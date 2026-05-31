@@ -1,6 +1,7 @@
 export type SessionStatus =
   | 'composing' | 'awaiting_spec_approval' | 'building'
-  | 'awaiting_push_confirm' | 'done' | 'failed' | 'cancelled'
+  | 'awaiting_critic_resolution' | 'awaiting_push_confirm'
+  | 'done' | 'failed' | 'cancelled'
 
 export interface SpecArtifact { title: string; body: string }
 export interface CodeArtifact { files: { filePath: string; content: string }[] }
