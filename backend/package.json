@@ -1,0 +1,21 @@
+{
+  "name": "@akis/backend",
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "smoke": "tsx scripts/smoke-mock-run.ts"
+  },
+  "dependencies": {
+    "@akis/shared": "workspace:*",
+    "fastify": "^4.28.0",
+    "gray-matter": "^4.0.3"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  }
+}
