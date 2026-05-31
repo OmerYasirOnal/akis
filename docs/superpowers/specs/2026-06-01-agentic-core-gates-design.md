@@ -47,15 +47,17 @@ This MVP is the first step of the larger studio vision (provider-agnostic, live 
 | Repo layout | `backend/ + frontend/ + shared/`, root pnpm workspace; `shared/` holds frozen contracts. |
 | Provider-agnostic | Own agent loop over a narrow `LlmProvider` (text + **tool-calling** + streaming); **mock only** in #1; real adapters later. |
 | Roles | `orchestrator`, `scribe`, `proto`, `trace`(=verifier), `critic` in #1; roster extensible (Research/Critic later) by config + prompt. |
+| Prompt/skill model | **Three layers:** (1) **Role** = structural concept in code (the gates key on it — a role cannot be a skill); (2) **thin agent base prompt** = identity + how-to-use-skills; (3) **rich skill library** = the use-case/business intelligence as `.md` + frontmatter, selected & injected by the orchestrator per request. No hardcoded per-use-case prompts. |
+| Skill library production | Authored in #1 via a **research workflow** (parallel agents per use-case/business category → `.md` drafts → critic gap-scan), every skill labeled **`status: draft — unvalidated on mock`**. Quality is **tuned against real AI** in a later sub-project (mock can't validate prompt quality). |
 | Live streaming | `AkisEvent` stream with per-agent + per-lane tagging from day one (parallel lanes visible). |
 | Mock control | Declarative knobs (`{mockNeedsClarification, mockCriticScore, mockTraceTestCount, mockProtoFixesOnIterate, scriptedToolCalls}`) for deterministic scenarios. |
 | Contract test origin | Executable spec of the new agentic core (TDD red→green), NOT run against v1. |
 
 ## 4. Scope of sub-project #1
 
-**In scope:** the provider-agnostic **agent loop**; the **main orchestrator agent** (conversational, holds session state, dispatches sub-agents, narrates, can run sub-agents in parallel); **sub-agents** Scribe/Proto/Trace/Critic (ported prompts); the **tool registry + role-based permission layer**; the **4 structural gates**; the **AkisEvent live stream** (per-agent/lane); a **skills/dynamic-prompt registry** (minimal: prompts are data, hot-swappable — wiring only, full editor UI later); the narrow `LlmProvider` + mock; the day-1 contract test + a CLI smoke; the `backend/ + frontend/ + shared/` scaffold.
+**In scope:** the provider-agnostic **agent loop**; the **main orchestrator agent** (conversational, holds session state, dispatches sub-agents, narrates, can run sub-agents in parallel); **sub-agents** Scribe/Proto/Trace/Critic (thin base prompts, ported); the **tool registry + role-based permission layer**; the **4 structural gates**; the **AkisEvent live stream** (per-agent/lane); the **skill registry** (`.md`+frontmatter loader + render + orchestrator selection + per-role injection) **and a researched draft skill library** (use-case/business-requirement skills authored via a research workflow, labeled `draft`); the narrow `LlmProvider` + mock; the day-1 contract test + a CLI smoke; the `backend/ + frontend/ + shared/` scaffold.
 
-**Out of scope (deferred; designed not to require a rewrite):** real providers + selection UI + key management; the FE chat shell, top-right live preview, analytics page, AI-futuristic UI polish; the skills **editor UI** (registry seam exists now); DevAgent; CI polling; RAG/knowledge injection; multi-project git/PR lifecycle (mock GitHub adapter in #1).
+**Out of scope (deferred; designed not to require a rewrite):** real providers + selection UI + key management; the FE chat shell, top-right live preview, analytics page, AI-futuristic UI polish; the skills **editor UI** (registry seam exists now); **real-AI validation/tuning of the skill drafts** (next sub-project — mock can't validate prompt quality); DevAgent; CI polling; RAG/knowledge injection; multi-project git/PR lifecycle (mock GitHub adapter in #1).
 
 ## 5. Repo structure
 
@@ -86,8 +88,15 @@ akis-platform-mvp/
     events/
       bus.ts              # AkisEvent emitter + ring buffer (ported pipelineBus shape)
       stream.plugin.ts    # SSE endpoint (ported)
+    prompts/              # THIN agent base prompts (identity + how-to-use-skills), ported/adapted
+      orchestrator.base.md · scribe.base.md · proto.base.md · trace.base.md · critic.base.md
     skills/
-      registry.ts         # skill = named versioned prompt/instruction bundle; injected per role
+      registry.ts         # loads .md+frontmatter, renders params, selects + injects per role
+      library/            # the researched skill library (status: draft) — one .md per use-case
+        spec/             # web-app-spec, rest-api-spec, data-pipeline-spec, prd-business-requirements, ...
+        code/             # react-spa-scaffold, node-service-scaffold, cli-tool-scaffold, ...
+        test/             # vitest-unit-suite, api-contract-tests, ...
+        review/           # security-review, a11y-review, ...
     store/                # SessionStore interface; MockSessionStore (tests); DrizzleSessionStore (runtime)
     di/services.ts        # OrchestratorServices DI container
   backend/test/contract/agentic-gates.contract.test.ts
@@ -139,7 +148,25 @@ function pushToGitHub(token: ApprovedPush, ...): Promise<PushResult>  // require
 ### 6.8 `events/bus.ts` + `shared/events.ts` — live streaming
 `AkisEvent` union, every event tagged with `agent` (orchestrator/scribe/proto/trace/critic) and a `laneId` (for parallel branches). Kinds: `session`, `text` (narration), `agent_start`/`agent_end`, `tool_call`/`tool_result`, `gate` (the trust moments), `verify` (verifier-only), `preview`, `done` (+ `verified`, provider/model, usage), `error`. The FE renders a live, possibly-parallel step tree (later sub-project); #1 ships the stream + a recording sink for tests + the SSE plugin.
 
-### 6.9 Ported IP
+### 6.9 Prompt & skill architecture (three layers)
+The use-case variety the product owner wants lives in **skills**, not in proliferating per-agent prompts.
+
+1. **Role (structural, in code).** The 4 gates key on role (`producer≠verifier` etc.). A role is a typed concept in `shared/roles.ts` — never a skill, never overridable by a prompt.
+2. **Thin agent base prompt (`prompts/*.base.md`).** Per agent: identity + behavior + *how to consume injected skills*. Short and stable; ported/adapted from v1's core prompts (e.g. Scribe's CLARIFICATION/SPEC_GENERATION distilled to a base + skill split).
+3. **Skill library (`skills/library/**.md`).** A skill = `.md` + frontmatter (`name`, `description`, `appliesToRole`, `triggers`, `status`, `version`, optional param schema). It carries the actual use-case/business intelligence ("how to write a REST-API spec", "how to scaffold a Node service", "a PRD/business-requirements doc"). The **orchestrator selects** relevant skills per request (by `appliesToRole` + `triggers`/intent) and the registry **injects** them into that sub-agent's context for the call.
+
+**Registry API (sketch):**
+```ts
+interface Skill { name; description; appliesToRole: Role; triggers: string[]; status: 'draft'|'validated'; version: string; body: string; params?: JSONSchema }
+loadSkills(dir): SkillRegistry                       // parse .md+frontmatter
+selectSkills(registry, { role, intent, request }): Skill[]   // orchestrator's chooser
+renderSkill(skill, params): string                   // fill params
+buildSystemPrompt(baseMd, skills, params): string    // base + injected skills
+```
+
+**Library production (this sub-project):** authored via a **research workflow** — parallel agents research each use-case/business category and emit `.md` drafts; a critic agent gap-scans for missing categories/contradictions. **Every skill ships `status: draft`** — a banner that it is *unvalidated on mock*. Quality tuning against real models is the next sub-project (mock cannot validate prompt quality). The registry + selection + injection mechanism, however, is fully built and unit-tested now.
+
+### 6.10 Ported IP
 - **Verbatim:** CriticAgent + types + `prompts/spec-review.ts` + `prompts/code-review.ts`; DeterministicValidator + checks + ValidatorTypes; MockAIService dispatch core; `pipelineBus`/ring-buffer + SSE plugin shape.
 - **Adapt:** Scribe prompts (CLARIFICATION + SPEC_GENERATION) + clarify/generate state machine → `ScribeAgent` sub-agent; Proto `SCAFFOLD_SYSTEM_PROMPT` + iteration prompt → `ProtoAgent` (text-only, MockGitHub); Trace test-gen prompt + AC-coverage → `TraceAgent` (the verifier; dryRun on in-memory files); `generateText` adapter → `LlmProvider.chat`.
 - **Survey facts to honor:** `ValidationInput={files:{filePath,content}[],spec?}`, `passed = score>=60 && errors===0`; `CriticReviewInput.reviewType:'spec'|'code'`, `CriticReviewOutput{approved,overallScore,findings,summary,hasCriticalFinding,maxSeverity}`, default `approvalThreshold=75`.
@@ -180,15 +207,17 @@ This is the regression tripwire: any later change that lets a gate be bypassed g
 - **Smoke:** `scripts/smoke-mock-run.ts` drives one full agentic run and prints the live event timeline (incl. a parallel lane) ending `done`/`verified=true`, plus the vacuous-green run ending `⚠️`.
 - **Store:** `MockSessionStore` for unit/contract; one integration test exercises `DrizzleSessionStore`.
 
-## 11. Build order (8 steps, mergeable)
+## 11. Build order (10 steps, mergeable)
 1. **Scaffold + contract test (red):** pnpm workspace, vitest, frozen `shared/` contracts (events/roles/session), and the §8 contract test against the not-yet-built orchestrator (TDD red).
 2. **Provider + loop:** `LlmProvider` interface; `MockProvider` (scripted tool-calls + knobs); `AgentLoop` (think→tool→observe + event emission).
 3. **Tools + permission (Gates 1&2):** tool registry; `canUseTool` matrix (run_tests→verifier; dispatch_proto needs approvedSpec); `PermissionDenied` flow.
 4. **Port pure IP:** CriticAgent + 2 prompts; DeterministicValidator + checks; MockAIService dispatch core; event bus + SSE plugin.
-5. **Sub-agents:** ScribeAgent, ProtoAgent (text-only + MockGitHub), TraceAgent (verifier, dryRun), CriticAgent wrapper — each a role over AgentLoop with ported prompts.
-6. **Gates 3&4:** `verifiedReducer`; `pushGate` (branded `ApprovedPush`, `mintApprovedPush` requires verified); wire `request_spec_approval` / `request_push_confirm` parking + human `approve`/`confirmPush`.
-7. **Orchestrator + parallel:** main agent system prompt + toolset + session state + narration; `parallel.ts` fan-out/join with per-lane events; minimal skills/dynamic-prompt registry seam.
-8. **Green + smoke:** make the contract test pass (Scenarios A–F); `scripts/smoke-mock-run.ts` prints a correct live timeline incl. a parallel lane.
+5. **Skill registry mechanism:** `.md`+frontmatter loader, param render, `selectSkills` + `buildSystemPrompt`; thin agent `*.base.md` prompts; unit tests (selection by role/trigger, injection, draft-status surfaced). No library content yet.
+6. **Sub-agents:** ScribeAgent, ProtoAgent (text-only + MockGitHub), TraceAgent (verifier, dryRun), CriticAgent wrapper — each a role over AgentLoop, base prompt + injected skills.
+7. **Gates 3&4:** `verifiedReducer`; `pushGate` (branded `ApprovedPush`, `mintApprovedPush` requires verified); wire `request_spec_approval` / `request_push_confirm` parking + human `approve`/`confirmPush`.
+8. **Orchestrator + parallel:** main agent base prompt + toolset + session state + narration + skill selection; `parallel.ts` fan-out/join with per-lane events.
+9. **Skill library (research workflow):** parallel research agents author the `skills/library/**.md` drafts per use-case/business category; critic gap-scan; all `status: draft`. Mergeable independently (content, not engine).
+10. **Green + smoke:** make the contract test pass (Scenarios A–F); `scripts/smoke-mock-run.ts` prints a correct live timeline incl. a parallel lane + a skill being selected/injected.
 
 ## 12. Risks
 - **Agentic non-determinism vs a deterministic contract test:** mitigated by the `MockProvider` scripted tool-call surface — the test pins the agent's choices; the gates are asserted regardless of flow. Real-provider runs will vary (expected); the gates still hold.
