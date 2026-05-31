@@ -18,6 +18,6 @@ describe('EventBus', () => {
     const bus = new EventBus(2)
     for (let i = 0; i < 5; i++) bus.emit(ev({ ts: i }))
     expect(bus.recent('s1')).toHaveLength(2)
-    expect(bus.recent('s1')[0].ts).toBe(3)
+    expect(bus.recent('s1')[0]?.ts).toBe(3)
   })
 })

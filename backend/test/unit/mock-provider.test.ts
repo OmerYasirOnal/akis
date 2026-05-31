@@ -8,7 +8,7 @@ describe('MockProvider', () => {
       { text: 'done' },
     ] })
     const a = await p.chat({ role: 'orchestrator', system: '', messages: [], tools: [] })
-    expect(a.toolCalls?.[0].name).toBe('dispatch_scribe')
+    expect(a.toolCalls?.[0]?.name).toBe('dispatch_scribe')
     const b = await p.chat({ role: 'orchestrator', system: '', messages: [], tools: [] })
     expect(b.text).toBe('done')
   })
