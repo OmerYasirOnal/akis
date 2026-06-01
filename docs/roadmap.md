@@ -28,18 +28,21 @@ Publish and merge the shared interfaces so D and E can proceed without colliding
 - [ ] `IngestRecord` — `{source, sourceId, workflowId, stage?, commitSha?, content, contentHash, createdAt}`
 - [ ] `RetrievalResult` — chunk + provenance + score
 - [ ] `WorkflowConfig` / `AgentConfig` — typed, references only legal stages
-- [ ] Reserve migration index for `knowledge_chunks` (parallel-session reservation file)
+- [ ] `IngestRecord` carries `userId` (tenancy key) + `workflowId`; reserve migration index for `knowledge_chunks` with both columns (parallel-session reservation file)
+- [ ] **Blocked on D1** (spine: `fsm/transitionTable.ts` + backend-stamped event bus) and **D3** (embedding provider chosen → fixes `vector(N)`)
 - **Exit:** interfaces merged to the MVP base; consumers compile against them; no behavior yet.
 
 ## M1 — Auto-RAG ingestion + retrieval (flag off)
-- [ ] `knowledge/store/` — pgvector schema (`knowledge_chunks`) + typed repo
+- [ ] `knowledge/store/` — pgvector schema (`knowledge_chunks` w/ `user_id`) + typed repo
 - [ ] `EmbeddingProvider` port + default adapter (provider decided in open-decision #1)
-- [ ] `ingestQueue` — async, idempotent, content-hash dedup, retry budget
+- [ ] `ingestQueue` — async, idempotent, content-hash dedup, **≤3 retries (1s/4s/16s) + dead-letter** (F1-AC7)
 - [ ] `conversationSource` + `pipelineSource` (subscribe to backend-stamped event bus)
-- [ ] `retrieve.ts` — hybrid vector + BM25 recall
-- [ ] Wire `retrieve()` into Scribe + ASK behind a feature flag (prompt augmentation only)
+- [ ] `retrieve.ts` — hybrid vector + BM25 recall, **filtered by `user_id`** (negative cross-tenant test, F1-AC5)
+- [ ] Golden eval set (≥20 query→chunk pairs) + top-5 ≥80% quality gate (F1-AC8)
+- [ ] Observability: ingest success/fail, dead-letter depth, dedup-hit, retrieval p95 (F1-AC14)
+- [ ] Wire `retrieve()` into Scribe + ASK behind a feature flag (prompt augmentation only); assert flag-off parity (F1-AC11)
 - [ ] **Contract test:** ingest → retrieve round-trip + provenance assertion
-- **Exit:** round-trip test green; Scribe/ASK read retrieval behind the flag; FSM untouched.
+- **Exit:** round-trip + quality-gate tests green; Scribe/ASK read retrieval behind the flag; FSM untouched.
 
 ## M2 — Remaining RAG sources + rerank
 - [ ] `repoSource` — GitHub repo files via existing GitHub MCP, incremental by commit
@@ -76,6 +79,6 @@ Publish and merge the shared interfaces so D and E can proceed without colliding
 (from `docs/rag-and-agents-design.md §E`)
 1. Embedding provider default (Voyage / OpenAI `text-embedding-3` / self-hosted) → fixes `vector(N)` dimension.
 2. Rerank cost/latency budget — LLM-judge on Scribe path, or ASK-only?
-3. Repo ingestion guardrails — full repo vs changed-files-only; binary exclusion; max size.
+3. Repo ingestion guardrails — full repo vs changed-files-only; max size. (Secret/binary exclusion is settled — mandated by spec F1-AC12.)
 4. Prompt-variant authoring — curated/version-pinned variants (recommended) vs raw editing.
 5. Skip scope — exactly which stages/gates are user-skippable (push-gate always mandatory).

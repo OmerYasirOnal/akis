@@ -105,18 +105,19 @@ Quality comes from a hybrid + reranked pipeline rather than naive top-k cosine:
 ```
 knowledge_chunks
   id            uuid pk
-  workflow_id   uuid        # scope
+  user_id       uuid        # tenancy key — retrieval ALWAYS filters on this
+  workflow_id   uuid        # scope within a user
   source        text        # conversation | pipeline | repo | upload
   source_id     text        # message id / stage id / file path / upload id
   stage         text null   # scribe | proto | critic | trace ... (pipeline only)
   commit_sha    text null   # repo provenance
   content       text
   content_hash  text        # idempotency / dedup
-  embedding     vector(N)   # pgvector
+  embedding     vector(N)   # pgvector — N fixed by the chosen embedding model
   tsv           tsvector    # BM25 / keyword recall
   created_at    timestamptz # backend-stamped
 ```
-Migration index reserved via the parallel-session reservation file (`HANDOFF.md §7`) before `db:generate`.
+Tenancy: scope by `user_id` + `workflow_id`; the retrieval query is always filtered by `user_id` (negative cross-tenant test required — spec `F1-AC5`). Secrets/binaries are excluded before embedding (spec `F1-AC12`). Migration index reserved via the parallel-session reservation file (`HANDOFF.md §7`) before `db:generate`. Milestones referenced as `Phase N` below map 1:1 to `M N` in `docs/roadmap.md` and the spec.
 
 ---
 
