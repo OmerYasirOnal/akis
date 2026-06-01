@@ -36,6 +36,8 @@ tmp/
 .akis/sessions/*.status.md
 .akis/sessions/registry.tsv
 
-# encrypted key store (never commit)
+# encrypted key store (never commit) — non-anchored globs cover ANY subdir (e.g. backend/.akis/)
+**/.akis/keys.json
+**/.akis/*.json
 .akis/keys.json
 .akis/*.json

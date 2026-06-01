@@ -53,6 +53,12 @@ export interface BuildServicesOptions {
   mockNeedsClarification?: boolean
   /** The verifier's test runner. Default fails closed (0 tests). */
   testRunner?: TestRunner
+  /**
+   * Optional key source (the encrypted KeyStore) consulted after env when
+   * resolving a provider — so a Settings-saved key actually reaches the critic.
+   * Only used when `provider` is not supplied and `mockCriticScore` is absent.
+   */
+  keyStore?: { get(provider: string): string | undefined }
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
@@ -84,7 +90,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     }
     providerName = opts.providerName ?? 'mock'
   } else {
-    const provider = opts.provider ?? createProvider()
+    const provider = opts.provider ?? createProvider(opts.keyStore ? { keyStore: opts.keyStore } : {})
     generateText = makeGenerateText(provider)
     providerName = opts.providerName ?? provider.name
   }

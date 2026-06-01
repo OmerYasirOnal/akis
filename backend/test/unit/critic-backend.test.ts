@@ -22,4 +22,12 @@ describe('buildServices providerName provenance', () => {
     const services = buildServices({ store: new MockSessionStore(), skillsDir, provider })
     expect(services.providerName).toBe('anthropic')
   })
+
+  it('keyless production fallback produces parseable critic JSON (no crash)', async () => {
+    // makeGenerateText over a keyless MockProvider must yield valid JSON for the
+    // critic, so a real deploy with no key degrades gracefully instead of throwing.
+    const out = await makeGenerateText(new MockProvider())('You are an INDEPENDENT spec reviewer.', 'review this')
+    expect(() => JSON.parse(out)).not.toThrow()
+    expect(JSON.parse(out).approved).toBe(true)
+  })
 })

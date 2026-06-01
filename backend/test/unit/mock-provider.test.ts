@@ -14,4 +14,11 @@ describe('MockProvider', () => {
     const r = await p.chat({ system: 's', messages: [] })
     expect(r.text).toBe('{"approved":true}')
   })
+  it('returns valid approved critic JSON when the system is a reviewer (graceful keyless fallback)', async () => {
+    const p = new MockProvider()
+    const r = await p.chat({ system: 'You are an INDEPENDENT code reviewer.', messages: [{ role: 'user', content: 'x' }] })
+    const parsed = JSON.parse(r.text ?? '')
+    expect(parsed.approved).toBe(true)
+    expect(parsed.reviewType).toBe('code_review')
+  })
 })
