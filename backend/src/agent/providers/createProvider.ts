@@ -91,10 +91,13 @@ export function createProvider(opts: CreateProviderOpts = {}): LlmProvider {
   if (!real) {
     throw new ProviderConfigError('No AI provider configured. Set ANTHROPIC_API_KEY (or another provider key) in env or the KeyStore, or pass allowMock for the mock.')
   }
-  // Key resolution: explicit arg > env > KeyStore.
+  // Key resolution: explicit arg > per-provider env var > KeyStore > generic AI_API_KEY.
+  // AI_API_KEY is only honored when the provider was named explicitly (opts.provider
+  // or AI_PROVIDER), so a generic key is never applied to the wrong provider.
   if (!apiKey) apiKey = firstPresentKey(env, real) ?? opts.keyStore?.get(real)
+  if (!apiKey && isRealProvider(forced)) apiKey = env.AI_API_KEY
   if (!apiKey) {
-    throw new ProviderConfigError(`Provider '${real}' selected but no API key found (env ${CATALOG[real].keyEnvVars.join('/')} or KeyStore).`)
+    throw new ProviderConfigError(`Provider '${real}' selected but no API key found (env ${CATALOG[real].keyEnvVars.join('/')}, AI_API_KEY, or KeyStore).`)
   }
 
   const model = resolveModel(real, opts.model ?? env.AI_MODEL)

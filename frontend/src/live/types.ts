@@ -46,8 +46,14 @@ export interface TestStats {
 }
 
 export interface PreviewState {
+  /** The same-origin /preview/:id/ path of the locally-RUNNING app (embedded in the iframe). */
   url?: string
+  /** The shipped artifact location (e.g. the pushed repo URL) — shown as a link, not embedded. */
+  artifactUrl?: string
+  /** The running app is up (preview_status 'ready'). */
   ready: boolean
+  /** A local run is being started (install/boot) — show a spinner. */
+  starting?: boolean
 }
 
 export type SessionStatus = 'started' | 'running' | 'done' | 'failed' | 'unknown'

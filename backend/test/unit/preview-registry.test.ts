@@ -86,6 +86,21 @@ describe('PreviewRegistry lifecycle', () => {
     expect(run).not.toHaveBeenCalled()
   })
 
+  it('serves static apps instantly: ready with NO install, NO launch, served from dir', async () => {
+    const run = vi.fn(okSandbox.run)
+    const launch = vi.fn<Launch>(() => fakeProc())
+    const reg = new PreviewRegistry({ sandbox: { run }, launch, probe: async () => true })
+    const e = await reg.start('s1', '/ws/s1', 'static')
+    expect(e.status).toBe('ready')
+    expect(e.type).toBe('static')
+    expect(e.url).toBe('/preview/s1/')
+    expect(e.port).toBeUndefined()
+    expect(run).not.toHaveBeenCalled()        // no pnpm install
+    expect(launch).not.toHaveBeenCalled()      // no process spawned
+    expect(reg.portFor('s1')).toBeUndefined()  // proxy must not treat it as a port
+    expect(reg.staticDirFor('s1')).toBe('/ws/s1')
+  })
+
   it('emits status transitions via onStatus', async () => {
     const seen: string[] = []
     const reg = new PreviewRegistry({ sandbox: okSandbox, launch: () => fakeProc(), probe: async () => true, onStatus: e => seen.push(e.status) })
