@@ -1,0 +1,11 @@
+{
+  "name": "akis-platform-mvp",
+  "private": true,
+  "packageManager": "pnpm@9.0.0",
+  "type": "module",
+  "scripts": {
+    "build": "pnpm -r build",
+    "test": "pnpm -C backend test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
