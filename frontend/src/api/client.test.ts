@@ -1,0 +1,50 @@
+import { describe, it, expect, vi, afterEach } from 'vitest'
+import { ApiClient, ApiError } from './client.js'
+
+function mockFetch(status: number, body: unknown) {
+  return vi.fn((_input: string, _init?: RequestInit) =>
+    Promise.resolve({ ok: status >= 200 && status < 300, status, json: async () => body, text: async () => JSON.stringify(body) } as unknown as Response))
+}
+afterEach(() => vi.restoreAllMocks())
+
+describe('ApiClient', () => {
+  it('startSession POSTs the idea and returns the session', async () => {
+    const f = mockFetch(201, { id: 's1', status: 'awaiting_spec_approval', version: 1 })
+    const api = new ApiClient('', f)
+    const s = await api.startSession('todo app')
+    expect(s.id).toBe('s1')
+    const [url, init] = f.mock.calls[0]!
+    expect(url).toBe('/sessions')
+    expect(init!.method).toBe('POST')
+    expect(JSON.parse(init!.body as string)).toEqual({ idea: 'todo app' })
+  })
+
+  it('approve/run/confirm hit the right endpoints', async () => {
+    const f = mockFetch(200, { id: 's1', status: 'building', version: 2 })
+    const api = new ApiClient('', f)
+    await api.approve('s1'); await api.run('s1'); await api.confirm('s1')
+    expect(f.mock.calls.map(c => c[0])).toEqual(['/sessions/s1/approve', '/sessions/s1/run', '/sessions/s1/confirm'])
+    expect(f.mock.calls.every(c => (c[1] as RequestInit).method === 'POST')).toBe(true)
+  })
+
+  it('getSession GETs and listProviders GETs', async () => {
+    const f = mockFetch(200, { id: 's1', status: 'done', version: 3 })
+    const api = new ApiClient('', f)
+    await api.getSession('s1')
+    expect(f.mock.calls[0]![0]).toBe('/sessions/s1')
+  })
+
+  it('maps a gate 409 to a typed ApiError', async () => {
+    const f = mockFetch(409, { error: 'Cannot push', code: 'NotVerifiedError' })
+    const api = new ApiClient('', f)
+    await expect(api.confirm('s1')).rejects.toMatchObject({ name: 'ApiError', status: 409, code: 'NotVerifiedError' })
+    expect(ApiError.is(await api.confirm('s1').catch(e => e))).toBe(true)
+  })
+
+  it('honors a base url', async () => {
+    const f = mockFetch(201, { id: 's1', status: 'x', version: 1 })
+    const api = new ApiClient('http://host:3000', f)
+    await api.startSession('x')
+    expect(f.mock.calls[0]![0]).toBe('http://host:3000/sessions')
+  })
+})
