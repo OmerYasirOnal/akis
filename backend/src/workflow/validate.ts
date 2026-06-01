@@ -1,4 +1,4 @@
-import { isCoreRole, isGateTool, GATE_TOOL_OWNER, VERIFIER_ROLE, type GateTool, type WorkflowConfigInput, MAX_ITERATE_BUDGET } from '@akis/shared'
+import { isGateTool, GATE_TOOL_OWNER, type GateTool, type WorkflowConfigInput, MAX_ITERATE_BUDGET } from '@akis/shared'
 import { CATALOG, REAL_PROVIDERS } from '../agent/providers/catalog.js'
 
 export type ValidationResult = { ok: true } | { ok: false; errors: string[] }
@@ -19,9 +19,10 @@ export function validateWorkflowConfig(cfg: WorkflowConfigInput): ValidationResu
 
   for (const a of cfg.agents ?? []) {
     const where = `agent '${a.role}'`
-    // Custom (non-core) agents: never the verifier, never a gate tool.
-    if (!isCoreRole(a.role) && a.role === VERIFIER_ROLE) errors.push(`${where}: a custom agent cannot be the verifier`)
-
+    // A custom (non-core) agent can never hold a gate capability. The verifier role
+    // ('trace') is itself core, so "custom == verifier" is impossible by name; the
+    // real protection is the gate-tool ownership check below (a custom agent granted
+    // run_tests/dispatch_trace is rejected since it isn't the structural owner).
     for (const tool of a.tools ?? []) {
       if (isGateTool(tool)) {
         const owner = GATE_TOOL_OWNER[tool as GateTool]

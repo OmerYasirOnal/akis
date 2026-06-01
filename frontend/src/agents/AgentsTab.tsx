@@ -20,7 +20,9 @@ export function AgentsTab({ api }: { api: ApiClient }) {
 
   useEffect(() => { void api.listProviders().then(setProviders) }, [api])
 
-  const available = useMemo(() => (providers ?? []).filter(p => p.available || true), [providers])
+  // Show every catalog provider (configured or not) so the user can pick a model and
+  // add its key in Settings; availability is per-row info, not a hide filter.
+  const available = useMemo(() => providers ?? [], [providers])
 
   const setAgent = (role: string, providerId: string, modelId: string): void => {
     setSel(s => ({ ...s, [role]: { providerId, modelId } }))
