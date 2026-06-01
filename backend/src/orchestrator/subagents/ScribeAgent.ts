@@ -1,13 +1,16 @@
-import type { SpecArtifact } from '@akis/shared'
+import type { SpecArtifact, SharedContext } from '@akis/shared'
 import type { EventBus } from '../../events/bus.js'
 import type { LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
 import { parseAIJson } from './critic/json-extract.js'
+import { renderKnowledge } from './context-prompt.js'
 
 export interface ScribeInput {
   sessionId: string
   laneId: string
   idea: string
+  /** Read view of the shared context (F2-AC16). Data only — no gate capability. */
+  ctx?: SharedContext
 }
 
 export type ScribeOutcome =
@@ -50,7 +53,7 @@ export class ScribeAgent {
     try {
       res = await this.deps.provider.chat({
         system: SCRIBE_SYSTEM,
-        messages: [{ role: 'user', content: input.idea }],
+        messages: [{ role: 'user', content: input.idea + renderKnowledge(input.ctx) }],
       })
     } catch (err) {
       // A throwing provider (auth/network/model error) must still CLOSE the event

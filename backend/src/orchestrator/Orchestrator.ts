@@ -3,6 +3,8 @@ import { initialSession, isVerified, type SessionState } from '@akis/shared'
 import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
 import { nextTs } from '../events/clock.js'
+import { assembleSharedContext } from '../context/assemble.js'
+import type { SharedContext } from '@akis/shared'
 import type { OrchestratorServices } from '../di/services.js'
 
 export interface StartInput { idea: string }
@@ -44,6 +46,13 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'gate', gate, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
   }
 
+  /** Assemble the typed read view AKIS dispatches each agent with (F2-AC16/AC17).
+   *  It carries data only — no gate capability — so a dispatched agent can read
+   *  context but cannot reach a gate through it. */
+  private ctx(sessionId: string, query: string): Promise<SharedContext> {
+    return assembleSharedContext(sessionId, { store: this.s.store, bus: this.s.bus, knowledge: this.s.knowledge }, { query })
+  }
+
   async start(input: StartInput): Promise<SessionState> {
     const id = randomUUID()
     let session = initialSession(id, input.idea)
@@ -51,7 +60,8 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'session', status: 'started', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     this.narrate(id, `Planning: ${input.idea}`)
 
-    const scribeOut = await this.s.scribe.run({ sessionId: id, laneId: 'main', idea: input.idea })
+    const scribeCtx = await this.ctx(id, input.idea)
+    const scribeOut = await this.s.scribe.run({ sessionId: id, laneId: 'main', idea: input.idea, ctx: scribeCtx })
     if (scribeOut.type === 'clarify') {
       this.narrate(id, `Scribe needs clarification: ${scribeOut.questions.join(' ')}`)
       return await this.s.store.update(id, { status: 'composing' }, session.version)
@@ -96,8 +106,9 @@ export class Orchestrator {
     let lastFiles: { filePath: string; content: string }[] = []
     let attempt = 0
     for (;;) {
+      const protoCtx = await this.ctx(id, `${approved.spec.title}\n${approved.spec.body}`)
       const proto = await this.s.proto.run({
-        sessionId: id, laneId: 'main', approved,
+        sessionId: id, laneId: 'main', approved, ctx: protoCtx,
         ...(feedback !== undefined ? { feedback } : {}),
       })
       lastFiles = proto.files
