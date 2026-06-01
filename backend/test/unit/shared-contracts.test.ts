@@ -16,8 +16,8 @@ describe('shared contracts', () => {
   })
   it('isVerified requires a token whose sessionId matches', async () => {
     const s = initialSession('s1', 'x')
-    const tokenS1 = mintVerifyToken('s1', 'd', await new MockTestRunner({ testsRun: 1, passed: true }).run([]))!
-    const tokenOther = mintVerifyToken('other', 'd', await new MockTestRunner({ testsRun: 1, passed: true }).run([]))!
+    const tokenS1 = mintVerifyToken('s1', await new MockTestRunner({ testsRun: 1, passed: true }).run([]))!
+    const tokenOther = mintVerifyToken('other', await new MockTestRunner({ testsRun: 1, passed: true }).run([]))!
     expect(isVerified({ ...s, verifyToken: tokenS1 })).toBe(true)
     expect(isVerified({ ...s, verifyToken: tokenOther })).toBe(false)
   })

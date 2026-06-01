@@ -23,21 +23,21 @@ describe('Gate 1 — ApprovedSpec token', () => {
 describe('Gate 3 — VerifyToken (fail-closed)', () => {
   it('mints only from a real >=1-test pass', async () => {
     const pass = await new MockTestRunner({ testsRun: 2, passed: true }).run(FILES)
-    expect(mintVerifyToken('s1', DIGEST, pass)).not.toBeNull()
+    expect(mintVerifyToken('s1', pass)).not.toBeNull()
   })
   it('returns null for 0 tests (vacuous green)', async () => {
     const zero = await new MockTestRunner({ testsRun: 0, passed: true }).run(FILES)
-    expect(mintVerifyToken('s1', DIGEST, zero)).toBeNull()
+    expect(mintVerifyToken('s1', zero)).toBeNull()
   })
   it('returns null for tests that ran but failed', async () => {
     const failed = await new MockTestRunner({ testsRun: 3, passed: false }).run(FILES)
-    expect(mintVerifyToken('s1', DIGEST, failed)).toBeNull()
+    expect(mintVerifyToken('s1', failed)).toBeNull()
   })
   it('default MockTestRunner fails closed (no auto-verify)', async () => {
     const def = await new MockTestRunner().run(FILES)
     expect(def.testsRun).toBe(0)
     expect(def.passed).toBe(false)
-    expect(mintVerifyToken('s1', DIGEST, def)).toBeNull()
+    expect(mintVerifyToken('s1', def)).toBeNull()
   })
 })
 
@@ -46,7 +46,7 @@ describe('Gate 4 — pushGate', () => {
     const unverified = initialSession('s1', 'idea')
     expect(() => mintApprovedPush(unverified, FILES)).toThrow(NotVerifiedError)
 
-    const token = mintVerifyToken('s1', DIGEST, await new MockTestRunner({ testsRun: 1, passed: true }).run(FILES))!
+    const token = mintVerifyToken('s1', await new MockTestRunner({ testsRun: 1, passed: true }).run(FILES))!
     const verified = { ...unverified, verifyToken: token }
     expect(isVerified(verified)).toBe(true)
     const push = mintApprovedPush(verified, FILES)
@@ -57,16 +57,40 @@ describe('Gate 4 — pushGate', () => {
   })
 
   it('rejects pushing files that differ from the verified code (digest mismatch)', async () => {
-    const token = mintVerifyToken('s1', DIGEST, await new MockTestRunner({ testsRun: 1, passed: true }).run(FILES))!
+    const token = mintVerifyToken('s1', await new MockTestRunner({ testsRun: 1, passed: true }).run(FILES))!
     const verified = { ...initialSession('s1', 'idea'), verifyToken: token }
     expect(() => mintApprovedPush(verified, [{ filePath: 'a.ts', content: 'TAMPERED' }])).toThrow(CodeMismatchError)
   })
 
   it('rejects a VerifyToken minted for a different session', async () => {
-    const tokenForOther = mintVerifyToken('other', DIGEST, await new MockTestRunner({ testsRun: 1, passed: true }).run(FILES))!
+    const tokenForOther = mintVerifyToken('other', await new MockTestRunner({ testsRun: 1, passed: true }).run(FILES))!
     const session = { ...initialSession('s1', 'idea'), verifyToken: tokenForOther }
     expect(isVerified(session)).toBe(false)
     expect(() => mintApprovedPush(session, FILES)).toThrow(NotVerifiedError)
+  })
+
+  it('binds verification to the runner-computed digest (caller cannot substitute)', async () => {
+    // The runner computes the digest from the files it actually ran; the token
+    // carries THAT digest, so a token from one file set cannot authorize another.
+    const ranA = await new MockTestRunner({ testsRun: 1, passed: true }).run(FILES)
+    const tokenA = mintVerifyToken('s1', ranA)!
+    const verified = { ...initialSession('s1', 'idea'), verifyToken: tokenA }
+    expect(() => mintApprovedPush(verified, [{ filePath: 'b.ts', content: 'other' }])).toThrow(CodeMismatchError)
+    expect(mintApprovedPush(verified, FILES)).toBeTruthy() // matching files OK
+  })
+})
+
+describe('digest collision-resistance', () => {
+  it('distinct file sets that would collide under naive concat get distinct digests', () => {
+    // Naive `${path} ${content}` join collides: ['a','b c'] vs ['a b','c'].
+    const setA = [{ filePath: 'a', content: 'b c' }]
+    const setB = [{ filePath: 'a b', content: 'c' }]
+    expect(digestFiles(setA)).not.toBe(digestFiles(setB))
+  })
+  it('is order-independent (sorted canonical form)', () => {
+    const f1 = { filePath: 'a.ts', content: '1' }
+    const f2 = { filePath: 'b.ts', content: '2' }
+    expect(digestFiles([f1, f2])).toBe(digestFiles([f2, f1]))
   })
 })
 

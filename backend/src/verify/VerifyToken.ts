@@ -10,16 +10,13 @@ export type { VerifyToken }
  *
  * `mintVerifyToken` is the single chokepoint that produces a VerifyToken, and it
  * FAILS CLOSED: only a genuine ≥1-test pass yields a token (else null → not
- * verified → no push). It requires a branded `TestRunResult` (unforgeable as a
- * literal), so a caller must have actually run a TestRunner to get here. The
- * token binds the session id + a digest of the tested code.
- *
- * The single audited brand cast lives here; the brand symbol is private to
- * @akis/shared so no other module can apply it.
+ * verified → no push). The token's `codeDigest` is read FROM the branded result
+ * (computed by the runner over the files it actually ran), never from a caller
+ * argument — so verification evidence is bound to the tested code.
  */
-export function mintVerifyToken(sessionId: string, codeDigest: string, result: TestRunResult): VerifyToken | null {
+export function mintVerifyToken(sessionId: string, result: TestRunResult): VerifyToken | null {
   if (result.testsRun >= 1 && result.passed === true) {
-    return { sessionId, testsRun: result.testsRun, codeDigest } as unknown as VerifyToken
+    return { sessionId, testsRun: result.testsRun, codeDigest: result.codeDigest } as unknown as VerifyToken
   }
   return null
 }

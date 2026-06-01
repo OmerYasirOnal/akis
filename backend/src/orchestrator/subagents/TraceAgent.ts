@@ -3,7 +3,6 @@ import type { EventBus } from '../../events/bus.js'
 import type { RepoFile } from '../../di/MockGitHubAdapter.js'
 import type { TestRunner } from '../../verify/TestRunner.js'
 import { mintVerifyToken } from '../../verify/VerifyToken.js'
-import { digestFiles } from '../../verify/digest.js'
 import { nextTs } from '../../events/clock.js'
 
 export interface TraceInput {
@@ -16,13 +15,12 @@ export interface TraceInput {
  * Trace — the independent verifier. It is the ONLY role given a TestRunner, so
  * it is the only role that can produce a TestRunResult and therefore the only
  * role that can mint a VerifyToken (Gate 2 by capability). It runs the real
- * runner over the produced files and returns a VerifyToken bound to a digest of
- * those files — or null when the run did not produce a genuine ≥1-test pass
- * (Gate 3, fail-closed).
+ * runner over the produced files; the returned token binds the runner-computed
+ * digest of those files — or null when the run did not produce a genuine ≥1-test
+ * pass (Gate 3, fail-closed).
  *
  * The emitted `verify` event is for the live stream/UX only; it is NOT the
- * source of truth — the returned token is. A forged event cannot grant
- * verification because the orchestrator persists the token, not the event.
+ * source of truth — the returned token is.
  */
 export class TraceAgent {
   constructor(private deps: { bus: EventBus; runner: TestRunner }) {}
@@ -32,7 +30,7 @@ export class TraceAgent {
     this.deps.bus.emit({ kind: 'agent_start', role: 'trace', agent: 'trace', laneId, sessionId, ts: nextTs() })
 
     const result = await this.deps.runner.run(input.files)
-    const token = mintVerifyToken(sessionId, digestFiles(input.files), result)
+    const token = mintVerifyToken(sessionId, result)
 
     this.deps.bus.emit({ kind: 'verify', testsRun: result.testsRun, passed: result.passed, agent: 'trace', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'agent_end', role: 'trace', ok: token !== null, agent: 'trace', laneId, sessionId, ts: nextTs() })

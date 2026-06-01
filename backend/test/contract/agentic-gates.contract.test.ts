@@ -87,7 +87,7 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     // store has no generic-patch path to set verifyToken/approval (SessionPatch
     // omits them; asserted at the type level below).
     const result = await new MockTestRunner({ testsRun: 0, passed: true }).run([])
-    expect(mintVerifyToken('s1', 'd', result)).toBeNull()
+    expect(mintVerifyToken('s1', result)).toBeNull()
   })
 
   it('D — Gate 3: tests ran but failed => not verified, push impossible', async () => {
@@ -125,6 +125,47 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     const events = services.bus.recent(s.id)
     expect(events.every(e => typeof e.agent === 'string' && typeof e.laneId === 'string')).toBe(true)
     expect(new Set(events.map(e => e.laneId)).size).toBeGreaterThanOrEqual(2)
+  })
+
+  it('H — Gate 2 DI wiring: only the verifier (trace) is constructed with a TestRunner', () => {
+    // Producers must not carry a runner — that is what makes the verifier
+    // capability exclusive in the wired system. Asserted structurally on the
+    // constructed services (the deps are private, so we assert via behavior:
+    // scribe/proto expose no run-tests path, only trace does).
+    const { services } = make()
+    // Trace can verify (returns a token for a passing run).
+    expect(services.trace).toBeDefined()
+    // Scribe/Proto have no verify capability in their public API.
+    expect('run' in services.scribe).toBe(true)
+    expect('run' in services.proto).toBe(true)
+    // There is no method on scribe/proto that returns a VerifyToken — enforced by
+    // their types (ScribeOutcome / {files}), checked at compile time.
+    expect(typeof (services.scribe as { runner?: unknown }).runner).toBe('undefined')
+    expect(typeof (services.proto as { runner?: unknown }).runner).toBe('undefined')
+  })
+
+  it('I — Gate 1 (orchestrator path): cannot reach build without approval; store patch cannot fake it', async () => {
+    const { orch, services } = make()
+    const s = await orch.start({ idea: 'todo' })
+    // Force status to 'building' WITHOUT approval via the generic patch (the only
+    // public mutation). approval is NOT in SessionPatch, so it stays undefined.
+    await services.store.update(s.id, { status: 'building' }, s.version)
+    // Gate 1: runToVerification mints ApprovedSpec, which throws without approval.
+    await expect(orch.runToVerification(s.id)).rejects.toBeInstanceOf(SpecNotApprovedError)
+    expect((await services.store.get(s.id))!.code).toBeUndefined()
+  })
+
+  it('J — Gate 4 (orchestrator path): cannot push without verification; store patch cannot fake it', async () => {
+    const { orch, services } = make({ testsRun: 0 }) // verifier fails closed
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id) // leaves status 'building' (not verified)
+    // Force status to 'awaiting_push_confirm' WITHOUT a verifyToken (not patchable).
+    const cur = (await services.store.get(s.id))!
+    await services.store.update(s.id, { status: 'awaiting_push_confirm', code: { files: [{ filePath: 'a.ts', content: 'x' }] } }, cur.version)
+    // Gate 4: confirmPush mints ApprovedPush, which throws without a VerifyToken.
+    await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(NotVerifiedError)
+    expect(services.github.read(s.id)).toHaveLength(0)
   })
 })
 

@@ -154,6 +154,7 @@ export class Orchestrator {
     // Push FIRST. Only persist 'done' after a successful push, so a push failure
     // leaves a retryable state (push_failed) and never loses the code.
     try {
+      await this.s.github.createRepo(id)
       await pushToGitHub(token, this.s.github, files)
     } catch (err) {
       await this.s.store.update(id, { status: 'push_failed' }, cur.version)
