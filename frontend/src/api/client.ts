@@ -31,8 +31,8 @@ type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
 export class ApiClient {
   constructor(private baseUrl = '', private fetchFn: FetchFn = (i, n) => fetch(i, n)) {}
 
-  startSession(idea: string): Promise<SessionState> {
-    return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea }) })
+  startSession(idea: string, workflowId?: string): Promise<SessionState> {
+    return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea, ...(workflowId ? { workflowId } : {}) }) })
   }
   getSession(id: string): Promise<SessionState> {
     return this.json<SessionState>(`/sessions/${id}`)

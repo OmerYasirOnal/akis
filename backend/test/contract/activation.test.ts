@@ -69,4 +69,23 @@ describe('activation wiring (sub-project 8)', () => {
     expect(await iterationsFor(1)).toBe(1)
     expect(await iterationsFor(3)).toBe(3)
   })
+
+  it('gatePolicy.requireCriticResolution tightens: any code rejection → human resolution, 0 auto-iterations', async () => {
+    const critic = {
+      name: 'fake', model: 'm',
+      async chat(req: { system: string }): Promise<{ text: string }> {
+        const isCode = req.system.toLowerCase().includes('code reviewer')
+        return { text: JSON.stringify({ approved: !isCode, overallScore: isCode ? 70 : 90, summary: 'x', findings: [], reviewType: isCode ? 'code_review' : 'spec_review', iteration: 1, hasCriticalFinding: false, maxSeverity: 'info' }) }
+      },
+    }
+    const store = new MockSessionStore()
+    const services = buildServices({ store, skillsDir, provider: critic, iterateBudget: 3, gatePolicy: { requireCriticResolution: true } })
+    const orch = new Orchestrator(services)
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    const done = await orch.runToVerification(s.id)
+    expect(done.status).toBe('awaiting_critic_resolution')
+    // No auto-iteration despite budget 3 — the policy forced resolution on first rejection.
+    expect(services.bus.recent(s.id).filter(e => e.kind === 'text' && e.text.includes('Iterating')).length).toBe(0)
+  })
 })

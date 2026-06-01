@@ -7,7 +7,9 @@
     "test:unit": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
-    "smoke": "tsx scripts/smoke-mock-run.ts"
+    "smoke": "tsx scripts/smoke-mock-run.ts",
+    "dev": "tsx watch src/main.ts",
+    "start": "tsx src/main.ts"
   },
   "dependencies": {
     "@akis/shared": "workspace:*",
