@@ -15,10 +15,17 @@ export interface AssembleOpts {
   knowledgeLimit?: number
 }
 
-/** Deep-freeze so the read view is immutable at runtime too (not just by type). */
-function deepFreeze<T>(o: T): T {
+/**
+ * Deep-freeze so the read view is immutable at runtime too (not just by type).
+ * Cycle-safe: a `tool_result.result`/`tool_call.args` is typed `unknown` and a
+ * KnowledgePort chunk is unvalidated, so the graph CAN contain a cycle — without
+ * the visited set this would stack-overflow and DoS the dispatch.
+ */
+function deepFreeze<T>(o: T, seen = new WeakSet<object>()): T {
   if (o && typeof o === 'object') {
-    for (const v of Object.values(o)) deepFreeze(v)
+    if (seen.has(o as object)) return o
+    seen.add(o as object)
+    for (const v of Object.values(o)) deepFreeze(v, seen)
     Object.freeze(o)
   }
   return o
@@ -40,10 +47,21 @@ export async function assembleSharedContext(
   if (!session) throw new Error(`session ${sessionId} not found`)
   const events = deps.bus.recent(sessionId)
   const scratchpad = foldScratchpad(events)
-  const knowledge = await deps.knowledge.retrieve({
-    query: opts.query,
-    sessionId,
-    ...(opts.knowledgeLimit !== undefined ? { limit: opts.knowledgeLimit } : {}),
-  })
-  return deepFreeze({ session, events, scratchpad, knowledge })
+  // Grounding is best-effort: a retrieval failure (RAG timeout/outage) must NOT
+  // fail the whole dispatch — an ungrounded prompt still works. (NullKnowledgePort
+  // never throws; this matters once the real RAG layer lands.)
+  const knowledge = await deps.knowledge
+    .retrieve({
+      query: opts.query,
+      sessionId,
+      ...(opts.knowledgeLimit !== undefined ? { limit: opts.knowledgeLimit } : {}),
+    })
+    .catch(() => [])
+
+  // Snapshot the session so freezing the read view never freezes the store's LIVE
+  // nested objects (store.get() returns a shallow copy, so spec/code are shared by
+  // reference; freezing them in place would silently mutate the source of truth).
+  // Events are write-once bus log objects — freezing them in place is safe and also
+  // prevents a dispatched agent from tampering with the event log (F2-AC17).
+  return deepFreeze({ session: structuredClone(session), events, scratchpad, knowledge })
 }

@@ -45,6 +45,42 @@ describe('assembleSharedContext (F2-AC16 / F2-AC17)', () => {
       .rejects.toThrow(/not found/)
   })
 
+  it('does NOT freeze the store’s live session (M1: no hidden mutation of source of truth)', async () => {
+    const store = new MockSessionStore()
+    await store.create(initialSession('s1', 'idea'))
+    // Give the session a nested object (spec) that the store holds.
+    const created = (await store.get('s1'))!
+    await store.update('s1', { spec: { title: 't', body: 'b' } }, created.version)
+    const bus = new EventBus()
+
+    await assembleSharedContext('s1', { store, bus, knowledge: new NullKnowledgePort() }, { query: 'x' })
+
+    const live = (await store.get('s1'))!
+    expect(Object.isFrozen(live.spec)).toBe(false) // store's live nested object untouched
+    // ...and the store still accepts updates (a frozen spec would throw on patch in strict mode).
+    await expect(store.update('s1', { status: 'building' }, live.version)).resolves.toBeDefined()
+  })
+
+  it('survives a circular reference in the event log (M2: no stack-overflow DoS)', async () => {
+    const store = new MockSessionStore()
+    await store.create(initialSession('s1', 'idea'))
+    const bus = new EventBus()
+    const cyclic: { self?: unknown } = {}
+    cyclic.self = cyclic
+    bus.emit({ kind: 'tool_result', tool: 'dispatch_proto', ok: false, result: cyclic, agent: 'proto', laneId: 'main', sessionId: 's1', ts: 1 })
+    await expect(assembleSharedContext('s1', { store, bus, knowledge: new NullKnowledgePort() }, { query: 'x' }))
+      .resolves.toBeDefined()
+  })
+
+  it('degrades gracefully when knowledge.retrieve rejects (N2: grounding is best-effort)', async () => {
+    const store = new MockSessionStore()
+    await store.create(initialSession('s1', 'idea'))
+    const bus = new EventBus()
+    const flaky: KnowledgePort = { async retrieve() { throw new Error('RAG down') } }
+    const ctx = await assembleSharedContext('s1', { store, bus, knowledge: flaky }, { query: 'x' })
+    expect(ctx.knowledge).toEqual([]) // dispatch not failed by a retrieval outage
+  })
+
   it('returns a deep-frozen, capability-free read view (F2-AC17)', async () => {
     const { store, bus } = await setup()
     const ctx = await assembleSharedContext('s1', { store, bus, knowledge: new NullKnowledgePort() }, { query: 'x' })
