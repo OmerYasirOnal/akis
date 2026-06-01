@@ -18,6 +18,21 @@ export interface CreateProviderOpts {
   env?: Record<string, string | undefined>
   /** Consulted after env keys — lets stored (Settings) keys reach a provider. */
   keyStore?: KeyLookup
+  /** Explicit opt-in to the mock OUTSIDE tests (e.g. a demo flag). Default false. */
+  allowMock?: boolean
+}
+
+/**
+ * Thrown when a real provider cannot be resolved outside `NODE_ENV=test` and the
+ * caller did not explicitly opt into the mock. FAIL-CLOSED (X-AC6 / CF6): a
+ * misconfigured provider must never silently fall back to the mock in production
+ * and emit fake "verified" output.
+ */
+export class ProviderConfigError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'ProviderConfigError'
+  }
 }
 
 type RealProvider = Exclude<ProviderId, 'mock'>
@@ -46,31 +61,41 @@ function anyKey(env: Record<string, string | undefined>): { provider: RealProvid
  * The single provider swap point. Resolution:
  *   provider = opts.provider > env.AI_PROVIDER > detectProviderFromKey(any present key)
  *   model    = opts.model    > env.AI_MODEL    > catalog default
- *   key      = opts.apiKey   > first present keyEnvVar for the provider
+ *   key      = opts.apiKey   > first present keyEnvVar > KeyStore
  *
- * FAIL-SAFE: returns a MockProvider when NODE_ENV==='test', or when no provider
- * or no key can be resolved. This keeps the whole test suite + smoke green with
- * zero env, and degrades gracefully in production until a key is configured.
- * Never logs the key.
+ * FAIL-CLOSED (X-AC6 / CF6): the ONLY implicit mock is `NODE_ENV==='test'`.
+ * Outside tests, the mock is used ONLY when explicitly opted in (`allowMock` or
+ * provider 'mock'). Anything else that cannot resolve a real provider+key —
+ * unknown provider, missing key — THROWS `ProviderConfigError` rather than
+ * silently producing fake "verified" output. Never logs the key.
+ *
+ * Default provider: with `ANTHROPIC_API_KEY` present and nothing else set, the
+ * platform runs live on Claude out of the box (CORE-AC2), because anyKey() probes
+ * the catalog and Anthropic's key is the natural default.
  */
 export function createProvider(opts: CreateProviderOpts = {}): LlmProvider {
   const env = opts.env ?? (process.env as Record<string, string | undefined>)
   if (env.NODE_ENV === 'test') return new MockProvider()
 
   const forced = opts.provider ?? (env.AI_PROVIDER as string | undefined)
-  if (forced === 'mock') return new MockProvider()
-  // An unrecognized AI_PROVIDER must not crash — fail safe to mock.
-  if (forced && !isRealProvider(forced)) return new MockProvider()
+  if (forced === 'mock' || opts.allowMock) return new MockProvider()
+  if (forced && !isRealProvider(forced)) {
+    throw new ProviderConfigError(`Unknown AI_PROVIDER '${forced}'. Use one of: anthropic, openai, openrouter, google, mock.`)
+  }
 
   let apiKey = opts.apiKey
   let real: RealProvider | undefined = isRealProvider(forced) ? forced : undefined
   if (!real) {
     real = apiKey ? detectProviderFromKey(apiKey) : anyKey(env)?.provider
   }
-  if (!real) return new MockProvider()
+  if (!real) {
+    throw new ProviderConfigError('No AI provider configured. Set ANTHROPIC_API_KEY (or another provider key) in env or the KeyStore, or pass allowMock for the mock.')
+  }
   // Key resolution: explicit arg > env > KeyStore.
   if (!apiKey) apiKey = firstPresentKey(env, real) ?? opts.keyStore?.get(real)
-  if (!apiKey) return new MockProvider()
+  if (!apiKey) {
+    throw new ProviderConfigError(`Provider '${real}' selected but no API key found (env ${CATALOG[real].keyEnvVars.join('/')} or KeyStore).`)
+  }
 
   const model = resolveModel(real, opts.model ?? env.AI_MODEL)
   const baseUrlOverride = env[`${real.toUpperCase()}_BASE_URL`]
