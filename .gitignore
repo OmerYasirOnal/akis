@@ -31,3 +31,7 @@ coverage/
 # Misc
 tmp/
 .cache/
+
+# spawned-session live status (ephemeral)
+.akis/sessions/*.status.md
+.akis/sessions/registry.tsv
