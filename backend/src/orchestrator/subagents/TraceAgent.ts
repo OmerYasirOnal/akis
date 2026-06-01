@@ -17,8 +17,9 @@ export interface TraceInput {
  * returned token binds the runner-computed digest — or null when the run did not
  * produce a genuine ≥1-test pass (Gate 3, fail-closed).
  *
- * The emitted `verify` event is for the live stream/UX only; the returned token
- * is the source of truth.
+ * Emits agent_start, tool_call (run_tests) + tool_result so the verification is
+ * observable in the live stream (CF2). The emitted `verify` event and the
+ * returned token are the source of truth; the tool_* events are narration only.
  */
 export class TraceAgent {
   constructor(private deps: { bus: EventBus; verifier: Verifier }) {}
@@ -26,9 +27,11 @@ export class TraceAgent {
   async run(input: TraceInput): Promise<VerifyToken | null> {
     const { sessionId, laneId } = input
     this.deps.bus.emit({ kind: 'agent_start', role: 'trace', agent: 'trace', laneId, sessionId, ts: nextTs() })
+    this.deps.bus.emit({ kind: 'tool_call', tool: 'run_tests', args: { files: input.files.length }, agent: 'trace', laneId, sessionId, ts: nextTs() })
 
     const token = await this.deps.verifier.verify(sessionId, input.files)
 
+    this.deps.bus.emit({ kind: 'tool_result', tool: 'run_tests', ok: token !== null, result: { testsRun: token?.testsRun ?? 0, passed: token !== null }, agent: 'trace', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'verify', testsRun: token?.testsRun ?? 0, passed: token !== null, agent: 'trace', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'agent_end', role: 'trace', ok: token !== null, agent: 'trace', laneId, sessionId, ts: nextTs() })
     return token
