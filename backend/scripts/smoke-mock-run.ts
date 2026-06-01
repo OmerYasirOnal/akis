@@ -8,7 +8,7 @@
 import { Orchestrator } from '../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../src/store/MockSessionStore.js'
 import { buildServices } from '../src/di/services.js'
-import { MockTestRunner } from '../src/verify/TestRunner.js'
+import { createMockTestRunner } from '../src/verify/TestRunner.js'
 import { isVerified } from '@akis/shared'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -31,7 +31,7 @@ async function run(label: string, testsRun: number): Promise<void> {
   const services = buildServices({
     store: new MockSessionStore(), skillsDir,
     mockCriticScore: 90,
-    testRunner: new MockTestRunner({ testsRun, passed: testsRun > 0 }),
+    testRunner: createMockTestRunner({ testsRun, passed: testsRun > 0 }),
   })
   const orch = new Orchestrator(services)
   const s = await orch.start({ idea: 'build a todo web app' })

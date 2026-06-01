@@ -1,7 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { initialSession, isVerified, VERIFIER_ROLE } from '@akis/shared'
-import { mintVerifyToken } from '../../src/verify/VerifyToken.js'
-import { MockTestRunner } from '../../src/verify/TestRunner.js'
+import { verifyWith } from '../helpers/tokens.js'
 
 describe('shared contracts', () => {
   it('initial session is unverified and composing', () => {
@@ -16,8 +15,8 @@ describe('shared contracts', () => {
   })
   it('isVerified requires a token whose sessionId matches', async () => {
     const s = initialSession('s1', 'x')
-    const tokenS1 = mintVerifyToken('s1', await new MockTestRunner({ testsRun: 1, passed: true }).run([]))!
-    const tokenOther = mintVerifyToken('other', await new MockTestRunner({ testsRun: 1, passed: true }).run([]))!
+    const tokenS1 = (await verifyWith('s1', [], { testsRun: 1, passed: true }))!
+    const tokenOther = (await verifyWith('other', [], { testsRun: 1, passed: true }))!
     expect(isVerified({ ...s, verifyToken: tokenS1 })).toBe(true)
     expect(isVerified({ ...s, verifyToken: tokenOther })).toBe(false)
   })

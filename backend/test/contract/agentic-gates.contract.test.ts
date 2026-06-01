@@ -16,12 +16,12 @@ import { describe, it, expect } from 'vitest'
 import { Orchestrator, SpecNotApprovedError, AlreadyPushedError } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
-import { MockTestRunner } from '../../src/verify/TestRunner.js'
-import { mintVerifyToken } from '../../src/verify/VerifyToken.js'
+import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { mintApprovedPush, NotVerifiedError } from '../../src/gates/pushGate.js'
 import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { EventBus } from '../../src/events/bus.js'
 import { initialSession, isVerified } from '@akis/shared'
+import { verifyWith } from '../helpers/tokens.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -32,7 +32,7 @@ function make(opts: { mockCriticScore?: number; testsRun?: number; passed?: bool
   const services = buildServices({
     store, skillsDir,
     mockCriticScore: opts.mockCriticScore ?? 90,
-    testRunner: new MockTestRunner({ testsRun: opts.testsRun ?? 2, passed: opts.passed ?? true }),
+    testRunner: createMockTestRunner({ testsRun: opts.testsRun ?? 2, passed: opts.passed ?? true }),
   })
   return { services, orch: new Orchestrator(services) }
 }
@@ -86,8 +86,7 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     // yields no token — so there is nothing to record as verification, and the
     // store has no generic-patch path to set verifyToken/approval (SessionPatch
     // omits them; asserted at the type level below).
-    const result = await new MockTestRunner({ testsRun: 0, passed: true }).run([])
-    expect(mintVerifyToken('s1', result)).toBeNull()
+    expect(await verifyWith('s1', [], { testsRun: 0, passed: true })).toBeNull()
   })
 
   it('D — Gate 3: tests ran but failed => not verified, push impossible', async () => {
@@ -127,21 +126,13 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     expect(new Set(events.map(e => e.laneId)).size).toBeGreaterThanOrEqual(2)
   })
 
-  it('H — Gate 2 DI wiring: only the verifier (trace) is constructed with a TestRunner', () => {
-    // Producers must not carry a runner — that is what makes the verifier
-    // capability exclusive in the wired system. Asserted structurally on the
-    // constructed services (the deps are private, so we assert via behavior:
-    // scribe/proto expose no run-tests path, only trace does).
+  it('H — Gate 2: only the verifier (trace) accepts a Verifier; producers cannot (compile-time)', () => {
+    // The exclusivity is structural at the type level: ProtoAgent/ScribeAgent deps
+    // do NOT accept a verifier or a runner. The @ts-expect-error tripwires below
+    // FAIL TO COMPILE if a producer is ever given a verify capability.
     const { services } = make()
-    // Trace can verify (returns a token for a passing run).
     expect(services.trace).toBeDefined()
-    // Scribe/Proto have no verify capability in their public API.
-    expect('run' in services.scribe).toBe(true)
     expect('run' in services.proto).toBe(true)
-    // There is no method on scribe/proto that returns a VerifyToken — enforced by
-    // their types (ScribeOutcome / {files}), checked at compile time.
-    expect(typeof (services.scribe as { runner?: unknown }).runner).toBe('undefined')
-    expect(typeof (services.proto as { runner?: unknown }).runner).toBe('undefined')
   })
 
   it('I — Gate 1 (orchestrator path): cannot reach build without approval; store patch cannot fake it', async () => {
@@ -187,5 +178,16 @@ void _patchVerify
 // @ts-expect-error — SessionPatch must not allow writing the approval field
 const _patchApproval: SessionPatch = { approval: undefined }
 void _patchApproval
+
+// Gate 2 (compile-time): producers' deps must NOT accept a verify capability.
+import { ProtoAgent as _Proto } from '../../src/orchestrator/subagents/ProtoAgent.js'
+import { ScribeAgent as _Scribe } from '../../src/orchestrator/subagents/ScribeAgent.js'
+import { EventBus as _Bus } from '../../src/events/bus.js'
+import { createVerifier as _mkVerifier } from '../../src/verify/verifier.js'
+import { createMockTestRunner as _mkRunner } from '../../src/verify/TestRunner.js'
+// @ts-expect-error — ProtoAgent (producer) does not accept a verifier in its deps
+void new _Proto({ bus: new _Bus(), verifier: _mkVerifier(_mkRunner({ testsRun: 1, passed: true })) })
+// @ts-expect-error — ScribeAgent (producer) does not accept a runner in its deps
+void new _Scribe({ bus: new _Bus(), runner: _mkRunner({ testsRun: 1, passed: true }) })
 
 void SpecNotApprovedError

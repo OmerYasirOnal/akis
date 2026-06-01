@@ -3,11 +3,12 @@ import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
 import { ScribeAgent } from '../../src/orchestrator/subagents/ScribeAgent.js'
 import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { TraceAgent } from '../../src/orchestrator/subagents/TraceAgent.js'
-import { MockTestRunner } from '../../src/verify/TestRunner.js'
-import { mintApprovedSpec, brandApproval, SpecNotApprovedError } from '../../src/gates/specGate.js'
+import { createVerifier } from '../../src/verify/verifier.js'
+import { mintApprovedSpec, SpecNotApprovedError } from '../../src/gates/specGate.js'
 import { EventBus } from '../../src/events/bus.js'
 import { initialSession } from '@akis/shared'
 import type { AkisEvent } from '@akis/shared'
+import { createMockTestRunner, approveSpec } from '../helpers/tokens.js'
 
 describe('MockGitHubAdapter', () => {
   it('stores pushed files in memory keyed by session, readable back', async () => {
@@ -44,8 +45,9 @@ describe('ProtoAgent', () => {
   it('requires an ApprovedSpec token and returns files (does not push)', async () => {
     const gh = new MockGitHubAdapter(); await gh.createRepo('s1')
     // ApprovedSpec can only come from mintApprovedSpec, which needs an ApprovalToken
-    // built by brandApproval (the approve() path).
-    const session = { ...initialSession('s1', 'i'), approval: brandApproval({ title: 't', body: 'b' }) }
+    // minted by the approval authority and bound to the session's reviewed spec.
+    const spec = { title: 't', body: 'b' }
+    const session = { ...initialSession('s1', 'i'), spec, approval: approveSpec(spec) }
     const approved = mintApprovedSpec(session)
     const proto = new ProtoAgent({ bus: new EventBus() })
     const out = await proto.run({ sessionId: 's1', laneId: 'main', approved })
@@ -63,7 +65,7 @@ describe('TraceAgent (verifier)', () => {
     const bus = new EventBus()
     const seen: AkisEvent[] = []
     bus.subscribe('s1', e => seen.push(e))
-    const trace = new TraceAgent({ bus, runner: new MockTestRunner({ testsRun: 2, passed: true }) })
+    const trace = new TraceAgent({ bus, verifier: createVerifier(createMockTestRunner({ testsRun: 2, passed: true })) })
     const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
     expect(token).not.toBeNull()
     expect(token?.testsRun).toBe(2)
@@ -71,12 +73,12 @@ describe('TraceAgent (verifier)', () => {
     expect(v && v.kind === 'verify' && v.agent).toBe('trace')
   })
   it('returns null for a 0-test run (no false green)', async () => {
-    const trace = new TraceAgent({ bus: new EventBus(), runner: new MockTestRunner({ testsRun: 0, passed: true }) })
+    const trace = new TraceAgent({ bus: new EventBus(), verifier: createVerifier(createMockTestRunner({ testsRun: 0, passed: true })) })
     const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
     expect(token).toBeNull()
   })
   it('returns null when tests ran but failed', async () => {
-    const trace = new TraceAgent({ bus: new EventBus(), runner: new MockTestRunner({ testsRun: 3, passed: false }) })
+    const trace = new TraceAgent({ bus: new EventBus(), verifier: createVerifier(createMockTestRunner({ testsRun: 3, passed: false })) })
     const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
     expect(token).toBeNull()
   })

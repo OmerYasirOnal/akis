@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { initialSession, isVerified, type SessionState } from '@akis/shared'
-import { mintApprovedSpec, brandApproval, SpecNotApprovedError } from '../gates/specGate.js'
+import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
 import { nextTs } from '../events/clock.js'
 import type { OrchestratorServices } from '../di/services.js'
@@ -77,7 +77,8 @@ export class Orchestrator {
     if (cur.status !== 'awaiting_spec_approval') throw new WrongStatusError('approve', cur.status)
     if (!cur.spec) throw new Error('no spec to approve')
     // Gate 1: persist a branded ApprovalToken bound to the exact reviewed spec.
-    const approving = await this.s.store.recordApproval(id, brandApproval(cur.spec), cur.version)
+    // The approval mint is held only by the orchestrator's ApprovalAuthority.
+    const approving = await this.s.store.recordApproval(id, this.s.approvalAuthority.approve(cur.spec), cur.version)
     const session = await this.s.store.update(id, { status: 'building' }, approving.version)
     this.emitGate(id, 'spec_approval', 'satisfied')
     return session

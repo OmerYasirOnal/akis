@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { Orchestrator, AlreadyPushedError } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
-import { MockTestRunner } from '../../src/verify/TestRunner.js'
+import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { NotVerifiedError } from '../../src/gates/pushGate.js'
 import { isVerified } from '@akis/shared'
 import { fileURLToPath } from 'node:url'
@@ -15,7 +15,7 @@ function makeOrch(opts: { mockCriticScore?: number; testsRun?: number; passed?: 
   const services = buildServices({
     store, skillsDir,
     mockCriticScore: opts.mockCriticScore ?? 90,
-    testRunner: new MockTestRunner({ testsRun: opts.testsRun ?? 2, passed: opts.passed ?? true }),
+    testRunner: createMockTestRunner({ testsRun: opts.testsRun ?? 2, passed: opts.passed ?? true }),
   })
   return { orch: new Orchestrator(services), services }
 }
@@ -87,7 +87,7 @@ describe('Orchestrator — confirmPush is idempotent', () => {
 describe('Orchestrator — verified survives a fresh instance (no in-memory token)', () => {
   it('a second Orchestrator over the same store can push the verified session', async () => {
     const store = new MockSessionStore()
-    const services = buildServices({ store, skillsDir, mockCriticScore: 90, testRunner: new MockTestRunner({ testsRun: 2, passed: true }) })
+    const services = buildServices({ store, skillsDir, mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
     const orch1 = new Orchestrator(services)
     const s = await orch1.start({ idea: 'todo' })
     await orch1.approve(s.id)

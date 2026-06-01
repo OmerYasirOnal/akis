@@ -51,9 +51,18 @@ export interface TestRunConfig {
  * computed from the actual files passed to run(). Real test execution arrives
  * later behind this same interface.
  */
-export class MockTestRunner implements TestRunner {
+class MockTestRunnerImpl implements TestRunner {
   constructor(private readonly cfg: TestRunConfig = { testsRun: 0, passed: false }) {}
   async run(files: RepoFile[]): Promise<TestRunResult> {
     return brandResult(this.cfg.testsRun, this.cfg.passed, digestFiles(files))
   }
+}
+
+/**
+ * Factory for the mock runner. The class itself stays module-private; callers get
+ * a `TestRunner` interface, not a constructable forging tool. (Real runners
+ * implement the same interface in a later sub-project, behind a sandbox.)
+ */
+export function createMockTestRunner(cfg?: TestRunConfig): TestRunner {
+  return new MockTestRunnerImpl(cfg)
 }

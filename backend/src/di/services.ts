@@ -6,7 +6,9 @@ import { CriticAgent } from '../orchestrator/subagents/critic/CriticAgent.js'
 import { ScribeAgent } from '../orchestrator/subagents/ScribeAgent.js'
 import { ProtoAgent } from '../orchestrator/subagents/ProtoAgent.js'
 import { TraceAgent } from '../orchestrator/subagents/TraceAgent.js'
-import { MockTestRunner, type TestRunner } from '../verify/TestRunner.js'
+import { createMockTestRunner, type TestRunner } from '../verify/TestRunner.js'
+import { createVerifier } from '../verify/verifier.js'
+import { createApprovalAuthority, type ApprovalAuthority } from '../gates/specGate.js'
 import { loadSkills, type Skill } from '../skills/registry.js'
 
 export interface OrchestratorServices {
@@ -18,6 +20,7 @@ export interface OrchestratorServices {
   scribe: ScribeAgent
   proto: ProtoAgent
   trace: TraceAgent
+  approvalAuthority: ApprovalAuthority
   skills: Skill[]
   providerName: string
 }
@@ -44,6 +47,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   const bus = new EventBus()
   const github = new MockGitHubAdapter()
   const score = opts.mockCriticScore ?? 90
+  const runner = opts.testRunner ?? createMockTestRunner()
 
   // Deterministic critic backend for the mock. The real-provider sub-project
   // swaps this for provider.chat(...) + parseAIJson.
@@ -72,7 +76,8 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     critic: new CriticAgent({ generateText }, 75),
     scribe: new ScribeAgent({ bus, ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}) }),
     proto: new ProtoAgent({ bus }),
-    trace: new TraceAgent({ bus, runner: opts.testRunner ?? new MockTestRunner() }),
+    trace: new TraceAgent({ bus, verifier: createVerifier(runner) }),
+    approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
     providerName: opts.providerName ?? 'mock',
   }
