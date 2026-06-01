@@ -77,6 +77,7 @@ export class AnthropicProvider implements LlmProvider {
 
   private mapMessage(m: ChatMessage): Record<string, unknown> {
     if (m.role === 'tool') {
+      if (!m.toolCallId) throw new Error('Anthropic tool result requires toolCallId (tool_use_id)')
       return {
         role: 'user',
         content: [{ type: 'tool_result', tool_use_id: m.toolCallId, content: m.content }],

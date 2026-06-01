@@ -23,4 +23,11 @@ describe('crypto', () => {
     expect(() => encryptSecret('x', 'openai', '')).toThrow()
     expect(() => encryptSecret('x', 'openai', 'short')).toThrow()
   })
+  it('uses a fresh random IV per encrypt (no nonce reuse — catastrophic for GCM)', () => {
+    const a = encryptSecret('same-secret', 'anthropic', MASTER)
+    const b = encryptSecret('same-secret', 'anthropic', MASTER)
+    expect(a.iv).not.toBe(b.iv)
+    expect(a.cipherText).not.toBe(b.cipherText)
+    expect(Buffer.from(a.iv, 'base64').length).toBe(12)
+  })
 })

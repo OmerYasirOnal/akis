@@ -10,7 +10,7 @@ export class ModelNotFoundError extends Error {
   constructor(m = 'model not found') { super(m); this.name = 'ModelNotFoundError' }
 }
 export class ProviderHttpError extends Error {
-  constructor(public status: number, m: string) { super(m); this.name = 'ProviderHttpError' }
+  constructor(public status: number, m: string, public body = '') { super(m); this.name = 'ProviderHttpError' }
 }
 
 export interface PostOpts {
@@ -57,6 +57,7 @@ export async function postJson<T = unknown>(
       await sleep(delay)
       continue
     }
-    throw new ProviderHttpError(r.status, `provider HTTP ${r.status}`)
+    const errBody = await r.text().catch(() => '')
+    throw new ProviderHttpError(r.status, `provider HTTP ${r.status}`, errBody)
   }
 }

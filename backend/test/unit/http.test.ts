@@ -26,4 +26,18 @@ describe('postJson', () => {
     const fetchFn = (async () => res(500, {})) as unknown as typeof fetch
     await expect(postJson('http://x', {}, {}, { fetchFn, maxRetries: 1, baseDelayMs: 0 })).rejects.toBeInstanceOf(ProviderHttpError)
   })
+  it('aborts a hung request when the timeout elapses', async () => {
+    // A fetch that only settles when its signal aborts — proves the timeout fires.
+    const fetchFn = ((_url: string, init: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError')))
+    })) as unknown as typeof fetch
+    await expect(postJson('http://x', {}, {}, { fetchFn, timeoutMs: 20 })).rejects.toThrow()
+  })
+  it('carries the response body on ProviderHttpError (for adapters to inspect)', async () => {
+    const fetchFn = (async () => new Response('{"error":{"status":"INVALID_ARGUMENT"}}', { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+    await postJson('http://x', {}, {}, { fetchFn }).catch((e: unknown) => {
+      expect(e).toBeInstanceOf(ProviderHttpError)
+      expect((e as ProviderHttpError).body).toContain('INVALID_ARGUMENT')
+    })
+  })
 })

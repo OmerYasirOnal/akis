@@ -31,9 +31,14 @@ describe('GeminiProvider', () => {
     expect(r.usage).toEqual({ inTokens: 2, outTokens: 3 })
   })
 
-  it('maps a 400 to AuthError (Gemini PERMISSION_DENIED)', async () => {
-    const fetchFn = (async () => new Response(JSON.stringify({ error: 'PERMISSION_DENIED' }), { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+  it('maps a 400 PERMISSION_DENIED to AuthError', async () => {
+    const fetchFn = (async () => new Response(JSON.stringify({ error: { status: 'PERMISSION_DENIED' } }), { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
     const p = new GeminiProvider({ apiKey: 'bad', model: 'm', fetchFn })
     await expect(p.chat({ system: 's', messages: [] })).rejects.toBeInstanceOf(AuthError)
+  })
+  it('does NOT map a 400 INVALID_ARGUMENT to AuthError (request-shape bug stays visible)', async () => {
+    const fetchFn = (async () => new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT', message: 'bad contents' } }), { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+    const p = new GeminiProvider({ apiKey: 'AIza-good', model: 'm', fetchFn })
+    await expect(p.chat({ system: 's', messages: [] })).rejects.not.toBeInstanceOf(AuthError)
   })
 })

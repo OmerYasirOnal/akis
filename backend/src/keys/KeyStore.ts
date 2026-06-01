@@ -51,8 +51,9 @@ export class JsonFileKeyStore implements KeyStore {
   }
 
   private persist(): void {
-    mkdirSync(dirname(this.filePath), { recursive: true })
-    writeFileSync(this.filePath, JSON.stringify(this.rows, null, 2))
+    mkdirSync(dirname(this.filePath), { recursive: true, mode: 0o700 })
+    // 0600: owner read/write only — the file holds encrypted keys + metadata.
+    writeFileSync(this.filePath, JSON.stringify(this.rows, null, 2), { mode: 0o600 })
   }
 
   set(provider: string, apiKey: string): void {

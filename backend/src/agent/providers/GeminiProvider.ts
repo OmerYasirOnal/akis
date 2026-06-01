@@ -53,8 +53,12 @@ export class GeminiProvider implements LlmProvider {
     try {
       res = await postJson<GeminiResponse>(url, body, { 'x-goog-api-key': this.cfg.apiKey }, opts)
     } catch (e) {
-      // Gemini reports bad keys as 400 PERMISSION_DENIED, not 401.
-      if (e instanceof ProviderHttpError && e.status === 400) throw new AuthError('Gemini 400 (likely PERMISSION_DENIED)')
+      // Gemini reports bad keys as 400 PERMISSION_DENIED / API_KEY_INVALID (not 401).
+      // Map ONLY those to AuthError; let INVALID_ARGUMENT (request-shape bugs)
+      // surface as a real ProviderHttpError so they stay debuggable.
+      if (e instanceof ProviderHttpError && e.status === 400 && /PERMISSION_DENIED|API_KEY_INVALID/i.test(e.body)) {
+        throw new AuthError('Gemini PERMISSION_DENIED / API_KEY_INVALID')
+      }
       throw e
     }
 
@@ -79,7 +83,10 @@ export class GeminiProvider implements LlmProvider {
 
   private mapMessage(m: ChatMessage): Record<string, unknown> {
     if (m.role === 'tool') {
-      return { role: 'user', parts: [{ functionResponse: { name: m.toolName ?? 'tool', response: { result: m.content } } }] }
+      // Gemini correlates a functionResponse to the prior functionCall BY NAME;
+      // a missing name would silently mis-route, so require it explicitly.
+      if (!m.toolName) throw new Error('Gemini tool result requires toolName (correlated by function name)')
+      return { role: 'user', parts: [{ functionResponse: { name: m.toolName, response: { result: m.content } } }] }
     }
     if (m.role === 'assistant' && m.toolCalls?.length) {
       const parts: Record<string, unknown>[] = []

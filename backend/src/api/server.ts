@@ -1,4 +1,6 @@
 import Fastify, { type FastifyInstance } from 'fastify'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
 import { registerProviderRoutes } from './providers.routes.js'
 
@@ -18,7 +20,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 /** Production entry: build a JSON-file KeyStore from env + listen. */
 export async function start(): Promise<void> {
   const master = process.env.AI_KEY_ENCRYPTION_KEY ?? ''
-  const file = process.env.AI_KEY_STORE_PATH ?? '.akis/keys.json'
+  // Default OUTSIDE the repo so an encrypted key blob can never be committed.
+  const file = process.env.AI_KEY_STORE_PATH ?? join(homedir(), '.config', 'akis', 'keys.json')
   const keyStore = new JsonFileKeyStore(file, master)
   const app = buildServer({ keyStore })
   const port = Number(process.env.PORT ?? 3000)

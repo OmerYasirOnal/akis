@@ -35,3 +35,7 @@ tmp/
 # spawned-session live status (ephemeral)
 .akis/sessions/*.status.md
 .akis/sessions/registry.tsv
+
+# encrypted key store (never commit)
+.akis/keys.json
+.akis/*.json

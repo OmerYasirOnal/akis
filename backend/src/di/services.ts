@@ -100,6 +100,6 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     trace: new TraceAgent({ bus, verifier: createVerifier(runner) }),
     approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
-    providerName: opts.providerName ?? 'mock',
+    providerName,
   }
 }

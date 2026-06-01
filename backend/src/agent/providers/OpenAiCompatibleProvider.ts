@@ -75,6 +75,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
 
   private mapMessage(m: ChatMessage): Record<string, unknown> {
     if (m.role === 'tool') {
+      if (!m.toolCallId) throw new Error('OpenAI tool result requires toolCallId (tool_call_id)')
       return { role: 'tool', tool_call_id: m.toolCallId, content: m.content }
     }
     if (m.role === 'assistant' && m.toolCalls?.length) {

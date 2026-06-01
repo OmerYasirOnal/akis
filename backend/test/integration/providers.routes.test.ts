@@ -50,4 +50,12 @@ describe('provider endpoints', () => {
     expect((await a.inject({ method: 'PUT', url: '/api/providers/nope/key', payload: { apiKey: 'x' } })).statusCode).toBe(400)
     expect((await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: '  ' } })).statusCode).toBe(400)
   })
+
+  it('GET never leaks the full stored key (only last4)', async () => {
+    const a = app()
+    await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: 'sk-ant-SUPERSECRET-9999' } })
+    const body = (await a.inject({ method: 'GET', url: '/api/providers' })).body
+    expect(body).not.toContain('SUPERSECRET')
+    expect(body).toContain('9999') // last4 only
+  })
 })

@@ -21,4 +21,16 @@ describe('createProvider', () => {
     const p = createProvider({ provider: 'anthropic', model: 'claude-opus-4-8', env: { ANTHROPIC_API_KEY: 'sk-ant-x', NODE_ENV: 'production' } })
     expect(p.model).toBe('claude-opus-4-8')
   })
+  it('fails safe to mock on an invalid AI_PROVIDER (no crash)', () => {
+    expect(createProvider({ env: { AI_PROVIDER: 'claude', ANTHROPIC_API_KEY: 'sk-ant-x', NODE_ENV: 'production' } }).name).toBe('mock')
+  })
+  it('consults the KeyStore after env when no env key is present', () => {
+    const keyStore = { get: (p: string) => (p === 'anthropic' ? 'sk-ant-stored' : undefined) }
+    const p = createProvider({ provider: 'anthropic', keyStore, env: { NODE_ENV: 'production' } })
+    expect(p.name).toBe('anthropic')
+  })
+  it('honors a base-URL override (does not crash; provider still builds)', () => {
+    const p = createProvider({ provider: 'openai', env: { OPENAI_API_KEY: 'sk-proj-x', OPENAI_BASE_URL: 'https://proxy.example/v1', NODE_ENV: 'production' } })
+    expect(p.name).toBe('openai')
+  })
 })
