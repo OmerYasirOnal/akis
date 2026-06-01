@@ -1,6 +1,8 @@
 import type { SpecArtifact } from '@akis/shared'
 import type { EventBus } from '../../events/bus.js'
+import type { LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
+import { parseAIJson } from './critic/json-extract.js'
 
 export interface ScribeInput {
   sessionId: string
@@ -12,41 +14,82 @@ export type ScribeOutcome =
   | { type: 'spec'; spec: SpecArtifact }
   | { type: 'clarify'; questions: string[] }
 
+const SCRIBE_SYSTEM = [
+  'You are Scribe, the spec author for the AKIS agentic build pipeline.',
+  'Turn the user idea into a concrete, buildable spec OR ask for clarification.',
+  'Respond with ONLY a JSON object, no prose, in one of these shapes:',
+  '{"kind":"spec","title":"...","body":"# ...markdown spec with Problem, Acceptance criteria (Given/When/Then), Out of scope..."}',
+  'or {"kind":"clarify","questions":["...","..."]}',
+].join('\n')
+
 /**
- * Scribe — idea → spec. A producer role. In the MVP it produces a deterministic
- * spec; `needsClarification` (explicit config, not a provider cast) drives the
- * clarify branch. The real prompt (CLARIFICATION + SPEC_GENERATION) is injected
- * via the skill layer on the real-AI path.
+ * Scribe — idea → spec. LIVE: it calls the injected LLM provider and parses the
+ * result into a typed SpecArtifact (CORE-AC1). Emits agent_start, tool_call
+ * (dispatch_scribe) and tool_result (CF2) so the run is observable. The mock
+ * provider returns deterministic JSON, so tests/keyless runs stay green.
+ *
+ * `needsClarification` forces the clarify branch without an LLM call (used by the
+ * orchestrator's deterministic clarify scenarios/tests).
  */
 export class ScribeAgent {
-  constructor(private deps: { bus: EventBus; needsClarification?: boolean }) {}
+  constructor(private deps: { bus: EventBus; provider: LlmProvider; needsClarification?: boolean }) {}
 
   async run(input: ScribeInput): Promise<ScribeOutcome> {
     const { sessionId, laneId } = input
     this.deps.bus.emit({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId, sessionId, ts: nextTs() })
 
     if (this.deps.needsClarification) {
+      const questions = ['Who is the primary user?', 'What is the single most important feature?']
       this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId, sessionId, ts: nextTs() })
-      return { type: 'clarify', questions: ['Who is the primary user?', 'What is the single most important feature?'] }
+      return { type: 'clarify', questions }
     }
 
-    const spec: SpecArtifact = {
-      title: `Spec for: ${input.idea}`,
-      body: [
-        `# ${input.idea}`,
-        '',
-        '## Problem',
-        input.idea,
-        '',
-        '## Acceptance criteria',
-        '- Given the app is open, When the user performs the core action, Then the expected result is shown.',
-        '',
-        '## Out of scope',
-        '- Authentication, deployment.',
-      ].join('\n'),
+    this.deps.bus.emit({ kind: 'tool_call', tool: 'dispatch_scribe', args: { idea: input.idea }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+
+    let res
+    try {
+      res = await this.deps.provider.chat({
+        system: SCRIBE_SYSTEM,
+        messages: [{ role: 'user', content: input.idea }],
+      })
+    } catch (err) {
+      // A throwing provider (auth/network/model error) must still CLOSE the event
+      // frame: emit a failed tool_result + agent_end so the live stream never has
+      // an orphaned tool_call, then re-throw (the orchestrator fails the session).
+      this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_scribe', ok: false, result: { error: errMsg(err) }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: false, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+      throw err
     }
 
-    this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId, sessionId, ts: nextTs() })
-    return { type: 'spec', spec }
+    const { outcome, parsed } = this.parse(res.text ?? '', input.idea)
+
+    // `ok` reflects whether the LLM output actually parsed — a fallback spec is a
+    // DEGRADED result, so the event must not claim success (event-stream honesty).
+    this.deps.bus.emit({
+      kind: 'tool_result', tool: 'dispatch_scribe', ok: parsed,
+      result: outcome.type === 'spec' ? { title: outcome.spec.title, parsed } : { clarify: outcome.questions.length, parsed },
+      agent: 'scribe', laneId, sessionId, ts: nextTs(),
+    })
+    this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+    return outcome
   }
+
+  private parse(text: string, idea: string): { outcome: ScribeOutcome; parsed: boolean } {
+    try {
+      const j = parseAIJson<{ kind?: string; title?: string; body?: string; questions?: unknown }>(text)
+      if (j.kind === 'clarify' && Array.isArray(j.questions)) {
+        return { outcome: { type: 'clarify', questions: j.questions.map(String) }, parsed: true }
+      }
+      if (typeof j.title === 'string' && typeof j.body === 'string') {
+        return { outcome: { type: 'spec', spec: { title: j.title, body: j.body } }, parsed: true }
+      }
+    } catch {
+      /* fall through to a minimal spec so the pipeline is never blocked by a parse miss */
+    }
+    return { outcome: { type: 'spec', spec: { title: `Spec for: ${idea}`, body: `# ${idea}\n\n${text}`.trim() } }, parsed: false }
+  }
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }

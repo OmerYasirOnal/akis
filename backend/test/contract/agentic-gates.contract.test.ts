@@ -19,6 +19,7 @@ import { buildServices } from '../../src/di/services.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { mintApprovedPush, NotVerifiedError } from '../../src/gates/pushGate.js'
 import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
+import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 import { EventBus } from '../../src/events/bus.js'
 import { initialSession, isVerified } from '@akis/shared'
 import { verifyWith } from '../helpers/tokens.js'
@@ -49,6 +50,11 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     const events = services.bus.recent(s.id)
     expect(events.some(e => e.kind === 'gate' && e.gate === 'spec_approval' && e.state === 'satisfied')).toBe(true)
     expect(events.some(e => e.kind === 'verify' && e.agent === 'trace')).toBe(true)
+    // CF2: tool_call/tool_result are emitted for the real tool uses, and a preview
+    // event carries the produced artifact's real URL after a successful push.
+    expect(events.some(e => e.kind === 'tool_call' && e.tool === 'run_tests')).toBe(true)
+    expect(events.some(e => e.kind === 'tool_call' && e.tool === 'push_to_github')).toBe(true)
+    expect(events.some(e => e.kind === 'preview' && e.url.includes(s.id))).toBe(true)
   })
 
   it('B — Gate 1: runToVerification before approve throws and produces NO code', async () => {
@@ -61,7 +67,7 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
   })
 
   it('B2 — Gate 1: ProtoAgent cannot run without an ApprovedSpec token (structural)', () => {
-    const proto = new ProtoAgent({ bus: new EventBus() })
+    const proto = new ProtoAgent({ bus: new EventBus(), provider: new MockProvider() })
     // No ApprovedSpec can be minted from an unapproved session, so Proto is uncallable.
     // (Compile-time: proto.run requires `approved: ApprovedSpec`; the only mint path is approve().)
     expect(typeof proto.run).toBe('function')
