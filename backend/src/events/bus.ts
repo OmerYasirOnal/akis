@@ -65,6 +65,11 @@ export class EventBus {
     return this.seqs.get(sessionId) ?? 0
   }
 
+  /** Active listener count for a session — observability + leak detection in tests. */
+  listenerCount(sessionId: string): number {
+    return this.listeners.get(sessionId)?.size ?? 0
+  }
+
   /**
    * Buffered events with `seq > afterSeq`, in order. `dropped` is true when the
    * next event the client needs (`afterSeq + 1`) was already evicted — i.e. the
