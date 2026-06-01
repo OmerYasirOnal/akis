@@ -59,10 +59,12 @@ export interface BuildServicesOptions {
    * Only used when `provider` is not supplied and `mockCriticScore` is absent.
    */
   keyStore?: { get(provider: string): string | undefined }
+  /** Injectable event bus (e.g. a small-cap bus to exercise SSE overflow/resume). */
+  bus?: EventBus
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
-  const bus = new EventBus()
+  const bus = opts.bus ?? new EventBus()
   const github = new MockGitHubAdapter()
   const runner = opts.testRunner ?? createMockTestRunner()
 
