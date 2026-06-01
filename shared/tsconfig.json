@@ -1,1 +1,6 @@
-{ "extends": "../tsconfig.base.json", "include": ["src"] }
+{
+  "extends": "../tsconfig.base.json",
+  "comment": "Typecheck-only: @akis/shared resolves to ./src/index.ts directly; nothing consumes compiled output. noEmit prevents a bare `tsc` from emitting .js into src and shadowing the .ts sources.",
+  "compilerOptions": { "noEmit": true, "declaration": false },
+  "include": ["src"]
+}
