@@ -1,106 +1,101 @@
-# Spec — Auto-RAG & Agents/Workflows
+# Spec — Auto-RAG & Agents/Workflows (agentic-core revision)
 
-> **Type:** requirements spec (what + acceptance criteria), not a design. Design lives in `docs/rag-and-agents-design.md`; phases in `docs/roadmap.md`.
-> **Captures:** the user's two requests from 2026-06-01, reconciled with the locked architecture in `HANDOFF.md`.
-> **Status:** revised after independent zero-context review — see `specs/review/2026-06-01-zero-context-review.md` for the review and per-finding responses.
-> **Vocabulary:** milestones are `M0`–`M5` everywhere (the design doc's "Phase N" maps 1:1 to `M N`).
+> **Type:** requirements spec (what + acceptance criteria). Design: `docs/rag-and-agents-design.md`; phases: `docs/roadmap.md`.
+> **⚠️ Revised 2026-06-01** onto the **agentic core** (PR #1 `feat/agentic-core-gates`, PR #2 `feat/real-providers`), replacing the FSM assumptions. Independent review history: `specs/review/`.
+> **Vocabulary:** milestones `M0`–`M5`. "AKIS" = the main orchestrator agent's display name (role `orchestrator`).
 
 ---
 
 ## 0. Source requests (verbatim intent)
-
-1. *"Bir RAG sistemi kuralım ama otomatik kaydolsun, kullanıcı elle bir şey yapmasın, en iyilerinden olsun, gerekirse kullanıcının bilgisayarını kullanalım."*
-   → A retrieval system that **auto-ingests** (zero manual user action), is **high-quality**, server-side.
-2. *"Bir agents tabı olsun, workflow'lar oluşturabilen — Claude Code / Opus 4.8 ultracode'un yaptığı gibi."*
-   → An **Agents tab** where the user can **compose workflows**.
+1. *Auto-RAG:* a retrieval system that **auto-ingests** (zero manual user action), high-quality, server-side.
+2. *Agents tab + workflows:* compose workflows like Claude Code, **but** (user, 2026-06-01): keep **Scribe/Proto/Trace** sub-agents and a **single main orchestrator agent named "AKIS"**; allow **extra/custom agents** and extra capabilities; a **proper preview-screen UI/UX**; and the user must **pick their own API keys — including keys from other providers — via a model picker** (the tooling that runs behind Claude Code). PR #2 already provides the backend for this.
 
 Reconciliation decisions (confirmed with user):
-- Timing = post-defense (v1 demo untouched).
-- RAG runs **server-side** (pgvector); the "use the user's computer" idea is dropped.
-- A "workflow" = a **config over the canonical verified chain**, NOT an arbitrary agent DAG (locked: not full-agentic).
-- Auto-ingest corpus = conversation + pipeline outputs + GitHub repo + document uploads.
-- **Tenancy key = `user_id` + `workflow_id`** (decided in review response R5). `knowledge_chunks` carries both; retrieval is filtered by `user_id` in the query layer.
-- **Ingestion privacy posture (this phase) = exclude-then-embed.** Secrets and binaries are excluded before embedding; no further redaction of PII in conversation/uploads for the single-user post-defense MVP (justification in review response R3).
+- Substrate = **agentic core + 4 structural gates**, NOT an FSM (per PR #1 §0). The gates are inviolable.
+- Timing = post-defense; v1 untouched. RAG = server-side pgvector.
+- Workflow = a **preset that seeds/bounds an agentic run** (enabled agents/tools/skills, per-agent model, gate policy, RAG settings), validated against the **role/tool permission matrix + gate invariants + model catalog** — not an FSM transition table.
+- Auto-ingest corpus = conversation + agent outputs (spec/code) + verification results + GitHub repo + uploads.
+- Tenancy key = `user_id` + `session_id`. Privacy posture = **exclude-then-embed** (secrets/binaries excluded; broader PII redaction deferred for the single-user MVP).
 
----
-
-## Dependencies (must exist before this work is dispatched)
-- **D1:** `fsm/transitionTable.ts` (the explicit FSM) and the **backend-stamped event bus** are delivered by the spine refactor (Lane A). M1 (`F1-AC2`) and M4 (`F2-AC3`, `F2-AC9`) are **blocked on D1** — do not dispatch them before the transition table + event bus exist.
-- **D2:** Auth / user identity is available to stamp `user_id` on ingest (`F1-AC5`).
-- **D3:** Embedding provider chosen (open question #1) before the `knowledge_chunks` migration is frozen in M0 — the `vector(N)` dimension depends on it.
+## Dependencies (must exist before dispatch)
+- **D1:** PR #1 (agentic orchestrator + sub-agents + 4 gates + `AkisEvent` bus + skill registry) and PR #2 (`LlmProvider`/`createProvider`/`catalog`/encrypted `KeyStore`/`/api/providers`) merged. M1/M3/M4 build directly on these seams.
+- **D2:** Auth / user identity available to stamp `user_id` (`F1-AC5`).
+- **D3:** Embedding provider chosen (open question #1) before the `knowledge_chunks` migration freezes (`vector(N)`).
 
 ---
 
 ## FEATURE 1 — Auto-RAG (zero-touch knowledge layer)
 
 ### F1 User stories
-- **F1-US1** As a user, I never manually add knowledge; everything the platform touches becomes retrievable automatically.
-- **F1-US2** As the Scribe stage, I retrieve relevant prior context so my specs are grounded in the project's own history and code.
-- **F1-US3** As a user in ASK/CHAT, I get answers grounded in my project, with citations to where each fact came from.
+- **F1-US1** I never manually add knowledge; everything the platform touches becomes retrievable automatically.
+- **F1-US2** AKIS/Scribe can retrieve relevant prior context so outputs are grounded in the project's own history and code.
+- **F1-US3** In ASK/CHAT I get answers grounded in my project, with citations.
 
 ### F1 Acceptance criteria
-- **F1-AC1 (zero-touch ingest):** GIVEN a new conversation message, pipeline `StageOutcome`, connected repo, or uploaded document, WHEN it is persisted, THEN its content is ingested into the knowledge store **without any manual user action**.
-- **F1-AC2 (event-driven, single source):** Ingestion is triggered by the **same backend-stamped event stream** the FSM emits (depends on **D1**). No polling; no FE-synthesized ingestion events.
-- **F1-AC3 (idempotent):** GIVEN identical content is ingested twice (replay/re-run), THEN no duplicate vectors are created (content-hash dedup).
-- **F1-AC4 (provenance):** Every stored chunk carries server-stamped `{source, sourceId, userId, workflowId, stage?, commitSha?, createdAt}`; retrieval results expose this provenance.
-- **F1-AC5 (tenancy isolation):** Retrieval is filtered by `user_id` (+ `workflow_id` scope) **in the query layer**. GIVEN a chunk owned by user A, WHEN user B issues any retrieval, THEN A's chunk is never returned. Enforced by SQL predicate and covered by an automated **negative** test. Cross-workflow access for the same user is explicit, never implicit.
-- **F1-AC6 (server-side):** Embedding generation + vector storage run server-side (Postgres + pgvector). No client/desktop component is required for the feature to work.
-- **F1-AC7 (non-blocking + bounded failure):** Ingestion is async, off the FSM critical path. Each record gets **≤3 retries with exponential backoff (1s/4s/16s)**. GIVEN a record exhausts its retry budget, THEN it is moved to a **dead-letter state**, is observable (metric + log), and is **never silently dropped**; the originating stage transition still completes successfully regardless of embed outcome.
-- **F1-AC8 (retrieval quality — measurable):** A versioned **golden eval set** of ≥20 `query → expected-chunk` pairs over a seeded corpus lives in the repo. Retrieval (hybrid vector + keyword/BM25, optional rerank) MUST place the expected chunk in the **top-5 for ≥80%** of eval queries. This bar is asserted by an automated test; dropping below it fails CI. ("Best-in-class" = meets/raises this bar, not a mechanism claim.)
-- **F1-AC9 (decoupling):** The orchestrator does not wire the knowledge subsystem; stages obtain retrieval via a DI-injected `KnowledgePort.retrieve()`. (Designs out v1's `applyChatMemory` coupling.)
-- **F1-AC10 (spine untouched):** RAG augments prompts only; it adds no input to the FSM transition table and changes no gate behavior.
-- **F1-AC11 (flagged + tested both ways):** RAG is behind a feature flag. WITH the flag off, pipeline behavior is byte-identical to no-RAG, asserted by the contract/real-AI smoke test run with the flag toggled both ways.
-- **F1-AC12 (secret/binary exclusion):** GIVEN repo or upload content matching the secret-pattern denylist (e.g. `.env`, key material) or a binary file type, WHEN ingestion runs, THEN that content is **excluded before embedding** and the exclusion is logged. This guardrail is a **prerequisite** for the repoSource/uploadSource ACs, not a deferred option.
-- **F1-AC13 (deletion / right-to-forget):** GIVEN a conversation, workflow, or upload is deleted, THEN its derived chunks/vectors are deleted (or tombstoned) and are no longer retrievable; idempotent re-deletion is a no-op.
-- **F1-AC14 (observability):** The knowledge subsystem exposes ingest success/failure counts, dead-letter/queue depth, dedup-hit rate, and retrieval latency, queryable without code changes.
-- **F1-AC15 (re-index on model change):** GIVEN the embedding provider or vector dimension changes, THEN a defined re-index path exists; chunks of dimension `N` are never mixed with dimension `M` at query time (mixed dimensions are rejected).
-- **F1-AC16 (provenance integrity for citations):** GIVEN a retrieval result cited in an ASK/CHAT answer whose source was later deleted/superseded, THEN the citation resolves to a still-valid state or is marked stale (no dangling citations).
+- **F1-AC1 (zero-touch ingest):** GIVEN a new conversation message, agent output (`SessionState.spec`/`.code`), verification result, connected repo, or uploaded document, WHEN persisted/emitted, THEN its content is ingested **without any manual user action**.
+- **F1-AC2 (event-driven, single source):** Ingestion is triggered by subscribing to the **`AkisEvent` bus** (`events/bus.ts`), whose events are backend-stamped (`ts`). No polling; no FE-synthesized ingestion events; no re-derivation of state.
+- **F1-AC3 (idempotent):** Re-ingesting identical content (replay/re-run) creates no duplicate vectors (content-hash dedup).
+- **F1-AC4 (provenance):** Every chunk carries server-stamped `{source, sourceId, userId, sessionId, agent?, commitSha?, createdAt}`; retrieval results expose this provenance.
+- **F1-AC5 (tenancy isolation):** Retrieval is filtered by `user_id` (+ `session_id` scope) in the query layer. GIVEN a chunk owned by user A, WHEN user B retrieves, THEN A's chunk is never returned. Enforced by SQL predicate + an automated **negative** test.
+- **F1-AC6 (server-side):** Embedding + vector storage run server-side (Postgres + pgvector). No client/desktop component required.
+- **F1-AC7 (non-blocking + bounded failure):** Ingestion is async, off the agent path. **≤3 retries, backoff 1s/4s/16s.** On budget exhaustion → **dead-letter** state, observable (metric + log), **never silently dropped**; the agent run completes regardless of embed outcome.
+- **F1-AC8 (retrieval quality — measurable):** A versioned **golden eval set** (≥20 `query → expected-chunk` pairs over a seeded corpus) lives in the repo; retrieval (hybrid vector + BM25, optional rerank) places the expected chunk in **top-5 for ≥80%** of queries, asserted in CI. ("Best-in-class" = meets/raises this bar.)
+- **F1-AC9 (retrieval = a tool, decoupled):** Retrieval is exposed as a `retrieve_knowledge` **tool** in the registry (callable by `orchestrator`/`scribe`/ASK), backed by a DI-injected `KnowledgePort.retrieve()`. The orchestrator does not wire the knowledge internals (no `applyChatMemory`-style coupling). The tool is **read-only and holds no gate capability**.
+- **F1-AC10 (gates untouched):** RAG augments prompts/answers only; it adds no input to any gate and changes no gate behavior. No knowledge code imports a gate minter.
+- **F1-AC11 (flagged + tested both ways):** RAG behind a feature flag; with the flag off, agent/gate behavior is identical to no-RAG, asserted by the gate contract/smoke test toggled both ways.
+- **F1-AC12 (secret/binary exclusion):** Repo/upload content matching the secret denylist (`.env`, keys) or a binary type is **excluded before embedding** and the exclusion is logged. Prerequisite for repoSource/uploadSource, not deferred.
+- **F1-AC13 (deletion / right-to-forget):** Deleting a conversation, session, or upload deletes/tombstones its chunks; idempotent re-deletion is a no-op.
+- **F1-AC14 (observability):** Exposes ingest success/failure counts, dead-letter/queue depth, dedup-hit rate, retrieval latency — queryable without code changes.
+- **F1-AC15 (re-index on model change):** Changing the embedding provider/dimension has a defined re-index path; `vector(N)` and `vector(M)` chunks are never mixed at query time.
+- **F1-AC16 (citation integrity):** A cited chunk whose source was deleted/superseded resolves to a valid state or is marked stale (no dangling citations).
 
 ### F1 Non-functional
-- Embedding provider is pluggable (`EmbeddingProvider` port); default decided in open question #1. Vector dimension follows the chosen model. **Privacy note:** the default provider (e.g. Voyage/OpenAI) receives all ingested conversation/repo/upload content as a third-party processor — this is acceptable for the single-user MVP but must be stated to the user; revisit if multi-tenant.
-- **Performance bound:** retrieval **p95 < 300 ms** on a corpus of ≤50k chunks (single-user load); rerank may be skipped on latency-sensitive paths to hold this.
+- `EmbeddingProvider` is a pluggable port that **reuses PR #2's `KeyStore` + catalog** (no second key system). Default = open question #1; vector dimension follows the model. **Privacy:** the default provider receives all ingested content as a 3rd-party processor — acceptable for single-user MVP, stated to the user, revisited if multi-tenant.
+- **Performance:** retrieval **p95 < 300 ms** on ≤50k chunks; rerank skippable on latency-sensitive paths.
 
-### F1 Out of scope (this spec)
-- Local/on-device embedding or indexing (future-work behind the same port).
-- Knowledge editing/curation UI (auto-only by design).
-- PII redaction beyond secret/binary exclusion (deferred; see R3).
+### F1 Out of scope
+- Local/on-device embedding (future behind the port); knowledge-curation UI (auto-only); PII redaction beyond secret/binary exclusion.
 
 ---
 
 ## FEATURE 2 — Agents & Workflows tab
 
 ### F2 User stories
-- **F2-US1** As a user, I can see the agents (Scribe/Proto/Validator/Critic/Trace) and their current configuration.
-- **F2-US2** As a user, I can assemble, name, save, and version a **workflow** that tunes the verified chain.
-- **F2-US3** As a user, when I build a workflow I can see it is still a verified pipeline (preview renders the canonical-chain subset).
+- **F2-US1** I can see + configure AKIS (orchestrator) and Scribe/Proto/Trace/Critic.
+- **F2-US2** I can add **extra/custom agents** and assemble, name, version, and select a **workflow** that seeds an agentic run.
+- **F2-US3** I can **pick my own API keys (incl. other providers) and assign a model per agent** via a model picker.
+- **F2-US4** I can watch a run live in a **proper preview screen** (timeline + gates + preview).
 
 ### F2 Acceptance criteria
-- **F2-AC1 (config, not DAG):** A workflow is a named, versioned configuration over the canonical chain (`Scribe → gate → Proto → Validator → Critic → Trace → push-gate`). The UI cannot define new agents or arbitrary stage graphs.
-- **F2-AC2 (configurable fields):** Per agent: model slot, prompt variant, enable/skip **only where legal** (the exact skippable surface is governed by open question #5 — until resolved, no stage/gate is assumed skippable beyond v1's existing Trace-skip). Per workflow: iterate budget, gate policy, RAG settings, name + version.
-- **F2-AC3 (validated against FSM):** GIVEN a workflow config, WHEN saved, THEN it is validated against `fsm/transitionTable.ts` (depends on **D1**); an illegal stage order or a disabled mandatory gate is **rejected at save time** with a clear error — never a runtime surprise.
-- **F2-AC4 (push-gate inviolable):** No workflow config can disable or bypass the push-confirm gate; push stays structurally unreachable until human approval, regardless of config.
-- **F2-AC5 (read-only first):** The Agents tab ships first as read-only (M3); editing/building arrives in later milestones (M4/M5).
-- **F2-AC6 (preview):** The builder renders the resulting pipeline as a subset/parameterization of the canonical chain, communicating "you are tuning a verified pipeline."
-- **F2-AC7 (i18n):** All user-facing strings go through the i18n catalogue (TR+EN); CI lint gate fails on hardcoded strings.
-- **F2-AC8 (no prop-drilling):** The FE feature uses the feature-sliced context discipline, not a prop bag.
-- **F2-AC9 (orchestrator input):** The orchestrator consumes a resolved `WorkflowConfig` as input (depends on **D1**); it gains no new control flow and the transition table is unchanged.
-- **F2-AC10 (version immutability for in-flight runs):** GIVEN a saved workflow is edited, THEN a new version is created and any in-flight pipeline continues to use the version it started with — a running pipeline's config is never mutated (preserves determinism).
+- **F2-AC1 (workflow = bounded preset):** A workflow is a typed, versioned `WorkflowConfig`: enabled agents/tools, pre-selected skills per agent, per-agent model `{providerId, modelId}`, gate policy, iterate budget, RAG settings. It seeds/bounds the orchestrator's run; it cannot define arbitrary stage graphs or new control flow.
+- **F2-AC2 (core roster, structural):** AKIS + Scribe/Proto/Trace/Critic are code-defined roles (`roles.ts`); the gates key on them. They are configurable (model, skills, base-prompt variant) but not redefinable/removable.
+- **F2-AC3 (custom agents — no gate capability):** A user may add extra agents via config + base prompt + skills. A custom agent is a **non-core role** that may hold read/compose tools but **cannot** be the verifier, **cannot** receive `run_tests`/`push_to_github`, and **cannot** mint approval/push tokens. Attempting to grant a gate capability to a custom agent is rejected.
+- **F2-AC4 (validation vs matrix + gates + catalog):** GIVEN a `WorkflowConfig`, WHEN saved, THEN it is validated against the role/tool permission matrix (`roles.ts`), the 4 gate invariants, and the model catalog; any violation (producer granted verifier tool, a gate disabled, an unknown `{providerId, modelId}`) is **rejected at save time** with a clear error — never a runtime surprise.
+- **F2-AC5 (gates inviolable):** No `WorkflowConfig` can disable or loosen the 4 structural gates (spec-approval, producer≠verifier, verified=real-test, push). Gate policy is **tighten-only** (may add required gates, e.g. mandatory critic resolution).
+- **F2-AC6 (model picker on PR #2):** The tab reads `GET /api/providers`; lets the user add/replace/remove keys via `PUT/DELETE /api/providers/:provider/key` (encrypted at rest, `last4`-only display, key never echoed); and assigns a model per agent persisted in the `WorkflowConfig`. Includes providers beyond Anthropic (OpenAI/OpenRouter/Gemini per catalog).
+- **F2-AC7 (live preview):** A preview screen consumes the `AkisEvent` stream and renders a live, possibly-parallel step tree (per `agent` + `laneId`), gate moments as first-class approve/confirm cards, `verify` results, and the `preview` event URL in a dedicated pane.
+- **F2-AC8 (read-only first):** The Agents tab ships first as read-only roster + model picker (M3); workflow building + live preview arrive in M4/M5.
+- **F2-AC9 (orchestrator input):** The orchestrator consumes a resolved `WorkflowConfig` (enabled tools/skills/models) at session start; it gains no new control flow; `roles.ts` and the gates are unchanged.
+- **F2-AC10 (version immutability for in-flight runs):** Editing a saved workflow creates a new version; an in-flight run keeps the version it started with (config never mutated mid-run).
+- **F2-AC11 (i18n + no prop-drilling):** All user-facing strings via the i18n catalogue (TR+EN), CI lint gate; the FE feature uses feature-sliced contexts, not a prop bag.
 
-### F2 Out of scope (this spec)
-- User-authored free-form agents / planner-agents that choose stages (explicitly future-work per `HANDOFF.md §3`).
-- Marketplace/sharing of workflows.
+### F2 Out of scope
+- Planner-agent that invents stages / fully free agent DAG authoring beyond the bounded preset.
+- Marketplace/sharing of workflows; streaming UI polish beyond the live event tree.
 
 ---
 
 ## Cross-cutting acceptance criteria
 - **X-AC1:** Neither feature modifies the v1 repo or jeopardizes the 2026-06-12 demo.
-- **X-AC2:** Each milestone lands behind a feature flag and on its own BE/FE PR per the parallel-session lanes (D, E).
-- **X-AC3:** Contracts (`KnowledgePort`, `IngestRecord`, `RetrievalResult`, `WorkflowConfig`, `AgentConfig`) are frozen and merged (M0) before dependent work starts.
-- **X-AC4 (rollback/migration safety):** GIVEN the `knowledge_chunks` migration + RAG flag, WHEN the feature is rolled back (flag off + migration down), THEN no FSM/spine behavior changes and the demo path is unaffected; the down migration is reversible or explicitly justified as one-way.
+- **X-AC2:** Each milestone behind a feature flag, on its own BE/FE PR (lanes D, E).
+- **X-AC3:** Contracts (`KnowledgePort`, `IngestRecord`, `RetrievalResult`, `EmbeddingProvider`, `WorkflowConfig`, `AgentConfig`, `CustomAgentSpec`) frozen + merged (M0) before dependent work.
+- **X-AC4 (rollback/migration safety):** Flag off + `knowledge_chunks` migration down → no agent/gate behavior change, demo path unaffected; down migration reversible or explicitly justified.
+- **X-AC5 (gate contract test stays green):** The PR #1 4-gate contract test (Scenarios A–F) must pass **unchanged** after both features land — proof neither touched the gates.
 
-## Open questions (must resolve before M1 code)
-1. Embedding provider default → fixes `vector(N)` dimension **and** chooses the third-party data processor (privacy, see F1 non-functional).
-2. Rerank cost/latency budget — Scribe path vs ASK-only (must fit the p95 < 300 ms bound).
-3. Repo ingestion guardrails — full vs changed-files; max repo size. (Secret/binary exclusion is no longer open — it is mandated by F1-AC12.)
-4. Prompt-variant authoring — curated/version-pinned vs raw editing.
-5. Skip scope — exactly which stages/gates are user-skippable (push-gate always mandatory; gates F2-AC2).
+## Open questions (resolve before M1 code)
+1. Embedding provider default → `vector(N)` + 3rd-party processor (reuse KeyStore).
+2. Rerank budget within p95 < 300 ms (orchestrator/Scribe path vs ASK-only).
+3. Repo ingestion guardrails — full vs changed-files; max size. (Secret/binary exclusion settled — F1-AC12.)
+4. Custom-agent capability surface — which read/compose tools a non-core agent may hold (never gate caps).
+5. Workflow gate policy = tighten-only (confirm).
+6. Model-selection persistence — per-workflow (recommended) vs per-session override.
