@@ -80,10 +80,15 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     return reply.send(s)
   })
 
+  const TERMINAL = new Set(['done', 'failed', 'cancelled'])
   const action = (run: (id: string) => Promise<unknown>) =>
     async (req: { params: { id: string } }, reply: FastifyReply) => {
-      try { return reply.send(await run(req.params.id)) }
-      catch (err) { return sendError(reply, err) }
+      try {
+        const r = await run(req.params.id)
+        // Release the per-session orchestrator once the run is terminal (no leak).
+        if (r && typeof r === 'object' && 'status' in r && TERMINAL.has(String((r as { status: unknown }).status))) bound.delete(req.params.id)
+        return reply.send(r)
+      } catch (err) { return sendError(reply, err) }
     }
 
   app.post<{ Params: { id: string } }>('/sessions/:id/approve', action(id => orchestratorFor(id).approve(id)))
