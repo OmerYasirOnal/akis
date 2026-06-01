@@ -1,4 +1,5 @@
 import type { ChatMessage } from './chatModel.js'
+import { useI18n } from '../i18n/I18nContext.js'
 
 const ROLE_TINT: Record<string, string> = {
   orchestrator: 'from-cyan-400/30 to-cyan-400/5 text-cyan-200',
@@ -17,6 +18,7 @@ function Avatar({ role }: { role: string }) {
 interface Props { messages: ChatMessage[]; onApprove: () => void; onConfirm: () => void; busy?: boolean }
 
 export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
+  const { t } = useI18n()
   return (
     <div className="flex flex-col gap-4">
       {messages.map(m => {
@@ -41,7 +43,7 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
                 <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-3">
                   <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-100">
                     <span className={`h-2 w-2 rounded-full ${dot(m.ok, m.done)}`} />{AKIS_NAME[m.agent] ?? m.agent}
-                    {!m.done && <span className="text-xs font-normal text-cyan-300">working…</span>}
+                    {!m.done && <span className="text-xs font-normal text-cyan-300">{t('chat.working')}</span>}
                   </div>
                   {m.tools.map((t, i) => (
                     <div key={i} className="ml-1 text-xs text-slate-400"><span className="text-violet-300">{t.tool}</span>{t.ok === undefined ? ' …' : t.ok ? ' ✓' : ' ✗'}</div>
@@ -52,18 +54,17 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
             )
           case 'gate': {
             const isSpec = m.gate === 'spec_approval'
-            const label = isSpec ? 'Spec approval' : 'Push confirm'
             const tone = m.state === 'satisfied' ? 'text-emerald-300' : m.state === 'rejected' ? 'text-rose-300' : 'text-amber-300'
             return (
               <div key={m.id} className="flex items-start gap-3">
                 <Avatar role="orchestrator" />
                 <div className="w-full max-w-[80%] rounded-2xl rounded-tl-sm border border-cyan-400/20 bg-cyan-400/[0.04] px-4 py-3">
-                  <div className="text-xs uppercase tracking-widest text-slate-500">Gate · {label}</div>
+                  <div className="text-xs uppercase tracking-widest text-slate-500">Gate · {t(`chat.gate.${m.gate}`)}</div>
                   <div className={`mb-2 text-sm ${tone}`}>{m.state}</div>
                   {m.state === 'awaiting' && (
                     <button onClick={isSpec ? onApprove : onConfirm} disabled={busy}
                       className="rounded bg-cyan-500/90 px-3 py-1 text-sm font-medium text-slate-900 disabled:opacity-40">
-                      {isSpec ? 'Approve spec' : 'Confirm push'}
+                      {t(isSpec ? 'chat.approve' : 'chat.confirm')}
                     </button>
                   )}
                 </div>
@@ -75,7 +76,7 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
               <div key={m.id} className="flex items-start gap-3">
                 <Avatar role="trace" />
                 <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${m.passed ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200' : 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'}`}>
-                  {m.passed ? '✓ Verified' : '✗ Not verified'} · {m.testsRun} test{m.testsRun === 1 ? '' : 's'}
+                  {m.passed ? `✓ ${t('chat.verified')}` : `✗ ${t('chat.notVerified')}`} · {m.testsRun} {t('chat.tests')}
                 </div>
               </div>
             )
@@ -84,7 +85,7 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
               <div key={m.id} className="flex items-start gap-3">
                 <Avatar role="orchestrator" />
                 <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-200">
-                  {m.ready ? 'Preview ready' : 'Preview starting…'}{m.url ? <> · <span className="break-all text-cyan-300">{m.url}</span></> : null}
+                  {m.ready ? t('chat.preview.ready') : t('chat.preview.starting')}{m.url ? <> · <span className="break-all text-cyan-300">{m.url}</span></> : null}
                 </div>
               </div>
             )
@@ -95,7 +96,7 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
               <div key={m.id} className="flex items-start gap-3">
                 <Avatar role="orchestrator" />
                 <div className="rounded-2xl rounded-tl-sm border border-emerald-400/30 bg-gradient-to-br from-emerald-400/15 to-cyan-400/10 px-4 py-2 text-sm text-emerald-200">
-                  🚀 Shipped{m.verified ? ' · verified' : ''}{m.provider ? ` · ${m.provider}` : ''}
+                  🚀 {t('chat.shipped')}{m.verified ? ` · ${t('chat.verified').toLowerCase()}` : ''}{m.provider ? ` · ${m.provider}` : ''}
                 </div>
               </div>
             )

@@ -68,7 +68,7 @@ export function foldChat(idea: string, events: readonly AkisEvent[]): ChatMessag
       case 'preview':
       case 'preview_status': {
         const ready = e.kind === 'preview' ? true : e.status === 'ready'
-        const url = e.kind === 'preview' ? e.url : e.url
+        const url = e.url
         if (!previewMsg) { previewMsg = { id, kind: 'preview', ready, ...(url !== undefined ? { url } : {}) }; items.push(previewMsg) }
         else { previewMsg.ready = ready; if (url !== undefined) previewMsg.url = url }
         break
