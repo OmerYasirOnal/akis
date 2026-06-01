@@ -117,6 +117,29 @@ describe('CONTRACT: resumable SSE (CF5 / F2-AC12)', () => {
     expect(Math.min(...ids2)).toBeGreaterThan(lastSeen) // no replay of already-seen (no dup)
   })
 
+  it('survives an abrupt client disconnect and keeps emitting to other sessions (no wedge/crash)', async () => {
+    const services = makeServices()
+    const base = await listen(services)
+    const a = JSON.parse(await fetch(`${base}/sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea: 'A' }) }).then(r => r.text()))
+
+    // Open a stream, take one frame, then abruptly abort (client reset).
+    const ctrl = new AbortController()
+    const res = await fetch(`${base}/sessions/${a.id}/events`, { signal: ctrl.signal })
+    const reader = res.body!.getReader()
+    await reader.read()
+    ctrl.abort()
+    await reader.cancel().catch(() => {})
+
+    // Emitting more on A (now a dead socket) must NOT throw into the bus/producer...
+    const approve = await fetch(`${base}/sessions/${a.id}/approve`, { method: 'POST' })
+    expect(approve.status).toBe(200)
+
+    // ...and an independent session B must stream perfectly.
+    const b = JSON.parse(await fetch(`${base}/sessions`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea: 'B' }) }).then(r => r.text()))
+    const bFrames = dataFrames(await collectFrames(`${base}/sessions/${b.id}/events`))
+    expect(bFrames.map(f => f.id)).toEqual(Array.from({ length: services.bus.head(b.id) }, (_, i) => i + 1))
+  })
+
   it('sends a reset control frame when the requested cursor was evicted (overflow)', async () => {
     const bus = new EventBus(3) // tiny cap to force eviction
     const services = makeServices({ bus })

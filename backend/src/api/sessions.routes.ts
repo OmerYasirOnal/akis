@@ -9,6 +9,11 @@ export interface SessionsDeps {
   services: OrchestratorServices
 }
 
+/** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
+ *  exceed this is dropped rather than allowed to grow without bound (OOM guard).
+ *  Full drain-based flow control is deferred (see spec out-of-scope). */
+const MAX_SSE_BUFFER_BYTES = 1 << 20 // 1 MiB
+
 /** Error class names that mean "a precondition/gate refused" -> 409, not 500.
  *  Reporting a gate refusal is observability; the gate still blocked the action. */
 const CONFLICT_ERRORS = new Set([
@@ -87,17 +92,42 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
 
       const cursor = parseCursor(req.headers['last-event-id'], req.query?.lastEventId)
 
-      // Subscribe BEFORE replay so an event emitted mid-replay is never lost.
-      // Live frames arriving during replay are queued, then flushed deduped by seq.
+      // One cleanup path, wired to BOTH 'close' and 'error'. After hijack(),
+      // Fastify is out of the loop, so an unhandled socket 'error' (EPIPE/
+      // ECONNRESET) would be an uncaught crash and the subscription would leak.
       let replaying = true
       let maxSent = cursor
+      let closed = false
+      let ping: ReturnType<typeof setInterval> | undefined
+      let unsub: () => void = () => {}
       const queue: SeqEvent[] = []
-      const write = (s: SeqEvent): void => {
-        if (s.seq <= maxSent) return // already delivered (replay/live overlap) — dedupe
-        raw.write(sseEvent(s.seq, s.event))
-        maxSent = s.seq
+
+      const cleanup = (): void => {
+        if (closed) return
+        closed = true
+        if (ping) clearInterval(ping)
+        unsub()
       }
-      const unsub = services.bus.subscribe(id, (event, seq) => {
+      // All writes go through here: a throw (write to a destroyed socket) must
+      // NEVER propagate into bus.emit()'s listener loop — it cleans up instead.
+      // Memory is bounded: a stalled client whose kernel/Node buffer exceeds the
+      // cap is dropped rather than allowed to grow without limit (backpressure).
+      const safeWrite = (chunk: string): void => {
+        if (closed) return
+        try {
+          raw.write(chunk)
+          if (raw.writableLength > MAX_SSE_BUFFER_BYTES) cleanup()
+        } catch { cleanup() }
+      }
+      // Subscribe BEFORE replay so an event emitted mid-replay is never lost.
+      // Live frames arriving during replay are queued, then flushed deduped by seq.
+      const write = (s: SeqEvent): void => {
+        if (closed || s.seq <= maxSent) return // dedupe replay/live overlap
+        safeWrite(sseEvent(s.seq, s.event))
+        if (!closed) maxSent = s.seq
+      }
+      unsub = services.bus.subscribe(id, (event, seq) => {
+        if (closed) return
         if (replaying) queue.push({ seq, event })
         else write({ seq, event })
       })
@@ -107,7 +137,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
         // The buffer no longer covers the gap: tell the client to re-sync from
         // GET /sessions/:id and resume live from head (no silent loss).
         const head = services.bus.head(id)
-        raw.write(sseControl('reset', { head }))
+        safeWrite(sseControl('reset', { head }))
         maxSent = head
       } else {
         for (const s of events) write(s)
@@ -115,9 +145,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       replaying = false
       for (const s of queue) write(s)
 
-      const ping = setInterval(() => raw.write(sseComment('ping')), 15000)
+      ping = setInterval(() => { if (!closed && !raw.writableNeedDrain) safeWrite(sseComment('ping')) }, 15000)
       if (typeof ping.unref === 'function') ping.unref()
-      raw.on('close', () => { clearInterval(ping); unsub() })
+      raw.on('close', cleanup)
+      raw.on('error', cleanup) // the missing handler — prevents an uncaught crash
       // Keep the request open: do not return a body (Fastify won't close raw).
     },
   )

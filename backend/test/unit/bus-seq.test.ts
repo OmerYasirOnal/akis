@@ -70,6 +70,20 @@ describe('EventBus per-session seq (F2-AC12 resumable stream)', () => {
     expect(r[0]?.kind).toBe('text')
   })
 
+  it('isolates a throwing listener: a broken subscriber cannot wedge the bus', () => {
+    const bus = new EventBus()
+    const seen: number[] = []
+    bus.subscribe('s1', () => { throw new Error('boom') }) // e.g. write to a dead SSE socket
+    bus.subscribe('s1', (_e, seq) => seen.push(seq))
+    // The throw must not propagate back into the producer (emit) ...
+    expect(() => bus.emit(ev('s1', 1))).not.toThrow()
+    // ... and must not stop the other listener for this event.
+    expect(seen).toEqual([1])
+    // The bus keeps working for subsequent events too.
+    expect(() => bus.emit(ev('s1', 2))).not.toThrow()
+    expect(seen).toEqual([1, 2])
+  })
+
   it('signals dropped=true once the buffer overflows (eviction)', () => {
     const cap = 3
     const bus = new EventBus(cap)

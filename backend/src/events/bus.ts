@@ -47,7 +47,12 @@ export class EventBus {
     buf.push({ seq, event: e })
     if (buf.length > this.cap) buf.splice(0, buf.length - this.cap)
     this.buffers.set(e.sessionId, buf)
-    this.listeners.get(e.sessionId)?.forEach(fn => fn(e, seq))
+    // A broken subscriber (e.g. an SSE write to a dead socket) must NOT stop the
+    // other listeners for this event, nor throw back into the producer that
+    // emitted it. Cleanup is the subscriber's own responsibility.
+    this.listeners.get(e.sessionId)?.forEach(fn => {
+      try { fn(e, seq) } catch { /* isolate a faulty listener */ }
+    })
   }
 
   /** Plain event list (back-compat for non-resumable consumers). */

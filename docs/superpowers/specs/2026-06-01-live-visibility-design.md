@@ -186,6 +186,11 @@ GET /sessions/:id/events            (EventSource auto-sends Last-Event-ID: K)
   throws into the loop; a slow/closed socket can't wedge the bus.
 
 ## Out of scope (later sub-projects)
+- **Full drain-based SSE flow control.** The handler bounds per-connection memory
+  by dropping a stalled client once its unflushed buffer exceeds
+  `MAX_SSE_BUFFER_BYTES` (OOM guard), and skips the heartbeat while the socket
+  needs drain. Proper `'drain'`-event pause/resume that keeps a slow-but-alive
+  client connected is deferred to hardening (F2-AC13/14 territory).
 - Event-log **persistence across process restart** (buffer is in-memory; a
   restart loses history — noted, deferred to a persistence sub-project).
 - Auth / multi-tenant on routes (single-user local-first MVP).
