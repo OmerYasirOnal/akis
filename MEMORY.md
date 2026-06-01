@@ -57,6 +57,17 @@ The original handoff's **FSM / transition table** decision was **consciously rev
 - Loop default model is `claude-haiku-4-5-20251001` (cost/quota guard); catalog is the single source of model IDs.
 - v1 lessons still apply: never reintroduce a verification-bypass path; one event stream only.
 
+## Architecture review findings (2026-06-01 — `docs/architecture-review.md`)
+A deep code review of `feat/real-providers` found:
+- **Gate kernel = sound** (real brands, digest binding, contract test drives the real path). Build on it.
+- **"Agentic" is hollow:** no agent loop; Scribe/Proto are **stubs that never call an LLM** (only Critic does) → real spec/code output is still fake. `tool_call`/`tool_result`/`preview` events never emitted.
+- **No delivery surface:** no orchestrator HTTP routes, **no SSE endpoint** — core is unreachable/unobservable over the wire.
+- **Dynamic mgmt partial:** provider/model + skills dynamic; but **`Role` is a closed union, no permission matrix**, agents hardcoded in DI (no registry), flow is imperative, **no tool registry** → my `retrieve_knowledge` tool has nothing to register into yet.
+- **Stream not resumable:** events carry counter `ts`, not per-session `seq`; buffer capped 200, no persistence → UI loses events on refresh.
+- **Correctness nits:** `confirmPush` concurrent **double-push window**; exported `createVerifier` + public `recordVerification` = same-realm capability gap; `createProvider` **fails open to mock** in prod on misconfig.
+- **→ Core Foundations CF1–CF6** added as upstream prerequisites (owned by core lanes A/B); my M1/M3/M4/M5 depend on them. Fallbacks: RAG as DI service (not tool), model picker read-only, until the CF lands.
+- **New ACs:** F1-AC17 (per-session ingest subscription), F2-AC12 (resumable stream), F2-AC13 (bounded loop), F2-AC14 (least-privilege tool scope), F2-AC15 (observability), X-AC6 (fail-closed providers).
+
 ## Status
 - Design + roadmap + spec + zero-context review on `claude/akis-agents-rag-system-NDTAH` (PR #3), **rebased onto the agentic core**.
 - No implementation yet — M0 (frozen contracts) is next, after the 6 open decisions in `docs/roadmap.md` and once PR #1 + #2 merge.

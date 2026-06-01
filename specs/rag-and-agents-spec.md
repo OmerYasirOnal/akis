@@ -18,7 +18,15 @@ Reconciliation decisions (confirmed with user):
 - Tenancy key = `user_id` + `session_id`. Privacy posture = **exclude-then-embed** (secrets/binaries excluded; broader PII redaction deferred for the single-user MVP).
 
 ## Dependencies (must exist before dispatch)
-- **D1:** PR #1 (agentic orchestrator + sub-agents + 4 gates + `AkisEvent` bus + skill registry) and PR #2 (`LlmProvider`/`createProvider`/`catalog`/encrypted `KeyStore`/`/api/providers`) merged. M1/M3/M4 build directly on these seams.
+- **D1:** PR #1 (agentic orchestrator + sub-agents + 4 gates + `AkisEvent` bus + skill registry) and PR #2 (`LlmProvider`/`createProvider`/`catalog`/encrypted `KeyStore`/`/api/providers`) merged.
+- **D1b — Core Foundations (NEW, per `docs/architecture-review.md`):** a code review found several seams our plan assumed are **not built yet**. Each milestone depends on its Core Foundation (owned by the agentic-core lanes, coordinated, not assumed):
+  - **CF1** orchestrator HTTP routes + SSE endpoint → blocks live preview (M5) + usability.
+  - **CF2** real provider-backed sub-agents + agent-loop/tool-dispatch seam + emit `tool_call`/`tool_result`/`preview` → blocks RAG-as-a-tool (M1), live UI (M5).
+  - **CF3** per-agent provider/model wiring → blocks the model picker binding (M3).
+  - **CF4** data-driven roles + permission matrix + agent registry → blocks custom agents / workflow presets (M4).
+  - **CF5** resumable event stream (per-session monotonic `seq` + buffer + `Last-Event-ID`) → blocks reliable live preview (M5).
+  - **CF6** core hardening (confirmPush atomicity, verify-capability wrap, fail-closed providers) → serves "flawless operation".
+  - **Fallback** if a CF isn't ready: RAG ships as a **DI service** (agent calls it directly) not an LLM tool; model picker ships **read-only** until CF3.
 - **D2:** Auth / user identity available to stamp `user_id` (`F1-AC5`).
 - **D3:** Embedding provider chosen (open question #1) before the `knowledge_chunks` migration freezes (`vector(N)`).
 
@@ -48,6 +56,7 @@ Reconciliation decisions (confirmed with user):
 - **F1-AC14 (observability):** Exposes ingest success/failure counts, dead-letter/queue depth, dedup-hit rate, retrieval latency — queryable without code changes.
 - **F1-AC15 (re-index on model change):** Changing the embedding provider/dimension has a defined re-index path; `vector(N)` and `vector(M)` chunks are never mixed at query time.
 - **F1-AC16 (citation integrity):** A cited chunk whose source was deleted/superseded resolves to a valid state or is marked stale (no dangling citations).
+- **F1-AC17 (ingestion subscription):** A global ingestion sink subscribes per session as sessions start (the bus `subscribe` is per-session only); no event is missed between session start and subscription.
 
 ### F1 Non-functional
 - `EmbeddingProvider` is a pluggable port that **reuses PR #2's `KeyStore` + catalog** (no second key system). Default = open question #1; vector dimension follows the model. **Privacy:** the default provider receives all ingested content as a 3rd-party processor — acceptable for single-user MVP, stated to the user, revisited if multi-tenant.
@@ -78,6 +87,10 @@ Reconciliation decisions (confirmed with user):
 - **F2-AC9 (orchestrator input):** The orchestrator consumes a resolved `WorkflowConfig` (enabled tools/skills/models) at session start; it gains no new control flow; `roles.ts` and the gates are unchanged.
 - **F2-AC10 (version immutability for in-flight runs):** Editing a saved workflow creates a new version; an in-flight run keeps the version it started with (config never mutated mid-run).
 - **F2-AC11 (i18n + no prop-drilling):** All user-facing strings via the i18n catalogue (TR+EN), CI lint gate; the FE feature uses feature-sliced contexts, not a prop bag.
+- **F2-AC12 (resumable live stream):** The live preview survives refresh/reconnect with **no lost or duplicated steps** — backed by a per-session monotonic `seq` + `Last-Event-ID` resume + a server buffer with an overflow signal (CF5).
+- **F2-AC13 (bounded agent loop):** Every agentic run has a hard step/iterate cap (generalize the existing `MAX_ITERATE`) **and** a wall-clock budget; exceeding either ends the run as `failed` with a typed reason — never an unbounded loop.
+- **F2-AC14 (least-privilege tool scope):** A `WorkflowConfig` grants each agent the **minimum** tool set; a tool not in the workflow is not dispatchable for that run.
+- **F2-AC15 (observability):** Core + RAG emit OpenTelemetry-style spans/metrics (run/step latency, tokens, gate events, ingest/retrieval health) queryable without code changes.
 
 ### F2 Out of scope
 - Planner-agent that invents stages / fully free agent DAG authoring beyond the bounded preset.
@@ -91,6 +104,7 @@ Reconciliation decisions (confirmed with user):
 - **X-AC3:** Contracts (`KnowledgePort`, `IngestRecord`, `RetrievalResult`, `EmbeddingProvider`, `WorkflowConfig`, `AgentConfig`, `CustomAgentSpec`) frozen + merged (M0) before dependent work.
 - **X-AC4 (rollback/migration safety):** Flag off + `knowledge_chunks` migration down → no agent/gate behavior change, demo path unaffected; down migration reversible or explicitly justified.
 - **X-AC5 (gate contract test stays green):** The PR #1 4-gate contract test (Scenarios A–F) must pass **unchanged** after both features land — proof neither touched the gates.
+- **X-AC6 (fail-closed providers):** Outside `NODE_ENV=test`, a misconfigured provider/key fails loudly; the mock never silently produces "verified" output in production (CF6).
 
 ## Open questions (resolve before M1 code)
 1. Embedding provider default → `vector(N)` + 3rd-party processor (reuse KeyStore).
