@@ -46,14 +46,27 @@ describe('activation wiring (sub-project 8)', () => {
     expect(token).toBeNull() // mock defaults to 0 tests, fail-closed
   })
 
-  it('iterateBudget tightens the orchestrator iterate loop (workflow → fewer attempts)', async () => {
-    // Critic score 70 → not approved, not critical → iterate; budget 1 → 1 attempt then human resolution.
-    const store = new MockSessionStore()
-    const services = buildServices({ store, skillsDir, mockCriticScore: 70, iterateBudget: 1 })
-    expect(services.iterateBudget).toBe(1)
-    const orch = new Orchestrator(services)
-    const s = await orch.start({ idea: 'todo' })
-    // Spec review at score 70 isn't approved either → stays awaiting_critic_resolution at start.
-    expect(['awaiting_critic_resolution', 'awaiting_spec_approval']).toContain(s.status)
+  it('iterateBudget actually tightens the runToVerification loop (1 → 1 retry, 3 → 3 retries)', async () => {
+    // A critic that APPROVES the spec but REJECTS the code (non-critical) → the
+    // orchestrator iterates until the budget, then goes to human resolution.
+    const critic = {
+      name: 'fake', model: 'm',
+      async chat(req: { system: string }): Promise<{ text: string }> {
+        const isCode = req.system.toLowerCase().includes('code reviewer')
+        return { text: JSON.stringify({ approved: !isCode, overallScore: isCode ? 70 : 90, summary: 'x', findings: [], reviewType: isCode ? 'code_review' : 'spec_review', iteration: 1, hasCriticalFinding: false, maxSeverity: 'info' }) }
+      },
+    }
+    const iterationsFor = async (budget: number): Promise<number> => {
+      const store = new MockSessionStore()
+      const services = buildServices({ store, skillsDir, provider: critic, iterateBudget: budget })
+      const orch = new Orchestrator(services)
+      const s = await orch.start({ idea: 'todo' })
+      await orch.approve(s.id)
+      const done = await orch.runToVerification(s.id)
+      expect(done.status).toBe('awaiting_critic_resolution')
+      return services.bus.recent(s.id).filter(e => e.kind === 'text' && e.text.includes('Iterating')).length
+    }
+    expect(await iterationsFor(1)).toBe(1)
+    expect(await iterationsFor(3)).toBe(3)
   })
 })
