@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ApiClient } from '../api/client.js'
-import { NewSessionForm } from '../components/NewSessionForm.js'
+import { NewSessionForm, type WorkflowOption } from '../components/NewSessionForm.js'
 import { SessionView } from '../components/SessionView.js'
 import { AgentsTab } from '../agents/AgentsTab.js'
 import { I18nProvider, useI18n } from '../i18n/I18nContext.js'
@@ -14,10 +14,13 @@ function Studio() {
   const [tab, setTab] = useState<'build' | 'agents'>('build')
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
+  const [workflows, setWorkflows] = useState<WorkflowOption[]>([])
 
-  const start = async (idea: string): Promise<void> => {
+  useEffect(() => { void api.listWorkflows().then(ws => setWorkflows(ws.map(w => ({ id: w.id, name: w.name })))).catch(() => {}) }, [api, tab])
+
+  const start = async (idea: string, workflowId?: string): Promise<void> => {
     setBusy(true)
-    try { const s = await api.startSession(idea); setSessionId(s.id) }
+    try { const s = await api.startSession(idea, workflowId); setSessionId(s.id) }
     finally { setBusy(false) }
   }
 
@@ -43,7 +46,7 @@ function Studio() {
 
         {tab === 'build' ? (
           <>
-            <div className="mb-8"><NewSessionForm onStart={start} busy={busy} /></div>
+            <div className="mb-8"><NewSessionForm onStart={start} busy={busy} workflows={workflows} /></div>
             {sessionId ? <SessionView sessionId={sessionId} api={api} baseUrl={BASE} /> : <p className="text-slate-600">Start a build to see the live agent flow.</p>}
           </>
         ) : (

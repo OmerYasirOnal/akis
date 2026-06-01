@@ -1,12 +1,19 @@
 import type { FastifyInstance, FastifyReply } from 'fastify'
+import type { WorkflowConfig } from '@akis/shared'
 import type { Orchestrator } from '../orchestrator/Orchestrator.js'
 import type { OrchestratorServices } from '../di/services.js'
 import type { SeqEvent } from '../events/bus.js'
+import type { WorkflowStore } from '../workflow/WorkflowStore.js'
 import { sseEvent, sseControl, sseComment } from './sse.js'
 
 export interface SessionsDeps {
   orchestrator: Orchestrator
   services: OrchestratorServices
+  /** A session may be started bound to a saved workflow (F2-AC9/AC10): the route
+   *  resolves it and builds a per-session orchestrator that applies its per-agent
+   *  models + iterate budget + RAG, sharing the same store + bus. */
+  workflowStore?: WorkflowStore
+  makeOrchestrator?: (wf: WorkflowConfig) => Orchestrator
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -45,12 +52,24 @@ function parseCursor(header: unknown, query: unknown): number {
 
 export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps): void {
   const { orchestrator, services } = deps
+  // Per-session orchestrator for workflow-bound runs (captured at start → immutable
+  // for that run even if the workflow is later edited, F2-AC10). Default otherwise.
+  const bound = new Map<string, Orchestrator>()
+  const orchestratorFor = (id: string): Orchestrator => bound.get(id) ?? orchestrator
 
-  app.post<{ Body: { idea?: string } }>('/sessions', async (req, reply) => {
+  app.post<{ Body: { idea?: string; workflowId?: string } }>('/sessions', async (req, reply) => {
     const idea = typeof req.body?.idea === 'string' ? req.body.idea.trim() : ''
     if (!idea) return reply.code(400).send({ error: 'idea required', code: 'BadRequest' })
+    let orch = orchestrator
+    const workflowId = req.body?.workflowId
+    if (workflowId && deps.workflowStore && deps.makeOrchestrator) {
+      const wf = deps.workflowStore.get(workflowId)
+      if (!wf) return reply.code(404).send({ error: `workflow ${workflowId} not found`, code: 'NotFound' })
+      orch = deps.makeOrchestrator(wf)
+    }
     try {
-      const s = await orchestrator.start({ idea })
+      const s = await orch.start({ idea })
+      if (orch !== orchestrator) bound.set(s.id, orch)
       return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }
   })
@@ -67,9 +86,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       catch (err) { return sendError(reply, err) }
     }
 
-  app.post<{ Params: { id: string } }>('/sessions/:id/approve', action(id => orchestrator.approve(id)))
-  app.post<{ Params: { id: string } }>('/sessions/:id/run', action(id => orchestrator.runToVerification(id)))
-  app.post<{ Params: { id: string } }>('/sessions/:id/confirm', action(id => orchestrator.confirmPush(id)))
+  app.post<{ Params: { id: string } }>('/sessions/:id/approve', action(id => orchestratorFor(id).approve(id)))
+  app.post<{ Params: { id: string } }>('/sessions/:id/run', action(id => orchestratorFor(id).runToVerification(id)))
+  app.post<{ Params: { id: string } }>('/sessions/:id/confirm', action(id => orchestratorFor(id).confirmPush(id)))
 
   // Batch event log: the retained {seq,event}[] for a session. The FE fetches this on
   // an SSE `reset` to rebuild its live view from the authoritative history (the SSE
