@@ -1,9 +1,9 @@
 /**
  * Syntax Check
  *
- * Catches basic syntax errors: unbalanced braces, brackets, parens.
+ * Catches basic syntax errors: unbalanced braces, brackets, parens; invalid JSON.
  * Not a full parser — just balance + a few common mistakes.
- * (Ported verbatim from AKIS v1.)
+ * (Ported from AKIS v1; tightened for strict noUncheckedIndexedAccess.)
  */
 
 import type { ValidationCheck, ValidationFile, ValidationIssue } from '../ValidatorTypes.js';
@@ -15,7 +15,6 @@ export class SyntaxCheck implements ValidationCheck {
     const issues: ValidationIssue[] = [];
 
     for (const file of files) {
-      // Skip non-code files
       if (file.language === 'json') {
         this.checkJson(file, issues);
         continue;
@@ -23,7 +22,6 @@ export class SyntaxCheck implements ValidationCheck {
       if (file.language !== 'typescript' && file.language !== 'javascript') {
         continue;
       }
-
       this.checkBalance(file, issues);
     }
 
@@ -50,15 +48,15 @@ export class SyntaxCheck implements ValidationCheck {
     const stack: { char: string; line: number }[] = [];
     const lines = file.content.split('\n');
 
-    // Strip strings/comments crudely to avoid false positives
     let inBlockComment = false;
 
     for (let lineNum = 0; lineNum < lines.length; lineNum++) {
-      const line = lines[lineNum];
+      const line = lines[lineNum] ?? '';
       let inString: string | null = null;
 
       for (let i = 0; i < line.length; i++) {
         const char = line[i];
+        if (char === undefined) continue;
 
         // Handle block comments
         if (inBlockComment) {
@@ -69,23 +67,23 @@ export class SyntaxCheck implements ValidationCheck {
           continue;
         }
 
-        // Handle strings
-        if (inString) {
+        // Inside a string literal?
+        if (inString !== null) {
           if (char === inString && line[i - 1] !== '\\') {
             inString = null;
           }
           continue;
         }
 
-        // Start of string?
+        // Start of a string?
         if (char === '"' || char === "'" || char === '`') {
           inString = char;
           continue;
         }
 
-        // Start of comment?
+        // Start of a comment?
         if (char === '/' && line[i + 1] === '/') {
-          break; // rest of line is comment
+          break; // rest of line is a comment
         }
         if (char === '/' && line[i + 1] === '*') {
           inBlockComment = true;
@@ -98,7 +96,7 @@ export class SyntaxCheck implements ValidationCheck {
           stack.push({ char, line: lineNum + 1 });
         } else if (closers.has(char)) {
           const last = stack.pop();
-          if (!last || pairs[last.char] !== char) {
+          if (last === undefined || pairs[last.char] !== char) {
             issues.push({
               severity: 'error',
               category: 'syntax',

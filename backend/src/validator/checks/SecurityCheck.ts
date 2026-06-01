@@ -16,7 +16,7 @@ export class SecurityCheck implements ValidationCheck {
     for (const file of files) {
       const lines = file.content.split('\n');
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
+        const line = lines[i] ?? '';
 
         // eval() usage
         if (/\beval\s*\(/.test(line)) {

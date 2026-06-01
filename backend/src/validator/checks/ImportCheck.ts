@@ -21,7 +21,7 @@ export class ImportCheck implements ValidationCheck {
 
       const lines = file.content.split('\n');
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
+        const line = lines[i] ?? '';
         const importMatch = line.match(/^\s*import\s+.*\s+from\s+['"]([^'"]+)['"]/);
         if (!importMatch) continue;
 
