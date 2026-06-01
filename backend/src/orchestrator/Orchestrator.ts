@@ -154,14 +154,21 @@ export class Orchestrator {
 
     // Push FIRST. Only persist 'done' after a successful push, so a push failure
     // leaves a retryable state (push_failed) and never loses the code.
+    this.s.bus.emit({ kind: 'tool_call', tool: 'push_to_github', args: { files: files.length }, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+    let repoUrl: string
     try {
-      await this.s.github.createRepo(id)
+      repoUrl = await this.s.github.createRepo(id)
       await pushToGitHub(token, this.s.github, files)
     } catch (err) {
       await this.s.store.update(id, { status: 'push_failed' }, cur.version)
+      this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       throw err
     }
+    this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: true, result: { url: repoUrl }, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+    // The pushed repo is the produced artifact's home — a real URL the UI can open
+    // (mock adapter today; a real preview env lands in the preview sub-project).
+    this.s.bus.emit({ kind: 'preview', url: repoUrl, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     const session = await this.s.store.update(id, { status: 'done' }, cur.version)
     this.emitGate(id, 'push_confirm', 'satisfied')
     this.s.bus.emit({ kind: 'done', verified: isVerified(session), provider: this.s.providerName, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })

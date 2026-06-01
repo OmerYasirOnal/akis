@@ -9,6 +9,7 @@ import { EventBus } from '../../src/events/bus.js'
 import { initialSession } from '@akis/shared'
 import type { AkisEvent } from '@akis/shared'
 import { createMockTestRunner, approveSpec } from '../helpers/tokens.js'
+import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 
 describe('MockGitHubAdapter', () => {
   it('stores pushed files in memory keyed by session, readable back', async () => {
@@ -28,16 +29,28 @@ describe('MockGitHubAdapter', () => {
 })
 
 describe('ScribeAgent', () => {
-  it('produces a spec for a normal idea', async () => {
-    const scribe = new ScribeAgent({ bus: new EventBus() })
+  it('produces a spec for a normal idea (live via provider)', async () => {
+    const scribe = new ScribeAgent({ bus: new EventBus(), provider: new MockProvider() })
     const out = await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'todo app' })
     expect(out.type).toBe('spec')
     if (out.type === 'spec') expect(out.spec.title).toContain('todo app')
   })
   it('asks for clarification when configured', async () => {
-    const scribe = new ScribeAgent({ bus: new EventBus(), needsClarification: true })
+    const scribe = new ScribeAgent({ bus: new EventBus(), provider: new MockProvider(), needsClarification: true })
     const out = await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'thing' })
     expect(out.type).toBe('clarify')
+  })
+  it('invokes the provider and emits tool_call + tool_result (CORE-AC1 / CF2)', async () => {
+    let calls = 0
+    const provider = { name: 'fake', model: 'm', async chat() { calls++; return { text: '{"kind":"spec","title":"Spec for: x","body":"# x"}' } } }
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const scribe = new ScribeAgent({ bus, provider })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'x' })
+    expect(calls).toBe(1)
+    expect(seen.some(e => e.kind === 'tool_call' && e.tool === 'dispatch_scribe')).toBe(true)
+    expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_scribe')).toBe(true)
   })
 })
 
@@ -49,7 +62,7 @@ describe('ProtoAgent', () => {
     const spec = { title: 't', body: 'b' }
     const session = { ...initialSession('s1', 'i'), spec, approval: approveSpec(spec) }
     const approved = mintApprovedSpec(session)
-    const proto = new ProtoAgent({ bus: new EventBus() })
+    const proto = new ProtoAgent({ bus: new EventBus(), provider: new MockProvider() })
     const out = await proto.run({ sessionId: 's1', laneId: 'main', approved })
     expect(out.files.length).toBeGreaterThan(0)
     expect(gh.read('s1')).toHaveLength(0) // Proto never pushes — push happens behind the gate
@@ -71,6 +84,9 @@ describe('TraceAgent (verifier)', () => {
     expect(token?.testsRun).toBe(2)
     const v = seen.find(e => e.kind === 'verify')
     expect(v && v.kind === 'verify' && v.agent).toBe('trace')
+    // CF2: the verifier's run_tests tool use is observable on the stream.
+    expect(seen.some(e => e.kind === 'tool_call' && e.tool === 'run_tests')).toBe(true)
+    expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'run_tests' && e.ok === true)).toBe(true)
   })
   it('returns null for a 0-test run (no false green)', async () => {
     const trace = new TraceAgent({ bus: new EventBus(), verifier: createVerifier(createMockTestRunner({ testsRun: 0, passed: true })) })

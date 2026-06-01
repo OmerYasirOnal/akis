@@ -66,8 +66,22 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   const github = new MockGitHubAdapter()
   const runner = opts.testRunner ?? createMockTestRunner()
 
-  // Critic backend: deterministic mock when mockCriticScore is set (the test
-  // path), else the real provider (createProvider falls back to mock with no key).
+  // The provider feeds the LIVE sub-agents (Scribe/Proto) AND the critic. Under
+  // NODE_ENV=test createProvider returns the mock; with mockCriticScore the critic
+  // uses a deterministic score backend instead, but Scribe/Proto still need a
+  // provider object — so we always resolve one (mock in tests / keyless via
+  // allowMock for deterministic runs).
+  const provider =
+    opts.provider ??
+    createProvider({
+      ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
+      // When a deterministic mock-critic run is requested, allow the mock provider
+      // for the sub-agents too (keeps suites/smoke green without a real key).
+      ...(opts.mockCriticScore !== undefined ? { allowMock: true } : {}),
+    })
+
+  // Critic backend: deterministic score when mockCriticScore is set (the test
+  // path), else the real provider via the criticBackend adapter.
   let generateText: (system: string, user: string) => Promise<string>
   let providerName: string
   if (opts.mockCriticScore !== undefined) {
@@ -88,9 +102,8 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
         maxSeverity: critical ? 'critical' : 'info',
       })
     }
-    providerName = opts.providerName ?? 'mock'
+    providerName = opts.providerName ?? provider.name
   } else {
-    const provider = opts.provider ?? createProvider(opts.keyStore ? { keyStore: opts.keyStore } : {})
     generateText = makeGenerateText(provider)
     providerName = opts.providerName ?? provider.name
   }
@@ -101,8 +114,8 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     github,
     validator: new DeterministicValidator(),
     critic: new CriticAgent({ generateText }, 75),
-    scribe: new ScribeAgent({ bus, ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}) }),
-    proto: new ProtoAgent({ bus }),
+    scribe: new ScribeAgent({ bus, provider, ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}) }),
+    proto: new ProtoAgent({ bus, provider }),
     trace: new TraceAgent({ bus, verifier: createVerifier(runner) }),
     approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
