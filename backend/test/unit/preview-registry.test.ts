@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from 'vitest'
 import { installSpec, startSpec } from '../../src/preview/Runner.js'
-import { PreviewRegistry, type Launch, type Probe, type PreviewProc } from '../../src/preview/PreviewRegistry.js'
+import { PreviewRegistry, buildLaunchEnv, type Launch, type Probe, type PreviewProc } from '../../src/preview/PreviewRegistry.js'
 import type { Sandbox, RunResult } from '../../src/exec/Sandbox.js'
 
 const okSandbox: Sandbox = { async run(): Promise<RunResult> { return { code: 0, stdout: '', stderr: '', timedOut: false } } }
@@ -26,6 +26,22 @@ describe('Runner specs', () => {
   it('static/unsupported have no start spec (deferred)', () => {
     expect(startSpec('static', 1)).toBeNull()
     expect(startSpec('unsupported', 1)).toBeNull()
+  })
+})
+
+describe('buildLaunchEnv', () => {
+  it('scrubs AI keys/key-store from the preview child env, keeps spec env (no re-leak)', () => {
+    process.env.ANTHROPIC_API_KEY = 'leak-me'
+    process.env.AI_KEY_STORE_PATH = '/secret'
+    try {
+      const env = buildLaunchEnv({ cmd: 'node', args: [], env: { PORT: '5000' } })
+      expect(env.ANTHROPIC_API_KEY).toBeUndefined()
+      expect(env.AI_KEY_STORE_PATH).toBeUndefined()
+      expect(env.PORT).toBe('5000')
+    } finally {
+      delete process.env.ANTHROPIC_API_KEY
+      delete process.env.AI_KEY_STORE_PATH
+    }
   })
 })
 

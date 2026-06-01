@@ -1,9 +1,15 @@
 import { spawn } from 'node:child_process'
-import type { Sandbox } from '../exec/Sandbox.js'
+import { type Sandbox, scrubEnv } from '../exec/Sandbox.js'
 import type { AppType } from './AppDetector.js'
 import { installSpec, startSpec, type StartSpec } from './Runner.js'
 import { allocatePort, releasePort } from './ports.js'
 import { teardown } from './Workspace.js'
+
+/** Env for the long-running preview child — SCRUBBED of AI keys/key-store just like
+ *  the Sandbox, so the agent-produced app (the more dangerous child) can't read them. */
+export function buildLaunchEnv(spec: StartSpec): Record<string, string> {
+  return { ...scrubEnv(process.env), ...spec.env }
+}
 
 export type PreviewStatus = 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'
 
@@ -33,7 +39,7 @@ export interface PreviewRegistryDeps {
 
 /** Real launcher: spawn the start command detached so we can kill its whole group. */
 const defaultLaunch: Launch = (spec, cwd) => {
-  const child = spawn(spec.cmd, spec.args, { cwd, env: { ...process.env, ...spec.env }, detached: true, stdio: 'ignore' })
+  const child = spawn(spec.cmd, spec.args, { cwd, env: buildLaunchEnv(spec), detached: true, stdio: 'ignore' })
   child.unref()
   const kill = (): void => { const p = child.pid; if (p) { try { process.kill(-p, 'SIGKILL') } catch { try { process.kill(p, 'SIGKILL') } catch { /* gone */ } } } }
   return child.pid !== undefined ? { pid: child.pid, kill } : { kill }
@@ -72,12 +78,12 @@ export class PreviewRegistry {
   async start(sessionId: string, dir: string, type: AppType): Promise<PreviewEntry> {
     await this.stop(sessionId) // replace any prior preview for this session
     const spec = startSpec(type, 0)
-    if (!spec) return this.set({ sessionId, status: 'unsupported', dir, reason: `app type '${type}' not previewable` })
+    if (!spec) { await teardown(dir).catch(() => {}); return this.set({ sessionId, status: 'unsupported', dir, reason: `app type '${type}' not previewable` }) }
 
     this.set({ sessionId, status: 'starting', dir })
     const install = installSpec()
     const res = await this.deps.sandbox.run(install.cmd, install.args, { cwd: dir, timeoutMs: this.deps.installTimeoutMs ?? 120_000 })
-    if (res.code !== 0) return this.set({ sessionId, status: 'failed', dir, reason: `install failed (code ${res.code})` })
+    if (res.code !== 0) { await teardown(dir).catch(() => {}); return this.set({ sessionId, status: 'failed', dir, reason: `install failed (code ${res.code})` }) }
 
     const port = await allocatePort()
     const proc = this.launch(startSpec(type, port)!, dir)
@@ -92,6 +98,7 @@ export class PreviewRegistry {
       await new Promise(r => setTimeout(r, interval))
     }
     proc.kill(); releasePort(port); this.procs.delete(sessionId)
+    await teardown(dir).catch(() => {})
     return this.set({ sessionId, status: 'failed', dir, port, reason: 'readiness probe timed out' })
   }
 
