@@ -8,11 +8,15 @@ import { registerSessionRoutes } from './sessions.routes.js'
 import { registerPreviewRoutes } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
 import { WorkflowStore } from '../workflow/WorkflowStore.js'
+import { workflowToAgentModels } from '../workflow/resolve.js'
+import type { WorkflowConfig } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
 import { PreviewRegistry } from '../preview/PreviewRegistry.js'
 import { LocalDirectSandbox } from '../exec/Sandbox.js'
+import { MockProvider } from '../agent/providers/mock/MockProvider.js'
+import { createMockTestRunner } from '../verify/TestRunner.js'
 import { nextTs } from '../events/clock.js'
 
 export interface ServerDeps {
@@ -47,6 +51,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
       ...(env.AKIS_REAL_TESTS === '1' || env.AKIS_REAL_TESTS === 'true' ? { realTests: true } : {}),
       ...(env.AKIS_RAG === '1' || env.AKIS_RAG === 'true' ? { rag: true } : {}),
+      // Keyless DEMO: run the whole loop on the deterministic mock provider (no API key)
+      // AND a passing mock test runner so a session reaches done+preview end-to-end.
+      // Explicit opt-in only — the default stays fail-closed (prod never auto-mocks /
+      // auto-verifies; verification still needs a real >=1-test pass without this flag).
+      ...(env.AKIS_ALLOW_MOCK === '1' || env.AKIS_ALLOW_MOCK === 'true'
+        ? { provider: new MockProvider(), testRunner: createMockTestRunner({ testsRun: 2, passed: true }) }
+        : {}),
     })
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
 
@@ -62,11 +73,27 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     }),
   })
 
+  // One shared workflow store (workflow CRUD + session-bound runs use the same one).
+  const workflowStore = deps.workflowStore ?? new WorkflowStore()
+  const realTests = env.AKIS_REAL_TESTS === '1' || env.AKIS_REAL_TESTS === 'true'
+  // Build a per-session orchestrator that applies a saved workflow (F2-AC9/AC10),
+  // sharing the same store + bus so the SSE stream and routes see its run.
+  const makeOrchestrator = (wf: WorkflowConfig): Orchestrator => new Orchestrator(buildServices({
+    store: services.store, bus: services.bus,
+    skillsDir: deps.skillsDir ?? defaultSkillsDir(),
+    ...(deps.keyStore ? { keyStore: deps.keyStore } : {}),
+    agentModels: workflowToAgentModels(wf),
+    ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
+    ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
+    ...(wf.rag !== undefined ? { rag: wf.rag } : {}),
+    ...(realTests ? { realTests: true } : {}),
+  }))
+
   app.get('/health', async () => ({ ok: true }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env })
-  registerSessionRoutes(app, { orchestrator, services })
+  registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
-  registerWorkflowRoutes(app, { store: deps.workflowStore ?? new WorkflowStore() })
+  registerWorkflowRoutes(app, { store: workflowStore })
   return app
 }
 
