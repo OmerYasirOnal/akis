@@ -14,6 +14,8 @@ import type { LlmProvider } from '../agent/LlmProvider.js'
 import { createProvider } from '../agent/providers/createProvider.js'
 import { makeGenerateText } from '../agent/criticBackend.js'
 import { NullKnowledgePort, type KnowledgePort } from '../knowledge/KnowledgePort.js'
+import { buildRag } from '../knowledge/buildRag.js'
+import type { IngestionSink } from '../knowledge/IngestionSink.js'
 
 export interface OrchestratorServices {
   store: SessionStore
@@ -29,6 +31,8 @@ export interface OrchestratorServices {
   providerName: string
   /** Read-only knowledge retrieval that feeds SharedContext (NullKnowledgePort until RAG). */
   knowledge: KnowledgePort
+  /** When RAG is on, the bus sink the orchestrator subscribes per session (F1-AC17). */
+  ingestionSink?: IngestionSink
 }
 
 /**
@@ -66,6 +70,12 @@ export interface BuildServicesOptions {
   bus?: EventBus
   /** Knowledge port feeding SharedContext. Defaults to NullKnowledgePort (no RAG yet). */
   knowledge?: KnowledgePort
+  /** Feature flag (F1-AC11): when true, build the embedded RAG stack + ingestion sink.
+   *  Default OFF → NullKnowledgePort, behavior identical to no-RAG. */
+  rag?: boolean
+  /** Inject a prebuilt ingestion sink alongside an explicit `knowledge` port (tests
+   *  that need the queue handle to drain ingestion deterministically). */
+  ingestionSink?: IngestionSink
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
@@ -127,6 +137,17 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
     providerName,
-    knowledge: opts.knowledge ?? new NullKnowledgePort(),
+    ...resolveKnowledge(opts, bus),
   }
+}
+
+/** F1-AC11: RAG behind a flag. ON → embedded RAG stack + ingestion sink; OFF (default)
+ *  or an explicit knowledge port → no sink, behavior identical to no-RAG. */
+function resolveKnowledge(opts: BuildServicesOptions, bus: EventBus): { knowledge: KnowledgePort; ingestionSink?: IngestionSink } {
+  if (opts.knowledge) return { knowledge: opts.knowledge, ...(opts.ingestionSink ? { ingestionSink: opts.ingestionSink } : {}) }
+  if (opts.rag) {
+    const stack = buildRag({ bus })
+    return { knowledge: stack.port, ingestionSink: stack.sink }
+  }
+  return { knowledge: new NullKnowledgePort() }
 }

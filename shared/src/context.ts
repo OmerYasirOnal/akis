@@ -1,12 +1,22 @@
 import type { SessionState } from './session.js'
 import type { AkisEvent } from './events.js'
 
+/** Non-secret provenance exposed on a retrieved chunk (F1-AC4). Never carries
+ *  `userId` — tenancy is an internal filter, not surfaced to consumers. */
+export interface ChunkProvenance {
+  sourceId: string
+  sessionId: string
+  agent?: string
+  createdAt: string
+}
+
 /** A unit of grounding retrieved from the knowledge layer (RAG). */
 export interface KnowledgeChunk {
   id: string
   text: string
   source: string          // file path / session id / url
   score: number           // retrieval score, 0..1
+  provenance?: ChunkProvenance  // exposed on retrieval (F1-AC4)
 }
 
 export type GateState = 'awaiting' | 'satisfied' | 'rejected'
