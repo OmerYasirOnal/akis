@@ -35,6 +35,10 @@ frontend/src/**/*.js.map
 *.log
 logs/
 
+# Claude Code runtime state (ephemeral; live sessionId + pid — never commit)
+.claude/*.lock
+.claude/scheduled_tasks.lock
+
 # OS / editor
 .DS_Store
 Thumbs.db
