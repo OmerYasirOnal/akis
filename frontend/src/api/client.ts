@@ -1,4 +1,5 @@
 import type { SessionState } from '@akis/shared'
+import type { SeqEvent } from '../live/types.js'
 
 export interface ProviderInfo {
   id: string
@@ -34,6 +35,11 @@ export class ApiClient {
   }
   getSession(id: string): Promise<SessionState> {
     return this.json<SessionState>(`/sessions/${id}`)
+  }
+  /** The retained {seq,event}[] log — fetched on an SSE `reset` to rebuild the live view. */
+  async getSessionLog(id: string): Promise<SeqEvent[]> {
+    const { events } = await this.json<{ events: SeqEvent[]; head: number }>(`/sessions/${id}/log`)
+    return events
   }
   approve(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/approve`) }
   run(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/run`) }

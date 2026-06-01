@@ -53,6 +53,7 @@ describe('foldSessionView (pure live view-model)', () => {
       ev({ kind: 'session', status: 'started' }),
       ev({ kind: 'verify', testsRun: 3, passed: true, agent: 'trace', laneId: 'verify' }),
       ev({ kind: 'preview', url: 'https://github.com/mock/s1' }),
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto' }),
       ev({ kind: 'tool_result', tool: 'dispatch_proto', ok: false, result: { error: 'boom' }, agent: 'proto' }),
       ev({ kind: 'error', message: 'push failed: x' }),
       ev({ kind: 'done', verified: true, provider: 'anthropic' }),
@@ -66,6 +67,11 @@ describe('foldSessionView (pure live view-model)', () => {
     expect(v.status).toBe('done')
     expect(v.provider).toBe('anthropic')
     expect(v.verified).toBe(true)
+  })
+
+  it('a tool_result with no open agent step does not push an orphan error (M5)', () => {
+    const v = foldSessionView('s1', [ev({ kind: 'tool_result', tool: 'dispatch_proto', ok: false, result: { error: 'x' }, agent: 'proto' })])
+    expect(v.errors).toHaveLength(0) // no step to attach to → no inconsistent orphan error
   })
 
   it('attaches text narration to the current agent step', () => {

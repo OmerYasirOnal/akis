@@ -10,7 +10,7 @@ export interface EventSourceLike {
 export type EventSourceFactory = (url: string) => EventSourceLike
 
 export interface ConnectHandlers {
-  onEvent: (e: AkisEvent) => void
+  onEvent: (e: AkisEvent, seq: number) => void
   onReset?: (data: { head: number }) => void
   onError?: (e: unknown) => void
 }
@@ -34,7 +34,7 @@ export class EventStreamClient {
       const seq = Number.parseInt(msg.lastEventId, 10)
       if (Number.isFinite(seq) && seq > this.lastSeq) this.lastSeq = seq
       const event = parse(msg.data)
-      if (event) handlers.onEvent(event)
+      if (event) handlers.onEvent(event, Number.isFinite(seq) ? seq : this.lastSeq)
     }
     es.addEventListener('reset', e => {
       const data = parseReset(e.data)

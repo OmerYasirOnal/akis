@@ -41,6 +41,22 @@ describe('ApiClient', () => {
     expect(ApiError.is(await api.confirm('s1').catch(e => e))).toBe(true)
   })
 
+  it('getSessionLog returns the events array from /log', async () => {
+    const f = mockFetch(200, { events: [{ seq: 1, event: { kind: 'text' } }], head: 1 })
+    const api = new ApiClient('', f)
+    const log = await api.getSessionLog('s1')
+    expect(f.mock.calls[0]![0]).toBe('/sessions/s1/log')
+    expect(log).toHaveLength(1)
+    expect(log[0]!.seq).toBe(1)
+  })
+
+  it('maps a non-JSON error body to a generic ApiError (no throw on bad body)', async () => {
+    const f = vi.fn((_i: string, _n?: RequestInit) =>
+      Promise.resolve({ ok: false, status: 500, json: async () => { throw new Error('not json') }, text: async () => '' } as unknown as Response))
+    const api = new ApiClient('', f)
+    await expect(api.getSession('s1')).rejects.toMatchObject({ name: 'ApiError', status: 500 })
+  })
+
   it('honors a base url', async () => {
     const f = mockFetch(201, { id: 's1', status: 'x', version: 1 })
     const api = new ApiClient('http://host:3000', f)

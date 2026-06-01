@@ -69,6 +69,18 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   app.post<{ Params: { id: string } }>('/sessions/:id/run', action(id => orchestrator.runToVerification(id)))
   app.post<{ Params: { id: string } }>('/sessions/:id/confirm', action(id => orchestrator.confirmPush(id)))
 
+  // Batch event log: the retained {seq,event}[] for a session. The FE fetches this on
+  // an SSE `reset` to rebuild its live view from the authoritative history (the SSE
+  // stream alone can't, after a buffer drop), then resumes live from head (F2-AC12).
+  app.get<{ Params: { id: string } }>('/sessions/:id/log', async (req, reply) => {
+    const id = req.params.id
+    if (services.bus.head(id) === 0 && !(await services.store.get(id))) {
+      return reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
+    }
+    const { events } = services.bus.replaySince(id, 0)
+    return reply.send({ events, head: services.bus.head(id) })
+  })
+
   // Resumable SSE stream (CF1 + CF5 / F2-AC12).
   app.get<{ Params: { id: string }; Querystring: { lastEventId?: string } }>(
     '/sessions/:id/events',
@@ -135,9 +147,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       const { dropped, events } = services.bus.replaySince(id, cursor)
       if (dropped) {
         // The buffer no longer covers the gap: tell the client to re-sync from
-        // GET /sessions/:id and resume live from head (no silent loss).
+        // GET /sessions/:id/log and resume live from head (no silent loss). The id:
+        // line advances Last-Event-ID so a drop right after reset resumes correctly.
         const head = services.bus.head(id)
-        safeWrite(sseControl('reset', { head }))
+        safeWrite(sseControl('reset', { head }, head))
         maxSent = head
       } else {
         for (const s of events) write(s)

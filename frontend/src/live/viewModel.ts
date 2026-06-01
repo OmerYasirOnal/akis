@@ -16,8 +16,9 @@ export function emptyView(sessionId: string): SessionView {
 /**
  * Pure projection of a session's AkisEvent stream into the live view-model — the
  * same idea as the backend scratchpad, extended with a per-agent/lane step tree for
- * the UI. Deterministic and side-effect free, so it is trivially testable and can be
- * re-run on every reconnect/replay (idempotent over the same events).
+ * the UI. Deterministic and side-effect free (same input → same output). It assumes
+ * a deduped, seq-ordered event list; DEDUP IS THE STREAM LAYER'S JOB (useLiveSession
+ * keys events by seq), so replays/reconnects/resets never double-count here.
  */
 export function foldSessionView(sessionId: string, events: readonly AkisEvent[]): SessionView {
   const v = emptyView(sessionId)
@@ -60,7 +61,11 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         const pending = step?.tools.slice().reverse().find(t => t.tool === e.tool && t.ok === undefined)
         if (pending) { pending.ok = e.ok; pending.result = e.result }
         else if (step) step.tools.push({ tool: e.tool, ok: e.ok, result: e.result })
-        if (!e.ok) v.errors.push(describeFailure(e.tool, e.result))
+        // Only surface a tool failure that we could attach to a step — never an
+        // orphan error with no visible tool (would be inconsistent). With seq-ordered
+        // input a tool_result always follows its agent_start, so this stays consistent;
+        // standalone failures still surface via `error` events.
+        if (!e.ok && (pending || step)) v.errors.push(describeFailure(e.tool, e.result))
         break
       }
       case 'text': {

@@ -36,6 +36,15 @@ describe('GateCards', () => {
     await userEvent.click(screen.getByRole('button', { name: 'Approve spec' }))
     expect(onApprove).toHaveBeenCalled()
   })
+  it('disables Approve when busy, even if awaiting', () => {
+    render(<GateCards view={withGate('awaiting')} onApprove={() => {}} onConfirm={() => {}} busy />)
+    expect(screen.getByRole('button', { name: 'Approve spec' })).toBeDisabled()
+  })
+  it('disables Approve for a rejected gate', () => {
+    const view: SessionView = { ...emptyView('s1'), gates: { specApproval: { gate: 'spec_approval', state: 'rejected' } } }
+    render(<GateCards view={view} onApprove={() => {}} onConfirm={() => {}} />)
+    expect(screen.getByRole('button', { name: 'Approve spec' })).toBeDisabled()
+  })
 })
 
 describe('PreviewPanel', () => {

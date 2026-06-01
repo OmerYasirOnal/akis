@@ -1,4 +1,11 @@
-import type { Role, GateState } from '@akis/shared'
+import type { AkisEvent, Role, GateState } from '@akis/shared'
+
+/** An event with its per-session transport seq (the resumable cursor). The FE keys
+ *  events by seq so replays/reconnects/resets dedup — never lost or duplicated. */
+export interface SeqEvent {
+  seq: number
+  event: AkisEvent
+}
 
 /** A tool use under an agent step (dispatch_x, run_tests, push_to_github). */
 export interface ToolStep {
