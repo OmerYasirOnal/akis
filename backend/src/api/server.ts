@@ -6,6 +6,8 @@ import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
 import { registerProviderRoutes } from './providers.routes.js'
 import { registerSessionRoutes } from './sessions.routes.js'
 import { registerPreviewRoutes } from './preview.routes.js'
+import { registerWorkflowRoutes } from './workflows.routes.js'
+import { WorkflowStore } from '../workflow/WorkflowStore.js'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
@@ -21,6 +23,8 @@ export interface ServerDeps {
   orchestrator?: Orchestrator
   /** Skills library dir; defaults to the bundled library next to the sources. */
   skillsDir?: string
+  /** Workflow preset store (in-memory by default; injectable for tests/persistence). */
+  workflowStore?: WorkflowStore
 }
 
 const defaultSkillsDir = (): string =>
@@ -55,6 +59,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env })
   registerSessionRoutes(app, { orchestrator, services })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
+  registerWorkflowRoutes(app, { store: deps.workflowStore ?? new WorkflowStore() })
   return app
 }
 
