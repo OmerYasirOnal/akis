@@ -1,12 +1,13 @@
-import type { SessionState } from '@akis/shared'
+import type { SessionState, WorkflowConfig, WorkflowConfigInput } from '@akis/shared'
 import type { SeqEvent } from '../live/types.js'
 
+export interface ModelOption { id: string; label: string; recommended?: boolean }
 export interface ProviderInfo {
   id: string
   label: string
   available: boolean
   defaultModel: string
-  models: string[]
+  models: ModelOption[]
   last4?: string
   updatedAt?: string
 }
@@ -45,6 +46,10 @@ export class ApiClient {
   run(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/run`) }
   confirm(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/confirm`) }
   listProviders(): Promise<ProviderInfo[]> { return this.json<ProviderInfo[]>('/api/providers') }
+  listWorkflows(): Promise<WorkflowConfig[]> { return this.json<WorkflowConfig[]>('/api/workflows') }
+  saveWorkflow(input: WorkflowConfigInput): Promise<WorkflowConfig> {
+    return this.json<WorkflowConfig>('/api/workflows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
+  }
 
   private post(path: string): Promise<SessionState> {
     return this.json<SessionState>(path, { method: 'POST' })

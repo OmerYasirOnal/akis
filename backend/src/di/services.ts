@@ -76,6 +76,9 @@ export interface BuildServicesOptions {
   /** Inject a prebuilt ingestion sink alongside an explicit `knowledge` port (tests
    *  that need the queue handle to drain ingestion deterministically). */
   ingestionSink?: IngestionSink
+  /** Per-agent {provider, model} from a resolved WorkflowConfig (F2-AC9). When set
+   *  for a producer role, that agent gets its own provider; otherwise the default. */
+  agentModels?: Partial<Record<import('@akis/shared').Role, { provider: import('./../agent/providers/catalog.js').ProviderId; model?: string }>>
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
@@ -125,14 +128,28 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     providerName = opts.providerName ?? provider.name
   }
 
+  // Per-agent model binding (F2-AC9): a producer with a resolved {provider, model}
+  // gets its own provider; everyone else shares the default. Under NODE_ENV=test
+  // createProvider returns the mock regardless, so this stays test-safe.
+  const providerFor = (role: 'scribe' | 'proto'): LlmProvider => {
+    const m = opts.agentModels?.[role]
+    if (!m) return provider
+    return createProvider({
+      provider: m.provider,
+      ...(m.model !== undefined ? { model: m.model } : {}),
+      ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
+      ...(opts.mockCriticScore !== undefined ? { allowMock: true } : {}),
+    })
+  }
+
   return {
     store: opts.store,
     bus,
     github,
     validator: new DeterministicValidator(),
     critic: new CriticAgent({ generateText }, 75),
-    scribe: new ScribeAgent({ bus, provider, ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}) }),
-    proto: new ProtoAgent({ bus, provider }),
+    scribe: new ScribeAgent({ bus, provider: providerFor('scribe'), ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}) }),
+    proto: new ProtoAgent({ bus, provider: providerFor('proto') }),
     trace: new TraceAgent({ bus, verifier: createVerifier(runner) }),
     approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
