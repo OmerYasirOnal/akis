@@ -1,5 +1,7 @@
 # Zero-context review — `specs/rag-and-agents-spec.md` (2026-06-01)
 
+> **Note (later same day):** this review covered the **FSM-era** spec. After it, the spec/design were **rebased onto the agentic core** (PR #1/#2) — "FSM transition table" → "role/tool matrix + 4 structural gates". All findings below still hold; only the validation *target* changed (see the revised spec's F2-AC4).
+
 Independent review by a fresh reviewer with no prior conversation context, reviewing the spec against `HANDOFF.md` and `docs/rag-and-agents-design.md`.
 
 **Verdict:** APPROVE WITH CHANGES. The spec honors every locked decision (not full-agentic, deterministic spine, push-gate inviolable, single source of truth, typed state). Problems were concentrated in: untestable quality bar, undefined ingest-failure handling, and a cluster of privacy/tenancy/deletion gaps. None fatal; all closeable before M1.

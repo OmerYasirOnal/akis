@@ -6,46 +6,57 @@
 
 ---
 
-## Locked architecture decisions (do NOT relitigate)
-- **Keep the FSM / verification chain** — `Scribe → human gate → Proto → Validator → Critic → Trace → push-gate`. It is the thesis and the moat.
-- **NOT full-agentic.** A planner-agent that invents stages is the *future-work slide*, not built. Spine stays deterministic.
-- **Explicit FSM** — one `fsm/transitionTable.ts`; emit happens *inside* `transition()` (forgotten-emit becomes structurally impossible).
-- **Monolith app, modular files** — single Fastify BE + single React FE; split god-files, no microservices.
-- **Flexibility at the edges only** — intra-stage loops + ONE verified iterate loop + free ASK/CHAT.
-- **DevAgent → labeled "unverified"** (no silent GitHub push).
-- **Push gate unreachable until approved** — structural (compile-time), not per-path discipline.
+## ⚠️ ARCHITECTURE PIVOT (2026-06-01) — read this first
+The original handoff's **FSM / transition table** decision was **consciously reversed** by the product owner. The MVP being built is **agentic**, not an FSM. Source of truth = `docs/superpowers/specs/2026-06-01-agentic-core-gates-design.md §0`.
+- **Flow is agentic:** a single **main orchestrator agent ("AKIS", role `orchestrator`)** decides which sub-agents/skills to dispatch and when. **No `fsm/transitionTable.ts` exists.**
+- **The thesis ("quality trust") is preserved by 4 STRUCTURAL GATES** (branded tokens, not the agent's choice), enforced at the type/permission layer:
+  1. **Spec-approval** — `ProtoAgent` needs an `ApprovedSpec`/`ApprovalToken`; code-write can't type-check without human approval.
+  2. **Producer ≠ verifier** — only the `trace` (verifier) role holds a `TestRunner`; producers can't produce verification evidence.
+  3. **Verified = real test** — verification is the *presence* of a branded `VerifyToken` (≥1 executed+passing test); can't be set as a literal.
+  4. **Push gate** — `pushToGitHub` needs an `ApprovedPush`, mintable only from a `VerifyToken` + human confirm + matching code digest.
+- **Roster** = `orchestrator/scribe/proto/trace/critic` in code; **extensible by config + prompt** for extra agents — but custom agents can NEVER hold a gate capability (verifier/run_tests/push/token mint).
+- **Substrate already built:** PR #1 (`feat/agentic-core-gates`) = agentic core + 4 gates + `AkisEvent` bus + skill registry + DeterministicValidator/Critic ported, mock provider. PR #2 (`feat/real-providers`) = 4 real providers behind `LlmProvider`, `createProvider`, model `catalog.ts`, encrypted `KeyStore`, `GET/PUT/DELETE /api/providers` (the model-picker backend; FE picker deferred → our Agents tab).
+- **Defense (2026-06-12) still runs on v1** (which has the FSM) → the pivot carries no defense risk; MVP is parallel/post-defense.
 
-## New feature decisions (2026-06-01, this branch)
-- **Auto-RAG = zero-touch.** User never adds knowledge by hand. Event-driven ingestion of: conversation, pipeline outputs, GitHub repo, document uploads.
-- **RAG runs server-side** (Postgres + pgvector). The "use the user's computer" idea was dropped for the simpler deterministic server path. Embedding provider is **pluggable** (a local adapter is future-work behind the same port).
-- **RAG is decoupled from the orchestrator.** Standalone `knowledge/` module exposing a `retrieve()` port; stages pull via DI. Do NOT repeat v1's `applyChatMemory` coupling inside the orchestrator god-file.
-- **A "workflow" = a named, versioned CONFIG over the canonical chain** — model slots, prompt variants, iterate budget, gate policy, RAG settings. NOT an arbitrary agent DAG.
-- **Workflow configs validated against the transition table at save time** — illegal order / disabled mandatory gate = save error, never a runtime surprise.
-- **Timing: post-defense.** v1 demo (2026-06-12) stays untouched; this is the parallel/clean hat.
+## Carried-over decisions (still hold under the pivot)
+- **Monolith app, modular files** — single Fastify BE + single React FE; `backend/ + frontend/ + shared/` workspace; `shared/` = frozen contracts.
+- **Gates inviolable, structural (compile-time), never disabled by config.** This replaces "push gate unreachable until approved" — same spirit, broader.
+- **Single source of truth for events** — the `AkisEvent` bus, backend-stamped `ts`; no FE-synthetic events.
+- **Typed contracts, no untyped bags** — `SessionState`, `IngestRecord`, `WorkflowConfig` all typed.
+- Stack kept: Fastify 4 + TS strict + Drizzle + Postgres 16 (pgvector) + React 19 + Vite 7 + Tailwind v4.
 
-## Bug-classes to design OUT (carried from v1)
-1. Single source of truth for stage/SSE — backend stamps every event; no FE-synthetic rows; no 3-way derivation. **Auto-RAG subscribes to this same stream — never a parallel channel.**
-2. No dual render paths — one canonical row builder.
-3. Forgotten-emit impossible — emit inside `transition()`.
-4. Typed cross-stage state — no untyped `intermediateState` bag. (Same rule for `IngestRecord` / `WorkflowConfig`.)
-5. Explicit FSM — no scattered `store.update`.
-6. One verification-chain runner — never 5 copies.
-7. i18n lint gate — no hardcoded Turkish (applies to the Agents tab too).
-8. Push gate unreachable until approved.
+## New feature decisions (2026-06-01, this branch — agentic-core revision)
+- **Auto-RAG = zero-touch.** User never adds knowledge by hand. Ingestion subscribes to the **`AkisEvent` bus** (not an FSM): conversation `text`, agent outputs (`SessionState.spec`/`.code`), `verify`/Critic results, GitHub repo, uploads.
+- **Retrieval = a `retrieve_knowledge` TOOL** in the registry (callable by AKIS/Scribe/ASK), backed by a DI-injected `KnowledgePort`. Read-only, no gate capability. Decoupled — orchestrator never imports knowledge internals.
+- **RAG runs server-side** (Postgres + pgvector). "Use the user's computer" dropped. `EmbeddingProvider` is a pluggable port that **reuses PR #2's `KeyStore` + catalog** (no second key system).
+- **A "workflow" = a bounded, versioned PRESET that SEEDS an agentic run** — enabled agents/tools, pre-selected skills per agent, per-agent model `{providerId, modelId}`, gate policy (tighten-only), iterate budget, RAG settings. NOT a config-over-FSM and NOT an arbitrary DAG. The orchestrator still decides flow at runtime; the preset only seeds/bounds it.
+- **Workflow validated at save time vs the role/tool permission matrix (`roles.ts`) + the 4 gate invariants + the model catalog** — producer-granted-verifier / gate-disabled / unknown-model = save error. (This replaces "validate against transition table".)
+- **Model picker = our FE home for PR #2's deferred ModelPicker** — consumes `GET /api/providers` + `PUT/DELETE key`; user picks own/other-provider keys; per-agent model.
+- **Live preview screen** consumes the `AkisEvent` stream (per-agent/lane step tree + gate cards + `preview` URL).
+- **Timing: post-defense.** v1 demo (2026-06-12) stays untouched.
+
+## Bug-classes to design OUT
+1. Single source of truth — the `AkisEvent` bus (backend-stamped `ts`); no FE-synthetic events. **Auto-RAG subscribes to this same bus — never a parallel channel.**
+2. Typed contracts — `SessionState`, `IngestRecord`, `WorkflowConfig` all typed; no untyped bags.
+3. Gates structural, never config-disabled — the 4 gates are code-defined; custom agents can't hold gate caps.
+4. RAG decoupled — no `applyChatMemory`-style coupling inside the orchestrator (DI + tool only).
+5. i18n lint gate — no hardcoded Turkish (applies to the Agents tab + live preview).
+6. The PR #1 4-gate contract test (Scenarios A–F) must stay green after our features land (proof we didn't touch the gates).
 
 ## Parallel-session ownership lanes
-- A = BE `orchestrator/fsm` + lifecycle · B = BE `stages/` + `agents/` · C = FE `features/chat`
-- **D = BE `knowledge/`** (auto-RAG) · **E = BE `workflows/` + FE `features/agents/`** (agents/workflows)
-- Freeze cross-session contracts BEFORE dispatch: `TransitionCtx`, `Stage`, `OrchestratorServices`, `ChatScreen`, the 3 FE contexts, plus `KnowledgePort`, `IngestRecord`, `RetrievalResult`, `WorkflowConfig`, `AgentConfig`.
-- BE/FE always separate PRs. Per-session port/DB isolation via `dev-up.sh --session N`.
+- In-flight: PR #1 `feat/agentic-core-gates`, PR #2 `feat/real-providers`.
+- **D = BE `knowledge/`** (auto-RAG: ingestion/retrieval/store + `retrieve_knowledge` tool) · **E = BE `workflows/` + FE `features/agents/`** (roster, workflow presets, model picker, live preview).
+- Shared (read-only) surfaces D/E consume: `roles.ts`, `catalog.ts`, gates, `events/bus.ts`, `di/services.ts`, `/api/providers`.
+- Freeze before dispatch: `KnowledgePort`, `IngestRecord`, `RetrievalResult`, `EmbeddingProvider`, `WorkflowConfig`, `AgentConfig`, `CustomAgentSpec`. BE/FE separate PRs.
 
 ## Gotchas / watch-outs
-- v1 `intermediateState` was an untyped `Record<string,unknown>` read-modify-written in 4+ files → silent no-ops 3 stages away. Always type cross-stage state.
-- v1 orchestrator `emit` callback was wired to `undefined`; real SSE flowed via a separate `pipelineBus` → "refresh gerekiyor" complaints. One stream only.
-- v1 had a parallel Proto path (iteration mode) that skipped Validator+Critic+Trace. Never reintroduce a verification-bypass path.
-- Claude is a generation model, not an embedding model — RAG needs a dedicated `EmbeddingProvider` (Voyage / OpenAI text-embedding-3 / self-hosted).
-- pgvector dimension is fixed by the chosen embedding model → decide the provider before writing the migration.
+- **No FSM exists** — anything referencing `fsm/transitionTable.ts` from the original plan is stale. Validate workflows against `roles.ts` + gates instead.
+- Claude is a generation model, not embeddings — RAG needs a dedicated `EmbeddingProvider` (Voyage / OpenAI text-embedding-3 / self-hosted); reuse the KeyStore for its key.
+- pgvector dimension fixed by the embedding model → decide the provider before the migration.
+- Custom/extra agents must NOT be grantable any gate capability (verifier / `run_tests` / `push_to_github` / token mint) — validate this at save time.
+- Loop default model is `claude-haiku-4-5-20251001` (cost/quota guard); catalog is the single source of model IDs.
+- v1 lessons still apply: never reintroduce a verification-bypass path; one event stream only.
 
 ## Status
-- Design docs + roadmap committed on `claude/akis-agents-rag-system-NDTAH` (PR #3).
-- No implementation yet — M0 (frozen contracts) is the next concrete step, after the 5 open decisions in `docs/roadmap.md` are resolved.
+- Design + roadmap + spec + zero-context review on `claude/akis-agents-rag-system-NDTAH` (PR #3), **rebased onto the agentic core**.
+- No implementation yet — M0 (frozen contracts) is next, after the 6 open decisions in `docs/roadmap.md` and once PR #1 + #2 merge.
