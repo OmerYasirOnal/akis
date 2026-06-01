@@ -66,3 +66,32 @@ class MockTestRunnerImpl implements TestRunner {
 export function createMockTestRunner(cfg?: TestRunConfig): TestRunner {
   return new MockTestRunnerImpl(cfg)
 }
+
+/** Deps for the real runner. */
+export interface RealTestRunnerDeps {
+  sandbox: import('../exec/Sandbox.js').Sandbox
+  spec?: import('@akis/shared').SpecArtifact
+  previewUrl?: string
+  timeoutMs?: number
+}
+
+/**
+ * The REAL test runner (opt-in; only Trace holds it). It delegates the actual
+ * cucumber+playwright execution to `runRealTests` (separate module, returns plain
+ * stats), then — IN THE TRUSTED PARENT — computes the digest over the exact files
+ * and brands the result. The brand stays private to this module, so the heavy
+ * runner module can NEVER forge a TestRunResult; it can only report stats.
+ * Fail-closed semantics live in runRealTests (timeout / missing report / 0 tests
+ * → passed false), and we zero the count unless it genuinely passed, so a non-pass
+ * can never mint a VerifyToken.
+ */
+export function createRealTestRunner(deps: RealTestRunnerDeps): TestRunner {
+  return {
+    async run(files: RepoFile[]): Promise<TestRunResult> {
+      const { runRealTests } = await import('./realRun.js')
+      const r = await runRealTests(files, deps)
+      const testsRun = r.passed ? r.testsRun : 0
+      return brandResult(testsRun, r.passed, digestFiles(files))
+    },
+  }
+}
