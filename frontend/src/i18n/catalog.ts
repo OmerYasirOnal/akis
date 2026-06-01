@@ -16,6 +16,13 @@ export const STRINGS = {
     'agents.saved': 'Workflow saved',
     'agents.default': '(default)',
     'agents.loading': 'Loading providers…',
+    'chat.idle': 'idle',
+    'chat.new': 'New build',
+    'chat.empty.title': 'Describe the app you want to build.',
+    'chat.empty.hint': 'The agents plan, build, verify with real tests, and ship it — live.',
+    'chat.placeholder': 'e.g. a QR-code generator app…',
+    'chat.defaultWorkflow': 'default workflow',
+    'chat.send': 'Build',
   },
   tr: {
     'app.title': 'AKIS · ajan tabanlı geliştirme stüdyosu',
@@ -31,6 +38,13 @@ export const STRINGS = {
     'agents.saved': 'İş akışı kaydedildi',
     'agents.default': '(varsayılan)',
     'agents.loading': 'Sağlayıcılar yükleniyor…',
+    'chat.idle': 'beklemede',
+    'chat.new': 'Yeni geliştirme',
+    'chat.empty.title': 'İnşa etmek istediğin uygulamayı tarif et.',
+    'chat.empty.hint': 'Ajanlar planlar, inşa eder, gerçek testlerle doğrular ve yayınlar — canlı.',
+    'chat.placeholder': 'örn. bir QR kod üretici uygulaması…',
+    'chat.defaultWorkflow': 'varsayılan iş akışı',
+    'chat.send': 'Geliştir',
   },
 } as const
 
