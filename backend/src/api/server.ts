@@ -40,7 +40,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // provider resolves via createProvider (fail-closed; mock only under NODE_ENV=test).
   const services =
     deps.services ??
-    buildServices({ store: new MockSessionStore(), skillsDir: deps.skillsDir ?? defaultSkillsDir(), keyStore: deps.keyStore })
+    buildServices({
+      store: new MockSessionStore(),
+      skillsDir: deps.skillsDir ?? defaultSkillsDir(),
+      keyStore: deps.keyStore,
+      // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
+      ...(env.AKIS_REAL_TESTS === '1' || env.AKIS_REAL_TESTS === 'true' ? { realTests: true } : {}),
+      ...(env.AKIS_RAG === '1' || env.AKIS_RAG === 'true' ? { rag: true } : {}),
+    })
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
 
   // Preview registry: the registry never spawns until POST /sessions/:id/preview is
