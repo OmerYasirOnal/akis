@@ -1,9 +1,11 @@
+import type { SharedContext } from '@akis/shared'
 import type { EventBus } from '../../events/bus.js'
 import type { RepoFile } from '../../di/MockGitHubAdapter.js'
 import type { ApprovedSpec } from '../../gates/specGate.js'
 import type { LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
 import { parseAIJson } from './critic/json-extract.js'
+import { renderKnowledge } from './context-prompt.js'
 
 export interface ProtoInput {
   sessionId: string
@@ -11,6 +13,8 @@ export interface ProtoInput {
   /** Gate 1: Proto cannot run without an ApprovedSpec token (only approve() mints it). */
   approved: ApprovedSpec
   feedback?: string
+  /** Read view of the shared context (F2-AC16). Data only — no gate capability. */
+  ctx?: SharedContext
 }
 
 const PROTO_SYSTEM = [
@@ -40,6 +44,7 @@ export class ProtoAgent {
       `SPEC: ${input.approved.spec.title}`,
       input.approved.spec.body,
       input.feedback ? `\nADDRESS THIS REVIEW FEEDBACK:\n${input.feedback}` : '',
+      renderKnowledge(input.ctx),
     ].join('\n')
 
     let res

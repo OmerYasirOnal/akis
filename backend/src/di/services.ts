@@ -13,6 +13,7 @@ import { loadSkills, type Skill } from '../skills/registry.js'
 import type { LlmProvider } from '../agent/LlmProvider.js'
 import { createProvider } from '../agent/providers/createProvider.js'
 import { makeGenerateText } from '../agent/criticBackend.js'
+import { NullKnowledgePort, type KnowledgePort } from '../knowledge/KnowledgePort.js'
 
 export interface OrchestratorServices {
   store: SessionStore
@@ -26,6 +27,8 @@ export interface OrchestratorServices {
   approvalAuthority: ApprovalAuthority
   skills: Skill[]
   providerName: string
+  /** Read-only knowledge retrieval that feeds SharedContext (NullKnowledgePort until RAG). */
+  knowledge: KnowledgePort
 }
 
 /**
@@ -61,6 +64,8 @@ export interface BuildServicesOptions {
   keyStore?: { get(provider: string): string | undefined }
   /** Injectable event bus (e.g. a small-cap bus to exercise SSE overflow/resume). */
   bus?: EventBus
+  /** Knowledge port feeding SharedContext. Defaults to NullKnowledgePort (no RAG yet). */
+  knowledge?: KnowledgePort
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
@@ -122,5 +127,6 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
     providerName,
+    knowledge: opts.knowledge ?? new NullKnowledgePort(),
   }
 }
