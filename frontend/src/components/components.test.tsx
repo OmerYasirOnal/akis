@@ -59,4 +59,10 @@ describe('PreviewPanel', () => {
     render(<PreviewPanel view={emptyView('s1')} />)
     expect(screen.getByText(/Preview appears after a verified push/)).toBeInTheDocument()
   })
+  it('renders a non-http(s) (javascript:) url as plain text, never a clickable href (XSS guard)', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { url: 'javascript:alert(1)', ready: true } }
+    const { container } = render(<PreviewPanel view={view} />)
+    expect(screen.getByText('javascript:alert(1)')).toBeInTheDocument()
+    expect(container.querySelector('a')).toBeNull() // no anchor → no js: sink
+  })
 })

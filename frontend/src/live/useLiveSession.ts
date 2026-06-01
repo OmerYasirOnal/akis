@@ -38,7 +38,7 @@ export function useLiveSession(
     client.connect(`${baseUrl}/sessions/${sessionId}/events`, {
       onEvent: (e, seq) => { bySeq.current.set(seq, e); refold() },
       onReset: data => {
-        client.lastSeq = data.head // advance cursor so a later drop resumes correctly
+        client.lastSeq = data.head // observability only — EventSource owns Last-Event-ID (advanced by the reset frame's id:)
         void api.getSessionLog(sessionId).then(log => {
           if (cancelled) return
           for (const { seq, event } of log) bySeq.current.set(seq, event) // merge (dedup by seq)

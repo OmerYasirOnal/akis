@@ -11,6 +11,9 @@ import { TestStats } from './TestStats.js'
 export function PreviewPanel({ view }: { view: SessionView }) {
   const url = view.preview.url
   const embeddable = !!url && url.startsWith('/preview/')
+  // Scheme allowlist: never render an agent-influenced URL as a live href/iframe
+  // unless it is http(s) or our own /preview/ path — blocks a javascript:/data: sink.
+  const safeLink = !!url && /^https?:\/\//i.test(url)
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="flex items-center justify-between">
@@ -28,7 +31,9 @@ export function PreviewPanel({ view }: { view: SessionView }) {
         ) : url ? (
           <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
             <span className="text-xs text-slate-500">Artifact pushed to</span>
-            <a href={url} target="_blank" rel="noreferrer" className="break-all text-sm text-cyan-300 underline">{url}</a>
+            {safeLink
+              ? <a href={url} target="_blank" rel="noreferrer" className="break-all text-sm text-cyan-300 underline">{url}</a>
+              : <span className="break-all text-sm text-slate-300">{url}</span>}
             <span className="text-[11px] text-slate-600">A live in-browser preview appears here once the local run env is enabled.</span>
           </div>
         ) : (

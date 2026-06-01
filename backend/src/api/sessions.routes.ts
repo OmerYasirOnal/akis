@@ -28,7 +28,9 @@ const CONFLICT_ERRORS = new Set([
 function sendError(reply: FastifyReply, err: unknown): FastifyReply {
   const name = err instanceof Error ? err.name : 'Error'
   const message = err instanceof Error ? err.message : String(err)
-  if (message.includes('not found')) return reply.code(404).send({ error: message, code: 'NotFound' })
+  // Narrow to the orchestrator/store "session <id> not found" message specifically,
+  // so an unrelated provider error (e.g. "model not found") never mismaps to 404.
+  if (/^session .+ not found$/.test(message)) return reply.code(404).send({ error: message, code: 'NotFound' })
   if (CONFLICT_ERRORS.has(name)) return reply.code(409).send({ error: message, code: name })
   return reply.code(500).send({ error: message, code: 'Internal' }) // message only, never internals/keys
 }
@@ -77,8 +79,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     if (services.bus.head(id) === 0 && !(await services.store.get(id))) {
       return reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
     }
-    const { events } = services.bus.replaySince(id, 0)
-    return reply.send({ events, head: services.bus.head(id) })
+    const { events, dropped } = services.bus.replaySince(id, 0)
+    // `truncated` = the buffer already evicted head events (a >cap-event session), so
+    // this log is a tail, not the full history — the client can surface that honestly.
+    return reply.send({ events, head: services.bus.head(id), truncated: dropped })
   })
 
   // Resumable SSE stream (CF1 + CF5 / F2-AC12).
@@ -119,6 +123,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
         closed = true
         if (ping) clearInterval(ping)
         unsub()
+        try { raw.end() } catch { /* socket already gone */ } // release the FD on overflow-drop too
       }
       // All writes go through here: a throw (write to a destroyed socket) must
       // NEVER propagate into bus.emit()'s listener loop — it cleans up instead.
