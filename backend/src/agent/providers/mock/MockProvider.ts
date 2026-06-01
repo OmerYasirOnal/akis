@@ -20,7 +20,11 @@ function defaultCriticJson(isCode: boolean): string {
 }
 
 /** A valid Scribe spec JSON so the live agent path works deterministically under the mock. */
-function defaultScribeJson(idea: string): string {
+function defaultScribeJson(rawIdea: string): string {
+  // The agent appends a RAG grounding block to the user content; the mock would
+  // otherwise echo it into the title. Use only the original idea (a real LLM writes
+  // a clean title regardless). Also cap length so the demo title stays tidy.
+  const idea = (rawIdea.split('\n\nRELEVANT PRIOR KNOWLEDGE')[0] ?? rawIdea).trim().slice(0, 80) || 'app'
   return JSON.stringify({
     kind: 'spec',
     title: `Spec for: ${idea}`,
