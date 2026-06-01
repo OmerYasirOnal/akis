@@ -4,7 +4,7 @@ import { ScribeAgent } from '../../src/orchestrator/subagents/ScribeAgent.js'
 import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { TraceAgent } from '../../src/orchestrator/subagents/TraceAgent.js'
 import { MockTestRunner } from '../../src/verify/TestRunner.js'
-import { mintApprovedSpec } from '../../src/gates/specGate.js'
+import { mintApprovedSpec, brandApproval, SpecNotApprovedError } from '../../src/gates/specGate.js'
 import { EventBus } from '../../src/events/bus.js'
 import { initialSession } from '@akis/shared'
 import type { AkisEvent } from '@akis/shared'
@@ -43,11 +43,18 @@ describe('ScribeAgent', () => {
 describe('ProtoAgent', () => {
   it('requires an ApprovedSpec token and returns files (does not push)', async () => {
     const gh = new MockGitHubAdapter(); await gh.createRepo('s1')
-    const approved = mintApprovedSpec({ ...initialSession('s1', 'i'), approvedSpec: { title: 't', body: 'b' } })
+    // ApprovedSpec can only come from mintApprovedSpec, which needs an ApprovalToken
+    // built by brandApproval (the approve() path).
+    const session = { ...initialSession('s1', 'i'), approval: brandApproval({ title: 't', body: 'b' }) }
+    const approved = mintApprovedSpec(session)
     const proto = new ProtoAgent({ bus: new EventBus() })
     const out = await proto.run({ sessionId: 's1', laneId: 'main', approved })
     expect(out.files.length).toBeGreaterThan(0)
     expect(gh.read('s1')).toHaveLength(0) // Proto never pushes — push happens behind the gate
+  })
+
+  it('Gate 1: mintApprovedSpec throws without a valid approval token', () => {
+    expect(() => mintApprovedSpec(initialSession('s1', 'i'))).toThrow(SpecNotApprovedError)
   })
 })
 

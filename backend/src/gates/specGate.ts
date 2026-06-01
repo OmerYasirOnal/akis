@@ -1,28 +1,36 @@
-import type { SessionState, SpecArtifact } from '@akis/shared'
+import type { SessionState, ApprovalToken, SpecArtifact } from '@akis/shared'
+import { digestSpec } from '../verify/digest.js'
 
 /**
  * Gate 1 — spec-approval (structural).
  *
- * `ApprovedSpec` is a branded token mintable only from a session that already
- * carries an `approvedSpec` (which only the human `approve()` sets). `ProtoAgent.run`
- * requires this token instead of a plain SpecArtifact, so code-write cannot be
- * called — it cannot even type-check — without an approved spec. No direct
- * caller of the producer can side-step approval.
+ * `ApprovalToken` (shared, nominal-branded) is minted ONLY here, only from a
+ * session whose `approval` token is present and matches its spec — and that
+ * `approval` token is itself written only by the store's dedicated approval
+ * method (so a generic `store.update({...})` patch cannot fabricate it).
+ * `ProtoAgent.run` requires the returned `ApprovedSpec`, so code-write cannot run
+ * without genuine human approval.
  */
 export type ApprovedSpec = {
-  readonly __brand: 'ApprovedSpec'
   readonly spec: SpecArtifact
+  readonly token: ApprovalToken
 }
 
 export class SpecNotApprovedError extends Error {
   constructor() {
-    super('Cannot mint ApprovedSpec: session has no approved spec (Gate 1)')
+    super('Cannot proceed to code-write: session has no valid approval (Gate 1)')
     this.name = 'SpecNotApprovedError'
   }
 }
 
-/** Mint requires session.approvedSpec to be present (set only by approve()). */
+/** Build an ApprovalToken for a reviewed spec. Single audited brand cast. */
+export function brandApproval(spec: SpecArtifact): ApprovalToken {
+  return { spec, specDigest: digestSpec(spec) } as unknown as ApprovalToken
+}
+
+/** Mint requires a present approval token whose digest matches its spec. */
 export function mintApprovedSpec(session: SessionState): ApprovedSpec {
-  if (!session.approvedSpec) throw new SpecNotApprovedError()
-  return { __brand: 'ApprovedSpec', spec: session.approvedSpec }
+  const t = session.approval
+  if (!t || t.specDigest !== digestSpec(t.spec)) throw new SpecNotApprovedError()
+  return { spec: t.spec, token: t }
 }

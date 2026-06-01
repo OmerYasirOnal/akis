@@ -1,9 +1,10 @@
 import type { VerifyToken } from './verify.js'
+import type { ApprovalToken } from './approval.js'
 
 export type SessionStatus =
   | 'composing' | 'awaiting_spec_approval' | 'building'
   | 'awaiting_critic_resolution' | 'awaiting_push_confirm'
-  | 'done' | 'failed' | 'cancelled'
+  | 'done' | 'push_failed' | 'failed' | 'cancelled'
 
 export interface SpecArtifact { title: string; body: string }
 export interface CodeArtifact { files: { filePath: string; content: string }[] }
@@ -13,13 +14,17 @@ export interface SessionState {
   status: SessionStatus
   idea: string
   spec?: SpecArtifact
-  approvedSpec?: SpecArtifact   // set only by human approve(); Gate 1 keys on this
+  /**
+   * Gate 1: approval is a branded ApprovalToken (not a plain spec field), so a
+   * generic store patch cannot fabricate it. Set only via the store's dedicated
+   * approval method, which the orchestrator's approve() calls.
+   */
+  approval?: ApprovalToken
   code?: CodeArtifact
   /**
-   * Gate 3: verification is the PRESENCE of a branded VerifyToken, not a free
-   * boolean. A VerifyToken can only be minted from a real passing test run, and
-   * cannot be written as a literal, so the store cannot be made to claim
-   * verification without genuine proof. Persisted, so it survives restart.
+   * Gate 3: verification is the PRESENCE of a branded VerifyToken (real ≥1-test
+   * pass), never a free boolean. The brand cannot be written as a literal, so the
+   * store cannot be made to claim verification. Persisted, so it survives restart.
    */
   verifyToken?: VerifyToken
   version: number               // optimistic lock

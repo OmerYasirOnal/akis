@@ -4,22 +4,22 @@ import type { TestRunResult } from './TestRunner.js'
 export type { VerifyToken }
 
 /**
- * Gate 3 — "verified" = a real test run. (Also enforces Gate 2 by capability:
- * only the verifier holds a TestRunner, so only the verifier can obtain the
- * branded TestRunResult required to mint this token.)
+ * Gate 3 — "verified" = a real test run. (Also Gate 2 by capability: only the
+ * verifier holds a TestRunner, so only the verifier can obtain the branded
+ * TestRunResult this requires.)
  *
- * `mintVerifyToken` is the ONLY producer of a VerifyToken, and it FAILS CLOSED:
- * anything other than a genuine ≥1-test pass returns null (no token → not
- * verified → no push). The token binds to the session AND a digest of the exact
- * tested code, so verified-code cannot diverge from pushed-code.
+ * `mintVerifyToken` is the single chokepoint that produces a VerifyToken, and it
+ * FAILS CLOSED: only a genuine ≥1-test pass yields a token (else null → not
+ * verified → no push). It requires a branded `TestRunResult` (unforgeable as a
+ * literal), so a caller must have actually run a TestRunner to get here. The
+ * token binds the session id + a digest of the tested code.
  *
- * The token is persisted in SessionState (`verifyToken`); the session's verified
- * state is the PRESENCE of that token (shared `isVerified`), never a free
- * boolean — so the store cannot be made to claim verification without proof.
+ * The single audited brand cast lives here; the brand symbol is private to
+ * @akis/shared so no other module can apply it.
  */
 export function mintVerifyToken(sessionId: string, codeDigest: string, result: TestRunResult): VerifyToken | null {
   if (result.testsRun >= 1 && result.passed === true) {
-    return { __brand: 'VerifyToken', sessionId, testsRun: result.testsRun, codeDigest }
+    return { sessionId, testsRun: result.testsRun, codeDigest } as unknown as VerifyToken
   }
   return null
 }

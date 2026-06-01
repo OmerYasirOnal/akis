@@ -81,17 +81,13 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(Error) // blocked: no token / wrong status
   })
 
-  it('C2 — Gate 2/3: the store cannot be made to claim verification without a real token', async () => {
-    const { orch, services } = make({ testsRun: 0 })
-    const s = await orch.start({ idea: 'todo' })
-    await orch.approve(s.id)
-    await orch.runToVerification(s.id)
-    // Try to force verification through the store. A VerifyToken cannot be
-    // fabricated as a literal (branded), and mintVerifyToken fails closed on 0
-    // tests — so there is no token to write. confirmPush stays blocked.
-    const noToken = mintVerifyToken(s.id, 'whatever', { __brand: 'TestRunResult', testsRun: 0, passed: true })
-    expect(noToken).toBeNull()
-    expect(isVerified((await services.store.get(s.id))!)).toBe(false)
+  it('C2 — Gate 3: mintVerifyToken fails closed for a real 0-test run (no token to persist)', async () => {
+    // The only way to get a TestRunResult is to run a runner. A 0-test result
+    // yields no token — so there is nothing to record as verification, and the
+    // store has no generic-patch path to set verifyToken/approval (SessionPatch
+    // omits them; asserted at the type level below).
+    const result = await new MockTestRunner({ testsRun: 0, passed: true }).run([])
+    expect(mintVerifyToken('s1', 'd', result)).toBeNull()
   })
 
   it('D — Gate 3: tests ran but failed => not verified, push impossible', async () => {
@@ -131,5 +127,24 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     expect(new Set(events.map(e => e.laneId)).size).toBeGreaterThanOrEqual(2)
   })
 })
+
+// ── Type-level tripwires: the gate tokens are nominally branded and the gate
+// fields are not writable through the generic store patch. These FAIL TO COMPILE
+// if the brands are weakened back to string-literal fields. ──────────────────
+import type { SessionPatch } from '../../src/store/SessionStore.js'
+import type { ApprovedPush } from '../../src/gates/pushGate.js'
+
+// @ts-expect-error — ApprovedPush cannot be written as a literal (nominal brand)
+const _forgePush: ApprovedPush = { sessionId: 's1' }
+void _forgePush
+// @ts-expect-error — even with a fake __brand string, the nominal brand rejects it
+const _forgePush2: ApprovedPush = { __brand: 'ApprovedPush', sessionId: 's1' }
+void _forgePush2
+// @ts-expect-error — SessionPatch must not allow writing the verification field
+const _patchVerify: SessionPatch = { verifyToken: undefined }
+void _patchVerify
+// @ts-expect-error — SessionPatch must not allow writing the approval field
+const _patchApproval: SessionPatch = { approval: undefined }
+void _patchApproval
 
 void SpecNotApprovedError

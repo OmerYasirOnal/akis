@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { mintVerifyToken } from '../../src/verify/VerifyToken.js'
 import { MockTestRunner } from '../../src/verify/TestRunner.js'
 import { digestFiles } from '../../src/verify/digest.js'
-import { mintApprovedSpec, SpecNotApprovedError } from '../../src/gates/specGate.js'
+import { mintApprovedSpec, brandApproval, SpecNotApprovedError } from '../../src/gates/specGate.js'
 import { mintApprovedPush, pushToGitHub, NotVerifiedError, CodeMismatchError } from '../../src/gates/pushGate.js'
 import { initialSession, isVerified } from '@akis/shared'
 import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
@@ -14,8 +14,8 @@ describe('Gate 1 — ApprovedSpec token', () => {
   it('cannot be minted without an approved spec', () => {
     expect(() => mintApprovedSpec(initialSession('s1', 'idea'))).toThrow(SpecNotApprovedError)
   })
-  it('mints once the session carries an approvedSpec', () => {
-    const s = { ...initialSession('s1', 'idea'), approvedSpec: { title: 't', body: 'b' } }
+  it('mints once the session carries a valid approval token', () => {
+    const s = { ...initialSession('s1', 'idea'), approval: brandApproval({ title: 't', body: 'b' }) }
     expect(mintApprovedSpec(s).spec.title).toBe('t')
   })
 })
@@ -35,7 +35,8 @@ describe('Gate 3 — VerifyToken (fail-closed)', () => {
   })
   it('default MockTestRunner fails closed (no auto-verify)', async () => {
     const def = await new MockTestRunner().run(FILES)
-    expect(def).toEqual({ __brand: 'TestRunResult', testsRun: 0, passed: false })
+    expect(def.testsRun).toBe(0)
+    expect(def.passed).toBe(false)
     expect(mintVerifyToken('s1', DIGEST, def)).toBeNull()
   })
 })
@@ -69,12 +70,17 @@ describe('Gate 4 — pushGate', () => {
   })
 })
 
-// @ts-expect-error — a bare object is not an ApprovedPush (branded); push without a minted token does not type-check.
-const _illegalPush: import('../../src/gates/pushGate.js').ApprovedPush = { sessionId: 's1' }
+// ── Nominal-brand tripwires: a FULL literal WITH the fake brand string must STILL
+// fail to type-check (this is what review #3 proved was broken before). ──────────
+// @ts-expect-error — ApprovedPush is nominally branded; no literal can satisfy it.
+const _illegalPush: import('../../src/gates/pushGate.js').ApprovedPush = { __brand: 'ApprovedPush', sessionId: 's1' }
 void _illegalPush
-// @ts-expect-error — a bare object is not a TestRunResult (branded); a producer cannot fabricate test evidence.
-const _illegalResult: import('../../src/verify/TestRunner.js').TestRunResult = { testsRun: 1, passed: true }
+// @ts-expect-error — TestRunResult is nominally branded; a producer cannot fabricate evidence.
+const _illegalResult: import('../../src/verify/TestRunner.js').TestRunResult = { __brand: 'TestRunResult', testsRun: 1, passed: true }
 void _illegalResult
-// @ts-expect-error — a bare object is not a VerifyToken (branded); the store cannot fabricate verification.
-const _illegalVerify: import('@akis/shared').VerifyToken = { sessionId: 's1', testsRun: 1, codeDigest: 'd' }
+// @ts-expect-error — VerifyToken is nominally branded; the store cannot fabricate verification.
+const _illegalVerify: import('@akis/shared').VerifyToken = { __brand: 'VerifyToken', sessionId: 's1', testsRun: 1, codeDigest: 'd' }
 void _illegalVerify
+// @ts-expect-error — ApprovalToken is nominally branded; approval cannot be forged.
+const _illegalApproval: import('@akis/shared').ApprovalToken = { __brand: 'ApprovalToken', spec: { title: 't', body: 'b' }, specDigest: 'd' }
+void _illegalApproval

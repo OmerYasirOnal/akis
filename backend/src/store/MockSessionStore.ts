@@ -1,5 +1,5 @@
-import type { SessionState } from '@akis/shared'
-import type { SessionStore } from './SessionStore.js'
+import type { SessionState, ApprovalToken, VerifyToken } from '@akis/shared'
+import type { SessionStore, SessionPatch } from './SessionStore.js'
 
 export class MockSessionStore implements SessionStore {
   private map = new Map<string, SessionState>()
@@ -13,14 +13,26 @@ export class MockSessionStore implements SessionStore {
     return s ? { ...s } : undefined
   }
 
-  async update(id: string, patch: Partial<SessionState>, expectedVersion: number): Promise<SessionState> {
+  private commit(id: string, expectedVersion: number, mutate: (cur: SessionState) => SessionState): SessionState {
     const cur = this.map.get(id)
     if (!cur) throw new Error(`session ${id} not found`)
     if (cur.version !== expectedVersion) {
       throw new Error(`version conflict: ${cur.version} !== ${expectedVersion}`)
     }
-    const next = { ...cur, ...patch, version: cur.version + 1 }
+    const next = { ...mutate(cur), version: cur.version + 1 }
     this.map.set(id, next)
     return { ...next }
+  }
+
+  async update(id: string, patch: SessionPatch, expectedVersion: number): Promise<SessionState> {
+    return this.commit(id, expectedVersion, cur => ({ ...cur, ...patch }))
+  }
+
+  async recordApproval(id: string, approval: ApprovalToken, expectedVersion: number): Promise<SessionState> {
+    return this.commit(id, expectedVersion, cur => ({ ...cur, approval }))
+  }
+
+  async recordVerification(id: string, token: VerifyToken, expectedVersion: number): Promise<SessionState> {
+    return this.commit(id, expectedVersion, cur => ({ ...cur, verifyToken: token }))
   }
 }

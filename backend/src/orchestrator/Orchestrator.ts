@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { initialSession, isVerified, type SessionState } from '@akis/shared'
-import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
+import { mintApprovedSpec, brandApproval, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
 import { nextTs } from '../events/clock.js'
 import type { OrchestratorServices } from '../di/services.js'
@@ -22,14 +22,16 @@ const MAX_ITERATE = 3
 
 /**
  * Conversational orchestrator. It decides the flow (no rigid FSM) and narrates,
- * but the 4 gates are STRUCTURAL — enforced by branded tokens + the verifier's
- * exclusive TestRunner, not by discipline:
- *  - Gate 1: ProtoAgent.run requires an ApprovedSpec token (only approve() mints it).
- *  - Gate 2: only Trace holds a TestRunner, so only Trace can produce a VerifyToken.
- *  - Gate 3: verification = the presence of a persisted VerifyToken (real ≥1-test
- *    pass), never a free boolean or an event; the store cannot fabricate it.
- *  - Gate 4: pushToGitHub requires ApprovedPush, mintable only from the session's
- *    VerifyToken with a digest matching the pushed files.
+ * but the 4 gates are STRUCTURAL — branded capability tokens + a verifier-only
+ * TestRunner, not discipline:
+ *  - Gate 1: code-write needs an ApprovedSpec, mintable only from the session's
+ *    ApprovalToken, which only the store's recordApproval (via approve()) writes.
+ *  - Gate 2: only Trace holds a TestRunner, so only Trace can produce the branded
+ *    TestRunResult a VerifyToken requires.
+ *  - Gate 3: verification = a persisted, nominal-branded VerifyToken (real
+ *    ≥1-test pass); it cannot be written as a literal or via a generic patch.
+ *  - Gate 4: push needs an ApprovedPush, mintable only from the VerifyToken with
+ *    a digest matching the pushed files.
  */
 export class Orchestrator {
   constructor(private s: OrchestratorServices) {}
@@ -74,8 +76,9 @@ export class Orchestrator {
     if (!cur) throw new Error(`session ${id} not found`)
     if (cur.status !== 'awaiting_spec_approval') throw new WrongStatusError('approve', cur.status)
     if (!cur.spec) throw new Error('no spec to approve')
-    // Bind approval to the exact reviewed spec content.
-    const session = await this.s.store.update(id, { approvedSpec: cur.spec, status: 'building' }, cur.version)
+    // Gate 1: persist a branded ApprovalToken bound to the exact reviewed spec.
+    const approving = await this.s.store.recordApproval(id, brandApproval(cur.spec), cur.version)
+    const session = await this.s.store.update(id, { status: 'building' }, approving.version)
     this.emitGate(id, 'spec_approval', 'satisfied')
     return session
   }
@@ -85,8 +88,7 @@ export class Orchestrator {
     if (!session) throw new Error(`session ${id} not found`)
     if (session.status !== 'building') throw new WrongStatusError('build', session.status)
 
-    // Gate 1 (structural): mint throws SpecNotApprovedError unless approve() ran.
-    // ProtoAgent cannot even be called without this token.
+    // Gate 1 (structural): throws SpecNotApprovedError unless a valid approval token exists.
     const approved = mintApprovedSpec(session)
 
     let feedback: string | undefined
@@ -126,11 +128,11 @@ export class Orchestrator {
       this.narrate(id, `Iterating (attempt ${attempt}) on Proto with feedback.`)
     }
 
-    // Gate 2 + 3: only Trace holds a TestRunner; verification is the presence of
-    // the persisted VerifyToken it returns (never a free boolean / event).
+    // Gate 2 + 3: only Trace holds a TestRunner; verification is the persisted token.
     const token = await this.s.trace.run({ sessionId: id, laneId: 'verify', files: lastFiles })
     if (token) {
-      session = await this.s.store.update(id, { verifyToken: token, status: 'awaiting_push_confirm' }, session.version)
+      const verified = await this.s.store.recordVerification(id, token, session.version)
+      session = await this.s.store.update(id, { status: 'awaiting_push_confirm' }, verified.version)
       this.emitGate(id, 'push_confirm', 'awaiting')
     } else {
       session = await this.s.store.update(id, { status: 'building' }, session.version)
@@ -143,15 +145,22 @@ export class Orchestrator {
     const cur = await this.s.store.get(id)
     if (!cur) throw new Error(`session ${id} not found`)
     if (cur.status === 'done') throw new AlreadyPushedError()
-    if (cur.status !== 'awaiting_push_confirm') throw new WrongStatusError('push', cur.status)
+    if (cur.status !== 'awaiting_push_confirm' && cur.status !== 'push_failed') throw new WrongStatusError('push', cur.status)
 
     const files = cur.code?.files ?? []
     // Gate 4: mint requires the persisted VerifyToken AND a digest match; throws otherwise.
     const token = mintApprovedPush(cur, files)
-    // Persist terminal status FIRST (atomic, optimistic-locked) so a duplicate
-    // call cannot slip past the guard, THEN perform the idempotent push.
+
+    // Push FIRST. Only persist 'done' after a successful push, so a push failure
+    // leaves a retryable state (push_failed) and never loses the code.
+    try {
+      await pushToGitHub(token, this.s.github, files)
+    } catch (err) {
+      await this.s.store.update(id, { status: 'push_failed' }, cur.version)
+      this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      throw err
+    }
     const session = await this.s.store.update(id, { status: 'done' }, cur.version)
-    await pushToGitHub(token, this.s.github, files)
     this.emitGate(id, 'push_confirm', 'satisfied')
     this.s.bus.emit({ kind: 'done', verified: isVerified(session), provider: this.s.providerName, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     return session
