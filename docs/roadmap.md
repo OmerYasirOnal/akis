@@ -13,13 +13,29 @@
 | # | Milestone | Lane | Depends on | Exit criterion |
 |---|---|---|---|---|
 | M0 | Frozen contracts + migration | D + E | #1 & #2 merged | Interfaces merged; `knowledge_chunks` migration reserved; no behavior |
-| M1 | Auto-RAG core (`retrieve_knowledge` tool, flagged) | D (BE `knowledge/`) | M0 | ingest→retrieve round-trip + golden-eval green; tool callable by AKIS/Scribe/ASK behind flag |
+| M1 | Auto-RAG core (`retrieve_knowledge` tool, flagged) | D (BE `knowledge/`) | M0, **CF2** (else DI-service fallback) | ingest→retrieve round-trip + golden-eval green; tool callable by AKIS/Scribe/ASK behind flag |
 | M2 | Remaining RAG sources + rerank | D | M1 | repo + upload sources live; dedup/tenancy hardened |
-| M3 | Agents tab (read-only) + model picker | E (FE) | M0 | roster (AKIS+4) visible; per-agent model assigned via `/api/providers` |
-| M4 | Workflow config + validation + custom agents | E (BE `workflows/`) | M0, M3 | `WorkflowConfig` versioned; validates vs roles matrix + gates + catalog |
-| M5 | Workflow builder + live preview UI | E (FE) | M4 | compose/save/select; live AkisEvent preview + gate cards |
+| M3 | Agents tab (read-only) + model picker | E (FE) | M0, **CF1, CF3** | roster (AKIS+4) visible; per-agent model assigned via `/api/providers` |
+| M4 | Workflow config + validation + custom agents | E (BE `workflows/`) | M0, M3, **CF4** | `WorkflowConfig` versioned; validates vs roles matrix + gates + catalog |
+| M5 | Workflow builder + live preview UI | E (FE) | M4, **CF1, CF5** (+CF2 for real steps) | compose/save/select; resumable live AkisEvent preview + gate cards |
 
 Lanes: **D** = BE `knowledge/`; **E** = BE `workflows/` + FE `features/agents/`. BE/FE always separate PRs.
+
+---
+
+## ⚠️ Core Foundations (upstream prerequisites — see `docs/architecture-review.md`)
+A code review of the implementation found seams our plan assumed are **not built yet**. These are owned by the agentic-core lanes (A/B) — coordinate, don't assume. Each blocks the milestone noted:
+
+| CF | What | Blocks |
+|---|---|---|
+| CF1 | Orchestrator HTTP routes + **SSE endpoint** (`GET /sessions/:id/events`) | M5, usability |
+| CF2 | **Real** provider-backed sub-agents + agent-loop/tool-dispatch seam + emit `tool_call`/`tool_result`/`preview` | M1 (RAG tool), M5 |
+| CF3 | **Per-agent** provider/model wiring | M3 (picker binding) |
+| CF4 | **Data-driven roles + permission matrix + agent registry** | M4 (custom agents/presets) |
+| CF5 | **Resumable** stream (per-session `seq` + buffer + `Last-Event-ID`) | M5 reliability |
+| CF6 | Core hardening (confirmPush atomicity, verify-capability wrap, fail-closed providers) | "flawless operation" |
+
+**Fallback if a CF isn't ready:** RAG ships as a DI service (agent calls it directly) not an LLM tool; model picker ships read-only until CF3.
 
 ---
 
