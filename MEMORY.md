@@ -68,6 +68,13 @@ A deep code review of `feat/real-providers` found:
 - **→ Core Foundations CF1–CF6** added as upstream prerequisites (owned by core lanes A/B); my M1/M3/M4/M5 depend on them. Fallbacks: RAG as DI service (not tool), model picker read-only, until the CF lands.
 - **New ACs:** F1-AC17 (per-session ingest subscription), F2-AC12 (resumable stream), F2-AC13 (bounded loop), F2-AC14 (least-privilege tool scope), F2-AC15 (observability), X-AC6 (fail-closed providers).
 
+## Owner requirements (2026-06-01) + coordination (`docs/coordination-notes.md`)
+- **Default Claude provider — live by default.** Anthropic is the DEFAULT provider so every agent (AKIS + Scribe/Proto/Trace/Critic) runs on a real model out of the box. Mock only for `NODE_ENV=test` / explicit opt-in. **Key from env (`ANTHROPIC_API_KEY`) or KeyStore — NEVER hardcoded/committed.** Loop default model `claude-haiku-4-5`; model picker overrides per agent.
+- **Live agents (CF2):** Scribe/Proto/Trace must actually call the LLM (today stubs) + emit `tool_call`/`tool_result`/`preview` events.
+- **Shared context environment:** a typed `SharedContext` per session = `SessionState` + `AkisEvent` log + retrieved knowledge (RAG) + a typed scratchpad (NO untyped blob). All agents read it; AKIS dispatches sub-agents with a read view; agents write back only via typed events/returns. RAG `retrieve_knowledge` feeds it.
+- New ACs: F2-AC16 (shared context), F2-AC17 (AKIS dispatch w/ context), CORE-AC1 (live agents), CORE-AC2 (default Claude, fail-closed), CORE-AC3 (no committed keys).
+- **Verified:** no real key/`.env` ever committed on `feat/real-providers` (only `.env.example`). The other session's gitignore hardening was preventive, not a leak cleanup.
+
 ## Status
 - Design + roadmap + spec + zero-context review on `claude/akis-agents-rag-system-NDTAH` (PR #3), **rebased onto the agentic core**.
 - No implementation yet — M0 (frozen contracts) is next, after the 6 open decisions in `docs/roadmap.md` and once PR #1 + #2 merge.

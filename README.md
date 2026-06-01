@@ -12,6 +12,7 @@ Clean rebuild of [AKIS](../akis-platform) — an AI agent orchestration engine w
 5. **`docs/roadmap.md`** — milestone/phase plan (M0–M5) for the RAG & Agents work; mirrored as GitHub issues.
 6. **`MEMORY.md`** — durable decision + gotcha index; read first to recover context fast.
 7. **`docs/architecture-review.md`** — review of the agentic core + plan against the goals (flawless / real-time / dynamic / quality); Core Foundations prerequisites + added acceptance criteria.
+8. **`docs/coordination-notes.md`** — cross-session notes for the agentic-core/providers session: live agents, default Claude provider, shared context environment.
 
 ## One-line thesis of the design
 Don't go more *agentic* — go more *explicit and verifiable*. Keep the FSM/verification chain (it's the thesis), keep the monolith **app** but split the monolith **files**, and put flexibility at the edges (verified iterate loop + free ASK/CHAT), never in the spine.
