@@ -62,6 +62,28 @@ describe('RAG feature flag (F1-AC11) + zero-touch ingestion (F1-AC1/AC17)', () =
     expect(bus.listenerCount(s.id)).toBe(0) // no dead listener left behind
   })
 
+  it('ingestion sink unsubscribes on a terminal session/failed (no leak on the failure path)', () => {
+    const bus = new EventBus()
+    const rag = buildRag({ bus, queue: { backoffMs: () => 0 } })
+    rag.sink.subscribeSession('s1')
+    expect(bus.listenerCount('s1')).toBe(1)
+    bus.emit({ kind: 'session', status: 'failed', agent: 'orchestrator', laneId: 'main', sessionId: 's1', ts: 1 })
+    expect(bus.listenerCount('s1')).toBe(0)
+  })
+
+  it('orchestrator emits session/failed on an unrecoverable critic failure (so the sink can close out)', async () => {
+    // A provider that returns non-JSON for the reviewer forces the critic into an error.
+    const provider = { name: 'fake', model: 'm', async chat(): Promise<{ text: string }> { return { text: 'not json' } } }
+    const store = new MockSessionStore()
+    let createdId = ''
+    const origCreate = store.create.bind(store)
+    store.create = async s => { createdId = s.id; return origCreate(s) }
+    const services = buildServices({ store, skillsDir, provider })
+    const orch = new Orchestrator(services)
+    await expect(orch.start({ idea: 'todo' })).rejects.toThrow()
+    expect(services.bus.recent(createdId).some(e => e.kind === 'session' && e.status === 'failed')).toBe(true)
+  })
+
   it('RagKnowledgePort is read-only (F1-AC9): no mint/approve/gate capability', () => {
     const rag = buildRag({ bus: new EventBus() })
     const keys = Object.getOwnPropertyNames(Object.getPrototypeOf(rag.port))

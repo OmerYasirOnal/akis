@@ -153,5 +153,6 @@ describe('CONTRACT: resumable SSE (CF5 / F2-AC12)', () => {
     // Client last saw seq 1, which has been evicted -> must be told to reset.
     const frames = await collectFrames(`${base}/sessions/${sid}/events`, { 'Last-Event-ID': '1' })
     expect(frames[0]?.event).toBe('reset')
+    expect(frames[0]?.id).toBe(services.bus.head(sid)) // reset carries id: head → advances Last-Event-ID
   })
 })

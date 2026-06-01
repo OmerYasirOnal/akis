@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm -r build",
-    "test": "pnpm -C backend test",
+    "test": "pnpm -C backend test && pnpm -C frontend test",
     "typecheck": "pnpm -r typecheck"
   }
 }

@@ -22,6 +22,8 @@ backend/scripts/**/*.d.ts
 shared/src/**/*.js
 shared/src/**/*.js.map
 shared/src/**/*.d.ts
+frontend/src/**/*.js
+frontend/src/**/*.js.map
 
 # Env & secrets
 .env

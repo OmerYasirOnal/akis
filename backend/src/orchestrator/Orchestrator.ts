@@ -46,6 +46,13 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'gate', gate, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
   }
 
+  /** Emit the terminal `session/failed` so live consumers (and the RAG ingestion
+   *  sink) can close out the session — used on unrecoverable throws, NOT on the
+   *  retryable push_failed path. */
+  private emitFailed(sessionId: string): void {
+    this.s.bus.emit({ kind: 'session', status: 'failed', agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
+  }
+
   /** Assemble the typed read view AKIS dispatches each agent with (F2-AC16/AC17).
    *  It carries data only — no gate capability — so a dispatched agent can read
    *  context but cannot reach a gate through it. */
@@ -73,6 +80,7 @@ export class Orchestrator {
     const specReview = await this.s.critic.reviewSpec({ reviewType: 'spec_review', artifact: scribeOut.spec, originalIdea: input.idea })
     if (specReview.type === 'error') {
       this.s.bus.emit({ kind: 'error', message: specReview.error.message, code: specReview.error.code, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      this.emitFailed(id)
       throw new CriticFailedError(specReview.error.code)
     }
     this.narrate(id, `Critic spec score: ${specReview.data.overallScore}`)
@@ -124,6 +132,7 @@ export class Orchestrator {
       })
       if (review.type === 'error') {
         this.s.bus.emit({ kind: 'error', message: review.error.message, code: review.error.code, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+        this.emitFailed(id)
         throw new CriticFailedError(review.error.code)
       }
       const approvedCode = review.data.approved && validation.passed

@@ -80,4 +80,18 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     const res = await app.inject({ method: 'POST', url: '/sessions/nope/approve' })
     expect(res.statusCode).toBe(404)
   })
+
+  it('GET /sessions/:id/log returns the retained {seq,event}[] + head (re-sync after reset)', async () => {
+    const { app, services } = makeApp()
+    const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
+    const res = await app.inject({ method: 'GET', url: `/sessions/${s.id}/log` })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.head).toBe(services.bus.head(s.id))
+    expect(Array.isArray(body.events)).toBe(true)
+    expect(body.events[0]).toHaveProperty('seq')
+    expect(body.events[0]).toHaveProperty('event')
+    expect(body.events.map((e: { seq: number }) => e.seq)).toEqual(body.events.map((_: unknown, i: number) => i + 1))
+    expect((await app.inject({ method: 'GET', url: '/sessions/nope/log' })).statusCode).toBe(404)
+  })
 })
