@@ -144,9 +144,12 @@ export class Orchestrator {
         session = await this.s.store.update(id, { code: { files: proto.files } }, session.version)
         break
       }
-      if (critical || attempt >= maxIterate) {
+      // gatePolicy.requireCriticResolution TIGHTENS the critic gate: any non-approved
+      // code goes straight to human resolution instead of auto-iterating.
+      const requireResolution = this.s.gatePolicy?.requireCriticResolution === true
+      if (critical || requireResolution || attempt >= maxIterate) {
         session = await this.s.store.update(id, { status: 'awaiting_critic_resolution', code: { files: proto.files } }, session.version)
-        this.narrate(id, critical ? 'Critic raised a critical finding — needs human resolution.' : 'Iterate budget exhausted — needs human resolution.')
+        this.narrate(id, critical ? 'Critic raised a critical finding — needs human resolution.' : requireResolution ? 'Workflow requires human resolution of the critic review.' : 'Iterate budget exhausted — needs human resolution.')
         return session
       }
       attempt++

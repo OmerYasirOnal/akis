@@ -15,6 +15,8 @@ import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
 import { PreviewRegistry } from '../preview/PreviewRegistry.js'
 import { LocalDirectSandbox } from '../exec/Sandbox.js'
+import { MockProvider } from '../agent/providers/mock/MockProvider.js'
+import { createMockTestRunner } from '../verify/TestRunner.js'
 import { nextTs } from '../events/clock.js'
 
 export interface ServerDeps {
@@ -49,6 +51,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
       ...(env.AKIS_REAL_TESTS === '1' || env.AKIS_REAL_TESTS === 'true' ? { realTests: true } : {}),
       ...(env.AKIS_RAG === '1' || env.AKIS_RAG === 'true' ? { rag: true } : {}),
+      // Keyless DEMO: run the whole loop on the deterministic mock provider (no API key)
+      // AND a passing mock test runner so a session reaches done+preview end-to-end.
+      // Explicit opt-in only — the default stays fail-closed (prod never auto-mocks /
+      // auto-verifies; verification still needs a real >=1-test pass without this flag).
+      ...(env.AKIS_ALLOW_MOCK === '1' || env.AKIS_ALLOW_MOCK === 'true'
+        ? { provider: new MockProvider(), testRunner: createMockTestRunner({ testsRun: 2, passed: true }) }
+        : {}),
     })
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
 
@@ -75,6 +84,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(deps.keyStore ? { keyStore: deps.keyStore } : {}),
     agentModels: workflowToAgentModels(wf),
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
+    ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
     ...(wf.rag !== undefined ? { rag: wf.rag } : {}),
     ...(realTests ? { realTests: true } : {}),
   }))

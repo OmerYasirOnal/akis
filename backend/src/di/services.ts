@@ -32,6 +32,8 @@ export interface OrchestratorServices {
   providerName: string
   /** Per-run iterate budget (a workflow may tighten it below the default). */
   iterateBudget?: number
+  /** Per-run gate policy (tighten-only — may ADD a required human resolution). */
+  gatePolicy?: import('@akis/shared').GatePolicy
   /** Read-only knowledge retrieval that feeds SharedContext (NullKnowledgePort until RAG). */
   knowledge: KnowledgePort
   /** When RAG is on, the bus sink the orchestrator subscribes per session (F1-AC17). */
@@ -70,6 +72,8 @@ export interface BuildServicesOptions {
   sandbox?: Sandbox
   /** Per-run iterate budget (a workflow may tighten it below the default 3). */
   iterateBudget?: number
+  /** Per-run gate policy (tighten-only). */
+  gatePolicy?: import('@akis/shared').GatePolicy
   /**
    * Optional key source (the encrypted KeyStore) consulted after env when
    * resolving a provider — so a Settings-saved key actually reaches the critic.
@@ -168,6 +172,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     skills: loadSkills(opts.skillsDir),
     providerName,
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
+    ...(opts.gatePolicy !== undefined ? { gatePolicy: opts.gatePolicy } : {}),
     ...resolveKnowledge(opts, bus),
   }
 }
