@@ -10,6 +10,9 @@ import { createMockTestRunner, type TestRunner } from '../verify/TestRunner.js'
 import { createVerifier } from '../verify/verifier.js'
 import { createApprovalAuthority, type ApprovalAuthority } from '../gates/specGate.js'
 import { loadSkills, type Skill } from '../skills/registry.js'
+import type { LlmProvider } from '../agent/LlmProvider.js'
+import { createProvider } from '../agent/providers/createProvider.js'
+import { makeGenerateText } from '../agent/criticBackend.js'
 
 export interface OrchestratorServices {
   store: SessionStore
@@ -35,7 +38,16 @@ export interface BuildServicesOptions {
   store: SessionStore
   skillsDir: string
   providerName?: string
-  /** Critic score for the mock: <60 → critical/hard-block; >=75 → approved. Default 90. */
+  /**
+   * Real LLM provider for the critic. If omitted AND no `mockCriticScore` is
+   * given, `createProvider()` resolves one from env (mock fallback with no key).
+   */
+  provider?: LlmProvider
+  /**
+   * Deterministic mock critic score: <60 → critical/hard-block; >=75 → approved.
+   * When set, the critic uses the deterministic backend (the default test path);
+   * when omitted, the critic uses the real `provider`.
+   */
   mockCriticScore?: number
   /** Scribe asks for clarification instead of producing a spec. */
   mockNeedsClarification?: boolean
@@ -46,26 +58,35 @@ export interface BuildServicesOptions {
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
   const bus = new EventBus()
   const github = new MockGitHubAdapter()
-  const score = opts.mockCriticScore ?? 90
   const runner = opts.testRunner ?? createMockTestRunner()
 
-  // Deterministic critic backend for the mock. The real-provider sub-project
-  // swaps this for provider.chat(...) + parseAIJson.
-  const generateText = async (system: string): Promise<string> => {
-    const critical = score < 60
-    const isCode = system.includes('code reviewer')
-    return JSON.stringify({
-      approved: score >= 75,
-      overallScore: score,
-      summary: 'mock review',
-      findings: critical
-        ? [{ severity: 'critical', category: 'security', description: 'mock critical finding', suggestion: 'fix it' }]
-        : [],
-      reviewType: isCode ? 'code_review' : 'spec_review',
-      iteration: 1,
-      hasCriticalFinding: critical,
-      maxSeverity: critical ? 'critical' : 'info',
-    })
+  // Critic backend: deterministic mock when mockCriticScore is set (the test
+  // path), else the real provider (createProvider falls back to mock with no key).
+  let generateText: (system: string, user: string) => Promise<string>
+  let providerName: string
+  if (opts.mockCriticScore !== undefined) {
+    const score = opts.mockCriticScore
+    generateText = async (system: string): Promise<string> => {
+      const critical = score < 60
+      const isCode = system.includes('code reviewer')
+      return JSON.stringify({
+        approved: score >= 75,
+        overallScore: score,
+        summary: 'mock review',
+        findings: critical
+          ? [{ severity: 'critical', category: 'security', description: 'mock critical finding', suggestion: 'fix it' }]
+          : [],
+        reviewType: isCode ? 'code_review' : 'spec_review',
+        iteration: 1,
+        hasCriticalFinding: critical,
+        maxSeverity: critical ? 'critical' : 'info',
+      })
+    }
+    providerName = opts.providerName ?? 'mock'
+  } else {
+    const provider = opts.provider ?? createProvider()
+    generateText = makeGenerateText(provider)
+    providerName = opts.providerName ?? provider.name
   }
 
   return {
