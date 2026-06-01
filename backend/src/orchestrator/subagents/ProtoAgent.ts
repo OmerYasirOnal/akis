@@ -42,15 +42,27 @@ export class ProtoAgent {
       input.feedback ? `\nADDRESS THIS REVIEW FEEDBACK:\n${input.feedback}` : '',
     ].join('\n')
 
-    const res = await this.deps.provider.chat({ system: PROTO_SYSTEM, messages: [{ role: 'user', content: user }] })
-    const files = this.parse(res.text ?? '', input.approved.spec.title)
+    let res
+    try {
+      res = await this.deps.provider.chat({ system: PROTO_SYSTEM, messages: [{ role: 'user', content: user }] })
+    } catch (err) {
+      // A throwing provider must still CLOSE the event frame (failed tool_result +
+      // agent_end) so the live stream never has an orphaned tool_call, then re-throw.
+      this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_proto', ok: false, result: { error: errMsg(err) }, agent: 'proto', laneId, sessionId, ts: nextTs() })
+      this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: false, agent: 'proto', laneId, sessionId, ts: nextTs() })
+      throw err
+    }
 
-    this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_proto', ok: true, result: { files: files.length }, agent: 'proto', laneId, sessionId, ts: nextTs() })
-    this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId, sessionId, ts: nextTs() })
+    const { files, parsed } = this.parse(res.text ?? '', input.approved.spec.title)
+
+    // `ok` reflects whether the LLM output parsed into real files — the placeholder
+    // fallback is a DEGRADED result, so the event must not claim success.
+    this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_proto', ok: parsed, result: { files: files.length, parsed }, agent: 'proto', laneId, sessionId, ts: nextTs() })
+    this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: parsed, agent: 'proto', laneId, sessionId, ts: nextTs() })
     return { files }
   }
 
-  private parse(text: string, title: string): RepoFile[] {
+  private parse(text: string, title: string): { files: RepoFile[]; parsed: boolean } {
     try {
       const j = parseAIJson<{ files?: unknown }>(text)
       if (Array.isArray(j.files)) {
@@ -58,12 +70,16 @@ export class ProtoAgent {
           .map(f => f as { filePath?: unknown; content?: unknown })
           .filter(f => typeof f.filePath === 'string' && typeof f.content === 'string')
           .map(f => ({ filePath: f.filePath as string, content: f.content as string }))
-        if (files.length) return files
+        if (files.length) return { files, parsed: true }
       }
     } catch {
       /* fall through */
     }
     // Never block the pipeline on a parse miss; emit a single placeholder file.
-    return [{ filePath: 'index.ts', content: `// ${title}\nexport const app = (): string => 'ok'\n` }]
+    return { files: [{ filePath: 'index.ts', content: `// ${title}\nexport const app = (): string => 'ok'\n` }], parsed: false }
   }
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }

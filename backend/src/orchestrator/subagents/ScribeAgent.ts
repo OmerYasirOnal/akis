@@ -46,33 +46,50 @@ export class ScribeAgent {
 
     this.deps.bus.emit({ kind: 'tool_call', tool: 'dispatch_scribe', args: { idea: input.idea }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
 
-    const res = await this.deps.provider.chat({
-      system: SCRIBE_SYSTEM,
-      messages: [{ role: 'user', content: input.idea }],
-    })
-    const outcome = this.parse(res.text ?? '', input.idea)
+    let res
+    try {
+      res = await this.deps.provider.chat({
+        system: SCRIBE_SYSTEM,
+        messages: [{ role: 'user', content: input.idea }],
+      })
+    } catch (err) {
+      // A throwing provider (auth/network/model error) must still CLOSE the event
+      // frame: emit a failed tool_result + agent_end so the live stream never has
+      // an orphaned tool_call, then re-throw (the orchestrator fails the session).
+      this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_scribe', ok: false, result: { error: errMsg(err) }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: false, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+      throw err
+    }
 
+    const { outcome, parsed } = this.parse(res.text ?? '', input.idea)
+
+    // `ok` reflects whether the LLM output actually parsed — a fallback spec is a
+    // DEGRADED result, so the event must not claim success (event-stream honesty).
     this.deps.bus.emit({
-      kind: 'tool_result', tool: 'dispatch_scribe', ok: true,
-      result: outcome.type === 'spec' ? { title: outcome.spec.title } : { clarify: outcome.questions.length },
+      kind: 'tool_result', tool: 'dispatch_scribe', ok: parsed,
+      result: outcome.type === 'spec' ? { title: outcome.spec.title, parsed } : { clarify: outcome.questions.length, parsed },
       agent: 'scribe', laneId, sessionId, ts: nextTs(),
     })
-    this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+    this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, agent: 'scribe', laneId, sessionId, ts: nextTs() })
     return outcome
   }
 
-  private parse(text: string, idea: string): ScribeOutcome {
+  private parse(text: string, idea: string): { outcome: ScribeOutcome; parsed: boolean } {
     try {
       const j = parseAIJson<{ kind?: string; title?: string; body?: string; questions?: unknown }>(text)
       if (j.kind === 'clarify' && Array.isArray(j.questions)) {
-        return { type: 'clarify', questions: j.questions.map(String) }
+        return { outcome: { type: 'clarify', questions: j.questions.map(String) }, parsed: true }
       }
       if (typeof j.title === 'string' && typeof j.body === 'string') {
-        return { type: 'spec', spec: { title: j.title, body: j.body } }
+        return { outcome: { type: 'spec', spec: { title: j.title, body: j.body } }, parsed: true }
       }
     } catch {
       /* fall through to a minimal spec so the pipeline is never blocked by a parse miss */
     }
-    return { type: 'spec', spec: { title: `Spec for: ${idea}`, body: `# ${idea}\n\n${text}`.trim() } }
+    return { outcome: { type: 'spec', spec: { title: `Spec for: ${idea}`, body: `# ${idea}\n\n${text}`.trim() } }, parsed: false }
   }
+}
+
+function errMsg(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }

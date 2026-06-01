@@ -7,6 +7,22 @@ dist/
 build/
 *.tsbuildinfo
 
+# Emitted TS artifacts that must NEVER live next to sources (they shadow .ts under
+# vitest's bundler resolution and cause stale-code test runs). The project is
+# typecheck-only (tsc --noEmit); any of these under src/test/scripts is garbage.
+backend/src/**/*.js
+backend/src/**/*.js.map
+backend/src/**/*.d.ts
+backend/test/**/*.js
+backend/test/**/*.js.map
+backend/test/**/*.d.ts
+backend/scripts/**/*.js
+backend/scripts/**/*.js.map
+backend/scripts/**/*.d.ts
+shared/src/**/*.js
+shared/src/**/*.js.map
+shared/src/**/*.d.ts
+
 # Env & secrets
 .env
 .env.*

@@ -109,7 +109,12 @@ export function createProvider(opts: CreateProviderOpts = {}): LlmProvider {
       return new OpenAiCompatibleProvider({ name: 'openrouter', apiKey, model, baseUrl: baseUrlOverride ?? CATALOG.openrouter.baseUrl })
     case 'google':
       return new GeminiProvider({ apiKey, model, ...(baseUrlOverride ? { baseUrl: baseUrlOverride } : {}) })
-    default:
-      return new MockProvider()
+    default: {
+      // Exhaustiveness: `real` is a RealProvider and every case is handled, so this
+      // is unreachable. Assert it at the type level so adding a provider without a
+      // case is a COMPILE error — and fail LOUD (never silent mock) if ever hit.
+      const _exhaustive: never = real
+      throw new ProviderConfigError(`Unhandled provider '${String(_exhaustive)}'.`)
+    }
   }
 }

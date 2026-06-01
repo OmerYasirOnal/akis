@@ -52,6 +52,30 @@ describe('ScribeAgent', () => {
     expect(seen.some(e => e.kind === 'tool_call' && e.tool === 'dispatch_scribe')).toBe(true)
     expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_scribe')).toBe(true)
   })
+  it('closes the event frame (tool_result ok:false + agent_end ok:false) when the provider throws', async () => {
+    const provider = { name: 'fake', model: 'm', async chat(): Promise<{ text: string }> { throw new Error('auth failed') } }
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const scribe = new ScribeAgent({ bus, provider })
+    await expect(scribe.run({ sessionId: 's1', laneId: 'main', idea: 'x' })).rejects.toThrow('auth failed')
+    // No orphaned tool_call: the failed tool_result + agent_end close the frame.
+    expect(seen.some(e => e.kind === 'tool_call' && e.tool === 'dispatch_scribe')).toBe(true)
+    expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_scribe' && e.ok === false)).toBe(true)
+    expect(seen.some(e => e.kind === 'agent_end' && e.agent === 'scribe' && e.ok === false)).toBe(true)
+  })
+  it('emits ok:false (honest) but still returns a fallback spec when the LLM output is unparseable', async () => {
+    const provider = { name: 'fake', model: 'm', async chat(): Promise<{ text: string }> { return { text: 'not json at all' } } }
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const scribe = new ScribeAgent({ bus, provider })
+    const out = await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'thing' })
+    expect(out.type).toBe('spec') // pipeline not blocked
+    // ...but the degraded fallback must NOT be reported as a success.
+    expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_scribe' && e.ok === false)).toBe(true)
+    expect(seen.some(e => e.kind === 'agent_end' && e.agent === 'scribe' && e.ok === false)).toBe(true)
+  })
 })
 
 describe('ProtoAgent', () => {
@@ -70,6 +94,36 @@ describe('ProtoAgent', () => {
 
   it('Gate 1: mintApprovedSpec throws without a valid approval token', () => {
     expect(() => mintApprovedSpec(initialSession('s1', 'i'))).toThrow(SpecNotApprovedError)
+  })
+
+  it('closes the event frame (tool_result ok:false + agent_end ok:false) when the provider throws', async () => {
+    const spec = { title: 't', body: 'b' }
+    const session = { ...initialSession('s1', 'i'), spec, approval: approveSpec(spec) }
+    const approved = mintApprovedSpec(session)
+    const provider = { name: 'fake', model: 'm', async chat(): Promise<{ text: string }> { throw new Error('rate limited') } }
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const proto = new ProtoAgent({ bus, provider })
+    await expect(proto.run({ sessionId: 's1', laneId: 'main', approved })).rejects.toThrow('rate limited')
+    expect(seen.some(e => e.kind === 'tool_call' && e.tool === 'dispatch_proto')).toBe(true)
+    expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_proto' && e.ok === false)).toBe(true)
+    expect(seen.some(e => e.kind === 'agent_end' && e.agent === 'proto' && e.ok === false)).toBe(true)
+  })
+
+  it('emits ok:false (honest) but still returns a placeholder file when the LLM output is unparseable', async () => {
+    const spec = { title: 't', body: 'b' }
+    const session = { ...initialSession('s1', 'i'), spec, approval: approveSpec(spec) }
+    const approved = mintApprovedSpec(session)
+    const provider = { name: 'fake', model: 'm', async chat(): Promise<{ text: string }> { return { text: 'garbage' } } }
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const proto = new ProtoAgent({ bus, provider })
+    const out = await proto.run({ sessionId: 's1', laneId: 'main', approved })
+    expect(out.files.length).toBeGreaterThan(0) // pipeline not blocked
+    expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_proto' && e.ok === false)).toBe(true)
+    expect(seen.some(e => e.kind === 'agent_end' && e.agent === 'proto' && e.ok === false)).toBe(true)
   })
 })
 
