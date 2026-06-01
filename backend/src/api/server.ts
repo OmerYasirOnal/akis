@@ -34,6 +34,8 @@ export interface ServerDeps {
 const defaultSkillsDir = (): string =>
   resolve(dirname(fileURLToPath(import.meta.url)), '../skills/library')
 
+const flag = (v: string | undefined): boolean => v === '1' || v === 'true'
+
 /** Build the Fastify app with injected deps (testable via app.inject / listen). */
 export function buildServer(deps: ServerDeps): FastifyInstance {
   const app = Fastify({ logger: false }) // logger off: never risk logging key bodies
@@ -49,15 +51,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       skillsDir: deps.skillsDir ?? defaultSkillsDir(),
       keyStore: deps.keyStore,
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
-      ...(env.AKIS_REAL_TESTS === '1' || env.AKIS_REAL_TESTS === 'true' ? { realTests: true } : {}),
-      ...(env.AKIS_RAG === '1' || env.AKIS_RAG === 'true' ? { rag: true } : {}),
-      // Keyless DEMO: run the whole loop on the deterministic mock provider (no API key)
-      // AND a passing mock test runner so a session reaches done+preview end-to-end.
-      // Explicit opt-in only — the default stays fail-closed (prod never auto-mocks /
-      // auto-verifies; verification still needs a real >=1-test pass without this flag).
-      ...(env.AKIS_ALLOW_MOCK === '1' || env.AKIS_ALLOW_MOCK === 'true'
-        ? { provider: new MockProvider(), testRunner: createMockTestRunner({ testsRun: 2, passed: true }) }
-        : {}),
+      ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true } : {}),
+      ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
+      // Keyless DEMO: run the loop on the deterministic mock provider (no API key).
+      ...(flag(env.AKIS_ALLOW_MOCK) ? { provider: new MockProvider() } : {}),
+      // Demo verification: a passing mock test runner so a session reaches done+preview
+      // WITHOUT real browsers — useful with REAL keys (real Claude output + a complete
+      // loop). Implied by AKIS_ALLOW_MOCK. Explicit opt-in only; the default stays
+      // fail-closed (real verification still needs AKIS_REAL_TESTS / a real >=1-test pass).
+      ...(flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY) ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     })
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
 
@@ -75,13 +77,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   // One shared workflow store (workflow CRUD + session-bound runs use the same one).
   const workflowStore = deps.workflowStore ?? new WorkflowStore()
-  const realTests = env.AKIS_REAL_TESTS === '1' || env.AKIS_REAL_TESTS === 'true'
+  const realTests = flag(env.AKIS_REAL_TESTS)
+  const demoVerify = flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY)
   // Build a per-session orchestrator that applies a saved workflow (F2-AC9/AC10),
   // sharing the same store + bus so the SSE stream and routes see its run.
   const makeOrchestrator = (wf: WorkflowConfig): Orchestrator => new Orchestrator(buildServices({
     store: services.store, bus: services.bus,
     skillsDir: deps.skillsDir ?? defaultSkillsDir(),
     ...(deps.keyStore ? { keyStore: deps.keyStore } : {}),
+    ...(flag(env.AKIS_ALLOW_MOCK) ? { provider: new MockProvider() } : {}),
+    ...(demoVerify ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     agentModels: workflowToAgentModels(wf),
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
