@@ -19,8 +19,9 @@ export class WrongStatusError extends Error {
   constructor(action: string, status: string) { super(`Cannot ${action} from status '${status}'`); this.name = 'WrongStatusError' }
 }
 
-/** Max auto-iterate attempts before a non-converging build needs human resolution. */
-const MAX_ITERATE = 3
+/** Default max auto-iterate attempts before a non-converging build needs human
+ *  resolution. A workflow may TIGHTEN this (lower it) via services.iterateBudget. */
+const DEFAULT_MAX_ITERATE = 3
 
 /**
  * Conversational orchestrator. It decides the flow (no rigid FSM) and narrates,
@@ -113,6 +114,7 @@ export class Orchestrator {
     // Gate 1 (structural): throws SpecNotApprovedError unless a valid approval token exists.
     const approved = mintApprovedSpec(session)
 
+    const maxIterate = this.s.iterateBudget ?? DEFAULT_MAX_ITERATE
     let feedback: string | undefined
     let lastFiles: { filePath: string; content: string }[] = []
     let attempt = 0
@@ -142,7 +144,7 @@ export class Orchestrator {
         session = await this.s.store.update(id, { code: { files: proto.files } }, session.version)
         break
       }
-      if (critical || attempt >= MAX_ITERATE) {
+      if (critical || attempt >= maxIterate) {
         session = await this.s.store.update(id, { status: 'awaiting_critic_resolution', code: { files: proto.files } }, session.version)
         this.narrate(id, critical ? 'Critic raised a critical finding — needs human resolution.' : 'Iterate budget exhausted — needs human resolution.')
         return session
