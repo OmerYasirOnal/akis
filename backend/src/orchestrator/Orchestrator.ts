@@ -57,6 +57,9 @@ export class Orchestrator {
     const id = randomUUID()
     let session = initialSession(id, input.idea)
     await this.s.store.create(session)
+    // F1-AC17: subscribe the ingestion sink AS the session starts, before any event
+    // is emitted, so zero-touch ingestion misses nothing (RAG flag on → sink present).
+    this.s.ingestionSink?.subscribeSession(id)
     this.s.bus.emit({ kind: 'session', status: 'started', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     this.narrate(id, `Planning: ${input.idea}`)
 
