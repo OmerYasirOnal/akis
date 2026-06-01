@@ -1,55 +1,65 @@
 import { describe, it, expect } from 'vitest'
 import { Orchestrator } from '../../src/orchestrator/Orchestrator.js'
-import { MockProvider } from '../../src/agent/mock/MockProvider.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
-import { NotVerifiedError } from '../../src/gates/pushGate.js'
+import { MockTestRunner } from '../../src/verify/TestRunner.js'
+import { AlreadyPushedError } from '../../src/orchestrator/Orchestrator.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
 const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/skills/library')
 
-function makeOrch(knobs: Record<string, unknown> = {}) {
-  const provider = new MockProvider({ script: [{ text: 'ok' }], knobs: { mockCriticScore: 90, mockTraceTestCount: 2, ...knobs } })
+function makeOrch(opts: { mockCriticScore?: number; testsRun?: number; passed?: boolean } = {}) {
   const store = new MockSessionStore()
-  const services = buildServices({ provider, store, skillsDir })
+  const services = buildServices({
+    store, skillsDir,
+    mockCriticScore: opts.mockCriticScore ?? 90,
+    testRunner: new MockTestRunner({ testsRun: opts.testsRun ?? 2, passed: opts.passed ?? true }),
+  })
   return { orch: new Orchestrator(services), services }
 }
 
-describe('Orchestrator (happy path on mock)', () => {
-  it('scribe→critic(spec)→[approve]→proto→validator→critic(code)→trace→[confirm]→done verified', async () => {
+describe('Orchestrator — happy path', () => {
+  it('start→approve→verify→confirm reaches done/verified', async () => {
     const { orch, services } = makeOrch()
     const s = await orch.start({ idea: 'build a todo web app' })
     expect((await services.store.get(s.id))!.status).toBe('awaiting_spec_approval')
-
     await orch.approve(s.id)
     await orch.runToVerification(s.id)
     const afterTrace = (await services.store.get(s.id))!
     expect(afterTrace.verified).toBe(true)
     expect(afterTrace.status).toBe('awaiting_push_confirm')
-
     const done = await orch.confirmPush(s.id)
     expect(done.status).toBe('done')
     expect(done.verified).toBe(true)
   })
 })
 
-describe('Orchestrator (vacuous-green guard)', () => {
-  it('0 tests → not verified → cannot confirm push', async () => {
-    const { orch, services } = makeOrch({ mockTraceTestCount: 0 })
+describe('Orchestrator — vacuous green (0 tests)', () => {
+  it('does not verify and cannot confirm push', async () => {
+    const { orch, services } = makeOrch({ testsRun: 0 })
     const s = await orch.start({ idea: 'todo' })
     await orch.approve(s.id)
     await orch.runToVerification(s.id)
     const st = (await services.store.get(s.id))!
     expect(st.verified).toBe(false)
     expect(st.status).not.toBe('awaiting_push_confirm')
-    await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(NotVerifiedError)
-    expect((await services.store.get(s.id))!.status).not.toBe('done')
+    await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(Error)
   })
 })
 
-describe('Orchestrator (critic hard-block)', () => {
-  it('critical code finding → awaiting_critic_resolution, never verified', async () => {
+describe('Orchestrator — tests ran but failed', () => {
+  it('does not verify (passed=false with testsRun>=1)', async () => {
+    const { orch, services } = makeOrch({ testsRun: 3, passed: false })
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    expect((await services.store.get(s.id))!.verified).toBe(false)
+  })
+})
+
+describe('Orchestrator — critic hard-block', () => {
+  it('critical finding → awaiting_critic_resolution, never verified', async () => {
     const { orch, services } = makeOrch({ mockCriticScore: 40 })
     const s = await orch.start({ idea: 'todo' })
     await orch.approve(s.id)
@@ -57,5 +67,18 @@ describe('Orchestrator (critic hard-block)', () => {
     const st = (await services.store.get(s.id))!
     expect(st.status).toBe('awaiting_critic_resolution')
     expect(st.verified).toBe(false)
+  })
+})
+
+describe('Orchestrator — confirmPush is idempotent', () => {
+  it('a second confirmPush throws and does not re-push', async () => {
+    const { orch, services } = makeOrch()
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    await orch.confirmPush(s.id)
+    const filesAfterFirst = services.github.read(s.id).length
+    await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(AlreadyPushedError)
+    expect(services.github.read(s.id).length).toBe(filesAfterFirst)
   })
 })

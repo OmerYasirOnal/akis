@@ -1,8 +1,6 @@
 import type { SpecArtifact } from '@akis/shared'
-import type { LlmProvider } from '../../agent/LlmProvider.js'
 import type { EventBus } from '../../events/bus.js'
 import { nextTs } from '../../events/clock.js'
-import { getKnobs } from './knobs.js'
 
 export interface ScribeInput {
   sessionId: string
@@ -15,20 +13,19 @@ export type ScribeOutcome =
   | { type: 'clarify'; questions: string[] }
 
 /**
- * Scribe — idea → spec. Thin role over the provider. In the MVP (mock), the
- * spec is produced deterministically; the `mockNeedsClarification` knob drives
- * the clarify branch. Real prompt (CLARIFICATION + SPEC_GENERATION) is injected
- * by the orchestrator's skill layer and used on the real-AI path.
+ * Scribe — idea → spec. A producer role. In the MVP it produces a deterministic
+ * spec; `needsClarification` (explicit config, not a provider cast) drives the
+ * clarify branch. The real prompt (CLARIFICATION + SPEC_GENERATION) is injected
+ * via the skill layer on the real-AI path.
  */
 export class ScribeAgent {
-  constructor(private deps: { provider: LlmProvider; bus: EventBus }) {}
+  constructor(private deps: { bus: EventBus; needsClarification?: boolean }) {}
 
   async run(input: ScribeInput): Promise<ScribeOutcome> {
     const { sessionId, laneId } = input
     this.deps.bus.emit({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId, sessionId, ts: nextTs() })
 
-    const knobs = getKnobs(this.deps.provider)
-    if (knobs.mockNeedsClarification) {
+    if (this.deps.needsClarification) {
       this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId, sessionId, ts: nextTs() })
       return { type: 'clarify', questions: ['Who is the primary user?', 'What is the single most important feature?'] }
     }

@@ -1,14 +1,14 @@
 /**
- * Smoke run — drives the full agentic flow on the mock provider and prints the
- * live event timeline. Demonstrates (1) the happy path ending done/verified and
- * (2) the vacuous-green guard ending ⚠️ (not verified → push blocked).
+ * Smoke run — drives the full flow on the mock and prints the live event
+ * timeline. Demonstrates (1) the happy path ending done/verified and (2) the
+ * vacuous-green guard ending ⚠️ (no real test → not verified → push blocked).
  *
  * Run: pnpm -C backend smoke
  */
 import { Orchestrator } from '../src/orchestrator/Orchestrator.js'
-import { MockProvider } from '../src/agent/mock/MockProvider.js'
 import { MockSessionStore } from '../src/store/MockSessionStore.js'
 import { buildServices } from '../src/di/services.js'
+import { MockTestRunner } from '../src/verify/TestRunner.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import type { AkisEvent } from '@akis/shared'
@@ -25,15 +25,17 @@ function line(e: AkisEvent): string {
   return head
 }
 
-async function run(label: string, knobs: Record<string, unknown>): Promise<void> {
+async function run(label: string, testsRun: number): Promise<void> {
   console.log(`\n=== ${label} ===`)
-  const provider = new MockProvider({ script: [{ text: 'ok' }], knobs: { mockCriticScore: 90, mockTraceTestCount: 2, ...knobs } })
-  const services = buildServices({ provider, store: new MockSessionStore(), skillsDir })
+  const services = buildServices({
+    store: new MockSessionStore(), skillsDir,
+    mockCriticScore: 90,
+    testRunner: new MockTestRunner({ testsRun, passed: testsRun > 0 }),
+  })
   const orch = new Orchestrator(services)
   const s = await orch.start({ idea: 'build a todo web app' })
   services.bus.subscribe(s.id, e => console.log(line(e)))
-  // replay the events already emitted before we subscribed
-  for (const e of services.bus.recent(s.id)) console.log(line(e))
+  for (const e of services.bus.recent(s.id)) console.log(line(e)) // replay pre-subscribe events
 
   await orch.approve(s.id)
   await orch.runToVerification(s.id)
@@ -45,6 +47,6 @@ async function run(label: string, knobs: Record<string, unknown>): Promise<void>
   }
 }
 
-await run('HAPPY PATH', {})
-await run('VACUOUS GREEN (0 tests)', { mockTraceTestCount: 0 })
+await run('HAPPY PATH', 2)
+await run('VACUOUS GREEN (0 tests)', 0)
 console.log('\nSmoke complete.')

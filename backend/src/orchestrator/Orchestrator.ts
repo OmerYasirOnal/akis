@@ -1,26 +1,35 @@
 import { randomUUID } from 'node:crypto'
 import { initialSession, type SessionState } from '@akis/shared'
-import { canUseTool } from '../tools/permission.js'
-import { deriveVerified } from '../gates/verifiedReducer.js'
+import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
+import type { VerifyToken } from '../verify/VerifyToken.js'
 import { nextTs } from '../events/clock.js'
 import type { OrchestratorServices } from '../di/services.js'
-import type { ProtoInput } from './subagents/ProtoAgent.js'
 
 export interface StartInput { idea: string }
+
+export class AlreadyPushedError extends Error {
+  constructor() { super('Session already pushed (confirmPush is not repeatable)'); this.name = 'AlreadyPushedError' }
+}
+export class CriticFailedError extends Error {
+  constructor(code: string) { super(`Critic/review failed: ${code}`); this.name = 'CriticFailedError' }
+}
 
 /** Max auto-iterate attempts before a non-converging build needs human resolution. */
 const MAX_ITERATE = 3
 
 /**
- * The conversational orchestrator. It decides the flow (no rigid FSM) and
- * narrates each step, but the 4 structural gates constrain it:
- *  1. Gate 1 — it cannot dispatch Proto (code-write) before spec approval.
- *  2. Gate 2 — it never runs tests; only Trace (the verifier) does.
- *  3. Gate 3 — `verified` is derived from a real Trace test run.
- *  4. Gate 4 — push needs an ApprovedPush token (verified + human confirm).
+ * Conversational orchestrator. It decides the flow (no rigid FSM) and narrates,
+ * but the 4 gates are STRUCTURAL — enforced by branded tokens + the verifier's
+ * exclusive TestRunner, not by discipline:
+ *  - Gate 1: ProtoAgent.run requires an ApprovedSpec token (only approve() mints it).
+ *  - Gate 2: only Trace holds a TestRunner, so only Trace can produce a VerifyToken.
+ *  - Gate 3: `verified` is set from a VerifyToken (real ≥1-test pass), never an event.
+ *  - Gate 4: pushToGitHub requires ApprovedPush, mintable only from a VerifyToken.
  */
 export class Orchestrator {
+  private verifyTokens = new Map<string, VerifyToken>()
+
   constructor(private s: OrchestratorServices) {}
 
   private narrate(sessionId: string, text: string): void {
@@ -45,9 +54,11 @@ export class Orchestrator {
     }
 
     const specReview = await this.s.critic.reviewSpec({ reviewType: 'spec_review', artifact: scribeOut.spec, originalIdea: input.idea })
-    if (specReview.type === 'review') {
-      this.narrate(id, `Critic spec score: ${specReview.data.overallScore}`)
+    if (specReview.type === 'error') {
+      this.s.bus.emit({ kind: 'error', message: specReview.error.message, code: specReview.error.code, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      throw new CriticFailedError(specReview.error.code)
     }
+    this.narrate(id, `Critic spec score: ${specReview.data.overallScore}`)
 
     session = await this.s.store.update(id, { spec: scribeOut.spec, status: 'awaiting_spec_approval' }, session.version)
     this.emitGate(id, 'spec_approval', 'awaiting')
@@ -58,6 +69,7 @@ export class Orchestrator {
     const cur = await this.s.store.get(id)
     if (!cur) throw new Error(`session ${id} not found`)
     if (!cur.spec) throw new Error('no spec to approve')
+    // Bind approval to the exact reviewed spec content.
     const session = await this.s.store.update(id, { approvedSpec: cur.spec, status: 'building' }, cur.version)
     this.emitGate(id, 'spec_approval', 'satisfied')
     return session
@@ -67,36 +79,34 @@ export class Orchestrator {
     let session = await this.s.store.get(id)
     if (!session) throw new Error(`session ${id} not found`)
 
-    // Gate 1 (structural): no code-write before spec approval.
-    const verdict = canUseTool('orchestrator', 'dispatch_proto', session)
-    if (!verdict.ok) {
-      this.s.bus.emit({ kind: 'error', message: verdict.reason, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
-      throw new Error(verdict.reason)
-    }
-    const approvedSpec = session.approvedSpec!
-
-    await this.s.github.createRepo(id)
+    // Gate 1 (structural): mint throws SpecNotApprovedError unless approve() ran.
+    // ProtoAgent cannot even be called without this token.
+    const approved = mintApprovedSpec(session)
 
     let feedback: string | undefined
+    let lastFiles: { filePath: string; content: string }[] = []
     let attempt = 0
-    // Agentic iterate loop: re-dispatch Proto on non-critical failure, capped.
     for (;;) {
-      const protoInput: ProtoInput = {
-        sessionId: id, laneId: 'main', spec: approvedSpec,
+      const proto = await this.s.proto.run({
+        sessionId: id, laneId: 'main', approved,
         ...(feedback !== undefined ? { feedback } : {}),
-      }
-      const proto = await this.s.proto.run(protoInput)
+      })
+      lastFiles = proto.files
 
       const validation = this.s.validator.validate({
         files: proto.files.map(f => ({ path: f.filePath, content: f.content, language: 'typescript' as const })),
       })
       const review = await this.s.critic.reviewCode({
-        reviewType: 'code_review', artifact: proto.files, originalIdea: session.idea, referenceSpec: approvedSpec,
+        reviewType: 'code_review', artifact: proto.files, originalIdea: session.idea, referenceSpec: approved.spec,
       })
-      const approved = review.type === 'review' && review.data.approved && validation.passed
-      const critical = review.type === 'review' && review.data.hasCriticalFinding
+      if (review.type === 'error') {
+        this.s.bus.emit({ kind: 'error', message: review.error.message, code: review.error.code, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+        throw new CriticFailedError(review.error.code)
+      }
+      const approvedCode = review.data.approved && validation.passed
+      const critical = review.data.hasCriticalFinding
 
-      if (approved) {
+      if (approvedCode) {
         session = await this.s.store.update(id, { code: { files: proto.files } }, session.version)
         break
       }
@@ -106,19 +116,20 @@ export class Orchestrator {
         return session
       }
       attempt++
-      feedback = review.type === 'review' ? review.data.summary : 'address validation issues'
+      feedback = review.data.summary
       this.narrate(id, `Iterating (attempt ${attempt}) on Proto with feedback.`)
     }
 
-    // Trace (verifier) — the only role permitted to run tests.
-    await this.s.trace.run({ sessionId: id, laneId: 'verify', files: session.code?.files ?? [] })
-    const verified = deriveVerified(this.s.bus.recent(id))
-    if (verified) {
+    // Gate 2 + 3: only Trace holds a TestRunner; verified comes from its token.
+    const token = await this.s.trace.run({ sessionId: id, laneId: 'verify', files: lastFiles })
+    if (token) {
+      this.verifyTokens.set(id, token)
       session = await this.s.store.update(id, { verified: true, status: 'awaiting_push_confirm' }, session.version)
       this.emitGate(id, 'push_confirm', 'awaiting')
     } else {
+      this.verifyTokens.delete(id)
       session = await this.s.store.update(id, { verified: false }, session.version)
-      this.narrate(id, '⚠️ Not verified — Trace did not run a real passing test.')
+      this.narrate(id, '⚠️ Not verified — no real passing test was produced.')
     }
     return session
   }
@@ -126,13 +137,18 @@ export class Orchestrator {
   async confirmPush(id: string): Promise<SessionState> {
     const cur = await this.s.store.get(id)
     if (!cur) throw new Error(`session ${id} not found`)
-    // Gate 4: mint throws NotVerifiedError unless verified; the branded token is
-    // the only key to pushToGitHub.
-    const token = mintApprovedPush(cur)
+    if (cur.status === 'done') throw new AlreadyPushedError()
+    if (cur.status !== 'awaiting_push_confirm') throw new Error(`cannot push from status '${cur.status}'`)
+
+    // Gate 4: mint requires the session's VerifyToken; throws NotVerifiedError otherwise.
+    const token = mintApprovedPush(id, this.verifyTokens.get(id))
     await pushToGitHub(token, this.s.github, cur.code?.files ?? [])
+    this.verifyTokens.delete(id)
     const session = await this.s.store.update(id, { status: 'done' }, cur.version)
     this.emitGate(id, 'push_confirm', 'satisfied')
-    this.s.bus.emit({ kind: 'done', verified: session.verified, provider: this.s.provider.name, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+    this.s.bus.emit({ kind: 'done', verified: session.verified, provider: this.s.providerName, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     return session
   }
 }
+
+export { SpecNotApprovedError }
