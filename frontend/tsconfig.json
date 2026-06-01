@@ -1,0 +1,12 @@
+{
+  "extends": "../tsconfig.base.json",
+  "comment": "Typecheck-only: Vite builds; tsc never emits into src (anti-shadowing).",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "types": ["vitest/globals", "@testing-library/jest-dom"]
+  },
+  "include": ["src"]
+}

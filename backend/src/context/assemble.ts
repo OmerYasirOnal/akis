@@ -49,13 +49,14 @@ export async function assembleSharedContext(
   const scratchpad = foldScratchpad(events)
   // Grounding is best-effort: a retrieval failure (RAG timeout/outage) must NOT
   // fail the whole dispatch — an ungrounded prompt still works. (NullKnowledgePort
-  // never throws; this matters once the real RAG layer lands.)
-  const knowledge = await deps.knowledge
-    .retrieve({
+  // never throws; this matters once the real RAG layer lands.) The Promise.resolve
+  // wrapper degrades a SYNCHRONOUS throw too, not only an async rejection.
+  const knowledge = await Promise.resolve()
+    .then(() => deps.knowledge.retrieve({
       query: opts.query,
       sessionId,
       ...(opts.knowledgeLimit !== undefined ? { limit: opts.knowledgeLimit } : {}),
-    })
+    }))
     .catch(() => [])
 
   // Snapshot the session so freezing the read view never freezes the store's LIVE
