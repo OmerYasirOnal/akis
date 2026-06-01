@@ -8,16 +8,28 @@ import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
 
 describe('NewSessionForm', () => {
-  it('submits the trimmed idea', async () => {
+  it('submits the trimmed idea (default workflow → undefined)', async () => {
     const onStart = vi.fn()
     render(<NewSessionForm onStart={onStart} />)
     await userEvent.type(screen.getByLabelText('idea'), '  todo app  ')
     await userEvent.click(screen.getByRole('button', { name: 'Build' }))
-    expect(onStart).toHaveBeenCalledWith('todo app')
+    expect(onStart).toHaveBeenCalledWith('todo app', undefined)
   })
   it('disables Build for an empty idea', () => {
     render(<NewSessionForm onStart={() => {}} />)
     expect(screen.getByRole('button', { name: 'Build' })).toBeDisabled()
+  })
+  it('passes the selected workflow id when one is chosen', async () => {
+    const onStart = vi.fn()
+    render(<NewSessionForm onStart={onStart} workflows={[{ id: 'w1', name: 'fast' }]} />)
+    await userEvent.type(screen.getByLabelText('idea'), 'todo')
+    await userEvent.selectOptions(screen.getByLabelText('workflow'), 'w1')
+    await userEvent.click(screen.getByRole('button', { name: 'Build' }))
+    expect(onStart).toHaveBeenCalledWith('todo', 'w1')
+  })
+  it('hides the workflow selector when there are none', () => {
+    render(<NewSessionForm onStart={() => {}} />)
+    expect(screen.queryByLabelText('workflow')).toBeNull()
   })
 })
 
