@@ -25,6 +25,7 @@ export class MemoryVectorStore implements VectorStore {
   }
 
   search(vector: number[], filter: TenantFilter, k: number): Scored[] {
+    if (this.byId.size === 0) return []
     const scored: Scored[] = []
     for (const stored of this.byId.values()) {
       if (!matchesTenant(stored.meta, filter)) continue

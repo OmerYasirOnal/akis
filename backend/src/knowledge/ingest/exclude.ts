@@ -3,15 +3,22 @@ export interface ExclusionResult { excluded: boolean; reason?: string }
 /** Source paths that must never be embedded (secrets at rest). */
 const SECRET_SOURCE = /(^|\/)(\.env(\..*)?|.*\.pem|.*\.key|keys\.json)$/i
 
-/** Inline secret material patterns (API keys, private keys). */
+/**
+ * Inline secret material patterns (API keys, private keys). For EXCLUSION, err on
+ * the side of over-matching (a false positive merely keeps some text out of RAG;
+ * a false negative leaks a secret). So: a leading boundary to avoid matching inside
+ * words, but NO trailing `\b` — `\b` fails between an alphanumeric run and a
+ * following `_`/letter/digit, which silently let real tokens (e.g. `ghp_…_v2`,
+ * `sk-proj-…`) slip through. Bodies allow `-`/`_` where real keys use them.
+ */
 const SECRET_PATTERNS: RegExp[] = [
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-  /\bsk-[A-Za-z0-9]{16,}\b/,            // OpenAI-style
-  /\bsk-ant-[A-Za-z0-9-]{16,}\b/,       // Anthropic-style
-  /\bAIza[0-9A-Za-z_-]{20,}\b/,         // Google API key
-  /\bAKIA[0-9A-Z]{16}\b/,               // AWS access key id
-  /\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,   // Slack token
-  /\bgh[pousr]_[A-Za-z0-9]{20,}\b/,     // GitHub token
+  /\bsk-ant-[A-Za-z0-9_-]{16,}/,        // Anthropic
+  /\bsk-[A-Za-z0-9_-]{16,}/,            // OpenAI (incl. sk-proj-…)
+  /\bAIza[0-9A-Za-z_-]{20,}/,           // Google API key
+  /\bAKIA[0-9A-Z]{16}/,                 // AWS access key id
+  /\bxox[baprs]-[A-Za-z0-9_-]{10,}/,    // Slack token
+  /\bgh[hpousr]_[A-Za-z0-9]{20,}/,      // GitHub token (ghp_/gho_/ghu_/ghs_/ghr_/ghh_)
 ]
 
 /** Fraction of non-printable chars above which content is treated as binary. */

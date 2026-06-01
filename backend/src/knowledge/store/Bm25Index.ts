@@ -1,11 +1,8 @@
 import { type StoredChunk, type TenantFilter, type Scored, type ChunkMeta, matchesTenant } from './VectorStore.js'
+import { tokenize } from '../ingest/tokenize.js'
 
 const K1 = 1.5
 const B = 0.75
-
-function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
-}
 
 interface Doc { stored: StoredChunk; tokens: string[]; len: number; tf: Map<string, number> }
 

@@ -67,6 +67,24 @@ describe('RagService ingest/retrieve', () => {
     expect(await service.retrieve('token', { userId: 'u1' }, 5)).toHaveLength(0)
   })
 
+  it('exposes non-secret provenance on retrieved chunks, never userId (F1-AC4)', async () => {
+    const { service, queue } = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
+    service.ingest({ text: 'provenance carrying content', source: 'conversation', sourceId: 'src1', userId: 'u1', sessionId: 'sess1', agent: 'scribe' })
+    await queue.drain()
+    const [hit] = await service.retrieve('provenance content', { userId: 'u1' }, 5)
+    expect(hit?.provenance).toEqual({ sourceId: 'src1', sessionId: 'sess1', createdAt: fixedNow(), agent: 'scribe' })
+    expect(JSON.stringify(hit)).not.toContain('"userId"')
+  })
+
+  it('exposes ingest metrics via the service (F1-AC14)', async () => {
+    const { service, queue } = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
+    service.ingest({ text: 'a measurable chunk of text', source: 'conversation', sourceId: 's1', userId: 'u1', sessionId: 's1' })
+    await queue.drain()
+    const m = service.getMetrics()
+    expect(m.ingested).toBeGreaterThan(0)
+    expect(m.corpusSize).toBeGreaterThan(0)
+  })
+
   it('right-to-forget: deleteBySession removes chunks idempotently (F1-AC13)', async () => {
     const { service, queue } = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
     service.ingest({ text: 'forgettable content here', source: 'conversation', sourceId: 's1', userId: 'u1', sessionId: 's1' })

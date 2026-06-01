@@ -37,7 +37,10 @@ export class IngestQueue {
   enqueue(task: unknown, run: () => Promise<void>): void {
     this.queue.push(() => this.attempt(task, run, 0))
     this.metrics.queueDepth = this.queue.length
-    void this.pump()
+    // Fire-and-forget worker. attempt() already catches per-task failures (retry →
+    // dead-letter), so pump() has no throwing path; .catch is a belt-and-suspenders
+    // guard against an unexpected rejection becoming an unhandled rejection.
+    void this.pump().catch(() => { /* never throws in practice */ })
   }
 
   private async pump(): Promise<void> {

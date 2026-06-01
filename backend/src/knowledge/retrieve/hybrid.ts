@@ -1,5 +1,7 @@
 import type { Scored } from '../store/VectorStore.js'
 
+/** RRF damping constant. Larger → flatter contribution across ranks; the standard
+ *  default is 60 (typical useful range ~40–100). Kept fixed for the embedded MVP. */
 const RRF_K = 60
 
 /**

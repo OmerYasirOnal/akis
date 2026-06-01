@@ -45,6 +45,23 @@ describe('RAG feature flag (F1-AC11) + zero-touch ingestion (F1-AC1/AC17)', () =
     expect(ctx.knowledge.some(c => c.text.toLowerCase().includes('todo planner'))).toBe(true)
   })
 
+  it('does not leak bus listeners: the ingestion sink unsubscribes when a session completes (M4)', async () => {
+    const bus = new EventBus()
+    const rag = buildRag({ bus, queue: { backoffMs: () => 0 }, now: () => '2026-06-01T00:00:00Z' })
+    const services = buildServices({
+      store: new MockSessionStore(), skillsDir, bus,
+      provider: new MockProvider(), testRunner: createMockTestRunner({ testsRun: 2, passed: true }),
+      knowledge: rag.port, ingestionSink: rag.sink,
+    })
+    const orch = new Orchestrator(services)
+    const s = await orch.start({ idea: 'leak check app' })
+    expect(bus.listenerCount(s.id)).toBe(1) // sink subscribed at start
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    await orch.confirmPush(s.id) // emits 'done' -> sink self-unsubscribes
+    expect(bus.listenerCount(s.id)).toBe(0) // no dead listener left behind
+  })
+
   it('RagKnowledgePort is read-only (F1-AC9): no mint/approve/gate capability', () => {
     const rag = buildRag({ bus: new EventBus() })
     const keys = Object.getOwnPropertyNames(Object.getPrototypeOf(rag.port))

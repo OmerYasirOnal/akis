@@ -126,6 +126,14 @@ real API embedding provider, rerank, the LLM-callable `retrieve_knowledge` tool
 in a tool registry (no tool registry exists yet — RAG ships as a DI service per
 the architecture review's documented fallback).
 
+**Ingestion scope (honest):** the IngestionSink currently ingests **conversation /
+`text` events** (zero-touch, bus-driven). Full agent-artifact ingestion (the spec
+body / produced code as their own ingestible content) is a follow-up — those flow
+through the bus as narration today; emitting/ingesting the full artifacts is a
+small, additive next step behind the same sink. AC4 (provenance) and AC14
+(metrics) ARE exposed: retrieved chunks carry `provenance` (never `userId`) and
+`RagService.getMetrics()` returns the ingest/dedup/dead-letter counters + corpus size.
+
 ---
 
 ## Testing (TDD — failing test first)

@@ -1,14 +1,11 @@
 import { createHash } from 'node:crypto'
+import { tokenize } from '../ingest/tokenize.js'
 
 /** Pluggable text→vector seam. A real API-backed provider (reusing PR #2's catalog
  *  + KeyStore) drops in behind this later; the embedded default needs no network. */
 export interface EmbeddingProvider {
   readonly dim: number
   embed(texts: string[]): Promise<number[][]>
-}
-
-function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
 }
 
 /** Two independent 32-bit hashes of a token (bucket index + sign), derived from sha1. */

@@ -94,6 +94,18 @@ describe('chunk / exclude / hash', () => {
     expect(shouldExclude(binary, 'blob.bin').excluded).toBe(true)
     expect(shouldExclude('a normal sentence about todos', 'notes.md').excluded).toBe(false)
   })
+  it('catches every secret pattern, including keys followed by a word char (M1 regression)', () => {
+    const cases = [
+      'here is sk-proj-abcdefghijklmnop1234567890 in code',   // modern OpenAI (hyphen in body)
+      'GH_TOKEN=ghp_abcdefghijklmnopqrstuvwx_v2',              // GitHub token followed by _
+      'gho_abcdefghijklmnopqrstuvwxyz0123',                    // GitHub oauth
+      'aws AKIAIOSFODNN7EXAMPLE rotated',                      // AWS access key id
+      'google AIzaSyA1234567890abcdefghijklmnopqrstu key',     // Google API key
+      'slack xoxb-1234567890-abcdefghijklmno token',           // Slack
+      'anthropic sk-ant-api03-abcdefghijklmnopqrst usage',     // Anthropic
+    ]
+    for (const c of cases) expect(shouldExclude(c, 'notes.md').excluded, c).toBe(true)
+  })
   it('contentHash is stable for identical content+scope and differs otherwise', () => {
     const scope = { userId: 'u1', source: 'conversation', sourceId: 's1' }
     expect(contentHash('hello', scope)).toBe(contentHash('hello', scope))

@@ -6,7 +6,7 @@ import { rrfFuse } from './retrieve/hybrid.js'
 import { chunkText } from './ingest/chunk.js'
 import { shouldExclude } from './ingest/exclude.js'
 import { contentHash } from './ingest/hash.js'
-import type { IngestQueue } from './ingest/IngestQueue.js'
+import type { IngestQueue, IngestMetrics } from './ingest/IngestQueue.js'
 
 export interface IngestInput {
   text: string
@@ -62,13 +62,26 @@ export class RagService {
     }
   }
 
-  /** Hybrid retrieval (vector + BM25 fused by RRF), tenancy-filtered (F1-AC5). */
+  /** Hybrid retrieval (vector + BM25 fused by RRF), tenancy-filtered (F1-AC5).
+   *  Exposes non-secret provenance on each chunk (F1-AC4) — never userId. */
   async retrieve(query: string, filter: TenantFilter, k = 6): Promise<KnowledgeChunk[]> {
     if (!query.trim() || this.deps.vectorStore.size() === 0) return []
     const [qv] = await this.deps.embedding.embed([query])
     const vec = this.deps.vectorStore.search(qv!, filter, k * 2)
     const lex = this.deps.bm25.search(query, filter, k * 2)
-    return rrfFuse([vec, lex], k).map(s => ({ ...s.stored.chunk, score: s.score }))
+    return rrfFuse([vec, lex], k).map(s => {
+      const m = s.stored.meta
+      return {
+        ...s.stored.chunk,
+        score: s.score,
+        provenance: { sourceId: m.sourceId, sessionId: m.sessionId, createdAt: m.createdAt, ...(m.agent !== undefined ? { agent: m.agent } : {}) },
+      }
+    })
+  }
+
+  /** Observability (F1-AC14): ingest/dead-letter/dedup counters + corpus size. */
+  getMetrics(): IngestMetrics & { corpusSize: number } {
+    return { ...this.deps.queue.metrics, corpusSize: this.deps.vectorStore.size() }
   }
 
   /** Right-to-forget (F1-AC13): idempotent delete by session or source. */
