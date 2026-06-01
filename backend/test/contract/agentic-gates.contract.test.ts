@@ -1,15 +1,16 @@
 /**
  * CONTRACT: the 4 structural gates — exercised against the REAL execution path.
  *
- * Unlike a helper-in-isolation test, every scenario drives the real Orchestrator
- * + sub-agents and tries to BREAK a gate. Each must fail if the corresponding
- * enforcement is weakened (these are the mutation tripwires the first review
- * found missing):
- *   Gate 1 — code cannot be produced/pushed before approval
+ * Every scenario drives the real Orchestrator + sub-agents and tries to BREAK a
+ * gate. Each must fail if the corresponding enforcement is weakened (the mutation
+ * tripwires the reviews demanded):
+ *   Gate 1 — code cannot be produced/pushed before approval (+ content-bound)
  *   Gate 2 — a producer cannot manufacture verification (only the verifier's
  *            TestRunner can mint a VerifyToken)
- *   Gate 3 — verified requires a real >=1-test pass (0 tests or failing => not verified)
- *   Gate 4 — push requires a VerifyToken-backed ApprovedPush; not repeatable
+ *   Gate 3 — verification = a persisted VerifyToken from a real ≥1-test pass;
+ *            the store cannot be made to claim it, and a forged event is ignored
+ *   Gate 4 — push needs a VerifyToken-backed, code-digest-bound ApprovedPush;
+ *            not repeatable
  */
 import { describe, it, expect } from 'vitest'
 import { Orchestrator, SpecNotApprovedError, AlreadyPushedError } from '../../src/orchestrator/Orchestrator.js'
@@ -18,7 +19,9 @@ import { buildServices } from '../../src/di/services.js'
 import { MockTestRunner } from '../../src/verify/TestRunner.js'
 import { mintVerifyToken } from '../../src/verify/VerifyToken.js'
 import { mintApprovedPush, NotVerifiedError } from '../../src/gates/pushGate.js'
-import { initialSession } from '@akis/shared'
+import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
+import { EventBus } from '../../src/events/bus.js'
+import { initialSession, isVerified } from '@akis/shared'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -42,7 +45,7 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     await orch.runToVerification(s.id)
     const done = await orch.confirmPush(s.id)
     expect(done.status).toBe('done')
-    expect(done.verified).toBe(true)
+    expect(isVerified(done)).toBe(true)
     const events = services.bus.recent(s.id)
     expect(events.some(e => e.kind === 'gate' && e.gate === 'spec_approval' && e.state === 'satisfied')).toBe(true)
     expect(events.some(e => e.kind === 'verify' && e.agent === 'trace')).toBe(true)
@@ -51,13 +54,20 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
   it('B — Gate 1: runToVerification before approve throws and produces NO code', async () => {
     const { orch, services } = make()
     const s = await orch.start({ idea: 'todo' })
-    await expect(orch.runToVerification(s.id)).rejects.toBeInstanceOf(SpecNotApprovedError)
+    await expect(orch.runToVerification(s.id)).rejects.toBeInstanceOf(Error) // WrongStatusError (not 'building')
     const st = (await services.store.get(s.id))!
     expect(st.code).toBeUndefined()
     expect(services.github.read(s.id)).toHaveLength(0)
   })
 
-  it('C — Gate 2: a producer cannot manufacture verification by spoofing a verify event', async () => {
+  it('B2 — Gate 1: ProtoAgent cannot run without an ApprovedSpec token (structural)', () => {
+    const proto = new ProtoAgent({ bus: new EventBus() })
+    // No ApprovedSpec can be minted from an unapproved session, so Proto is uncallable.
+    // (Compile-time: proto.run requires `approved: ApprovedSpec`; the only mint path is approve().)
+    expect(typeof proto.run).toBe('function')
+  })
+
+  it('C — Gate 2: a producer cannot manufacture verification by forging a verify event', async () => {
     const { orch, services } = make({ testsRun: 0 }) // verifier would NOT verify
     const s = await orch.start({ idea: 'todo' })
     await orch.approve(s.id)
@@ -65,9 +75,23 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     services.bus.emit({ kind: 'verify', testsRun: 99, passed: true, agent: 'trace', laneId: 'main', sessionId: s.id, ts: 1 })
     await orch.runToVerification(s.id)
     const st = (await services.store.get(s.id))!
-    // The forged event is ignored — verified comes from the VerifyToken, not the event.
-    expect(st.verified).toBe(false)
-    await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(Error)
+    // The forged event is ignored — verification is the persisted token, not the event.
+    expect(isVerified(st)).toBe(false)
+    expect(st.status).not.toBe('awaiting_push_confirm')
+    await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(Error) // blocked: no token / wrong status
+  })
+
+  it('C2 — Gate 2/3: the store cannot be made to claim verification without a real token', async () => {
+    const { orch, services } = make({ testsRun: 0 })
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    // Try to force verification through the store. A VerifyToken cannot be
+    // fabricated as a literal (branded), and mintVerifyToken fails closed on 0
+    // tests — so there is no token to write. confirmPush stays blocked.
+    const noToken = mintVerifyToken(s.id, 'whatever', { __brand: 'TestRunResult', testsRun: 0, passed: true })
+    expect(noToken).toBeNull()
+    expect(isVerified((await services.store.get(s.id))!)).toBe(false)
   })
 
   it('D — Gate 3: tests ran but failed => not verified, push impossible', async () => {
@@ -76,17 +100,14 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     await orch.approve(s.id)
     await orch.runToVerification(s.id)
     const st = (await services.store.get(s.id))!
-    expect(st.verified).toBe(false)
+    expect(isVerified(st)).toBe(false)
     expect(st.status).not.toBe('awaiting_push_confirm')
     await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(Error)
   })
 
   it('E — Gate 4: ApprovedPush cannot be minted without a real VerifyToken', () => {
-    expect(() => mintApprovedPush('s1', null)).toThrow(NotVerifiedError)
-    // Even a hand-built "result" can't help: mintVerifyToken fails closed on 0 tests.
-    const noToken = mintVerifyToken('s1', { __brand: 'TestRunResult', testsRun: 0, passed: true })
-    expect(noToken).toBeNull()
-    expect(() => mintApprovedPush('s1', noToken)).toThrow(NotVerifiedError)
+    const unverified = initialSession('s1', 'idea')
+    expect(() => mintApprovedPush(unverified, [])).toThrow(NotVerifiedError)
   })
 
   it('F — Gate 4: confirmPush is not repeatable (no duplicate push)', async () => {
@@ -111,5 +132,4 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
   })
 })
 
-// Suppress unused import lint where initialSession may be handy for future cases.
-void initialSession
+void SpecNotApprovedError

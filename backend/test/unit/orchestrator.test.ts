@@ -1,9 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { Orchestrator } from '../../src/orchestrator/Orchestrator.js'
+import { Orchestrator, AlreadyPushedError } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
 import { MockTestRunner } from '../../src/verify/TestRunner.js'
-import { AlreadyPushedError } from '../../src/orchestrator/Orchestrator.js'
+import { NotVerifiedError } from '../../src/gates/pushGate.js'
+import { isVerified } from '@akis/shared'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -27,11 +28,11 @@ describe('Orchestrator — happy path', () => {
     await orch.approve(s.id)
     await orch.runToVerification(s.id)
     const afterTrace = (await services.store.get(s.id))!
-    expect(afterTrace.verified).toBe(true)
+    expect(isVerified(afterTrace)).toBe(true)
     expect(afterTrace.status).toBe('awaiting_push_confirm')
     const done = await orch.confirmPush(s.id)
     expect(done.status).toBe('done')
-    expect(done.verified).toBe(true)
+    expect(isVerified(done)).toBe(true)
   })
 })
 
@@ -42,7 +43,7 @@ describe('Orchestrator — vacuous green (0 tests)', () => {
     await orch.approve(s.id)
     await orch.runToVerification(s.id)
     const st = (await services.store.get(s.id))!
-    expect(st.verified).toBe(false)
+    expect(isVerified(st)).toBe(false)
     expect(st.status).not.toBe('awaiting_push_confirm')
     await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(Error)
   })
@@ -54,7 +55,7 @@ describe('Orchestrator — tests ran but failed', () => {
     const s = await orch.start({ idea: 'todo' })
     await orch.approve(s.id)
     await orch.runToVerification(s.id)
-    expect((await services.store.get(s.id))!.verified).toBe(false)
+    expect(isVerified((await services.store.get(s.id))!)).toBe(false)
   })
 })
 
@@ -62,11 +63,11 @@ describe('Orchestrator — critic hard-block', () => {
   it('critical finding → awaiting_critic_resolution, never verified', async () => {
     const { orch, services } = makeOrch({ mockCriticScore: 40 })
     const s = await orch.start({ idea: 'todo' })
-    await orch.approve(s.id)
-    await orch.runToVerification(s.id)
-    const st = (await services.store.get(s.id))!
-    expect(st.status).toBe('awaiting_critic_resolution')
-    expect(st.verified).toBe(false)
+    // start() already parks at awaiting_critic_resolution because the spec review failed.
+    expect((await services.store.get(s.id))!.status).toBe('awaiting_critic_resolution')
+    // approve is refused from that status.
+    await expect(orch.approve(s.id)).rejects.toBeInstanceOf(Error)
+    expect(isVerified((await services.store.get(s.id))!)).toBe(false)
   })
 })
 
@@ -82,3 +83,21 @@ describe('Orchestrator — confirmPush is idempotent', () => {
     expect(services.github.read(s.id).length).toBe(filesAfterFirst)
   })
 })
+
+describe('Orchestrator — verified survives a fresh instance (no in-memory token)', () => {
+  it('a second Orchestrator over the same store can push the verified session', async () => {
+    const store = new MockSessionStore()
+    const services = buildServices({ store, skillsDir, mockCriticScore: 90, testRunner: new MockTestRunner({ testsRun: 2, passed: true }) })
+    const orch1 = new Orchestrator(services)
+    const s = await orch1.start({ idea: 'todo' })
+    await orch1.approve(s.id)
+    await orch1.runToVerification(s.id)
+    // A different Orchestrator instance (simulating restart) sharing the store + github.
+    const orch2 = new Orchestrator(services)
+    const done = await orch2.confirmPush(s.id)
+    expect(done.status).toBe('done')
+    expect(isVerified(done)).toBe(true)
+  })
+})
+
+void NotVerifiedError

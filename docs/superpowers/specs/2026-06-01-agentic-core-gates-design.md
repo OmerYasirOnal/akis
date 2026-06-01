@@ -18,14 +18,16 @@ Why it's safe: the **2026-06-12 defense runs on v1** (which has the FSM chain), 
 
 ## 1. The 4 structural gates (NON-NEGOTIABLE — the whole point)
 
-Everything else is free agentic flow. These four are enforced by construction, asserted by the contract test (§8):
+> **Enforcement mechanism (revised after independent review #1, 2026-06-01):** the gates are enforced by **branded capability tokens + a verifier-only TestRunner capability**, NOT by a `canUseTool`/`AgentLoop` permission layer. The agentic provider-driven loop (where an LLM's tool-calls drive dispatch through a permission check) is deferred to the real-provider sub-project; in this mock sub-project the orchestrator drives sub-agents imperatively, and the tokens are what make the gates structural. (Option A.) The contract test (§8) drives the **real** path adversarially.
 
-1. **Spec-approval gate (human).** The orchestrator **cannot** dispatch Proto to write code until a human approves the Scribe spec. Enforced: the `dispatch_proto` tool is unavailable / denied until an `approvedSpec` exists in session state.
-2. **Producer ≠ verifier (role-based tool permission).** The agent/role that writes code (Proto / orchestrator) **cannot** run tests. The `run_tests` tool is callable **only** by the `verifier` (Trace) role. Enforced at the tool-permission layer (akis-v2's `canUseTool` lesson), not advisory `allowedTools`.
-3. **"Verified" = a real test run.** The `verified` flag latches **only** when a real Trace test run reported **≥1 test that executed and passed**. Zero/empty/no-op runs → `⚠️ unverified`, never `✅`. Enforced by a reducer over the event stream, not by any agent's assertion.
-4. **Push gate (token + verified + human).** GitHub push/PR requires an `ApprovedPush` **branded token** that is mintable **only** by the human push-confirm action **and only when `verified === true`**. `pushToGitHub(token: ApprovedPush)` won't type-check without it. Compile-time, not per-path discipline.
+Everything else is free agentic flow. These four are enforced by construction:
 
-A breach of any gate is a build/test failure.
+1. **Spec-approval gate (human) — `ApprovedSpec` token.** `ProtoAgent.run` requires an `ApprovedSpec` branded token (`gates/specGate.ts`), mintable only from a session that carries an `approvedSpec` — which only the human `approve()` sets. Code-write cannot even type-check without approval; no direct caller can side-step it.
+2. **Producer ≠ verifier — verifier-only TestRunner capability.** Verification evidence (`TestRunResult`) is a branded type producible **only** by a `TestRunner` (`verify/TestRunner.ts`), and only the `trace` (verifier) sub-agent is given a `TestRunner` in the DI container. Producers (Scribe/Proto/orchestrator) hold no runner, so they cannot produce the evidence required to verify.
+3. **"Verified" = a real test run — persisted `VerifyToken`.** Verification is the **presence of a branded `VerifyToken`** in `SessionState` (`shared/verify.ts`; read via `isVerified`), never a free boolean or an event. `mintVerifyToken` fails closed: only a genuine **≥1 executed + passing** `TestRunResult` yields a token; 0 tests or a failing run → no token → `⚠️ unverified`. The token can't be written as a literal (branded), so the store cannot be made to claim verification. It is persisted, so it survives restart, and it binds a **digest of the tested code**.
+4. **Push gate — `ApprovedPush` token.** `pushToGitHub` requires an `ApprovedPush` branded token (`gates/pushGate.ts`), mintable only from the session's `VerifyToken` **and** only when the files to push match the token's code digest (verified-code = pushed-code). Push without a verified session does not type-check. `confirmPush` is status-guarded + idempotent.
+
+A breach of any gate is a build/test failure (the §8 contract test exercises each as a mutation tripwire on the real path).
 
 ## 2. Context & why mock-first is cheap
 

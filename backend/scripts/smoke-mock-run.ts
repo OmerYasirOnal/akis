@@ -9,6 +9,7 @@ import { Orchestrator } from '../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../src/store/MockSessionStore.js'
 import { buildServices } from '../src/di/services.js'
 import { MockTestRunner } from '../src/verify/TestRunner.js'
+import { isVerified } from '@akis/shared'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import type { AkisEvent } from '@akis/shared'
@@ -41,7 +42,7 @@ async function run(label: string, testsRun: number): Promise<void> {
   await orch.runToVerification(s.id)
   try {
     const done = await orch.confirmPush(s.id)
-    console.log(`RESULT: ${done.status} · verified=${done.verified} ✅`)
+    console.log(`RESULT: ${done.status} · verified=${isVerified(done)} ✅`)
   } catch (e) {
     console.log(`RESULT: blocked — ${(e as Error).name} (correct: vacuous green ⚠️)`)
   }
