@@ -21,7 +21,7 @@ export class TypeConsistencyCheck implements ValidationCheck {
 
       const lines = file.content.split('\n');
       for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
+        const line = lines[i] ?? '';
 
         // Flag 'any' usage (info-level)
         if (/:\s*any\b/.test(line) && !line.includes('// eslint')) {

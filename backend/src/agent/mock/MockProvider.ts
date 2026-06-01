@@ -19,6 +19,9 @@ export class MockProvider implements LlmProvider {
   async chat(_req: ChatRequest): Promise<ChatResult> {
     const turn = this.cfg.script[this.i++]
     if (!turn) return { text: '' }
-    return { text: turn.text, toolCalls: turn.toolCalls }
+    const result: ChatResult = {}
+    if (turn.text !== undefined) result.text = turn.text
+    if (turn.toolCalls !== undefined) result.toolCalls = turn.toolCalls
+    return result
   }
 }

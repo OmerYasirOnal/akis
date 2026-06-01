@@ -25,7 +25,7 @@ export class ImportCheck implements ValidationCheck {
         const importMatch = line.match(/^\s*import\s+.*\s+from\s+['"]([^'"]+)['"]/);
         if (!importMatch) continue;
 
-        const specifier = importMatch[1];
+        const specifier = importMatch[1] ?? '';
 
         // Relative import escaping upward too far
         if (specifier.startsWith('../../../')) {
