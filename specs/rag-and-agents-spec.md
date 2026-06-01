@@ -91,6 +91,13 @@ Reconciliation decisions (confirmed with user):
 - **F2-AC13 (bounded agent loop):** Every agentic run has a hard step/iterate cap (generalize the existing `MAX_ITERATE`) **and** a wall-clock budget; exceeding either ends the run as `failed` with a typed reason — never an unbounded loop.
 - **F2-AC14 (least-privilege tool scope):** A `WorkflowConfig` grants each agent the **minimum** tool set; a tool not in the workflow is not dispatchable for that run.
 - **F2-AC15 (observability):** Core + RAG emit OpenTelemetry-style spans/metrics (run/step latency, tokens, gate events, ingest/retrieval health) queryable without code changes.
+- **F2-AC16 (shared context environment):** All agents read a typed `SharedContext` = `SessionState` + the `AkisEvent` log + retrieved knowledge (`KnowledgePort.retrieve()`) + a typed cross-agent scratchpad. The **only** write path is typed events/returns — no untyped shared blob (v1's `intermediateState` mistake).
+- **F2-AC17 (AKIS dispatch with context):** AKIS (the main orchestrator agent) dispatches every agent (core + custom) with a read view of `SharedContext`; a dispatched agent never reaches a gate capability it isn't entitled to.
+
+### CORE acceptance criteria (owned by the agentic-core session; we depend on them)
+- **CORE-AC1 (live agents):** every core sub-agent (Scribe/Proto/Trace) produces its artifact via a **real provider call** (asserted by a test that the provider was invoked), not a hardcoded literal — closes the "sub-agents are stubs" gap (CF2).
+- **CORE-AC2 (default Claude, live by default):** with `ANTHROPIC_API_KEY` present (env or KeyStore) and no other config, all agents run on Claude; with nothing configured outside `NODE_ENV=test`, the system **fails loudly** (no silent mock fallback) (CF6).
+- **CORE-AC3 (no committed keys):** the default Claude API key comes from env/KeyStore only; a secret-scan/CI check asserts no key material is ever committed; default key-store path is outside the repo.
 
 ### F2 Out of scope
 - Planner-agent that invents stages / fully free agent DAG authoring beyond the bounded preset.
