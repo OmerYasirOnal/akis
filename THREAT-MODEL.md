@@ -40,3 +40,32 @@ User-supplied LLM API keys are handled with these guarantees:
 - **Plaintext is transient** — it exists in memory only during encrypt (on PUT) and decrypt (right before constructing a provider client).
 - **Missing master key** surfaces as a clear `EncryptionNotConfiguredError` (a settings error), not a stack trace; env-only keys do not require the master key.
 - **Residual:** a hostile in-tree first-party module in the same process can read decrypted keys in memory (same single-trust-domain limit as the gates). Self-hosted single-user posture accepts this; multi-user/remote would need process isolation + a secrets manager.
+
+## Preview + real-test execution (sub-project #6)
+
+`RealTestRunner` (opt-in) and the live preview run **agent-produced code as child
+processes on the host** (local-direct), per the owner's explicit "no microVM,
+local, show it nicely" decision. This is **hygiene + blast-radius reduction, NOT a
+security boundary.**
+
+- **Mitigations (every OS):** dependency install runs with **lifecycle scripts
+  blocked** (`pnpm install --ignore-scripts`); the child env is **scrubbed of AI
+  keys + the key-store path** (`scrubEnv` in `exec/Sandbox.ts`; asserted by a test
+  that `ANTHROPIC_API_KEY` is absent in the child); each run uses an **ephemeral
+  workspace** under `~/.akis/workspaces/<id>-<nonce>/` with path-traversal-safe
+  materialization; on timeout the **whole process group is SIGKILLed**.
+- **Integrity (unchanged from #1):** the **trusted parent computes the file digest**
+  (`createRealTestRunner` → `digestFiles`), never the child; reporter files are read
+  **only after the child exits**; the runner is **fail-closed** (timeout / missing
+  report / 0 tests → `passed:false`, count zeroed → no `VerifyToken`). The 4 gates,
+  the private `TestRunResult` brand, and producer≠verifier wiring are untouched.
+- **Residual (stated, accepted for single-user self-host):** every process shares
+  the kernel; Node's permission model is not a sandbox; on macOS local mode there is
+  effectively no isolation. A passing test in a non-isolated workspace is `verified`
+  but **not isolation-grade** until the deferred signed-verifier process lands.
+- **Seam kept:** the `Sandbox` interface lets a stronger executor (Docker
+  `network=none`/caps-dropped, gVisor, microVM) or a separate signed verifier drop
+  in **without touching callers** — exactly the migration path in the section above.
+- **Default stays mock:** `createMockTestRunner` remains the default; the real
+  runner is opt-in (config + browsers present), so the suite + smoke stay green with
+  zero setup and no untrusted code executes by default.
