@@ -6,8 +6,9 @@ import { CriticAgent } from '../orchestrator/subagents/critic/CriticAgent.js'
 import { ScribeAgent } from '../orchestrator/subagents/ScribeAgent.js'
 import { ProtoAgent } from '../orchestrator/subagents/ProtoAgent.js'
 import { TraceAgent } from '../orchestrator/subagents/TraceAgent.js'
-import { createMockTestRunner, type TestRunner } from '../verify/TestRunner.js'
+import { createMockTestRunner, createRealTestRunner, type TestRunner } from '../verify/TestRunner.js'
 import { createVerifier } from '../verify/verifier.js'
+import { LocalDirectSandbox, type Sandbox } from '../exec/Sandbox.js'
 import { createApprovalAuthority, type ApprovalAuthority } from '../gates/specGate.js'
 import { loadSkills, type Skill } from '../skills/registry.js'
 import type { LlmProvider } from '../agent/LlmProvider.js'
@@ -29,6 +30,8 @@ export interface OrchestratorServices {
   approvalAuthority: ApprovalAuthority
   skills: Skill[]
   providerName: string
+  /** Per-run iterate budget (a workflow may tighten it below the default). */
+  iterateBudget?: number
   /** Read-only knowledge retrieval that feeds SharedContext (NullKnowledgePort until RAG). */
   knowledge: KnowledgePort
   /** When RAG is on, the bus sink the orchestrator subscribes per session (F1-AC17). */
@@ -60,6 +63,13 @@ export interface BuildServicesOptions {
   mockNeedsClarification?: boolean
   /** The verifier's test runner. Default fails closed (0 tests). */
   testRunner?: TestRunner
+  /** Opt-in: use the REAL runner (Playwright+Cucumber via Sandbox) instead of the
+   *  mock, so 'verified' means a real >=1-test pass. Ignored if `testRunner` is given. */
+  realTests?: boolean
+  /** Sandbox for the real runner (default LocalDirectSandbox; injectable for tests). */
+  sandbox?: Sandbox
+  /** Per-run iterate budget (a workflow may tighten it below the default 3). */
+  iterateBudget?: number
   /**
    * Optional key source (the encrypted KeyStore) consulted after env when
    * resolving a provider — so a Settings-saved key actually reaches the critic.
@@ -84,7 +94,10 @@ export interface BuildServicesOptions {
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
   const bus = opts.bus ?? new EventBus()
   const github = new MockGitHubAdapter()
-  const runner = opts.testRunner ?? createMockTestRunner()
+  // Runner selection: explicit > real (opt-in) > mock (fail-closed default).
+  const runner: TestRunner =
+    opts.testRunner ??
+    (opts.realTests ? createRealTestRunner({ sandbox: opts.sandbox ?? new LocalDirectSandbox() }) : createMockTestRunner())
 
   // The provider feeds the LIVE sub-agents (Scribe/Proto) AND the critic. Under
   // NODE_ENV=test createProvider returns the mock; with mockCriticScore the critic
@@ -154,6 +167,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
     providerName,
+    ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
     ...resolveKnowledge(opts, bus),
   }
 }
