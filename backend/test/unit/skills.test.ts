@@ -25,4 +25,18 @@ describe('skill registry', () => {
     expect(sys).toContain('BASE')
     expect(sys).toContain('web-app-spec')
   })
+
+  it('every library skill is status:draft and has required frontmatter', () => {
+    const reg = loadSkills(libDir)
+    expect(reg.length).toBeGreaterThanOrEqual(10)
+    const validRoles = ['orchestrator', 'scribe', 'proto', 'trace', 'critic']
+    for (const s of reg) {
+      expect(s.status).toBe('draft')
+      expect(s.name).toBeTruthy()
+      expect(validRoles).toContain(s.appliesToRole)
+      expect(Array.isArray(s.triggers)).toBe(true)
+      expect(s.triggers.length).toBeGreaterThan(0)
+      expect(s.body.length).toBeGreaterThan(0)
+    }
+  })
 })
