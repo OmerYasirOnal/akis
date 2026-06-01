@@ -5,9 +5,13 @@ import { fileURLToPath } from 'node:url'
 import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
 import { registerProviderRoutes } from './providers.routes.js'
 import { registerSessionRoutes } from './sessions.routes.js'
+import { registerPreviewRoutes } from './preview.routes.js'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
+import { PreviewRegistry } from '../preview/PreviewRegistry.js'
+import { LocalDirectSandbox } from '../exec/Sandbox.js'
+import { nextTs } from '../events/clock.js'
 
 export interface ServerDeps {
   keyStore: KeyStore
@@ -35,9 +39,22 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     buildServices({ store: new MockSessionStore(), skillsDir: deps.skillsDir ?? defaultSkillsDir(), keyStore: deps.keyStore })
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
 
+  // Preview registry: the registry never spawns until POST /sessions/:id/preview is
+  // called; its status changes ride the `preview_status` event so the live UI updates.
+  const previewRegistry = new PreviewRegistry({
+    sandbox: new LocalDirectSandbox(),
+    onStatus: e => services.bus.emit({
+      kind: 'preview_status', status: e.status,
+      ...(e.url !== undefined ? { url: e.url } : {}),
+      ...(e.reason !== undefined ? { reason: e.reason } : {}),
+      agent: 'orchestrator', laneId: 'main', sessionId: e.sessionId, ts: nextTs(),
+    }),
+  })
+
   app.get('/health', async () => ({ ok: true }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env })
   registerSessionRoutes(app, { orchestrator, services })
+  registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   return app
 }
 

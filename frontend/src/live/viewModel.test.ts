@@ -69,6 +69,18 @@ describe('foldSessionView (pure live view-model)', () => {
     expect(v.verified).toBe(true)
   })
 
+  it('consumes preview_status (embeds the same-origin url on ready) and test_stats', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'starting' }),
+      ev({ kind: 'test_stats', built: 4, running: 4, passed: 4, failed: 0, durationMs: 1200 }),
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+    ])
+    expect(v.preview).toEqual({ ready: true, url: '/preview/s1/' })
+    expect(v.tests.ran).toBe(true)
+    expect(v.tests.scenariosBuilt).toBe(4)
+    expect(v.tests.scenariosRunning).toBe(4)
+  })
+
   it('a tool_result with no open agent step does not push an orphan error (M5)', () => {
     const v = foldSessionView('s1', [ev({ kind: 'tool_result', tool: 'dispatch_proto', ok: false, result: { error: 'x' }, agent: 'proto' })])
     expect(v.errors).toHaveLength(0) // no step to attach to → no inconsistent orphan error
