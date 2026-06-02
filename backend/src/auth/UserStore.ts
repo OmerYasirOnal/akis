@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string }
+export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string }
 /** The user projection safe to return over the wire — never includes the hash. */
 export interface PublicUser { id: string; name: string; email: string }
 export const toPublic = (u: AuthUser): PublicUser => ({ id: u.id, name: u.name, email: u.email })
@@ -14,7 +14,7 @@ export interface UserStorePort {
   findByEmail(email: string): Promise<AuthUser | undefined>
   findById(id: string): Promise<AuthUser | undefined>
   updatePassword(id: string, passwordHash: string): Promise<void>
-  upsertOAuth(input: { email: string; name: string }): Promise<AuthUser>
+  upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser>
 }
 
 /**
@@ -25,6 +25,7 @@ export interface UserStorePort {
 export class UserStore implements UserStorePort {
   private byEmail = new Map<string, AuthUser>()
   private byId = new Map<string, AuthUser>()
+  private byExternalId = new Map<string, AuthUser>()
   constructor(private genId: () => string = randomUUID, private clock: () => string = () => new Date().toISOString()) {}
 
   async create(input: { name: string; email: string; passwordHash: string }): Promise<AuthUser> {
@@ -37,14 +38,21 @@ export class UserStore implements UserStorePort {
   }
   async findByEmail(email: string): Promise<AuthUser | undefined> { return this.byEmail.get(email.trim().toLowerCase()) }
   async findById(id: string): Promise<AuthUser | undefined> { return this.byId.get(id) }
-  /** Find-or-create a user from an OAuth profile (no password — `passwordHash` is empty,
-   *  which never verifies, so the account is OAuth-only until a reset sets a password). */
-  async upsertOAuth(input: { email: string; name: string }): Promise<AuthUser> {
+  /** Find-or-create a user from an OAuth profile. Bound to the provider identity
+   *  (externalId) first; falls back to the (provider-VERIFIED) email, linking it to that
+   *  identity. New OAuth users have an empty passwordHash (never verifies). The caller
+   *  MUST have verified the email with the provider before linking by email. */
+  async upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser> {
+    const byExt = this.byExternalId.get(input.externalId)
+    if (byExt) return byExt
     const email = input.email.trim().toLowerCase()
     const existing = this.byEmail.get(email)
-    if (existing) return existing
-    const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock() }
-    this.byEmail.set(email, u); this.byId.set(u.id, u)
+    if (existing) { // link this provider identity to the verified-email account
+      if (!existing.externalId) { existing.externalId = input.externalId; this.byExternalId.set(input.externalId, existing) }
+      return existing
+    }
+    const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock(), externalId: input.externalId }
+    this.byEmail.set(email, u); this.byId.set(u.id, u); this.byExternalId.set(input.externalId, u)
     return u
   }
   /** Replace a user's password hash (password reset). No-op if the id is unknown. */

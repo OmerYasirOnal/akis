@@ -14,10 +14,13 @@ export function RouterProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('popstate', onPop)
   }, [])
   const navigate = useCallback((to: string, opts?: { replace?: boolean }) => {
-    if (to === window.location.pathname) return
+    // `to` may carry a query string (e.g. /reset-password?token=…). Push the FULL url
+    // (so location.search is populated) but track only the pathname for route matching.
+    const pathname = new URL(to, window.location.origin).pathname
+    if (pathname === window.location.pathname && to === window.location.pathname + window.location.search) return
     if (opts?.replace) window.history.replaceState({}, '', to)
     else window.history.pushState({}, '', to)
-    setPath(to)
+    setPath(pathname)
   }, [])
   return <RouterCtx.Provider value={{ path, navigate }}>{children}</RouterCtx.Provider>
 }

@@ -72,4 +72,9 @@ describe('fetchProfile', () => {
   it('throws on a profile missing id/email', async () => {
     await expect(fetchProfile('google', 'tok', async () => ok({ name: 'x' }))).rejects.toThrow()
   })
+  it('rejects a Google profile whose email is not verified (account-takeover guard)', async () => {
+    await expect(fetchProfile('google', 'tok', async () => ok({ sub: 'g-2', email: 'victim@gmail.com', email_verified: false }))).rejects.toThrow(/not verified/)
+    // missing flag is also treated as unverified
+    await expect(fetchProfile('google', 'tok', async () => ok({ sub: 'g-3', email: 'x@y.dev' }))).rejects.toThrow(/not verified/)
+  })
 })
