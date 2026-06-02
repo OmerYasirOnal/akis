@@ -36,6 +36,24 @@ describe('Orchestrator — happy path', () => {
   })
 })
 
+describe('Orchestrator — code-review visibility', () => {
+  it('emits a structured code_review event (approved verdict) at the review step', async () => {
+    const { orch, services } = makeOrch()
+    const s = await orch.start({ idea: 'build a todo web app' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const events = services.bus.recent(s.id)
+    const cr = events.find(e => e.kind === 'code_review')
+    expect(cr).toBeDefined()
+    expect(cr).toMatchObject({ kind: 'code_review', approved: true, critical: false, agent: 'critic', laneId: 'main' })
+    // Structured-only: findings/iteration are bounded numbers, never free-form prose.
+    expect(typeof (cr as { findings: unknown }).findings).toBe('number')
+    expect(typeof (cr as { iteration: unknown }).iteration).toBe('number')
+    // It is NOT a text event, so the RAG ingestion sink never treats it as trusted grounding.
+    expect(cr).not.toHaveProperty('text')
+  })
+})
+
 describe('Orchestrator — vacuous green (0 tests)', () => {
   it('does not verify and cannot confirm push', async () => {
     const { orch, services } = makeOrch({ testsRun: 0 })
