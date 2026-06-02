@@ -84,6 +84,12 @@ export class ApiClient {
   }
   me(): Promise<{ user: AuthUser }> { return this.json('/auth/me') }
   logout(): Promise<{ ok: boolean }> { return this.json('/auth/logout', { method: 'POST' }) }
+  forgotPassword(email: string): Promise<{ message: string; resetToken?: string; resetUrl?: string }> {
+    return this.json('/auth/forgot-password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) })
+  }
+  resetPassword(token: string, password: string): Promise<{ user: AuthUser }> {
+    return this.json('/auth/reset-password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, password }) })
+  }
 
   /** Free-form conversation WITH AKIS (the orchestrator persona) — distinct from a build. */
   chatWithAkis(message: string, history: { role: 'user' | 'assistant'; content: string }[] = []): Promise<{ reply: string }> {

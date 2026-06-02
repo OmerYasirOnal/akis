@@ -10,6 +10,8 @@ import { SettingsPage } from '../pages/SettingsPage.js'
 import { Login } from '../pages/Login.js'
 import { Signup } from '../pages/Signup.js'
 import { Landing } from '../pages/Landing.js'
+import { ForgotPassword } from '../pages/ForgotPassword.js'
+import { ResetPassword } from '../pages/ResetPassword.js'
 import { I18nProvider, useI18n } from '../i18n/I18nContext.js'
 import { RouterProvider, useRouter, Link, Navigate } from '../router/router.js'
 import { AuthProvider, useAuth } from '../auth/AuthContext.js'
@@ -128,6 +130,9 @@ function Shell({ api }: { api: ApiClient }) {
   if (loading) return <Loader />
   if (path === '/login') return user ? <Navigate to="/" /> : <PublicFrame><Login /></PublicFrame>
   if (path === '/signup') return user ? <Navigate to="/" /> : <PublicFrame><Signup /></PublicFrame>
+  // Reset works in either auth state (the link arrives by email/out-of-band).
+  if (path === '/forgot-password') return <PublicFrame><ForgotPassword api={api} /></PublicFrame>
+  if (path === '/reset-password') return <PublicFrame><ResetPassword api={api} /></PublicFrame>
   if (!user) return <PublicFrame>{path === '/docs' ? <PublicDocs /> : <Landing />}</PublicFrame>
   return <AppFrame api={api} />
 }

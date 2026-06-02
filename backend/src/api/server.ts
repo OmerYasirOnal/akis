@@ -125,7 +125,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   registerWorkflowRoutes(app, { store: workflowStore })
-  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env) })
+  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env), devEcho: env.NODE_ENV !== 'production' })
   registerAnalyticsRoutes(app, { stats })
   registerChatRoutes(app, { provider: services.provider })
   return app
