@@ -80,6 +80,10 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
       case 'verify':
         v.tests = { ...v.tests, testsRun: e.testsRun, passed: e.passed, ran: true }
         break
+      case 'code_review':
+        // Critic's read-only verdict (last wins across iterations). Automatic, not a gate.
+        v.codeReview = { approved: e.approved, findings: e.findings, critical: e.critical, iteration: e.iteration }
+        break
       case 'preview':
         // The shipped artifact (e.g. pushed repo URL): a link, not the embedded app.
         v.preview = { ...v.preview, ...(e.url !== undefined ? { artifactUrl: e.url } : {}) }

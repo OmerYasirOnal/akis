@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { foldChat, type AgentMsg, type GateMsg } from './chatModel.js'
+import { foldChat, type AgentMsg, type GateMsg, type CodeReviewMsg } from './chatModel.js'
 import type { AkisEvent } from '@akis/shared'
 
 const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
@@ -37,6 +37,16 @@ describe('foldChat', () => {
     const gateCards = msgs.filter(m => m.kind === 'gate') as GateMsg[]
     expect(gateCards).toHaveLength(1)
     expect(gateCards[0]!.state).toBe('satisfied')
+  })
+
+  it('renders a read-only code_review card and updates it in place (last verdict wins)', () => {
+    const msgs = foldChat('x', [
+      ev({ kind: 'code_review', approved: false, findings: 3, critical: false, iteration: 1, agent: 'critic' }),
+      ev({ kind: 'code_review', approved: true, findings: 0, critical: false, iteration: 2, agent: 'critic' }),
+    ])
+    const cards = msgs.filter(m => m.kind === 'code_review') as CodeReviewMsg[]
+    expect(cards).toHaveLength(1)
+    expect(cards[0]).toMatchObject({ kind: 'code_review', approved: true, findings: 0, critical: false, iteration: 2 })
   })
 
   it('renders verify, preview and done cards', () => {

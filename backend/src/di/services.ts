@@ -112,6 +112,11 @@ export interface BuildServicesOptions {
   bus?: EventBus
   /** Knowledge port feeding SharedContext. Defaults to NullKnowledgePort (no RAG yet). */
   knowledge?: KnowledgePort
+  /** Durable vector store for the RAG corpus. Only meaningful when `rag` is on (and no
+   *  explicit `knowledge` port is given): when DATABASE_URL is set the server injects a
+   *  hydrated PgVectorStore so the corpus survives restart; absent it, buildRag's default
+   *  MemoryVectorStore is used (the keyless default, byte-for-byte unchanged). */
+  vectorStore?: import('../knowledge/store/VectorStore.js').VectorStore
   /** Feature flag (F1-AC11): when true, build the embedded RAG stack + ingestion sink.
    *  Default OFF → NullKnowledgePort, behavior identical to no-RAG. */
   rag?: boolean
@@ -268,6 +273,8 @@ function resolveKnowledge(opts: BuildServicesOptions, bus: EventBus, github: Moc
       // Thread env so a configured AKIS_GITHUB_TOKEN selects the RealGitHubRepoReader
       // (opt-in); absent it the default MockRepoReader is used (zero behavior change).
       ...(opts.env ? { env: opts.env } : {}),
+      // Durable corpus: a PgVectorStore when DATABASE_URL is set; else the in-memory default.
+      ...(opts.vectorStore ? { vectorStore: opts.vectorStore } : {}),
     })
     return {
       knowledge: stack.port,

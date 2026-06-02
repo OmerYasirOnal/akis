@@ -23,6 +23,15 @@ describe('runMigrations', () => {
     expect(all).toMatch(/CREATE TABLE IF NOT EXISTS workflows/)
   })
 
+  it('creates the vector_chunks table for the persistent RAG corpus (idempotent CREATE TABLE IF NOT EXISTS + index)', async () => {
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    const all = texts.join('\n')
+    expect(all).toMatch(/CREATE TABLE IF NOT EXISTS vector_chunks/)
+    // a tenancy index so the hydration/candidate scan stays cheap, idempotent.
+    expect(all).toMatch(/CREATE INDEX IF NOT EXISTS \w+ ON vector_chunks/i)
+  })
+
   it('runs the idempotent external_id ALTER for pre-existing user tables', async () => {
     const { db, texts } = recordingDb()
     await runMigrations(db)

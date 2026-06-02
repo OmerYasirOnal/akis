@@ -49,6 +49,13 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'gate', gate, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
   }
 
+  /** Surface the critic's READ-ONLY code-review verdict as a status card. It is
+   *  AUTOMATIC (not a human gate) and STRUCTURED ONLY — booleans + bounded counts,
+   *  no free-form prose — so it is never ingested as trusted RAG grounding. */
+  private emitCodeReview(sessionId: string, v: { approved: boolean; findings: number; critical: boolean; iteration: number }): void {
+    this.s.bus.emit({ kind: 'code_review', ...v, agent: 'critic', laneId: 'main', sessionId, ts: nextTs() })
+  }
+
   /** Emit the terminal `session/failed` so live consumers (and the RAG ingestion
    *  sink) can close out the session — used on unrecoverable throws, NOT on the
    *  retryable push_failed path. */
@@ -173,6 +180,15 @@ export class Orchestrator {
       }
       const approvedCode = review.data.approved && validation.passed
       const critical = review.data.hasCriticalFinding
+      // Surface the critic verdict as a read-only status card (automatic, not a gate).
+      // `approved` reflects the full produce-able verdict (critic approval AND validator),
+      // matching the branch the orchestrator actually takes below.
+      this.emitCodeReview(id, {
+        approved: approvedCode,
+        findings: review.data.findings.length,
+        critical,
+        iteration: review.data.iteration,
+      })
 
       if (approvedCode) {
         session = await this.s.store.update(id, { code: { files: proto.files } }, session.version)
@@ -238,6 +254,23 @@ export class Orchestrator {
     const session = await this.s.store.update(id, { status: 'done' }, cur.version)
     this.emitGate(id, 'push_confirm', 'satisfied')
     this.s.bus.emit({ kind: 'done', verified: isVerified(session), provider: this.s.providerName, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+
+    // Issue #7 AC1: auto-ingest the just-pushed repo into RAG grounding (no manual
+    // POST needed). PURELY ADDITIVE grounding, OFF the gate path: it runs AFTER the
+    // push succeeded and the session is already persisted 'done'. The RepoSource reads
+    // the SAME shared `github` adapter we just pushed to, mirroring the manual repo
+    // route's arg shape ({sessionId,userId} with userId = ragUserIdFor). Fire-and-forget
+    // for FAILURE: awaited but try/catch-wrapped so a thrown/failed ingest can NEVER
+    // fail confirmPush, change the session status, or touch the push gate. No-op when
+    // RAG/repoSource is absent (keyless / RAG-off default is byte-for-byte unchanged).
+    if (this.s.repoSource) {
+      const userId = this.s.ragUserIdFor?.(id) ?? id
+      try {
+        await this.s.repoSource.ingest({ sessionId: id, userId })
+      } catch (err) {
+        this.narrate(id, `Repo auto-ingest skipped: ${err instanceof Error ? err.message : String(err)}`, { ephemeral: true })
+      }
+    }
     return session
   }
 }
