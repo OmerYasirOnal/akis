@@ -30,6 +30,7 @@ export interface ReplayResult {
  */
 export class EventBus {
   private listeners = new Map<string, Set<Listener>>()
+  private taps = new Set<Listener>()
   private buffers = new Map<string, SeqEvent[]>()
   private seqs = new Map<string, number>()
   constructor(private readonly cap = 200) {}
@@ -38,6 +39,13 @@ export class EventBus {
     const set = this.listeners.get(sessionId) ?? new Set()
     set.add(fn); this.listeners.set(sessionId, set)
     return () => set.delete(fn)
+  }
+
+  /** Observe EVERY event across all sessions (analytics/metrics). Like subscribe, a
+   *  throwing tap is isolated and never disrupts the producer or other listeners. */
+  tap(fn: Listener): () => void {
+    this.taps.add(fn)
+    return () => this.taps.delete(fn)
   }
 
   emit(e: AkisEvent): void {
@@ -52,6 +60,9 @@ export class EventBus {
     // emitted it. Cleanup is the subscriber's own responsibility.
     this.listeners.get(e.sessionId)?.forEach(fn => {
       try { fn(e, seq) } catch { /* isolate a faulty listener */ }
+    })
+    this.taps.forEach(fn => {
+      try { fn(e, seq) } catch { /* isolate a faulty tap */ }
     })
   }
 

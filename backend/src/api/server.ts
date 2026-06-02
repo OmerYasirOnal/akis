@@ -3,10 +3,16 @@ import { homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
+import { randomBytes } from 'node:crypto'
 import { registerProviderRoutes } from './providers.routes.js'
 import { registerSessionRoutes } from './sessions.routes.js'
 import { registerPreviewRoutes } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
+import { registerAuthRoutes } from './auth.routes.js'
+import { UserStore } from '../auth/UserStore.js'
+import { cookieConfigFromEnv } from '../auth/cookie.js'
+import { registerAnalyticsRoutes } from './analytics.routes.js'
+import { StatsCollector } from '../analytics/StatsCollector.js'
 import { WorkflowStore } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
@@ -29,6 +35,8 @@ export interface ServerDeps {
   skillsDir?: string
   /** Workflow preset store (in-memory by default; injectable for tests/persistence). */
   workflowStore?: WorkflowStore
+  /** User store for auth (in-memory by default; injectable for tests/persistence). */
+  userStore?: UserStore
 }
 
 const defaultSkillsDir = (): string =>
@@ -94,11 +102,23 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(realTests ? { realTests: true } : {}),
   }))
 
+  // Auth: JWT-in-cookie (reusing AUTH_JWT_SECRET + AUTH_COOKIE_* from env). If no
+  // secret is configured we fall back to an ephemeral per-boot secret so dev still
+  // works (sessions just don't survive a restart); a real deploy sets AUTH_JWT_SECRET.
+  const authSecret = env.AUTH_JWT_SECRET || randomBytes(32).toString('hex')
+  const userStore = deps.userStore ?? new UserStore()
+
+  // Aggregate run analytics via a single global bus tap (observability only).
+  const stats = new StatsCollector()
+  stats.attach(services.bus)
+
   app.get('/health', async () => ({ ok: true }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env })
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   registerWorkflowRoutes(app, { store: workflowStore })
+  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env) })
+  registerAnalyticsRoutes(app, { stats })
   return app
 }
 
