@@ -1,5 +1,5 @@
-import type { FastifyInstance, FastifyReply } from 'fastify'
-import type { WorkflowConfig } from '@akis/shared'
+import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { type WorkflowConfig, isVerified } from '@akis/shared'
 import type { Orchestrator } from '../orchestrator/Orchestrator.js'
 import type { OrchestratorServices } from '../di/services.js'
 import type { SeqEvent } from '../events/bus.js'
@@ -14,6 +14,9 @@ export interface SessionsDeps {
    *  models + iterate budget + RAG, sharing the same store + bus. */
   workflowStore?: WorkflowStore
   makeOrchestrator?: (wf: WorkflowConfig) => Orchestrator
+  /** Resolve the authenticated user id from a request (for per-user build history);
+   *  returns undefined when unauthenticated. */
+  userIdOf?: (req: FastifyRequest) => string | undefined
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -68,10 +71,20 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       orch = deps.makeOrchestrator(wf)
     }
     try {
-      const s = await orch.start({ idea })
+      const ownerId = deps.userIdOf?.(req)
+      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}) })
       if (orch !== orchestrator) bound.set(s.id, orch)
       return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }
+  })
+
+  // Per-user build history (newest first). Registered before /sessions/:id; Fastify
+  // prioritizes the static path anyway. Auth required — lists only the caller's runs.
+  app.get('/sessions/mine', async (req, reply) => {
+    const ownerId = deps.userIdOf?.(req)
+    if (!ownerId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
+    const list = await services.store.listByOwner(ownerId)
+    return list.map(s => ({ id: s.id, idea: s.idea, status: s.status, verified: isVerified(s) }))
   })
 
   app.get<{ Params: { id: string } }>('/sessions/:id', async (req, reply) => {

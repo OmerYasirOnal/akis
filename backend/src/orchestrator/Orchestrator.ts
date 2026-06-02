@@ -9,7 +9,7 @@ import type { OrchestratorServices } from '../di/services.js'
 import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 
-export interface StartInput { idea: string }
+export interface StartInput { idea: string; ownerId?: string }
 
 export class AlreadyPushedError extends Error {
   constructor() { super('Session already pushed (confirmPush is not repeatable)'); this.name = 'AlreadyPushedError' }
@@ -93,7 +93,7 @@ export class Orchestrator {
 
   async start(input: StartInput): Promise<SessionState> {
     const id = randomUUID()
-    let session = initialSession(id, input.idea)
+    let session = initialSession(id, input.idea, input.ownerId)
     await this.s.store.create(session)
     // F1-AC17: subscribe the ingestion sink AS the session starts, before any event
     // is emitted, so zero-touch ingestion misses nothing (RAG flag on → sink present).

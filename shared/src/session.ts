@@ -13,6 +13,8 @@ export interface SessionState {
   id: string
   status: SessionStatus
   idea: string
+  /** The user who started this build (for per-user history). Absent for anonymous runs. */
+  ownerId?: string
   spec?: SpecArtifact
   /**
    * Gate 1: approval is a branded ApprovalToken (not a plain spec field), so a
@@ -35,6 +37,6 @@ export function isVerified(s: SessionState): boolean {
   return s.verifyToken != null && s.verifyToken.sessionId === s.id
 }
 
-export function initialSession(id: string, idea: string): SessionState {
-  return { id, status: 'composing', idea, version: 0 }
+export function initialSession(id: string, idea: string, ownerId?: string): SessionState {
+  return { id, status: 'composing', idea, version: 0, ...(ownerId ? { ownerId } : {}) }
 }
