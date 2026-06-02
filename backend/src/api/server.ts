@@ -27,6 +27,7 @@ import { MockSessionStore } from '../store/MockSessionStore.js'
 import { PreviewRegistry } from '../preview/PreviewRegistry.js'
 import { LocalDirectSandbox } from '../exec/Sandbox.js'
 import { MockProvider } from '../agent/providers/mock/MockProvider.js'
+import { hasRealProviderKey } from '../agent/providers/createProvider.js'
 import { createMockTestRunner } from '../verify/TestRunner.js'
 import { nextTs } from '../events/clock.js'
 
@@ -53,6 +54,14 @@ const flag = (v: string | undefined): boolean => v === '1' || v === 'true'
 export function buildServer(deps: ServerDeps): FastifyInstance {
   const app = Fastify({ logger: false }) // logger off: never risk logging key bodies
   const env = deps.env ?? (process.env as Record<string, string | undefined>)
+
+  // Keyless DEMO gate: AKIS_ALLOW_MOCK turns on the deterministic mock provider so a
+  // bare `docker compose up` serves a working demo with NO provider key. It is a
+  // FALLBACK, not a force — the moment a real key is configured (env or KeyStore) it
+  // takes over (the documented "add a key, run real builds" path), so the demo flag
+  // never masks a configured key. Fail-closed is preserved: without the flag AND
+  // without a key, createProvider still throws (no silent mock).
+  const useMock = flag(env.AKIS_ALLOW_MOCK) && !hasRealProviderKey(env, deps.keyStore)
 
   // AKIS_RERANK is a default QUALITY toggle (issue #7 AC3), default ON. Only an explicit
   // 0/false disables it (wiring a NoopReranker); anything else leaves the stack default.
@@ -91,7 +100,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
       ...(rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
       // Keyless DEMO: run the loop on the deterministic mock provider (no API key).
-      ...(flag(env.AKIS_ALLOW_MOCK) ? { provider: new MockProvider() } : {}),
+      // Gated by `useMock` so a configured real key wins over the demo flag.
+      ...(useMock ? { provider: new MockProvider() } : {}),
       // Demo verification: a passing mock test runner so a session reaches done+preview
       // WITHOUT real browsers — useful with REAL keys (real Claude output + a complete
       // loop). Implied by AKIS_ALLOW_MOCK. Explicit opt-in only; the default stays
@@ -122,7 +132,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     store: services.store, bus: services.bus,
     skillsDir: deps.skillsDir ?? defaultSkillsDir(),
     ...(deps.keyStore ? { keyStore: deps.keyStore } : {}),
-    ...(flag(env.AKIS_ALLOW_MOCK) ? { provider: new MockProvider() } : {}),
+    ...(useMock ? { provider: new MockProvider() } : {}),
     ...(demoVerify ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     agentModels: workflowToAgentModels(wf),
     customAgents: workflowCustomAgents(wf),

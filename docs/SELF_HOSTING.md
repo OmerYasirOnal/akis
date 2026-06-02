@@ -34,24 +34,41 @@ frontend), starts Postgres, waits for it to be healthy, then starts AKIS. Open:
 http://localhost:3000
 ```
 
+With **no provider key**, this is a fully working **keyless mock demo**: the
+compose file defaults `AKIS_ALLOW_MOCK=1` (deterministic mock provider + passing
+demo verification) so a session runs end-to-end without any API key. It also ships
+a working **insecure default `AUTH_JWT_SECRET`** so the production-mode container
+boots instead of failing closed on an empty secret — **override it before any real
+use** (see [Run a real build](#run-a-real-build-optional) and the env table below).
+
 Stop it with `Ctrl-C` (or `docker compose down` if detached). Your data persists
 in named volumes across `down`/`up` — see [Persistence](#persistence) below.
 
-### Run a REAL build (optional)
+> [!IMPORTANT]
+> The bundled `AUTH_JWT_SECRET` default is **insecure and shared** — it exists only
+> so the keyless demo boots zero-config. For anything beyond a throwaway local demo,
+> set your own (`AUTH_JWT_SECRET=$(openssl rand -hex 32)` in a `.env`). An empty
+> secret in production fails closed by design; the default keeps that guard happy
+> while still nudging you to replace it.
 
-With **no** provider key, AKIS runs a fully working keyless **mock** demo. To do
-real builds, give it a provider key — put it in a `.env` file next to
-`docker-compose.yml` (Compose auto-loads it) or export it in your shell:
+### Run a real build (optional)
+
+With **no** provider key, AKIS runs the keyless **mock** demo. To do real builds,
+give it a provider key — put it in a `.env` file next to `docker-compose.yml`
+(Compose auto-loads it) or export it in your shell:
 
 ```bash
 # .env  (next to docker-compose.yml)
 ANTHROPIC_API_KEY=sk-ant-...
-AUTH_JWT_SECRET=$(openssl rand -hex 32)   # stable sessions across restarts
+AUTH_JWT_SECRET=$(openssl rand -hex 32)   # replace the insecure default; stable sessions
 PUBLIC_BASE_URL=http://localhost:3000     # browser-facing origin (cookies/OAuth)
 ```
 
-Then `docker compose up` again. (See the full key list in
-[`backend/.env.example`](../backend/.env.example).)
+Then `docker compose up` again. Supplying a provider key **automatically takes
+over from the mock** — `AKIS_ALLOW_MOCK` is a fallback, not a force, so a
+configured key is never masked. (To require a real key and refuse the mock
+entirely, also set `AKIS_ALLOW_MOCK=0`.) See the full key list in
+[`backend/.env.example`](../backend/.env.example).
 
 ---
 
@@ -67,9 +84,10 @@ optional and flows through from your shell / `.env`. Full descriptions live in
 | `HOST`            | `0.0.0.0`                 | Bind address. **Containers MUST use `0.0.0.0`** or the published port is unreachable; local non-Docker dev defaults to `127.0.0.1`. |
 | `SERVE_STATIC`    | `1`                       | Serve the built `frontend/dist` SPA alongside the API on the same port. |
 | `DATABASE_URL`    | `postgres://akis:akis@db:5432/akis` | Postgres DSN → activates persistence (see below). Unset → in-memory. |
-| `AUTH_JWT_SECRET` | pass-through (`.env`/shell) | HS256 session-signing secret. **Set it** in production, else sessions reset every boot. |
+| `AKIS_ALLOW_MOCK` | `1` (override in `.env`)  | Keyless demo: run the deterministic mock provider + passing demo verification. **Fallback** — auto-disabled when a provider key is set. Set `0` to require a real key (fail-closed). |
+| `AUTH_JWT_SECRET` | **insecure default** (`akis-insecure-demo-secret-change-me`); override via `.env`/shell | HS256 session-signing secret. The default only keeps the prod-mode demo booting. **Override it** for any real use (`openssl rand -hex 32`) — also makes sessions survive restarts. |
 | `PUBLIC_BASE_URL` | pass-through              | Browser-facing origin for OAuth + cross-site cookies, e.g. `http://localhost:3000`. |
-| `ANTHROPIC_API_KEY` (or another provider key) | pass-through | Enables real builds. Absent → deterministic mock demo. |
+| `ANTHROPIC_API_KEY` (or another provider key) | pass-through | Enables real builds and auto-disables the mock. Absent → keyless mock demo. |
 
 To change the published port without touching the container's internal port:
 
@@ -158,8 +176,13 @@ use `-v` only when you intend to wipe all data.
 - **Browser can't reach `http://localhost:3000`** — confirm `HOST=0.0.0.0` is set
   on the `app` service (the compose file does this); a container bound to
   `127.0.0.1` is unreachable from the published port.
-- **Sessions drop on every restart** — set `AUTH_JWT_SECRET` (a stable value);
-  unset, the backend uses an ephemeral per-boot secret.
+- **Sessions drop on every restart** — set your own stable `AUTH_JWT_SECRET` in a
+  `.env` (the compose default is a shared insecure placeholder; in dev/non-prod an
+  unset secret falls back to an ephemeral per-boot one).
+- **Builds produce canned/mock output despite an API key** — a provider key
+  auto-disables the mock, so check the key is actually reaching the container
+  (`docker compose config | grep -i api_key`) and that you did not set
+  `AKIS_ALLOW_MOCK` to something other than `1` while *also* expecting the mock.
 - **`db` never becomes healthy** — check `docker compose logs db`; the `app`
   service waits for the `pg_isready` healthcheck before starting.
 - **Data vanished after `down`** — you likely ran `down -v`, which removes the

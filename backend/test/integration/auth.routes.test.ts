@@ -159,6 +159,34 @@ describe('auth routes', () => {
     expect(() => buildServer({ keyStore, env: { NODE_ENV: 'production' } })).toThrow(/AUTH_JWT_SECRET/)
   })
 
+  it('keyless self-host (the docker-compose default) BOOTS instead of crash-looping', () => {
+    // The bundled compose stack runs NODE_ENV=production with a default AUTH_JWT_SECRET
+    // and AKIS_ALLOW_MOCK=1 (no provider key). That must build a working server on the
+    // mock provider — NOT throw at boot (the prod no-key / no-secret crash-loop bug).
+    const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
+    const env = { NODE_ENV: 'production', AUTH_JWT_SECRET: 'x', AKIS_ALLOW_MOCK: '1', SERVE_STATIC: '1' }
+    const server = buildServer({ keyStore, env, userStore: new UserStore() })
+    expect(server).toBeTruthy()
+  })
+
+  // NOTE: the prod no-key crash-loop (createProvider throwing) only manifests OUTSIDE
+  // NODE_ENV=test — under vitest the real process env is `test`, so createProvider
+  // short-circuits to the mock regardless of an injected env. Fail-closed provider
+  // resolution is therefore unit-tested in create-provider.test.ts (explicit env), and
+  // the end-to-end keyless boot is proved by the tsx boot harness in CI / verification.
+
+  it('AKIS_ALLOW_MOCK + a real provider key boots WITHOUT forcing the mock', () => {
+    // Compose defaults AKIS_ALLOW_MOCK=1; when the user later supplies a real key the
+    // mock must step aside so real builds run (the documented "add a key" path). The
+    // server must build the live provider here (no thrown ProviderConfigError, no
+    // injected MockProvider) — the not-masked decision is unit-tested via
+    // hasRealProviderKey; this asserts the wired server boots on the real key.
+    const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
+    const env = { NODE_ENV: 'production', AUTH_JWT_SECRET: 'x', AKIS_ALLOW_MOCK: '1', ANTHROPIC_API_KEY: 'sk-ant-x' }
+    const server = buildServer({ keyStore, env, userStore: new UserStore() })
+    expect(server).toBeTruthy()
+  })
+
   it('login runs equal work for unknown email vs wrong password (no timing oracle)', async () => {
     const server = app()
     await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'known@akis.dev', password: 'hunter2hunter' } })

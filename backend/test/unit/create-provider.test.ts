@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { createProvider, ProviderConfigError } from '../../src/agent/providers/createProvider.js'
+import { createProvider, ProviderConfigError, hasRealProviderKey } from '../../src/agent/providers/createProvider.js'
 
 describe('createProvider — fail-closed (X-AC6 / CF6)', () => {
   it('returns mock under NODE_ENV=test (the only implicit mock)', () => {
@@ -58,5 +58,27 @@ describe('createProvider — fail-closed (X-AC6 / CF6)', () => {
   it('honors a base-URL override (does not crash; provider still builds)', () => {
     const p = createProvider({ provider: 'openai', env: { OPENAI_API_KEY: 'sk-proj-x', OPENAI_BASE_URL: 'https://proxy.example/v1', NODE_ENV: 'production' } })
     expect(p.name).toBe('openai')
+  })
+})
+
+describe('hasRealProviderKey — keyless-demo gate (self-host AKIS_ALLOW_MOCK fallback)', () => {
+  it('false when no provider key is configured anywhere', () => {
+    expect(hasRealProviderKey({})).toBe(false)
+    expect(hasRealProviderKey({ NODE_ENV: 'production' })).toBe(false)
+  })
+  it('true when a per-provider env key is present (auto-detected)', () => {
+    expect(hasRealProviderKey({ ANTHROPIC_API_KEY: 'sk-ant-x' })).toBe(true)
+    expect(hasRealProviderKey({ OPENAI_API_KEY: 'sk-proj-x' })).toBe(true)
+    expect(hasRealProviderKey({ GEMINI_API_KEY: 'AIza-x' })).toBe(true)
+  })
+  it('true when AI_PROVIDER + AI_API_KEY (generic BYO) is set', () => {
+    expect(hasRealProviderKey({ AI_PROVIDER: 'anthropic', AI_API_KEY: 'sk-ant-x' })).toBe(true)
+  })
+  it('false for a generic AI_API_KEY with NO named provider (cannot resolve a provider)', () => {
+    expect(hasRealProviderKey({ AI_API_KEY: 'somekey' })).toBe(false)
+  })
+  it('true when a key lives only in the KeyStore', () => {
+    const keyStore = { get: (p: string) => (p === 'anthropic' ? 'sk-ant-stored' : undefined) }
+    expect(hasRealProviderKey({}, keyStore)).toBe(true)
   })
 })

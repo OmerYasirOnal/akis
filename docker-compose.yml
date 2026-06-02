@@ -32,13 +32,22 @@ services:
       SERVE_STATIC: "1"
       PORT: "3000"
       NODE_ENV: production
-      # ── Pass-throughs from your shell / .env (unset → empty; see backend/.env.example) ──
-      # AUTH_JWT_SECRET is REQUIRED for stable sessions in production — set it in a
-      # .env file next to this compose file (compose auto-loads it) or your shell.
-      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      # Keyless DEMO by default: with NO provider key, AKIS runs on the deterministic
+      # mock provider so a bare `docker compose up` serves a working demo. This is a
+      # FALLBACK — the moment you set a provider key below (or via .env) the real
+      # provider takes over; the mock never masks a configured key. Set
+      # AKIS_ALLOW_MOCK=0 in your .env to opt out and require a real key (fail-closed).
+      AKIS_ALLOW_MOCK: ${AKIS_ALLOW_MOCK:-1}
+      # ── Pass-throughs from your shell / .env (see backend/.env.example) ──
+      # AUTH_JWT_SECRET signs session JWTs. Production fails closed on an EMPTY secret,
+      # so this ships a working INSECURE default to keep the zero-config demo booting.
+      # ⚠ OVERRIDE IT for any real use: put AUTH_JWT_SECRET=$(openssl rand -hex 32) in a
+      # .env next to this file (compose auto-loads it) — also makes sessions survive
+      # restarts and is required if you ever run multi-instance.
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-akis-insecure-demo-secret-change-me}
       # Browser-facing origin (OAuth + cross-site cookies). e.g. http://localhost:3000
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
-      # Optional: a provider key enables REAL builds (else the keyless mock demo).
+      # Optional: a provider key enables REAL builds (and auto-disables the mock above).
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:
       # Publish on the host (127.0.0.1 ONLY — single-user posture). Override the
