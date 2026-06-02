@@ -55,6 +55,21 @@ describe('createProvider — fail-closed (X-AC6 / CF6)', () => {
     const p = createProvider({ provider: 'anthropic', keyStore, env: { NODE_ENV: 'production' } })
     expect(p.name).toBe('anthropic')
   })
+  it('AUTO-DETECTS the provider from the KeyStore when no env key and no forced provider (Settings-only key)', () => {
+    // The Settings UI saves a key to the KeyStore with NO env var. hasRealProviderKey
+    // counts it (so the mock is disabled), so createProvider MUST also resolve the
+    // provider from the KeyStore — otherwise boot disables mock yet can't build a provider.
+    const keyStore = { get: (p: string) => (p === 'anthropic' ? 'sk-ant-stored' : undefined) }
+    const p = createProvider({ keyStore, env: { NODE_ENV: 'production' } })
+    expect(p.name).toBe('anthropic')
+  })
+  it('stays consistent with hasRealProviderKey for a KeyStore-only key (no boot crash)', () => {
+    const keyStore = { get: (p: string) => (p === 'openai' ? 'sk-proj-stored' : undefined) }
+    const env = { NODE_ENV: 'production' }
+    expect(hasRealProviderKey(env, keyStore)).toBe(true)
+    expect(() => createProvider({ keyStore, env })).not.toThrow()
+    expect(createProvider({ keyStore, env }).name).toBe('openai')
+  })
   it('honors a base-URL override (does not crash; provider still builds)', () => {
     const p = createProvider({ provider: 'openai', env: { OPENAI_API_KEY: 'sk-proj-x', OPENAI_BASE_URL: 'https://proxy.example/v1', NODE_ENV: 'production' } })
     expect(p.name).toBe('openai')
