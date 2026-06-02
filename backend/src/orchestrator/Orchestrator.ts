@@ -65,7 +65,8 @@ export class Orchestrator {
 
   /** Dynamic dispatch (CF4): AKIS consults each registered advisory (edge) agent at
    *  a pipeline edge. ADVISORY ONLY — each agent reads context + non-gate tools and
-   *  its note is narrated into the live stream (so RAG ingests it); it never touches a
+   *  its note is narrated EPHEMERALLY into the live stream (shown live but NOT ingested
+   *  into RAG — closes the advisory→RAG injection loop); it never touches a
    *  gate, and a failing/throwing advisor is skipped. So this can never block, fake, or
    *  alter the verified pipeline. No-op when no advisory agents are registered. */
   private async runAdvisory(sessionId: string, phase: AdvisoryPhase, objective: string): Promise<void> {
