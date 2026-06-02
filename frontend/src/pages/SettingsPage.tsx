@@ -5,6 +5,7 @@ import { AccountSettings } from './AccountSettings.js'
 import { useAuth } from '../auth/AuthContext.js'
 import { Card, SectionTitle, Button } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
+import { Link } from '../router/router.js'
 
 /** Settings — account profile (with logout) above the agents/workflow + provider config.
  *  Reuses the existing AgentsTab so model/provider/workflow editing stays in one place. */
@@ -34,6 +35,19 @@ export function SettingsPage({ api }: { api: ApiClient }) {
 
       <Card className="p-5">
         <ProviderKeys api={api} />
+      </Card>
+
+      <Card className="flex items-center justify-between gap-4 p-5">
+        <div>
+          <div className="font-semibold text-slate-100">{t('settings.workflows.title')}</div>
+          <div className="text-sm text-slate-400">{t('settings.workflows.sub')}</div>
+        </div>
+        <Link
+          to="/workflows"
+          className="rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] transition hover:brightness-110"
+        >
+          {t('settings.workflows.open')}
+        </Link>
       </Card>
 
       <Card className="p-5">

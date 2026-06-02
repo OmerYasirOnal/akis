@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   CORE_ROLES,
   GATE_TOOLS,
@@ -73,10 +73,14 @@ export function WorkflowBuilder({
   api,
   initial,
   onSaved,
+  onDraftChange,
 }: {
   api: ApiClient
   initial?: WorkflowConfig | WorkflowConfigInput
   onSaved?: (saved: WorkflowConfig) => void
+  /** Fires with the assembled WorkflowConfigInput whenever the draft changes, so a parent
+   *  can render a LIVE preview alongside the builder. Optional — the builder works standalone. */
+  onDraftChange?: (draft: WorkflowConfigInput) => void
 }) {
   const { t } = useI18n()
   const [providers, setProviders] = useState<ProviderInfo[] | undefined>()
@@ -129,7 +133,7 @@ export function WorkflowBuilder({
   const stepBudget = (delta: number): void => { setIterateBudget(b => clampIterateBudget(b + delta)); clearStatus() }
 
   /** Assemble the WorkflowConfigInput payload from the current draft. */
-  const buildDraft = (): WorkflowConfigInput => {
+  const buildDraft = useCallback((): WorkflowConfigInput => {
     const agentConfigs: AgentConfig[] = CORE_ROLES.map((role: Role) => {
       const d = agents[role]!
       const cfg: AgentConfig = { role }
@@ -149,7 +153,10 @@ export function WorkflowBuilder({
     }
     if (initial?.id) draft.id = initial.id
     return draft
-  }
+  }, [agents, name, iterateBudget, rag, requireCritic, initial?.id])
+
+  // Push the live draft up so a parent can render a real-time preview beside the builder.
+  useEffect(() => { onDraftChange?.(buildDraft()) }, [buildDraft, onDraftChange])
 
   const save = async (): Promise<void> => {
     clearStatus()
