@@ -50,7 +50,7 @@ describe('CONTRACT: single-container static SPA serving (self-host)', () => {
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.statusCode).toBe(200)
     expect(res.headers['content-type']).toMatch(/application\/json/)
-    expect(res.json()).toEqual({ ok: true })
+    expect(res.json()).toMatchObject({ ok: true }) // body also carries the persistence mode
   })
 
   it('an unknown API path returns a JSON 404 (NOT the SPA index.html)', async () => {
