@@ -1,6 +1,7 @@
 import type { EventBus } from '../events/bus.js'
 import { LocalEmbeddingProvider, type EmbeddingProvider } from './embedding/EmbeddingProvider.js'
 import { MemoryVectorStore } from './store/MemoryVectorStore.js'
+import type { VectorStore } from './store/VectorStore.js'
 import { Bm25Index } from './store/Bm25Index.js'
 import { IngestQueue, type IngestQueueOpts } from './ingest/IngestQueue.js'
 import { RagService } from './RagService.js'
@@ -16,6 +17,11 @@ export interface BuildRagOpts {
   bus: EventBus
   /** Defaults to the offline LocalEmbeddingProvider (deterministic, no key). */
   embedding?: EmbeddingProvider
+  /** The vector corpus store. Defaults to the in-memory MemoryVectorStore (the keyless
+   *  default, lost on restart). When DATABASE_URL is set the server injects a hydrated
+   *  PgVectorStore (durable across restart) behind the SAME VectorStore interface — no
+   *  consumer changes. The default path stays byte-for-byte unchanged. */
+  vectorStore?: VectorStore
   /** Single-user MVP → a constant tenant; multi-tenant resolves a real user id later. */
   userIdFor?: (sessionId: string) => string
   queue?: IngestQueueOpts
@@ -62,7 +68,7 @@ export function buildRag(opts: BuildRagOpts): RagStack {
   const rerankOn = opts.rerank ?? true
   const service = new RagService({
     embedding,
-    vectorStore: new MemoryVectorStore(),
+    vectorStore: opts.vectorStore ?? new MemoryVectorStore(),
     bm25: new Bm25Index(),
     queue,
     // Default reranker is the offline LocalReranker; a default-off stack wires the

@@ -14,6 +14,8 @@ import { createPgUserStoreWithClient } from '../auth/PgUserStore.js'
 import { createPgPool, runMigrations } from '../store/pg.js'
 import { PgSessionStore } from '../store/PgSessionStore.js'
 import { PgWorkflowStore } from '../workflow/PgWorkflowStore.js'
+import { PgVectorStore } from '../knowledge/store/PgVectorStore.js'
+import type { VectorStore } from '../knowledge/store/VectorStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
@@ -54,6 +56,10 @@ export interface ServerDeps {
   /** Session store (MockSessionStore by default; a PgSessionStore when DATABASE_URL is
    *  set). Injected so the durable store flows through buildServices unchanged. */
   sessionStore?: SessionStore
+  /** Durable RAG vector store (a hydrated PgVectorStore when DATABASE_URL is set; absent it
+   *  buildServices uses the in-memory default). Only consulted when RAG is on (AKIS_RAG);
+   *  the keyless/in-memory default path is byte-for-byte unchanged. */
+  vectorStore?: VectorStore
   /** Built-frontend dist dir for single-container static serving (defaults to
    *  frontend/dist resolved next to the sources; overridable for tests/hosts). */
   staticRoot?: string
@@ -116,6 +122,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
       ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true } : {}),
       ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
+      // Durable corpus: a hydrated PgVectorStore when DATABASE_URL is set (only effective with
+      // RAG on); absent it, buildServices uses the in-memory default unchanged.
+      ...(flag(env.AKIS_RAG) && deps.vectorStore ? { vectorStore: deps.vectorStore } : {}),
       ...(rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
       // Keyless DEMO: run the loop on the deterministic mock provider (no API key).
       // Gated by `useMock` so a configured real key wins over the demo flag.
@@ -157,6 +166,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
     ...(wf.rag !== undefined ? { rag: wf.rag } : {}),
+    // Durable corpus for a per-workflow run too: when that run turns RAG on AND a durable
+    // store is wired (DATABASE_URL set), use it so the corpus stays shared + persistent.
+    ...(wf.rag && deps.vectorStore ? { vectorStore: deps.vectorStore } : {}),
     // rerank: the workflow's per-run knob wins (issue #7 AC3); else the env default.
     ...(wf.rerank !== undefined ? { rerank: wf.rerank } : rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
     ...(realTests ? { realTests: true } : {}),
@@ -255,6 +267,9 @@ interface PgStores {
   userStore: UserStorePort
   sessionStore: SessionStore
   workflowStore: WorkflowStorePort
+  /** The durable RAG corpus, hydrated from the table so a restart re-loads the existing
+   *  corpus instead of re-indexing from scratch. */
+  vectorStore: PgVectorStore
   pool: SqlClient
 }
 
@@ -268,12 +283,18 @@ async function buildPgStores(connectionString: string): Promise<PgStores | undef
   try {
     const pool = await createPgPool(connectionString)
     await runMigrations(pool)
+    // Durable RAG corpus: hydrate the in-memory index from the persisted rows so a restart
+    // re-loads the existing corpus (vs. re-indexing). Reads stay synchronous + parity-identical
+    // to MemoryVectorStore; writes go through to Postgres.
+    const vectorStore = new PgVectorStore(pool)
+    await vectorStore.hydrate()
     // eslint-disable-next-line no-console
-    console.log('persistence: using Postgres (users + sessions + workflows)')
+    console.log('persistence: using Postgres (users + sessions + workflows + RAG corpus)')
     return {
       userStore: createPgUserStoreWithClient(pool),
       sessionStore: new PgSessionStore(pool),
       workflowStore: new PgWorkflowStore(pool),
+      vectorStore,
       pool,
     }
   } catch (e) {
@@ -306,7 +327,7 @@ export async function start(): Promise<void> {
   const app = buildServer({
     keyStore,
     persistence: pg ? 'postgres' : 'memory',
-    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore } : {}),
+    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, vectorStore: pg.vectorStore } : {}),
   })
   const port = Number(process.env.PORT ?? 3000)
   const host = resolveListenHost(process.env)
@@ -321,6 +342,9 @@ export async function start(): Promise<void> {
   installGracefulShutdown({
     close: async () => {
       await app.close()
+      // Settle any pending durable corpus write-through BEFORE draining the pool, so a
+      // chunk ingested just before shutdown is persisted (not lost) on the next boot.
+      if (pg?.vectorStore) await pg.vectorStore.flush()
       if (pg?.pool.end) await pg.pool.end()
     },
   })
