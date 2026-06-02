@@ -75,6 +75,17 @@ A deep code review of `feat/real-providers` found:
 - New ACs: F2-AC16 (shared context), F2-AC17 (AKIS dispatch w/ context), CORE-AC1 (live agents), CORE-AC2 (default Claude, fail-closed), CORE-AC3 (no committed keys).
 - **Verified:** no real key/`.env` ever committed on `feat/real-providers` (only `.env.example`). The other session's gitignore hardening was preventive, not a leak cleanup.
 
+## Implementation verified (2026-06-02)
+PR #1/#2 merged to main; the other session shipped much of this plan. **Verified by running the suite on `main`: 332 backend tests green (52 files).** RAG is genuinely built (not a stub) and follows our spec's ACs:
+- `backend/src/knowledge/`: `RagService` (exclude→chunk→dedup→embed→upsert+BM25, async queue), hybrid retrieve (RRF of vector+BM25), tenancy filter, provenance (never userId), metrics, right-to-forget, `IngestionSink` (subscribes the AkisEvent bus per session = zero-touch auto-ingest), behind a `rag` flag in `di/services.ts` (`NullKnowledgePort` when off).
+- RAG tests assert the exact ACs: dedup (AC3), tenancy negative test (AC5), provenance (AC4), dead-letter (AC7), **golden-eval top-5 ≥80% recall (AC8)**, secret exclusion (AC12), right-to-forget (AC13), metrics (AC14), flag dispatch (AC11), no-gate-minter (AC10).
+- PR #23 (`feat/dynamic-agents`, open) adds the `retrieve_knowledge` LLM-callable tool + tool registry + dynamic advisory agents that reject gate caps (CF4) — our coordination asks.
+
+**Remaining RAG gaps (deferred, marked in code):**
+1. Embeddings = `LocalEmbeddingProvider` (feature-hashing, offline) — NOT semantic; real model (Voyage/OpenAI) drops in behind `EmbeddingProvider` (open-decision #1).
+2. `MemoryVectorStore` (in-memory) — NOT pgvector yet (F1-AC6 deferred); not persistent.
+3. Auto-ingest only maps `text` events so far; agent outputs / repo / uploads (M2) not yet wired into `IngestionSink.toIngest`.
+
 ## Status
-- Design + roadmap + spec + zero-context review on `claude/akis-agents-rag-system-NDTAH` (PR #3), **rebased onto the agentic core**.
-- No implementation yet — M0 (frozen contracts) is next, after the 6 open decisions in `docs/roadmap.md` and once PR #1 + #2 merge.
+- Planning lane (PR #3) merged its docs to main; planning largely realized by the core session.
+- Next concrete RAG work = the 3 gaps above (semantic embeddings, pgvector store, full corpus sources). Agents/Workflows tab + live preview tracked on PR #23 + roadmap M3–M5.

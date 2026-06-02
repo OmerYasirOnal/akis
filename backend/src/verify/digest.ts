@@ -1,0 +1,31 @@
+import { createHash } from 'node:crypto'
+import type { RepoFile } from '../di/MockGitHubAdapter.js'
+import type { SpecArtifact } from '@akis/shared'
+
+/**
+ * Length-prefixed encoding so distinct inputs can never collide by separator
+ * ambiguity (e.g. file boundaries or a space inside a path/content). Each field
+ * is written as `<byteLength>:<value>`, which is injective.
+ */
+function lp(s: string): string {
+  return `${Buffer.byteLength(s, 'utf8')}:${s}`
+}
+
+/**
+ * Stable, collision-resistant digest of a file set. Binds a VerifyToken to the
+ * exact code that was tested, so "verified code" cannot diverge from "pushed
+ * code". Files are sorted by path for order-independence.
+ */
+export function digestFiles(files: RepoFile[]): string {
+  const h = createHash('sha256')
+  for (const f of [...files].sort((a, b) => a.filePath.localeCompare(b.filePath))) {
+    h.update(lp(f.filePath))
+    h.update(lp(f.content))
+  }
+  return h.digest('hex')
+}
+
+/** Stable digest of a spec — binds an ApprovalToken to the exact reviewed spec. */
+export function digestSpec(spec: SpecArtifact): string {
+  return createHash('sha256').update(lp(spec.title)).update(lp(spec.body)).digest('hex')
+}
