@@ -78,6 +78,15 @@ export class RepoSource {
         this.deps.rag.ingest({ text, source: 'repo', sourceId: file.filePath, userId, sessionId })
       }
     }
+    // Prune files removed (or renamed) since the last pass: their chunks must not linger as
+    // stale RAG grounding. A rename is a remove (old path) + add (new path), so dropping the
+    // absent old paths covers it. deleteBySource targets the file's provenance
+    // (source:'repo', sourceId:filePath) for this tenancy.
+    if (prev) {
+      for (const oldPath of prev.fileShas.keys()) {
+        if (!nextShas.has(oldPath)) this.deps.rag.deleteBySourceFor('repo', oldPath, { userId, sessionId })
+      }
+    }
     this.state.set(repoKey, { sha: head, fileShas: nextShas })
   }
 }

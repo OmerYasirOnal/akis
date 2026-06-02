@@ -148,4 +148,47 @@ describe('RepoSource.ingest (incremental, source:repo sourceId=filePath)', () =>
     expect(service.getMetrics().ingested).toBeGreaterThan(ingestedAfterA)
     expect((await service.retrieve('shared document', { userId: 'B' }, 5)).length).toBeGreaterThan(0)
   })
+
+  it('prunes a file removed (or renamed) since the last pass — no stale grounding lingers', async () => {
+    const { service, queue, source, github } = harness()
+    await github.pushFiles('s1', [
+      { filePath: 'keep.md', content: '# Keep\nstable document about authentication and login flow' },
+      { filePath: 'gone.md', content: '# Gone\nremovable document about postgres database migration schema' },
+    ])
+    await source.ingest({ sessionId: 's1', userId: 'u1' })
+    await queue.drain()
+    // gone.md is retrievable after the first pass.
+    expect((await service.retrieve('postgres database migration schema', { userId: 'u1' }, 5)).some(r => r.source === 'repo:gone.md')).toBe(true)
+
+    // Remove gone.md (pushFiles REPLACES the set) → headSha moves → the next pass runs.
+    await github.pushFiles('s1', [
+      { filePath: 'keep.md', content: '# Keep\nstable document about authentication and login flow' },
+    ])
+    await source.ingest({ sessionId: 's1', userId: 'u1' })
+    await queue.drain()
+    // The removed file's chunk MUST be pruned (deleteBySource('repo', filePath)) — it can no
+    // longer be retrieved as grounding.
+    expect((await service.retrieve('postgres database migration schema', { userId: 'u1' }, 5)).some(r => r.source === 'repo:gone.md')).toBe(false)
+    // The surviving file stays retrievable.
+    expect((await service.retrieve('authentication login flow', { userId: 'u1' }, 5)).some(r => r.source === 'repo:keep.md')).toBe(true)
+  })
+
+  it('pruning a removed file is tenancy-scoped: it does NOT delete another tenant\'s identically-pathed file', async () => {
+    const { service, queue, source, github } = harness()
+    // Two tenants each have a repo file at the SAME path README.md (different session+user).
+    await github.pushFiles('s-a', [{ filePath: 'README.md', content: '# A\npostgres database migration schema notes' }])
+    await github.pushFiles('s-b', [{ filePath: 'README.md', content: '# B\npostgres database migration schema notes' }])
+    await source.ingest({ sessionId: 's-a', userId: 'A' })
+    await source.ingest({ sessionId: 's-b', userId: 'B' })
+    await queue.drain()
+    expect((await service.retrieve('postgres migration schema', { userId: 'B' }, 5)).some(r => r.source === 'repo:README.md')).toBe(true)
+
+    // A removes README.md (replace its set) and re-ingests → A's prune must NOT touch B's
+    // identically-pathed file (deleteBySourceFor is scoped to {userId,sessionId}).
+    await github.pushFiles('s-a', [{ filePath: 'other.md', content: '# Other\nunrelated redis caching content' }])
+    await source.ingest({ sessionId: 's-a', userId: 'A' })
+    await queue.drain()
+    expect((await service.retrieve('postgres migration schema', { userId: 'A' }, 5)).some(r => r.source === 'repo:README.md')).toBe(false)
+    expect((await service.retrieve('postgres migration schema', { userId: 'B' }, 5)).some(r => r.source === 'repo:README.md')).toBe(true)
+  })
 })

@@ -43,8 +43,10 @@ export const DEFAULT_UPLOAD_MAX_BYTES = 5 * 1024 * 1024
 export function registerKnowledgeRoutes(app: FastifyInstance, deps: KnowledgeRoutesDeps): void {
   // Register the multipart parser bounded by the size limit. throwFileSizeLimit (default)
   // surfaces a 413-coded RequestFileTooLargeError when toBuffer() exceeds fileSize — so an
-  // oversized body is rejected before we ever ingest it.
-  void app.register(fastifyMultipart, { limits: { fileSize: deps.uploadMaxBytes, files: 1 } })
+  // oversized body is rejected before we ever ingest it. The route contract is a SINGLE
+  // `file` part with no form fields, so bound fields/parts too (defense-in-depth: a client
+  // can't flood the request with many small non-file fields).
+  void app.register(fastifyMultipart, { limits: { fileSize: deps.uploadMaxBytes, files: 1, fields: 0, parts: 1 } })
 
   const notFound = (reply: FastifyReply, id: string): FastifyReply =>
     reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
