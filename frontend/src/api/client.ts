@@ -119,6 +119,12 @@ export class ApiClient {
     return this.json(`/api/providers/${provider}/key`, { method: 'DELETE' })
   }
   listWorkflows(): Promise<WorkflowConfig[]> { return this.json<WorkflowConfig[]>('/api/workflows') }
+  /** Fetch a single workflow by id; pass `version` to read a specific prior version
+   *  (the version-history probe). A missing id/version surfaces as an ApiError(404). */
+  getWorkflow(id: string, version?: number): Promise<WorkflowConfig> {
+    const q = version !== undefined ? `?version=${encodeURIComponent(version)}` : ''
+    return this.json<WorkflowConfig>(`/api/workflows/${encodeURIComponent(id)}${q}`)
+  }
   saveWorkflow(input: WorkflowConfigInput): Promise<WorkflowConfig> {
     return this.json<WorkflowConfig>('/api/workflows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
   }
