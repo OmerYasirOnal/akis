@@ -67,6 +67,21 @@ describe('PgUserStore', () => {
     expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
   })
 
+  it('upsertOAuth does NOT rebind an email account already bound to a different identity (parity with in-memory)', async () => {
+    // byExt miss, but the email account already carries external_id 'github:old'.
+    // A new login with 'github:new' must NOT clobber the DB and must return the
+    // ORIGINAL identity (the in-memory store returns `existing` unchanged) — never a
+    // fabricated externalId that was never persisted.
+    const { db, calls } = fakeDb([
+      { match: s => s.includes('WHERE external_id'), rows: () => [] },
+      { match: s => s.includes('WHERE email'), rows: () => [row({ id: 'id1', external_id: 'github:old' })] },
+    ])
+    const u = await new PgUserStore(db).upsertOAuth({ externalId: 'github:new', email: 'ada@akis.dev', name: 'Ada' })
+    expect(u.externalId).toBe('github:old')
+    expect(calls.some(c => c.text.startsWith('UPDATE'))).toBe(false)
+    expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
+  })
+
   it('upsertOAuth inserts a new empty-password user with external_id when nothing matches', async () => {
     const { db, calls } = fakeDb([
       { match: s => s.startsWith('SELECT'), rows: () => [] },

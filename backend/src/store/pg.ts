@@ -36,6 +36,19 @@ CREATE TABLE IF NOT EXISTS users (
 export const ADD_EXTERNAL_ID = `ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id text`
 
 /**
+ * Idempotent UNIQUE index on external_id. The fresh-table inline `external_id text UNIQUE`
+ * only protects DBs created from CREATE_USERS_TABLE; a users table that PRE-DATES the
+ * column gets it via ADD_EXTERNAL_ID (ADD COLUMN IF NOT EXISTS), which adds NO constraint —
+ * so without this index an upgraded DB would allow duplicate OAuth identities, defeating
+ * PgUserStore.upsertOAuth's 23505 race-recovery and the in-memory store's per-identity
+ * uniqueness. PARTIAL (WHERE external_id IS NOT NULL) so password-only users (NULL
+ * external_id) are unaffected. The name matches the inline constraint's Postgres auto-name
+ * (`<table>_<column>_key`), so on a fresh DB the index already exists and this is a no-op.
+ */
+export const CREATE_USERS_EXTERNAL_ID_UNIQUE =
+  `CREATE UNIQUE INDEX IF NOT EXISTS users_external_id_key ON users (external_id) WHERE external_id IS NOT NULL`
+
+/**
  * Idempotent DDL for the `sessions` table. The gate-bearing fields (`approval`,
  * `verify_token`) and the artifacts (`spec`, `code`) are jsonb; `version` carries the
  * optimistic lock. `owner_id` powers per-user build history (indexed for listByOwner).
@@ -82,6 +95,7 @@ CREATE TABLE IF NOT EXISTS workflows (
 const MIGRATIONS: readonly string[] = [
   CREATE_USERS_TABLE,
   ADD_EXTERNAL_ID,
+  CREATE_USERS_EXTERNAL_ID_UNIQUE,
   CREATE_SESSIONS_TABLE,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,
@@ -97,8 +111,15 @@ export async function runMigrations(client: SqlClient): Promise<void> {
   }
 }
 
+/** Fail fast (rather than block on the OS TCP default) when the DB is unreachable, so a
+ *  bad/down DATABASE_URL feeds the boot fallback/fail-closed path promptly. */
+const PG_CONNECT_TIMEOUT_MS = 5000
+
+/** The runtime pool surface createPgPool needs: the SqlClient `query` plus the
+ *  EventEmitter `on` (to attach the REQUIRED idle-client 'error' listener — see below). */
+type PgPool = SqlClient & { on(event: 'error', listener: (err: Error) => void): unknown }
 /** The `pg` module shape createPgPool needs, and an injectable importer for it. */
-type PgModule = { Pool: new (cfg: { connectionString: string }) => SqlClient }
+type PgModule = { Pool: new (cfg: { connectionString: string; connectionTimeoutMillis?: number }) => PgPool }
 export type PgImporter = () => Promise<PgModule>
 
 /** Default importer: a NON-LITERAL specifier so tsc never resolves `pg` at build time
@@ -124,5 +145,16 @@ export async function createPgPool(connectionString: string, importPg: PgImporte
   } catch {
     throw new Error('DATABASE_URL is set but the `pg` package is not installed (run: pnpm -C backend add pg)')
   }
-  return new pg.Pool({ connectionString })
+  const pool = new pg.Pool({ connectionString, connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS })
+  // node-postgres emits an 'error' event on behalf of IDLE clients when a backend
+  // connection dies (DB restart, failover, admin terminate, idle timeout). A `pg.Pool`
+  // is an EventEmitter, so an 'error' with NO listener throws and becomes an UNCAUGHT
+  // exception that kills the whole process post-boot — the pg docs require this listener.
+  // It is recoverable: the pool discards the dead client and opens a fresh one on the
+  // next query, so we log and continue rather than crash.
+  pool.on('error', err => {
+    // eslint-disable-next-line no-console
+    console.error('pg pool idle-client error (connection will be recycled):', err.message)
+  })
+  return pool
 }

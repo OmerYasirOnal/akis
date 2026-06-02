@@ -29,6 +29,17 @@ describe('runMigrations', () => {
     expect(texts.some(t => /ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id/.test(t))).toBe(true)
   })
 
+  it('enforces external_id uniqueness via a dedicated index (so upgraded DBs match fresh ones)', async () => {
+    // A fresh DB gets `external_id text UNIQUE` inline, but the ADD COLUMN migration that
+    // upgrades a pre-existing users table adds NO constraint — without a dedicated unique
+    // index, an upgraded DB lets duplicate OAuth identities exist. The migration set must
+    // therefore include an idempotent unique index on external_id.
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    const all = texts.join('\n')
+    expect(all).toMatch(/CREATE UNIQUE INDEX IF NOT EXISTS \w+ ON users ?\(external_id\)/i)
+  })
+
   it('runs every migration statement to completion (no statement is skipped)', async () => {
     const { db, texts } = recordingDb()
     await runMigrations(db)
@@ -44,5 +55,24 @@ describe('createPgPool', () => {
     // the clear "pg not installed" message rather than a raw module-not-found.
     const missing = () => Promise.reject(new Error("Cannot find package 'pg'"))
     await expect(createPgPool('postgres://localhost/akis', missing)).rejects.toThrow(/pg.*not installed/i)
+  })
+
+  it('attaches an idle-client error listener and a connection timeout (a dead DB connection must not crash the process)', async () => {
+    // node-postgres emits an 'error' event on idle clients when a backend connection dies
+    // (DB restart/failover/admin terminate). With NO listener that EventEmitter error
+    // becomes an uncaught exception → process crash. createPgPool must attach a listener
+    // and set a finite connectionTimeoutMillis so an unreachable DB fails fast.
+    const cfgs: Array<Record<string, unknown>> = []
+    const events: string[] = []
+    const fakeImport = () => Promise.resolve({
+      Pool: class {
+        constructor(cfg: Record<string, unknown>) { cfgs.push(cfg) }
+        async query() { return { rows: [] } }
+        on(event: string) { events.push(event) }
+      },
+    })
+    await createPgPool('postgres://localhost/akis', fakeImport)
+    expect(events).toContain('error')
+    expect(Number(cfgs[0]!.connectionTimeoutMillis)).toBeGreaterThan(0)
   })
 })
