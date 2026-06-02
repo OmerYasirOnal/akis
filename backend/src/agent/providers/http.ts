@@ -22,6 +22,25 @@ export interface PostOpts {
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
+/**
+ * Pull a short, human-actionable reason out of a provider error body (Anthropic
+ * `{error:{message}}`, OpenAI `{error:{message}}`, or a bare string), so a failed build
+ * shows WHY (e.g. "messages.0: ...") instead of an opaque "provider HTTP 400". The
+ * response body never contains the API key (the key is a request header), so this is safe
+ * to surface. Truncated to keep it a one-liner.
+ */
+export function providerErrorDetail(body: string): string {
+  if (!body) return ''
+  try {
+    const j = JSON.parse(body) as { error?: { message?: string } | string; message?: string }
+    const msg = typeof j.error === 'object' && j.error ? j.error.message
+      : typeof j.error === 'string' ? j.error
+      : j.message
+    if (msg) return String(msg).slice(0, 300)
+  } catch { /* not JSON — fall through to the raw body */ }
+  return body.slice(0, 300)
+}
+
 export async function postJson<T = unknown>(
   url: string,
   body: unknown,
@@ -58,6 +77,7 @@ export async function postJson<T = unknown>(
       continue
     }
     const errBody = await r.text().catch(() => '')
-    throw new ProviderHttpError(r.status, `provider HTTP ${r.status}`, errBody)
+    const detail = providerErrorDetail(errBody)
+    throw new ProviderHttpError(r.status, `provider HTTP ${r.status}${detail ? `: ${detail}` : ''}`, errBody)
   }
 }

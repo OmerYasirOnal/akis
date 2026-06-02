@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { postJson, AuthError, ModelNotFoundError, ProviderHttpError } from '../../src/agent/providers/http.js'
+import { postJson, AuthError, ModelNotFoundError, ProviderHttpError, providerErrorDetail } from '../../src/agent/providers/http.js'
 
 const res = (status: number, body: unknown, headers: Record<string, string> = {}) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json', ...headers } })
@@ -39,5 +39,21 @@ describe('postJson', () => {
       expect(e).toBeInstanceOf(ProviderHttpError)
       expect((e as ProviderHttpError).body).toContain('INVALID_ARGUMENT')
     })
+  })
+  it('surfaces the provider error message in the thrown error (actionable, not opaque)', async () => {
+    // Anthropic 400 body shape → the message must include WHY, not just "provider HTTP 400".
+    const body = '{"type":"error","error":{"type":"invalid_request_error","message":"model: String should have at least 1 character"}}'
+    const fetchFn = (async () => new Response(body, { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+    await expect(postJson('http://x', {}, {}, { fetchFn, maxRetries: 0 })).rejects.toThrow(/at least 1 character/)
+  })
+})
+
+describe('providerErrorDetail', () => {
+  it('extracts {error:{message}} (Anthropic/OpenAI), {error:string}, {message}, and raw bodies', () => {
+    expect(providerErrorDetail('{"error":{"message":"bad model"}}')).toBe('bad model')
+    expect(providerErrorDetail('{"error":"flat error"}')).toBe('flat error')
+    expect(providerErrorDetail('{"message":"top level"}')).toBe('top level')
+    expect(providerErrorDetail('not json at all')).toBe('not json at all')
+    expect(providerErrorDetail('')).toBe('')
   })
 })
