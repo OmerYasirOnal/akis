@@ -5,6 +5,7 @@ import { ChatStudio } from '../chat/ChatStudio.js'
 import { CosmicBackground } from '../components/CosmicBackground.js'
 import { AkisLogo } from '../components/AkisLogo.js'
 import { AnalyticsPage } from '../pages/AnalyticsPage.js'
+import { HistoryPage } from '../pages/HistoryPage.js'
 import { DocsPage } from '../pages/DocsPage.js'
 import { SettingsPage } from '../pages/SettingsPage.js'
 import { WorkflowsPage } from '../workflows/WorkflowsPage.js'
@@ -49,6 +50,7 @@ function AppFrame({ api }: { api: ApiClient }) {
   useEffect(() => { void api.listWorkflows().then(ws => setWorkflows(ws.map(w => ({ id: w.id, name: w.name })))).catch(() => {}) }, [api, path])
 
   const page = path === '/analytics' ? <AnalyticsPage api={api} />
+    : path === '/history' ? <HistoryPage api={api} />
     : path === '/workflows' ? <WorkflowsPage api={api} />
     : path === '/settings' ? <SettingsPage api={api} />
     : path === '/docs' ? <DocsPage />
@@ -63,6 +65,7 @@ function AppFrame({ api }: { api: ApiClient }) {
           <Brand />
           <nav className="order-3 flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto">
             <NavLink to="/" label={t('nav.dashboard')} />
+            <NavLink to="/history" label={t('nav.history')} />
             <NavLink to="/analytics" label={t('nav.analytics')} />
             <NavLink to="/workflows" label={t('nav.workflows')} />
             <NavLink to="/settings" label={t('nav.settings')} />

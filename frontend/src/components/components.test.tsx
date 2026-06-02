@@ -44,4 +44,17 @@ describe('PreviewPanel', () => {
     const { container } = renderI18n(<PreviewPanel view={view} />)
     expect(container.querySelector('iframe')).toBeNull()
   })
+  it('shows the mock-provider demo note only for the mock provider', () => {
+    const mock: SessionView = { ...emptyView('s1'), provider: 'mock' }
+    const { rerender } = renderI18n(<PreviewPanel view={mock} />)
+    expect(screen.getByText(/Demo preview \(mock provider\)/)).toBeInTheDocument()
+    // a real provider must NOT show the note
+    rerender(<I18nProvider><PreviewPanel view={{ ...emptyView('s1'), provider: 'anthropic' }} /></I18nProvider>)
+    expect(screen.queryByText(/Demo preview \(mock provider\)/)).toBeNull()
+  })
+  it('keeps the iframe sandbox exactly (allow-scripts allow-forms allow-popups, no allow-same-origin)', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
+    const { container } = renderI18n(<PreviewPanel view={view} />)
+    expect(container.querySelector('iframe')?.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-popups')
+  })
 })
