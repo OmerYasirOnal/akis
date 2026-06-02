@@ -29,6 +29,14 @@ describe('OpenAiCompatibleProvider', () => {
     expect(r.usage).toEqual({ inTokens: 3, outTokens: 4 })
   })
 
+  it('maps choices[0].finish_reason → stopReason', async () => {
+    const resBody = { choices: [{ message: { content: 'hi' }, finish_reason: 'stop' }], usage: { prompt_tokens: 1, completion_tokens: 1 } }
+    const fetchFn = (async () => new Response(JSON.stringify(resBody), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+    const p = new OpenAiCompatibleProvider({ name: 'openai', apiKey: 'sk', model: 'm', baseUrl: 'https://api.openai.com/v1', fetchFn })
+    const r = await p.chat({ system: 's', messages: [] })
+    expect(r.stopReason).toBe('stop')
+  })
+
   it('falls back to {} when tool arguments is invalid JSON', async () => {
     const bad = { choices: [{ message: { tool_calls: [{ id: 'call_2', type: 'function', function: { name: 'do', arguments: 'not json' } }] } }] }
     const fetchFn = (async () => new Response(JSON.stringify(bad), { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch

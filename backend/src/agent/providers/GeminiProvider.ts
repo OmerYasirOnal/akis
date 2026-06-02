@@ -13,7 +13,7 @@ interface GeminiPart {
   functionCall?: { name: string; args?: unknown; id?: string }
 }
 interface GeminiResponse {
-  candidates?: { content?: { parts?: GeminiPart[] } }[]
+  candidates?: { content?: { parts?: GeminiPart[] }; finishReason?: string }[]
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number }
 }
 
@@ -44,6 +44,13 @@ export class GeminiProvider implements LlmProvider {
     if (req.tools?.length) {
       body.tools = [{ functionDeclarations: req.tools.map(t => ({ name: t.name, description: t.description, parameters: t.schema })) }]
     }
+    // generationConfig parity (Anthropic/OpenAI pass these): map the common
+    // request fields to Gemini's names; omit the key entirely when unset so the
+    // API keeps its own defaults (backward compatible).
+    const generationConfig: Record<string, unknown> = {}
+    if (req.temperature !== undefined) generationConfig.temperature = req.temperature
+    if (req.maxTokens !== undefined) generationConfig.maxOutputTokens = req.maxTokens
+    if (Object.keys(generationConfig).length > 0) body.generationConfig = generationConfig
 
     const opts: PostOpts = {}
     if (this.cfg.fetchFn) opts.fetchFn = this.cfg.fetchFn
@@ -78,6 +85,10 @@ export class GeminiProvider implements LlmProvider {
     if (res.usageMetadata) {
       result.usage = { inTokens: res.usageMetadata.promptTokenCount ?? 0, outTokens: res.usageMetadata.candidatesTokenCount ?? 0 }
     }
+    // Pass Gemini's raw finishReason ('STOP' | 'MAX_TOKENS' | 'SAFETY' | ...) as
+    // stopReason, consistent with how Anthropic forwards its raw stop_reason.
+    const finishReason = res.candidates?.[0]?.finishReason
+    if (finishReason) result.stopReason = finishReason
     return result
   }
 

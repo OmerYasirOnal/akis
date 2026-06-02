@@ -12,9 +12,8 @@ interface OpenAiConfig {
 
 interface OpenAiToolCall { id: string; type: 'function'; function: { name: string; arguments: string } }
 interface OpenAiResponse {
-  choices: { message: { content?: string | null; tool_calls?: OpenAiToolCall[] } }[]
+  choices: { message: { content?: string | null; tool_calls?: OpenAiToolCall[] }; finish_reason?: string }[]
   usage?: { prompt_tokens?: number; completion_tokens?: number }
-  // some providers (OpenRouter) report stop reason as finish_reason on the choice
 }
 
 function safeJson(s: string): unknown {
@@ -70,6 +69,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     if (text) result.text = text
     if (toolCalls.length) result.toolCalls = toolCalls
     if (res.usage) result.usage = { inTokens: res.usage.prompt_tokens ?? 0, outTokens: res.usage.completion_tokens ?? 0 }
+    // Forward the raw finish_reason ('stop' | 'length' | 'tool_calls' | ...) as
+    // stopReason — parity with the Anthropic adapter.
+    const finishReason = res.choices[0]?.finish_reason
+    if (finishReason) result.stopReason = finishReason
     return result
   }
 

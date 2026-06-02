@@ -17,6 +17,10 @@ import { makeGenerateText } from '../agent/criticBackend.js'
 import { NullKnowledgePort, type KnowledgePort } from '../knowledge/KnowledgePort.js'
 import { buildRag } from '../knowledge/buildRag.js'
 import type { IngestionSink } from '../knowledge/IngestionSink.js'
+import { AgentRegistry } from '../agent/dynamic/AgentRegistry.js'
+import { LlmAdvisoryAgent } from '../agent/dynamic/AdvisoryAgent.js'
+import { isCoreRole, type AgentConfig } from '@akis/shared'
+import type { ProviderId } from '../agent/providers/catalog.js'
 
 export interface OrchestratorServices {
   store: SessionStore
@@ -40,6 +44,9 @@ export interface OrchestratorServices {
   knowledge: KnowledgePort
   /** When RAG is on, the bus sink the orchestrator subscribes per session (F1-AC17). */
   ingestionSink?: IngestionSink
+  /** Custom (non-core) workflow agents AKIS dispatches as advisory at the edges (CF4).
+   *  Empty when no workflow / no custom agents — the orchestrator then dispatches none. */
+  advisoryAgents?: AgentRegistry
 }
 
 /**
@@ -95,6 +102,13 @@ export interface BuildServicesOptions {
   /** Per-agent {provider, model} from a resolved WorkflowConfig (F2-AC9). When set
    *  for a producer role, that agent gets its own provider; otherwise the default. */
   agentModels?: Partial<Record<import('@akis/shared').Role, { provider: import('./../agent/providers/catalog.js').ProviderId; model?: string }>>
+  /** Custom (non-core) workflow agents to wire as advisory edge agents (CF4). A
+   *  declared gate capability is REJECTED here (runtime re-check) — buildServices throws. */
+  customAgents?: AgentConfig[]
+  /** Prebuilt advisory registry to use as the base (tests/advanced callers inject
+   *  custom AdvisoryAgent stubs here, e.g. a throwing advisor); `customAgents` are
+   *  registered on top of it. */
+  advisoryAgents?: AgentRegistry
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
@@ -150,15 +164,35 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   // Per-agent model binding (F2-AC9): a producer with a resolved {provider, model}
   // gets its own provider; everyone else shares the default. Under NODE_ENV=test
   // createProvider returns the mock regardless, so this stays test-safe.
+  // Build a per-agent provider with the standard option spreads (shared by producer
+  // model-binding and the advisory agents — one place to evolve createProvider opts).
+  const makeProvider = (p: ProviderId, model?: string): LlmProvider => createProvider({
+    provider: p,
+    ...(model !== undefined ? { model } : {}),
+    ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
+    ...(opts.mockCriticScore !== undefined ? { allowMock: true } : {}),
+  })
+
   const providerFor = (role: 'scribe' | 'proto'): LlmProvider => {
     const m = opts.agentModels?.[role]
-    if (!m) return provider
-    return createProvider({
-      provider: m.provider,
-      ...(m.model !== undefined ? { model: m.model } : {}),
-      ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
-      ...(opts.mockCriticScore !== undefined ? { allowMock: true } : {}),
-    })
+    return m ? makeProvider(m.provider, m.model) : provider
+  }
+
+  // Custom (non-core) workflow agents → advisory edge agents (CF4). Registration
+  // REJECTS any gate capability (defense-in-depth behind save-time validation), so a
+  // throw here means a gate-holding custom agent slipped past validation. Each gets
+  // its own provider (its model, else the default). A prebuilt `advisoryAgents`
+  // registry (tests/advanced callers) is the base; customAgents register on top.
+  // NOTE: AgentConfig.skills is not yet applied to advisory agents (prompt + tools
+  // only) — an intentional no-op until advisory skills are scoped.
+  const advisoryAgents = opts.advisoryAgents ?? new AgentRegistry()
+  for (const a of opts.customAgents ?? []) {
+    if (isCoreRole(a.role)) continue // core agents run on the spine, never as advisory
+    const agentProvider = a.model?.providerId ? makeProvider(a.model.providerId as ProviderId, a.model.modelId) : provider
+    advisoryAgents.register(
+      new LlmAdvisoryAgent({ role: a.role, provider: agentProvider, ...(a.basePromptVariant !== undefined ? { persona: a.basePromptVariant } : {}) }),
+      a.tools ?? [],
+    )
   }
 
   return {
@@ -176,6 +210,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     providerName,
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
     ...(opts.gatePolicy !== undefined ? { gatePolicy: opts.gatePolicy } : {}),
+    ...(advisoryAgents.size > 0 ? { advisoryAgents } : {}),
     ...resolveKnowledge(opts, bus),
   }
 }
