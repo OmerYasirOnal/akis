@@ -238,6 +238,23 @@ export class Orchestrator {
     const session = await this.s.store.update(id, { status: 'done' }, cur.version)
     this.emitGate(id, 'push_confirm', 'satisfied')
     this.s.bus.emit({ kind: 'done', verified: isVerified(session), provider: this.s.providerName, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+
+    // Issue #7 AC1: auto-ingest the just-pushed repo into RAG grounding (no manual
+    // POST needed). PURELY ADDITIVE grounding, OFF the gate path: it runs AFTER the
+    // push succeeded and the session is already persisted 'done'. The RepoSource reads
+    // the SAME shared `github` adapter we just pushed to, mirroring the manual repo
+    // route's arg shape ({sessionId,userId} with userId = ragUserIdFor). Fire-and-forget
+    // for FAILURE: awaited but try/catch-wrapped so a thrown/failed ingest can NEVER
+    // fail confirmPush, change the session status, or touch the push gate. No-op when
+    // RAG/repoSource is absent (keyless / RAG-off default is byte-for-byte unchanged).
+    if (this.s.repoSource) {
+      const userId = this.s.ragUserIdFor?.(id) ?? id
+      try {
+        await this.s.repoSource.ingest({ sessionId: id, userId })
+      } catch (err) {
+        this.narrate(id, `Repo auto-ingest skipped: ${err instanceof Error ? err.message : String(err)}`, { ephemeral: true })
+      }
+    }
     return session
   }
 }
