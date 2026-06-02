@@ -132,6 +132,10 @@ export interface BuildServicesOptions {
    *  custom AdvisoryAgent stubs here, e.g. a throwing advisor); `customAgents` are
    *  registered on top of it. */
   advisoryAgents?: AgentRegistry
+  /** Env source threaded into the RAG build for repo-reader selection (AKIS_GITHUB_TOKEN
+   *  + repo target). Only meaningful when `rag` is on. Absent ⇒ MockRepoReader (default
+   *  OFF, zero behavior change). */
+  env?: Record<string, string | undefined>
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
@@ -258,7 +262,13 @@ interface KnowledgeWiring {
 function resolveKnowledge(opts: BuildServicesOptions, bus: EventBus, github: MockGitHubAdapter): KnowledgeWiring {
   if (opts.knowledge) return { knowledge: opts.knowledge, ...(opts.ingestionSink ? { ingestionSink: opts.ingestionSink } : {}) }
   if (opts.rag) {
-    const stack = buildRag({ bus, github, ...(opts.rerank !== undefined ? { rerank: opts.rerank } : {}) })
+    const stack = buildRag({
+      bus, github,
+      ...(opts.rerank !== undefined ? { rerank: opts.rerank } : {}),
+      // Thread env so a configured AKIS_GITHUB_TOKEN selects the RealGitHubRepoReader
+      // (opt-in); absent it the default MockRepoReader is used (zero behavior change).
+      ...(opts.env ? { env: opts.env } : {}),
+    })
     return {
       knowledge: stack.port,
       ingestionSink: stack.sink,
