@@ -64,6 +64,11 @@ export class PgUserStore implements UserStorePort {
     await this.db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, id])
   }
 
+  async updateName(id: string, name: string): Promise<AuthUser | undefined> {
+    const { rows } = await this.db.query('UPDATE users SET name = $1 WHERE id = $2 RETURNING *', [name.trim(), id])
+    return rows[0] ? toUser(rows[0] as unknown as Row) : undefined
+  }
+
   async upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser> {
     // 1) same provider identity returning?
     const byExt = await this.db.query('SELECT * FROM users WHERE external_id = $1', [input.externalId])

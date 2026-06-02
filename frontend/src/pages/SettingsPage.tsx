@@ -1,6 +1,7 @@
 import type { ApiClient } from '../api/client.js'
 import { AgentsTab } from '../agents/AgentsTab.js'
 import { ProviderKeys } from './ProviderKeys.js'
+import { AccountSettings } from './AccountSettings.js'
 import { useAuth } from '../auth/AuthContext.js'
 import { Card, SectionTitle, Button } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -25,6 +26,10 @@ export function SettingsPage({ api }: { api: ApiClient }) {
           </div>
         </div>
         <Button variant="ghost" onClick={() => void logout()}>{t('nav.logout')}</Button>
+      </Card>
+
+      <Card className="p-5">
+        <AccountSettings api={api} />
       </Card>
 
       <Card className="p-5">
