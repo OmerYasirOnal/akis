@@ -53,6 +53,21 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const app = Fastify({ logger: false }) // logger off: never risk logging key bodies
   const env = deps.env ?? (process.env as Record<string, string | undefined>)
 
+  // CSRF defense (defense-in-depth, important under AUTH_COOKIE_SAMESITE=none): reject a
+  // state-changing request whose browser Origin doesn't match the trusted origin. A
+  // missing Origin (non-browser clients, same-origin nav, tests) is not a CSRF vector.
+  const MUTATING = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+  const trustedOrigin = env.PUBLIC_BASE_URL?.replace(/\/+$/, '')
+  app.addHook('onRequest', async (req, reply) => {
+    if (!MUTATING.has(req.method)) return
+    const origin = req.headers.origin
+    // Enforce only when the trusted origin is configured (behind a dev proxy the host
+    // differs from the browser origin, so we can't reliably derive it). A missing Origin
+    // (non-browser, same-origin nav, tests) is not a CSRF vector. Dev relies on SameSite=lax.
+    if (!trustedOrigin || !origin) return
+    if (origin !== trustedOrigin) return reply.code(403).send({ error: 'cross-origin request blocked', code: 'CsrfBlocked' })
+  })
+
   // One shared orchestrator stack (single store + single bus) across all requests,
   // so the SSE stream observes the same events the command routes produce. The
   // provider resolves via createProvider (fail-closed; mock only under NODE_ENV=test).

@@ -86,6 +86,18 @@ describe('auth routes', () => {
     expect(res.statusCode).toBe(401)
   })
 
+  it('blocks a cross-origin state-changing request when a trusted origin is configured (CSRF)', async () => {
+    const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
+    const server = buildServer({ keyStore, env: { AUTH_JWT_SECRET: 'x', PUBLIC_BASE_URL: 'http://localhost:5173' }, userStore: new UserStore() })
+    const blocked = await server.inject({ method: 'POST', url: '/auth/login', payload: { email: 'a@b.com', password: 'x' }, headers: { origin: 'http://evil.example' } })
+    expect(blocked.statusCode).toBe(403)
+    expect(blocked.json().code).toBe('CsrfBlocked')
+    // matching origin passes the guard (then normal 401 for bad creds)
+    expect((await server.inject({ method: 'POST', url: '/auth/login', payload: { email: 'a@b.com', password: 'x' }, headers: { origin: 'http://localhost:5173' } })).statusCode).toBe(401)
+    // no Origin (non-browser / tests) is allowed through
+    expect((await server.inject({ method: 'POST', url: '/auth/login', payload: { email: 'a@b.com', password: 'x' } })).statusCode).toBe(401)
+  })
+
   it('forgot→reset: lets a user set a new password and log in with it', async () => {
     const store = new UserStore(); const server = app(store)
     await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'ada@akis.dev', password: 'oldpassword1' } })
