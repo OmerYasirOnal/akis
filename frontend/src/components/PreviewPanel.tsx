@@ -14,6 +14,9 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
   const artifact = view.preview.artifactUrl
   const embeddable = !!url && url.startsWith('/preview/')
   const artifactSafe = !!artifact && /^https?:\/\//i.test(artifact)
+  // The mock provider runs WITHOUT a real provider key — the produced app is a stub, so the
+  // preview is a demo. Only surface the hint for the mock provider (never a real one).
+  const isMock = view.provider === 'mock'
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -34,31 +37,51 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
         </div>
       </div>
 
-      <div className="relative flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
-        {embeddable ? (
-          // The framed app is UNTRUSTED agent-generated code served same-origin from
-          // /preview/:id/. Deliberately NO allow-same-origin: that would let it reach
-          // the AKIS origin (session cookie, parent DOM). allow-scripts in an opaque
-          // origin is enough to run a self-contained app. (Apps needing real same-origin
-          // storage are a deferred cross-origin-preview hardening.)
-          <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-popups" />
-        ) : view.preview.starting ? (
-          <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <span className="h-6 w-6 animate-spin rounded-full border-2 border-teal-400/40 border-t-teal-300" />
-            <span className="text-xs text-slate-400">{t('preview.booting')}</span>
-          </div>
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
-            <span className="text-sm text-slate-500">{t('preview.empty')}</span>
-            {onRun && canRun && (
-              <button onClick={onRun} disabled={busy}
-                className="mt-1 rounded-lg bg-gradient-to-r from-teal-400 to-violet-500 px-3 py-1.5 text-sm font-semibold text-slate-900 disabled:opacity-40">
-                ▶ {t('preview.run')}
-              </button>
-            )}
-          </div>
-        )}
+      <div className="relative flex flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
+        {/* Intentional browser-chrome header so the framed area never reads as dead space —
+            traffic-light dots, an agent attribution, and (when live) the preview path. */}
+        <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5">
+          <span className="flex gap-1" aria-hidden>
+            <span className="h-2 w-2 rounded-full bg-rose-400/70" />
+            <span className="h-2 w-2 rounded-full bg-amber-300/70" />
+            <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
+          </span>
+          <span className="truncate text-[10px] text-slate-400">{embeddable ? url : t('preview.attribution')}</span>
+        </div>
+
+        <div className="relative flex-1 overflow-hidden">
+          {embeddable ? (
+            // The framed app is UNTRUSTED agent-generated code served same-origin from
+            // /preview/:id/. Deliberately NO allow-same-origin: that would let it reach
+            // the AKIS origin (session cookie, parent DOM). allow-scripts in an opaque
+            // origin is enough to run a self-contained app. (Apps needing real same-origin
+            // storage are a deferred cross-origin-preview hardening.)
+            <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-popups" />
+          ) : view.preview.starting ? (
+            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+              <span className="h-6 w-6 animate-spin rounded-full border-2 border-teal-400/40 border-t-teal-300" />
+              <span className="text-xs text-slate-400">{t('preview.booting')}</span>
+            </div>
+          ) : (
+            <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+              <span className="text-sm text-slate-500">{t('preview.empty')}</span>
+              {onRun && canRun && (
+                <button onClick={onRun} disabled={busy}
+                  className="mt-1 rounded-lg bg-gradient-to-r from-teal-400 to-violet-500 px-3 py-1.5 text-sm font-semibold text-slate-900 disabled:opacity-40">
+                  ▶ {t('preview.run')}
+                </button>
+              )}
+            </div>
+          )}
+        </div>
       </div>
+
+      {isMock && (
+        <div className="flex items-start gap-2 rounded-lg border border-amber-400/20 bg-amber-400/[0.06] px-3 py-2 text-[11px] text-amber-200/90">
+          <span aria-hidden>ℹ</span>
+          <span>{t('preview.mockNote')}</span>
+        </div>
+      )}
 
       {artifact && (
         <div className="truncate text-[11px] text-slate-500">
