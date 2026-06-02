@@ -39,9 +39,10 @@ describe('runMigrations', () => {
 
 describe('createPgPool', () => {
   it('throws a clear, actionable error when the `pg` package is not installed', async () => {
-    // pg is NOT a build/test dependency in this lane, so the lazy import fails and
-    // createPgPool must surface a clear "pg not installed" message rather than a raw
-    // module-not-found.
-    await expect(createPgPool('postgres://localhost/akis')).rejects.toThrow(/pg.*not installed/i)
+    // `pg` is a shipped dependency, so we can't rely on the env lacking it — inject an
+    // importer that rejects (as a missing module would) and assert createPgPool surfaces
+    // the clear "pg not installed" message rather than a raw module-not-found.
+    const missing = () => Promise.reject(new Error("Cannot find package 'pg'"))
+    await expect(createPgPool('postgres://localhost/akis', missing)).rejects.toThrow(/pg.*not installed/i)
   })
 })
