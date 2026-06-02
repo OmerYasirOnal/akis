@@ -1,0 +1,52 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AKIS CI — the deterministic build gate (separate from the @claude AI-review
+# workflows in claude.yml / claude-code-review.yml; this one does NOT call them).
+#
+# It runs the per-package checks that actually pass on a clean checkout. Each
+# package's `test` script is `tsc --noEmit && vitest run`, so this gates BOTH the
+# typecheck and the unit/integration suite for backend + frontend. We deliberately
+# do NOT run `pnpm -r typecheck`: the shared package has no local tsc/typecheck and
+# would fail recursion. Node is pinned to one major (22) to match the Dockerfile.
+# ─────────────────────────────────────────────────────────────────────────────
+name: CI
+
+on:
+  push:
+  pull_request:
+
+# Cancel superseded runs on the same ref to save CI minutes.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: typecheck + test (backend, frontend)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up pnpm
+        # No `version` input: pnpm/action-setup@v4 reads the pnpm version from
+        # package.json's `packageManager: pnpm@9.0.0`. Specifying BOTH errors with
+        # "Multiple versions of pnpm specified" (ERR_PNPM_BAD_PM_VERSION).
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies (frozen lockfile)
+        run: pnpm install --frozen-lockfile
+
+      # `test` = tsc --noEmit && vitest run, per package. Backend first (heavier),
+      # then frontend. The shared package is typecheck-only via its consumers, so
+      # it is not invoked directly (no `pnpm -r typecheck`).
+      - name: Backend — typecheck + test
+        run: pnpm -C backend test
+
+      - name: Frontend — typecheck + test
+        run: pnpm -C frontend test

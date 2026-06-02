@@ -58,6 +58,37 @@ function anyKey(env: Record<string, string | undefined>): { provider: RealProvid
 }
 
 /**
+ * True when a REAL provider+key can be resolved from env (or the KeyStore) without
+ * the mock — i.e. `createProvider` would build a live provider rather than throw.
+ * Used by the self-host boot to make `AKIS_ALLOW_MOCK` a FALLBACK, not a force:
+ * the keyless demo runs the mock, but the moment a real key is supplied it takes
+ * over (the documented "add a provider key, then `docker compose up` again" path),
+ * so the demo flag never masks a configured key. Mirrors createProvider's
+ * resolution but performs NO key validation and NEVER logs the key.
+ */
+export function hasRealProviderKey(
+  env: Record<string, string | undefined>,
+  keyStore?: KeyLookup,
+): boolean {
+  const forced = env.AI_PROVIDER as string | undefined
+  // Explicitly named real provider: a key from its env var, the generic AI_API_KEY,
+  // or the KeyStore satisfies it.
+  if (isRealProvider(forced)) {
+    return Boolean(firstPresentKey(env, forced) ?? env.AI_API_KEY ?? keyStore?.get(forced))
+  }
+  // Unknown/invalid forced provider can never resolve a real provider.
+  if (forced && forced !== 'mock') return false
+  // Auto-detect: any per-provider env key, or any KeyStore-held key.
+  if (anyKey(env)) return true
+  if (keyStore) {
+    for (const provider of Object.keys(CATALOG) as RealProvider[]) {
+      if (keyStore.get(provider)) return true
+    }
+  }
+  return false
+}
+
+/**
  * The single provider swap point. Resolution:
  *   provider = opts.provider > env.AI_PROVIDER > detectProviderFromKey(any present key)
  *   model    = opts.model    > env.AI_MODEL    > catalog default
