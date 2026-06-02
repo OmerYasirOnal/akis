@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { signJwt, verifyJwt, JwtError } from '../../src/auth/jwt.js'
+import { signJwt, verifyJwt, signResetToken, verifyResetToken, JwtError } from '../../src/auth/jwt.js'
 import { hashPassword, verifyPassword } from '../../src/auth/password.js'
 import { serializeCookie, parseCookies, cookieConfigFromEnv } from '../../src/auth/cookie.js'
 import { UserStore, EmailTakenError, toPublic } from '../../src/auth/UserStore.js'
@@ -24,6 +24,20 @@ describe('jwt (HS256, Node crypto)', () => {
   it('rejects an expired token', () => {
     const t = signJwt({ sub: 'u1', email: 'a@b.com', name: 'A' }, secret, 10, 1000)
     expect(() => verifyJwt(t, secret, 2000)).toThrow(/expired/)
+  })
+
+  it('reset token: round-trips, enforces purpose, and is not usable as a session', () => {
+    const rt = signResetToken('u1', secret, 900, 1000)
+    expect(verifyResetToken(rt, secret, 1100).sub).toBe('u1')
+    // A reset token must NOT verify as a session JWT (missing email/name claims).
+    expect(() => verifyJwt(rt, secret, 1100)).toThrow(JwtError)
+    // A session JWT must NOT verify as a reset token (wrong purpose).
+    const sess = signJwt({ sub: 'u1', email: 'a@b.com', name: 'A' }, secret, 900, 1000)
+    expect(() => verifyResetToken(sess, secret, 1100)).toThrow(/purpose/)
+  })
+  it('reset token expires', () => {
+    const rt = signResetToken('u1', secret, 10, 1000)
+    expect(() => verifyResetToken(rt, secret, 2000)).toThrow(/expired/)
   })
 })
 
@@ -84,5 +98,16 @@ describe('UserStore', () => {
   })
   it('toPublic never leaks the password hash', () => {
     expect(toPublic({ id: '1', name: 'A', email: 'a@b.com', passwordHash: 'secret', createdAt: 'x' })).not.toHaveProperty('passwordHash')
+  })
+  it('upsertOAuth binds by externalId and links a (verified) email account to that identity', async () => {
+    const s = new UserStore()
+    const a = await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' })
+    // same identity returns the same user
+    expect((await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' })).id).toBe(a.id)
+    // a password account is linked to the identity when the (verified) email matches
+    const pw = await s.create({ name: 'Bo', email: 'bo@akis.dev', passwordHash: 'h' })
+    const linked = await s.upsertOAuth({ externalId: 'google:2', email: 'BO@akis.dev', name: 'Bo' })
+    expect(linked.id).toBe(pw.id)
+    expect((await s.findById(pw.id))?.externalId).toBe('google:2')
   })
 })

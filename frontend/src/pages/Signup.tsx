@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
-import { ApiError } from '../api/client.js'
+import { ApiClient, ApiError } from '../api/client.js'
 import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
+import { OAuthButtons } from './OAuthButtons.js'
 
-export function Signup() {
+export function Signup({ api }: { api: ApiClient }) {
   const { signup } = useAuth()
   const { navigate } = useRouter()
   const { t } = useI18n()
@@ -28,6 +29,7 @@ export function Signup() {
   return (
     <AuthShell title={t('auth.signup.title')} subtitle={t('auth.signup.subtitle')}
       footer={<>{t('auth.haveAccount')} <Link to="/login" className="font-semibold text-[#07D1AF] hover:underline">{t('auth.login.cta')}</Link></>}>
+      <div className="mb-4"><OAuthButtons api={api} /></div>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.name')}>
           <Input autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Ada Lovelace" required />

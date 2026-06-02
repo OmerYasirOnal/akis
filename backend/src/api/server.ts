@@ -9,11 +9,14 @@ import { registerSessionRoutes } from './sessions.routes.js'
 import { registerPreviewRoutes } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
 import { registerAuthRoutes } from './auth.routes.js'
-import { UserStore } from '../auth/UserStore.js'
+import { UserStore, type UserStorePort } from '../auth/UserStore.js'
+import { createPgUserStore } from '../auth/PgUserStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
 import { registerChatRoutes } from './chat.routes.js'
+import { registerOAuthRoutes } from './oauth.routes.js'
+import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
@@ -36,8 +39,8 @@ export interface ServerDeps {
   skillsDir?: string
   /** Workflow preset store (in-memory by default; injectable for tests/persistence). */
   workflowStore?: WorkflowStore
-  /** User store for auth (in-memory by default; injectable for tests/persistence). */
-  userStore?: UserStore
+  /** User store for auth (in-memory by default; a PgUserStore when DATABASE_URL is set). */
+  userStore?: UserStorePort
 }
 
 const defaultSkillsDir = (): string =>
@@ -116,6 +119,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   }
   const userStore = deps.userStore ?? new UserStore()
 
+  // OAuth needs a trusted public origin for redirect_uri — don't rely on the client
+  // Host header in production. Fail closed if a provider is configured without it.
+  if (env.NODE_ENV === 'production' && configuredProviders(env).length > 0 && !env.PUBLIC_BASE_URL) {
+    throw new Error('PUBLIC_BASE_URL is required in production when OAuth providers are configured')
+  }
+
   // Aggregate run analytics via a single global bus tap (observability only).
   const stats = new StatsCollector()
   stats.attach(services.bus)
@@ -125,7 +134,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   registerWorkflowRoutes(app, { store: workflowStore })
-  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env) })
+  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env), devEcho: env.NODE_ENV !== 'production' })
+  registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env), env })
   registerAnalyticsRoutes(app, { stats })
   registerChatRoutes(app, { provider: services.provider })
   return app
@@ -137,7 +147,13 @@ export async function start(): Promise<void> {
   // Default OUTSIDE the repo so an encrypted key blob can never be committed.
   const file = process.env.AI_KEY_STORE_PATH ?? join(homedir(), '.config', 'akis', 'keys.json')
   const keyStore = new JsonFileKeyStore(file, master)
-  const app = buildServer({ keyStore })
+  // Durable user store when DATABASE_URL is configured; else in-memory (dev/self-host).
+  let userStore: UserStorePort | undefined
+  if (process.env.DATABASE_URL) {
+    try { userStore = await createPgUserStore(process.env.DATABASE_URL); console.log('auth: using Postgres user store') }
+    catch (e) { console.error('auth: Postgres unavailable, using in-memory store —', (e as Error).message) }
+  }
+  const app = buildServer({ keyStore, ...(userStore ? { userStore } : {}) })
   const port = Number(process.env.PORT ?? 3000)
   await app.listen({ port, host: '127.0.0.1' })
   // eslint-disable-next-line no-console
