@@ -22,10 +22,13 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [workflowId, setWorkflowId] = useState('')
   const [busy, setBusy] = useState(false)
+  const [auto, setAuto] = useState(false)            // autopilot: auto-approve + auto-confirm
   const [actionError, setActionError] = useState<string | undefined>()
 
   const live = useLiveChat(sessionId, sent, api, baseUrl, makeClient)
   const status = live.view.status
+  const specState = live.view.gates.specApproval?.state
+  const pushState = live.view.gates.pushConfirm?.state
 
   const send = async (): Promise<void> => {
     const v = idea.trim(); if (!v || busy) return
@@ -55,6 +58,17 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
     }
   }, [sessionId, status, api])
 
+  // Autopilot: when on, satisfy the gates automatically as they open — fully hands-off,
+  // while the structural verification gate still enforces a real test pass before push.
+  const autoApproved = useRef<string | undefined>(undefined)
+  const autoConfirmed = useRef<string | undefined>(undefined)
+  useEffect(() => {
+    if (!auto || !sessionId || busy) return
+    if (specState === 'awaiting' && autoApproved.current !== sessionId) { autoApproved.current = sessionId; void approve() }
+    else if (pushState === 'awaiting' && autoConfirmed.current !== sessionId) { autoConfirmed.current = sessionId; void confirm() }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [auto, sessionId, specState, pushState, busy])
+
   const canRun = !!sessionId && (status === 'done' || live.view.verified !== undefined)
 
   return (
@@ -83,6 +97,10 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
               {workflows.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           )}
+          <label title={t('chat.auto.hint')} className={`flex shrink-0 cursor-pointer items-center gap-1.5 rounded-xl border px-3 py-2 text-sm ${auto ? 'border-[#07D1AF]/50 bg-[#07D1AF]/10 text-[#07D1AF]' : 'border-white/10 bg-white/[0.04] text-slate-400'}`}>
+            <input type="checkbox" className="sr-only" checked={auto} onChange={e => setAuto(e.target.checked)} aria-label={t('chat.auto')} />
+            ⚡ {t('chat.auto')}
+          </label>
           <button type="submit" disabled={busy || idea.trim() === ''} className="rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 font-semibold text-slate-900 shadow-[0_0_20px_rgba(7,209,175,0.35)] disabled:opacity-40">{t('chat.send')}</button>
         </form>
       </section>

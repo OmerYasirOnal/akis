@@ -7,6 +7,8 @@ interface AuthValue {
   login: (email: string, password: string) => Promise<void>
   signup: (name: string, email: string, password: string) => Promise<void>
   logout: () => Promise<void>
+  /** Re-fetch the session (e.g. after a password reset that set a fresh cookie). */
+  refresh: () => Promise<void>
 }
 const AuthCtx = createContext<AuthValue | null>(null)
 
@@ -29,8 +31,9 @@ export function AuthProvider({ api, children }: { api: ApiClient; children: Reac
   // Clear local state even if the network/server call fails — never leave a user
   // looking signed-in after a logout attempt.
   const logout = async (): Promise<void> => { try { await api.logout() } finally { setUser(null) } }
+  const refresh = async (): Promise<void> => { try { setUser((await api.me()).user) } catch { setUser(null) } }
 
-  return <AuthCtx.Provider value={{ user, loading, login, signup, logout }}>{children}</AuthCtx.Provider>
+  return <AuthCtx.Provider value={{ user, loading, login, signup, logout, refresh }}>{children}</AuthCtx.Provider>
 }
 
 export function useAuth(): AuthValue {
