@@ -93,19 +93,30 @@ export async function runMigrations(client: SqlClient): Promise<void> {
   }
 }
 
+/** The `pg` module shape createPgPool needs, and an injectable importer for it. */
+type PgModule = { Pool: new (cfg: { connectionString: string }) => SqlClient }
+export type PgImporter = () => Promise<PgModule>
+
+/** Default importer: a NON-LITERAL specifier so tsc never resolves `pg` at build time
+ *  (a pruned/library install without `pg` still builds) and it loads lazily, only when a
+ *  pool is actually created (DATABASE_URL set). */
+const defaultImportPg: PgImporter = () => {
+  const spec = 'pg'
+  return import(spec) as unknown as Promise<PgModule>
+}
+
 /**
- * Lazily import `pg` and create a connection Pool. `pg` is an OPTIONAL runtime
- * dependency loaded via a NON-LITERAL specifier so tsc never resolves it at build time
- * (the in-memory default builds with `pg` not installed). Throws a clear, actionable
- * error when DATABASE_URL is set but `pg` was never installed.
+ * Lazily import `pg` and create a connection Pool. `pg` is shipped as a dependency (the
+ * self-host image needs it) but loaded lazily via the default NON-LITERAL importer, so
+ * tsc never resolves it at build time and a pruned/library install without `pg` still
+ * builds. Throws a clear, actionable error when the import fails. `importPg` is injectable
+ * ONLY so the missing-`pg` error path is deterministically testable (the test env can't
+ * rely on `pg` being absent now that it is a shipped dependency).
  */
-export async function createPgPool(connectionString: string): Promise<SqlClient> {
-  let pg: { Pool: new (cfg: { connectionString: string }) => SqlClient }
+export async function createPgPool(connectionString: string, importPg: PgImporter = defaultImportPg): Promise<SqlClient> {
+  let pg: PgModule
   try {
-    // Non-literal specifier: `pg` is OPTIONAL (only needed when DATABASE_URL is set),
-    // so tsc must not try to resolve it at build time.
-    const spec = 'pg'
-    pg = (await import(spec)) as unknown as { Pool: new (cfg: { connectionString: string }) => SqlClient }
+    pg = await importPg()
   } catch {
     throw new Error('DATABASE_URL is set but the `pg` package is not installed (run: pnpm -C backend add pg)')
   }
