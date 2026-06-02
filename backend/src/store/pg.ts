@@ -90,6 +90,35 @@ CREATE TABLE IF NOT EXISTS workflows (
   PRIMARY KEY (id, version)
 )`
 
+/**
+ * Idempotent DDL for the `vector_chunks` table — the PERSISTENT RAG corpus (so it survives
+ * restart instead of being re-indexed from scratch). NO pgvector extension: the embedding is a
+ * plain `double precision[]` and ranking is brute-force cosine done in JS after a tenant fetch
+ * (the single-user corpus is small). `id` is the contentHash → idempotent upsert (ON CONFLICT).
+ * `chunk`/`meta` are jsonb (round-trip the KnowledgeChunk + ChunkMeta losslessly). The tenancy
+ * columns (`user_id`, `session_id`, `source`, `source_id`) are broken out for indexed scans and
+ * mirror ChunkMeta. `seq` (a BIGSERIAL) preserves insertion order so hydration rebuilds the
+ * in-memory index in the SAME order, keeping score-tie ordering identical to MemoryVectorStore.
+ */
+export const CREATE_VECTOR_CHUNKS_TABLE = `
+CREATE TABLE IF NOT EXISTS vector_chunks (
+  id          text PRIMARY KEY,
+  user_id     text NOT NULL,
+  session_id  text NOT NULL,
+  source      text NOT NULL,
+  source_id   text NOT NULL,
+  agent       text,
+  created_at  text NOT NULL,
+  vector      double precision[] NOT NULL,
+  chunk       jsonb NOT NULL,
+  meta        jsonb NOT NULL,
+  seq         bigserial NOT NULL
+)`
+
+/** Tenancy scan index: the candidate fetch / right-to-forget filter on (user_id, session_id). */
+export const CREATE_VECTOR_CHUNKS_TENANT_INDEX =
+  `CREATE INDEX IF NOT EXISTS vector_chunks_tenant_idx ON vector_chunks (user_id, session_id)`
+
 /** Every migration statement, in apply order. CREATE TABLE IF NOT EXISTS + idempotent
  *  ALTERs, so running this repeatedly (e.g. on every boot) is safe. */
 const MIGRATIONS: readonly string[] = [
@@ -99,6 +128,8 @@ const MIGRATIONS: readonly string[] = [
   CREATE_SESSIONS_TABLE,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,
+  CREATE_VECTOR_CHUNKS_TABLE,
+  CREATE_VECTOR_CHUNKS_TENANT_INDEX,
 ]
 
 /**
