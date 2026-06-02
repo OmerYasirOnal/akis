@@ -17,6 +17,10 @@ import { makeGenerateText } from '../agent/criticBackend.js'
 import { NullKnowledgePort, type KnowledgePort } from '../knowledge/KnowledgePort.js'
 import { buildRag } from '../knowledge/buildRag.js'
 import type { IngestionSink } from '../knowledge/IngestionSink.js'
+import type { RagService } from '../knowledge/RagService.js'
+import type { IngestQueue } from '../knowledge/ingest/IngestQueue.js'
+import type { UploadSource } from '../knowledge/ingest/UploadSource.js'
+import type { RepoSource } from '../knowledge/ingest/RepoSource.js'
 import { AgentRegistry } from '../agent/dynamic/AgentRegistry.js'
 import { LlmAdvisoryAgent } from '../agent/dynamic/AdvisoryAgent.js'
 import { isCoreRole, type AgentConfig } from '@akis/shared'
@@ -44,6 +48,21 @@ export interface OrchestratorServices {
   knowledge: KnowledgePort
   /** When RAG is on, the bus sink the orchestrator subscribes per session (F1-AC17). */
   ingestionSink?: IngestionSink
+  /** The RagService — surfaced ONLY when RAG is on, so the knowledge routes can ingest
+   *  uploads/repo files and a host can read metrics. Undefined when RAG is off. */
+  ragService?: RagService
+  /** The RAG ingestion queue — surfaced ONLY when RAG is on (deterministic drain in
+   *  tests / metrics). Undefined when RAG is off. */
+  ragQueue?: IngestQueue
+  /** Upload ingestion source (issue #7 AC2) — surfaced ONLY when RAG is on; the upload
+   *  route calls it (owner-scoped). Undefined when RAG is off. */
+  uploadSource?: UploadSource
+  /** Repo ingestion source (issue #7 AC1) — surfaced ONLY when RAG is on; the repo
+   *  trigger route calls it. Reads the same shared `github` adapter. Undefined when off. */
+  repoSource?: RepoSource
+  /** The tenancy resolver the RAG port retrieves with — the knowledge routes stamp
+   *  ingestion with it so a write is retrievable. Surfaced ONLY when RAG is on. */
+  ragUserIdFor?: (sessionId: string) => string
   /** Custom (non-core) workflow agents AKIS dispatches as advisory at the edges (CF4).
    *  Empty when no workflow / no custom agents — the orchestrator then dispatches none. */
   advisoryAgents?: AgentRegistry
@@ -96,6 +115,10 @@ export interface BuildServicesOptions {
   /** Feature flag (F1-AC11): when true, build the embedded RAG stack + ingestion sink.
    *  Default OFF → NullKnowledgePort, behavior identical to no-RAG. */
   rag?: boolean
+  /** Default second-stage rerank toggle (issue #7 AC3): threaded into buildRag. Only
+   *  meaningful when `rag` is on. Defaults to on; false wires a NoopReranker. A skippable
+   *  quality knob, never a gate (per-call `RetrieveQuery.rerank` can still override). */
+  rerank?: boolean
   /** Inject a prebuilt ingestion sink alongside an explicit `knowledge` port (tests
    *  that need the queue handle to drain ingestion deterministically). */
   ingestionSink?: IngestionSink
@@ -211,17 +234,40 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
     ...(opts.gatePolicy !== undefined ? { gatePolicy: opts.gatePolicy } : {}),
     ...(advisoryAgents.size > 0 ? { advisoryAgents } : {}),
-    ...resolveKnowledge(opts, bus),
+    ...resolveKnowledge(opts, bus, github),
   }
 }
 
-/** F1-AC11: RAG behind a flag. ON → embedded RAG stack + ingestion sink; OFF (default)
- *  or an explicit knowledge port → no sink, behavior identical to no-RAG. */
-function resolveKnowledge(opts: BuildServicesOptions, bus: EventBus): { knowledge: KnowledgePort; ingestionSink?: IngestionSink } {
+/** What buildServices surfaces for the knowledge subsystem. The source/queue handles
+ *  are present ONLY when this build owns the RAG stack (opts.rag) — an injected port has
+ *  no handles to surface, and the RAG-off default surfaces none (no behavior change). */
+interface KnowledgeWiring {
+  knowledge: KnowledgePort
+  ingestionSink?: IngestionSink
+  ragService?: RagService
+  ragQueue?: IngestQueue
+  uploadSource?: UploadSource
+  repoSource?: RepoSource
+  ragUserIdFor?: (sessionId: string) => string
+}
+
+/** F1-AC11: RAG behind a flag. ON → embedded RAG stack + ingestion sink + repo/upload
+ *  sources (issue #7); OFF (default) or an explicit knowledge port → no stack handles,
+ *  behavior identical to no-RAG. The RepoSource reads the SAME shared `github` adapter
+ *  the orchestrator pushes to, so a freshly pushed repo is immediately ingestable. */
+function resolveKnowledge(opts: BuildServicesOptions, bus: EventBus, github: MockGitHubAdapter): KnowledgeWiring {
   if (opts.knowledge) return { knowledge: opts.knowledge, ...(opts.ingestionSink ? { ingestionSink: opts.ingestionSink } : {}) }
   if (opts.rag) {
-    const stack = buildRag({ bus })
-    return { knowledge: stack.port, ingestionSink: stack.sink }
+    const stack = buildRag({ bus, github, ...(opts.rerank !== undefined ? { rerank: opts.rerank } : {}) })
+    return {
+      knowledge: stack.port,
+      ingestionSink: stack.sink,
+      ragService: stack.service,
+      ragQueue: stack.queue,
+      uploadSource: stack.uploadSource,
+      repoSource: stack.repoSource,
+      ragUserIdFor: stack.userIdFor,
+    }
   }
   return { knowledge: new NullKnowledgePort() }
 }
