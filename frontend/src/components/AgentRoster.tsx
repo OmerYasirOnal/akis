@@ -6,7 +6,7 @@ export type AgentPresence = 'idle' | 'working' | 'done' | 'failed'
 
 /** The AKIS core roster, in pipeline order. orchestrator = AKIS itself. */
 export const ROSTER: { role: Role; name: string; tint: string }[] = [
-  { role: 'orchestrator', name: 'AKIS', tint: 'from-cyan-400 to-cyan-300' },
+  { role: 'orchestrator', name: 'AKIS', tint: 'from-teal-400 to-teal-300' },
   { role: 'scribe', name: 'Scribe', tint: 'from-sky-400 to-sky-300' },
   { role: 'proto', name: 'Proto', tint: 'from-violet-400 to-violet-300' },
   { role: 'trace', name: 'Trace', tint: 'from-emerald-400 to-emerald-300' },
@@ -33,7 +33,7 @@ export function presenceOf(view: SessionView, role: Role): AgentPresence {
 
 const DOT: Record<AgentPresence, string> = {
   idle: 'bg-slate-600',
-  working: 'bg-cyan-400 animate-pulse shadow-[0_0_8px_2px_rgba(34,211,238,0.6)]',
+  working: 'bg-teal-400 animate-pulse shadow-[0_0_8px_2px_rgba(7,209,175,0.6)]',
   done: 'bg-emerald-400',
   failed: 'bg-rose-400',
 }
@@ -51,8 +51,8 @@ export function AgentRoster({ view }: { view: SessionView }) {
             className="group flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 transition hover:border-white/20">
             <span className={`grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br ${a.tint} text-[9px] font-black text-slate-950`}>{a.name.slice(0, 2)}</span>
             <span className="text-xs font-semibold text-slate-200">{a.name}</span>
-            <span className={`h-1.5 w-1.5 rounded-full ${DOT[p]}`} />
-            <span className="hidden text-[10px] text-slate-500 sm:inline">{t(`roster.status.${p}`)}</span>
+            <span title={t(`roster.status.${p}`)} className={`h-1.5 w-1.5 rounded-full ${DOT[p]}`} />
+            <span className="hidden text-[10px] text-slate-400 sm:inline">{t(`roster.status.${p}`)}</span>
           </div>
         )
       })}

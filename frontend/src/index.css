@@ -79,3 +79,11 @@ code, pre, .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regu
 @media (prefers-reduced-motion: reduce) {
   .akis-stars, .akis-stars::after, .akis-aurora { animation: none; }
 }
+
+/* Visible keyboard focus on every interactive control (WCAG 2.4.7). Tailwind's
+   Preflight removes default outlines, so restore a clear teal ring app-wide. */
+:where(a, button, select, input, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--akis-teal);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
