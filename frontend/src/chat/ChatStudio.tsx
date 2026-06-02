@@ -4,6 +4,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import { useLiveChat } from './useLiveChat.js'
 import { ChatThread } from './ChatThread.js'
 import { AkisChat } from './AkisChat.js'
+import { loadRecentBuilds, recordRecentBuild, type RecentBuild } from './recentBuilds.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import type { WorkflowOption } from '../live/types.js'
@@ -23,6 +24,7 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const [workflowId, setWorkflowId] = useState('')
   const [busy, setBusy] = useState(false)
   const [auto, setAuto] = useState(false)            // autopilot: auto-approve + auto-confirm
+  const [recent, setRecent] = useState<RecentBuild[]>(() => loadRecentBuilds())
   const [actionError, setActionError] = useState<string | undefined>()
 
   const live = useLiveChat(sessionId, sent, api, baseUrl, makeClient)
@@ -36,9 +38,12 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
     try {
       const s = await api.startSession(v, workflowId || undefined)
       setSent(v); setSessionId(s.id); setIdea('')
+      setRecent(recordRecentBuild({ id: s.id, idea: v, ts: Date.now() }))
     } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) }
     finally { setBusy(false) }
   }
+  /** Re-open a past build — useLiveChat replays /log + /events to rebuild the thread. */
+  const openSession = (b: RecentBuild): void => { setActionError(undefined); setSent(b.idea); setSessionId(b.id) }
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setActionError(undefined)
     try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }
@@ -83,7 +88,24 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
         <div className="flex-1 overflow-y-auto px-4 py-4">
           {sessionId
             ? <ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />
-            : <AkisChat api={api} />}
+            : (
+              <div className="flex flex-col gap-4">
+                <AkisChat api={api} />
+                {recent.length > 0 && (
+                  <div className="border-t border-white/10 pt-3">
+                    <div className="mb-2 text-xs uppercase tracking-widest text-slate-500">{t('chat.recent')}</div>
+                    <div className="flex flex-wrap gap-2">
+                      {recent.map(b => (
+                        <button key={b.id} onClick={() => openSession(b)}
+                          className="max-w-[16rem] truncate rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 text-xs text-slate-300 hover:border-[#07D1AF]/40 hover:text-slate-100">
+                          {b.idea}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           {actionError && <div role="alert" className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
         </div>
 
