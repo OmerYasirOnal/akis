@@ -4,9 +4,11 @@
 #
 # It runs the per-package checks that actually pass on a clean checkout. Each
 # package's `test` script is `tsc --noEmit && vitest run`, so this gates BOTH the
-# typecheck and the unit/integration suite for backend + frontend. We deliberately
-# do NOT run `pnpm -r typecheck`: the shared package has no local tsc/typecheck and
-# would fail recursion. Node is pinned to one major (22) to match the Dockerfile.
+# typecheck and the unit/integration suite for backend + frontend. The `shared`
+# package is types-only (no vitest suite), so it gets a dedicated `pnpm -C shared
+# typecheck` step. We do NOT run `pnpm -r typecheck`: it would re-run the backend +
+# frontend tsc their `test` steps already cover. Node is pinned to one major (22)
+# to match the Dockerfile.
 # ─────────────────────────────────────────────────────────────────────────────
 name: CI
 
@@ -42,11 +44,31 @@ jobs:
       - name: Install dependencies (frozen lockfile)
         run: pnpm install --frozen-lockfile
 
+      # Shared is types-only — gate it directly (fast fail before the heavier suites).
+      - name: Shared — typecheck
+        run: pnpm -C shared typecheck
+
       # `test` = tsc --noEmit && vitest run, per package. Backend first (heavier),
-      # then frontend. The shared package is typecheck-only via its consumers, so
-      # it is not invoked directly (no `pnpm -r typecheck`).
+      # then frontend.
       - name: Backend — typecheck + test
         run: pnpm -C backend test
 
       - name: Frontend — typecheck + test
         run: pnpm -C frontend test
+
+  # Ops gate: the self-host image + compose/env/docs were previously verified by
+  # NOTHING in CI — that is how a build-breaking Dockerfile COPY reached main. This
+  # runs the static artifact guard (fast fail) and then actually builds the bundled
+  # image, so a broken Dockerfile/lockfile fails the PR instead of `docker compose up`.
+  ops:
+    name: ops — validate artifacts + docker build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate ops/self-host artifacts (static guard)
+        run: bash scripts/validate-p2-artifacts.sh
+
+      - name: Build the bundled self-host image
+        run: docker build -t akis:ci .
