@@ -38,14 +38,11 @@ describe('runMigrations', () => {
 })
 
 describe('createPgPool', () => {
-  it('returns a usable SqlClient (a pg Pool) WITHOUT opening a connection', async () => {
-    // `pg` ships as a real dependency (the self-host image needs it), so the lazy
-    // import resolves and createPgPool returns a Pool. Crucially, `new Pool()` does NOT
-    // dial the DB — construction is lazy — so this stays offline-safe in CI: we only
-    // assert the returned object satisfies the SqlClient shape (a `query` method).
-    const client = await createPgPool('postgres://localhost/akis')
-    expect(typeof client.query).toBe('function')
-    // Best-effort cleanup so the idle pool never keeps the test runner alive.
-    await (client as unknown as { end?: () => Promise<void> }).end?.()
+  it('throws a clear, actionable error when the `pg` package is not installed', async () => {
+    // `pg` is a shipped dependency, so we can't rely on the env lacking it — inject an
+    // importer that rejects (as a missing module would) and assert createPgPool surfaces
+    // the clear "pg not installed" message rather than a raw module-not-found.
+    const missing = () => Promise.reject(new Error("Cannot find package 'pg'"))
+    await expect(createPgPool('postgres://localhost/akis', missing)).rejects.toThrow(/pg.*not installed/i)
   })
 })
