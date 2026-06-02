@@ -36,7 +36,8 @@ Flexibility lives at the **edges** (agentic dispatch, a verified iterate loop, f
 3. **`docs/architecture-review.md`** — review of the core against the goals (flawless / real-time / dynamic / quality) + the Core Foundations prerequisites.
 4. **`docs/roadmap.md`** + tracking issue #4 — milestone map (M0–M5).
 5. **`MEMORY.md`** — durable decision + gotcha index.
-6. **`HANDOFF.md`** — historical design dossier (the pre-pivot FSM direction + the v1 audit). Read for *why*, not for *current* architecture.
+6. **`docs/coordination-notes.md`** — cross-session notes (live agents, default Claude provider, shared context); **`specs/review/`** — independent zero-context spec review.
+7. **`HANDOFF.md`** — historical design dossier (the pre-pivot FSM direction + the v1 audit). Read for *why*, not for *current* architecture.
 
 ## Running it
 - Install: `pnpm install` (workspace root).
