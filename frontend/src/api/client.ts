@@ -6,6 +6,9 @@ export interface ModelOption { id: string; label: string; recommended?: boolean 
 /** A preview lifecycle entry (mirrors the backend PreviewEntry). */
 export interface PreviewEntry { sessionId: string; status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; url?: string; reason?: string }
 
+/** The authenticated user projection (matches the backend PublicUser). */
+export interface AuthUser { id: string; name: string; email: string }
+
 /** Per-agent activity counts for the analytics dashboard. */
 export interface AgentStat { agent: string; runs: number; ok: number }
 /** Aggregate run analytics surfaced on the Agents tab. */
@@ -71,6 +74,16 @@ export class ApiClient {
   }
   /** Aggregate run analytics for the Agents dashboard. */
   getAnalytics(): Promise<Analytics> { return this.json<Analytics>('/api/analytics') }
+
+  // ── Auth (JWT-in-cookie; the cookie rides on credentials:'include') ──
+  signup(input: { name: string; email: string; password: string }): Promise<{ user: AuthUser }> {
+    return this.json('/auth/signup', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
+  }
+  login(email: string, password: string): Promise<{ user: AuthUser }> {
+    return this.json('/auth/login', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email, password }) })
+  }
+  me(): Promise<{ user: AuthUser }> { return this.json('/auth/me') }
+  logout(): Promise<{ ok: boolean }> { return this.json('/auth/logout', { method: 'POST' }) }
   listProviders(): Promise<ProviderInfo[]> { return this.json<ProviderInfo[]>('/api/providers') }
   listWorkflows(): Promise<WorkflowConfig[]> { return this.json<WorkflowConfig[]>('/api/workflows') }
   saveWorkflow(input: WorkflowConfigInput): Promise<WorkflowConfig> {
@@ -82,7 +95,8 @@ export class ApiClient {
   }
 
   private async json<T>(path: string, init?: RequestInit): Promise<T> {
-    const res = await this.fetchFn(this.baseUrl + path, init)
+    // Always send the session cookie (same-origin in prod; CORS-credentialed in dev).
+    const res = await this.fetchFn(this.baseUrl + path, { credentials: 'include', ...init })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) {
       const b = body as { error?: string; code?: string }
