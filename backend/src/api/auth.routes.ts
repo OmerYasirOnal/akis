@@ -79,6 +79,33 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     return reply.send({ user: toPublic(user) })
   })
 
+  app.patch<{ Body: { name?: unknown } }>('/auth/me', async (req, reply) => {
+    let id: string
+    try { id = userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
+    const name = isStr(req.body?.name) ? req.body.name.trim() : ''
+    if (!name) return reply.code(400).send({ error: 'name required', code: 'BadRequest' })
+    const user = await deps.users.updateName(id, name)
+    if (!user) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
+    return reply.send({ user: toPublic(user) })
+  })
+
+  app.post<{ Body: { currentPassword?: unknown; newPassword?: unknown } }>('/auth/change-password', async (req, reply) => {
+    let id: string
+    try { id = userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
+    const current = isStr(req.body?.currentPassword) ? req.body.currentPassword : ''
+    const next = isStr(req.body?.newPassword) ? req.body.newPassword : ''
+    if (next.length < 8) return reply.code(400).send({ error: 'password must be at least 8 characters', code: 'WeakPassword' })
+    const user = await deps.users.findById(id)
+    if (!user) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
+    // OAuth-only accounts (empty hash) may SET a first password without a current one;
+    // password accounts must prove the current password.
+    if (user.passwordHash !== '' && !(await verifyPassword(current, user.passwordHash))) {
+      return reply.code(400).send({ error: 'current password is incorrect', code: 'BadCredentials' })
+    }
+    await deps.users.updatePassword(user.id, await hashPassword(next))
+    return reply.send({ ok: true })
+  })
+
   app.post('/auth/logout', async (_req, reply) => {
     // Expire the cookie (Max-Age 0) with the same attributes so it actually clears.
     reply.header('set-cookie', serializeCookie(deps.cookie.name, '', { ...deps.cookie, maxAgeMs: 0, httpOnly: true }))

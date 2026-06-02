@@ -14,6 +14,7 @@ export interface UserStorePort {
   findByEmail(email: string): Promise<AuthUser | undefined>
   findById(id: string): Promise<AuthUser | undefined>
   updatePassword(id: string, passwordHash: string): Promise<void>
+  updateName(id: string, name: string): Promise<AuthUser | undefined>
   upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser>
 }
 
@@ -59,6 +60,12 @@ export class UserStore implements UserStorePort {
   async updatePassword(id: string, passwordHash: string): Promise<void> {
     const u = this.byId.get(id)
     if (u) u.passwordHash = passwordHash
+  }
+  /** Update a user's display name; returns the updated user (or undefined if unknown). */
+  async updateName(id: string, name: string): Promise<AuthUser | undefined> {
+    const u = this.byId.get(id)
+    if (u) u.name = name.trim()
+    return u
   }
   count(): number { return this.byId.size }
 }

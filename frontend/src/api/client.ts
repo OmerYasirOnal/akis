@@ -84,6 +84,12 @@ export class ApiClient {
   }
   me(): Promise<{ user: AuthUser }> { return this.json('/auth/me') }
   logout(): Promise<{ ok: boolean }> { return this.json('/auth/logout', { method: 'POST' }) }
+  updateProfile(name: string): Promise<{ user: AuthUser }> {
+    return this.json('/auth/me', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name }) })
+  }
+  changePassword(currentPassword: string, newPassword: string): Promise<{ ok: boolean }> {
+    return this.json('/auth/change-password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ currentPassword, newPassword }) })
+  }
   forgotPassword(email: string): Promise<{ message: string; resetToken?: string; resetUrl?: string }> {
     return this.json('/auth/forgot-password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ email }) })
   }

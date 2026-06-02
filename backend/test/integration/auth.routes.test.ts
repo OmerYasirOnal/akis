@@ -113,6 +113,35 @@ describe('auth routes', () => {
     expect(res.json().code).toBe('BadToken')
   })
 
+  it('PATCH /auth/me updates the display name (auth required)', async () => {
+    const server = app()
+    const signup = await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'ada@akis.dev', password: 'hunter2hunter' } })
+    const cookie = sessionCookie(signup)
+    expect((await server.inject({ method: 'PATCH', url: '/auth/me', payload: { name: 'Ada Lovelace' } })).statusCode).toBe(401) // no cookie
+    const ok = await server.inject({ method: 'PATCH', url: '/auth/me', payload: { name: 'Ada Lovelace' }, headers: { cookie } })
+    expect(ok.statusCode).toBe(200)
+    expect(ok.json().user.name).toBe('Ada Lovelace')
+    expect((await server.inject({ method: 'GET', url: '/auth/me', headers: { cookie } })).json().user.name).toBe('Ada Lovelace')
+  })
+
+  it('change-password verifies the current password then lets the new one log in', async () => {
+    const server = app()
+    const cookie = sessionCookie(await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'ada@akis.dev', password: 'oldpassword1' } }))
+    // wrong current → 400
+    expect((await server.inject({ method: 'POST', url: '/auth/change-password', payload: { currentPassword: 'WRONG', newPassword: 'newpassword9' }, headers: { cookie } })).statusCode).toBe(400)
+    // correct current → 200
+    expect((await server.inject({ method: 'POST', url: '/auth/change-password', payload: { currentPassword: 'oldpassword1', newPassword: 'newpassword9' }, headers: { cookie } })).statusCode).toBe(200)
+    expect((await server.inject({ method: 'POST', url: '/auth/login', payload: { email: 'ada@akis.dev', password: 'newpassword9' } })).statusCode).toBe(200)
+    expect((await server.inject({ method: 'POST', url: '/auth/login', payload: { email: 'ada@akis.dev', password: 'oldpassword1' } })).statusCode).toBe(401)
+  })
+
+  it('change-password requires authentication and a strong new password', async () => {
+    const server = app()
+    expect((await server.inject({ method: 'POST', url: '/auth/change-password', payload: { currentPassword: 'x', newPassword: 'newpassword9' } })).statusCode).toBe(401)
+    const cookie = sessionCookie(await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'A', email: 'a@akis.dev', password: 'oldpassword1' } }))
+    expect((await server.inject({ method: 'POST', url: '/auth/change-password', payload: { currentPassword: 'oldpassword1', newPassword: 'short' }, headers: { cookie } })).statusCode).toBe(400)
+  })
+
   it('fails closed in production when AUTH_JWT_SECRET is missing', () => {
     const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
     expect(() => buildServer({ keyStore, env: { NODE_ENV: 'production' } })).toThrow(/AUTH_JWT_SECRET/)
