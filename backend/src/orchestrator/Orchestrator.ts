@@ -6,6 +6,9 @@ import { nextTs } from '../events/clock.js'
 import { assembleSharedContext } from '../context/assemble.js'
 import type { SharedContext } from '@akis/shared'
 import type { OrchestratorServices } from '../di/services.js'
+import { ToolRegistry } from '../agent/tools/ToolRegistry.js'
+import { retrieveKnowledgeTool } from '../agent/tools/retrieveKnowledgeTool.js'
+import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 
 export interface StartInput { idea: string }
 
@@ -61,6 +64,34 @@ export class Orchestrator {
     return assembleSharedContext(sessionId, { store: this.s.store, bus: this.s.bus, knowledge: this.s.knowledge }, { query })
   }
 
+  /** Dynamic dispatch (CF4): AKIS consults each registered advisory (edge) agent at
+   *  a pipeline edge. ADVISORY ONLY — each agent reads context + non-gate tools and
+   *  its note is narrated into the live stream (so RAG ingests it); it never touches a
+   *  gate, and a failing/throwing advisor is skipped. So this can never block, fake, or
+   *  alter the verified pipeline. No-op when no advisory agents are registered. */
+  private async runAdvisory(sessionId: string, phase: AdvisoryPhase, objective: string): Promise<void> {
+    const registry = this.s.advisoryAgents
+    if (!registry || registry.size === 0) return
+    const ctx = await this.ctx(sessionId, objective)
+    for (const { agent, capabilities } of registry.list()) {
+      // Per-agent tool registry: only the non-gate tools it declared that we support.
+      // (A gate tool can never be here — registration already rejected gate caps.)
+      const tools = new ToolRegistry()
+      if (capabilities.has('retrieve_knowledge')) {
+        tools.register(retrieveKnowledgeTool({ knowledge: this.s.knowledge, sessionId }))
+      }
+      try {
+        const note = await agent.advise({
+          sessionId, phase, objective, ctx, tools,
+          onTool: call => this.narrate(sessionId, `Advisory ${agent.role} used ${call.name}`),
+        })
+        this.narrate(sessionId, `💡 Advisory (${note.role}/${phase}): ${note.text}`)
+      } catch (e) {
+        this.narrate(sessionId, `Advisory (${agent.role}) skipped: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    }
+  }
+
   async start(input: StartInput): Promise<SessionState> {
     const id = randomUUID()
     let session = initialSession(id, input.idea)
@@ -70,6 +101,10 @@ export class Orchestrator {
     this.s.ingestionSink?.subscribeSession(id)
     this.s.bus.emit({ kind: 'session', status: 'started', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     this.narrate(id, `Planning: ${input.idea}`)
+
+    // Edge (advisory): consult any custom agents before drafting the spec. No-op
+    // without advisory agents; never gates — only narrates research notes.
+    await this.runAdvisory(id, 'pre_scribe', `Research before drafting a spec for: ${input.idea}`)
 
     const scribeCtx = await this.ctx(id, input.idea)
     const scribeOut = await this.s.scribe.run({ sessionId: id, laneId: 'main', idea: input.idea, ctx: scribeCtx })
@@ -156,6 +191,10 @@ export class Orchestrator {
       feedback = review.data.summary
       this.narrate(id, `Iterating (attempt ${attempt}) on Proto with feedback.`)
     }
+
+    // Edge (advisory): consult any custom agents on the reviewed build before
+    // verification. No-op without advisory agents; never gates — only narrates.
+    await this.runAdvisory(id, 'post_code_review', `Advise on the reviewed build for: ${session.idea}`)
 
     // Gate 2 + 3: only Trace holds a TestRunner; verification is the persisted token.
     const token = await this.s.trace.run({ sessionId: id, laneId: 'verify', files: lastFiles })

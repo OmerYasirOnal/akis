@@ -17,6 +17,10 @@ import { makeGenerateText } from '../agent/criticBackend.js'
 import { NullKnowledgePort, type KnowledgePort } from '../knowledge/KnowledgePort.js'
 import { buildRag } from '../knowledge/buildRag.js'
 import type { IngestionSink } from '../knowledge/IngestionSink.js'
+import { AgentRegistry } from '../agent/dynamic/AgentRegistry.js'
+import { LlmAdvisoryAgent } from '../agent/dynamic/AdvisoryAgent.js'
+import { isCoreRole, type AgentConfig } from '@akis/shared'
+import type { ProviderId } from '../agent/providers/catalog.js'
 
 export interface OrchestratorServices {
   store: SessionStore
@@ -40,6 +44,9 @@ export interface OrchestratorServices {
   knowledge: KnowledgePort
   /** When RAG is on, the bus sink the orchestrator subscribes per session (F1-AC17). */
   ingestionSink?: IngestionSink
+  /** Custom (non-core) workflow agents AKIS dispatches as advisory at the edges (CF4).
+   *  Empty when no workflow / no custom agents — the orchestrator then dispatches none. */
+  advisoryAgents?: AgentRegistry
 }
 
 /**
@@ -95,6 +102,9 @@ export interface BuildServicesOptions {
   /** Per-agent {provider, model} from a resolved WorkflowConfig (F2-AC9). When set
    *  for a producer role, that agent gets its own provider; otherwise the default. */
   agentModels?: Partial<Record<import('@akis/shared').Role, { provider: import('./../agent/providers/catalog.js').ProviderId; model?: string }>>
+  /** Custom (non-core) workflow agents to wire as advisory edge agents (CF4). A
+   *  declared gate capability is REJECTED here (runtime re-check) — buildServices throws. */
+  customAgents?: AgentConfig[]
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
@@ -161,6 +171,27 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     })
   }
 
+  // Custom (non-core) workflow agents → advisory edge agents (CF4). Registration
+  // REJECTS any gate capability (defense-in-depth behind save-time validation), so a
+  // throw here means a gate-holding custom agent slipped past validation. Each gets
+  // its own provider (its model, else the default). Empty when no custom agents.
+  const advisoryAgents = new AgentRegistry()
+  for (const a of opts.customAgents ?? []) {
+    if (isCoreRole(a.role)) continue // core agents run on the spine, never as advisory
+    const agentProvider: LlmProvider = a.model?.providerId
+      ? createProvider({
+          provider: a.model.providerId as ProviderId,
+          ...(a.model.modelId !== undefined ? { model: a.model.modelId } : {}),
+          ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
+          ...(opts.mockCriticScore !== undefined ? { allowMock: true } : {}),
+        })
+      : provider
+    advisoryAgents.register(
+      new LlmAdvisoryAgent({ role: a.role, provider: agentProvider, ...(a.basePromptVariant !== undefined ? { persona: a.basePromptVariant } : {}) }),
+      a.tools ?? [],
+    )
+  }
+
   return {
     store: opts.store,
     bus,
@@ -176,6 +207,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     providerName,
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
     ...(opts.gatePolicy !== undefined ? { gatePolicy: opts.gatePolicy } : {}),
+    ...(advisoryAgents.size > 0 ? { advisoryAgents } : {}),
     ...resolveKnowledge(opts, bus),
   }
 }
