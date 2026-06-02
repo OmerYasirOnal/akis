@@ -30,10 +30,13 @@ have "cache: pnpm"              "$ci"
 have "install --frozen-lockfile" "$ci"
 have "pnpm -C backend test"     "$ci"
 have "pnpm -C frontend test"    "$ci"
+have "pnpm -C shared typecheck" "$ci"   # shared is types-only; gated directly
 grep -q "on:" "$ci" && grep -q "push:" "$ci" && grep -q "pull_request:" "$ci" \
   || fail "$ci must trigger on push + pull_request"
 # Reject ACTUAL use (a `run:` step), not the explanatory comment about avoiding it.
-grep -E "^\s*(run:|-)\s*.*pnpm -r typecheck" "$ci" && fail "$ci must NOT use 'pnpm -r typecheck' (shared has no local tsc)" || true
+# `-r typecheck` would re-run the backend+frontend tsc their `test` steps already do;
+# shared is gated by its own `pnpm -C shared typecheck` step instead.
+grep -E "^\s*(run:|-)\s*.*pnpm -r typecheck" "$ci" && fail "$ci must NOT use 'pnpm -r typecheck' (redundant; shared is gated by its own typecheck step)" || true
 grep -q "anthropics/claude-code-action" "$ci" && fail "$ci must NOT duplicate the claude AI-review workflows" || true
 # pnpm version is pinned via package.json's `packageManager` (action-setup reads it);
 # ci.yml must NOT also set a `version:` input or action-setup errors ERR_PNPM_BAD_PM_VERSION.
