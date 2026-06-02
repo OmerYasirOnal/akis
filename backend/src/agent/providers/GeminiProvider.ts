@@ -54,7 +54,7 @@ export class GeminiProvider implements LlmProvider {
 
     const opts: PostOpts = {}
     if (this.cfg.fetchFn) opts.fetchFn = this.cfg.fetchFn
-    const url = `${this.baseUrl}/models/${req.model ?? this.model}:generateContent`
+    const url = `${this.baseUrl}/models/${req.model || this.model}:generateContent` // `||`: empty per-agent model falls back, never sends ""
 
     let res: GeminiResponse
     try {
