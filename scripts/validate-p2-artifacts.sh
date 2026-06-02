@@ -35,7 +35,10 @@ grep -q "on:" "$ci" && grep -q "push:" "$ci" && grep -q "pull_request:" "$ci" \
 # Reject ACTUAL use (a `run:` step), not the explanatory comment about avoiding it.
 grep -E "^\s*(run:|-)\s*.*pnpm -r typecheck" "$ci" && fail "$ci must NOT use 'pnpm -r typecheck' (shared has no local tsc)" || true
 grep -q "anthropics/claude-code-action" "$ci" && fail "$ci must NOT duplicate the claude AI-review workflows" || true
-grep -qi "version: 9" "$ci" || fail "$ci pnpm/action-setup must pin version 9"
+# pnpm version is pinned via package.json's `packageManager` (action-setup reads it);
+# ci.yml must NOT also set a `version:` input or action-setup errors ERR_PNPM_BAD_PM_VERSION.
+grep -qE '"packageManager":[[:space:]]*"pnpm@' package.json || fail "package.json must pin pnpm via packageManager"
+grep -qE "^\s*version:\s*9" "$ci" && fail "$ci must NOT set a pnpm/action-setup 'version:' input (conflicts with packageManager)" || true
 
 # ── 3) env template: self-host/DB block added, existing keys kept ────────────
 env=backend/.env.example
