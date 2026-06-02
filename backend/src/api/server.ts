@@ -16,6 +16,7 @@ import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
 import { registerChatRoutes } from './chat.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
+import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
@@ -117,6 +118,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     console.warn('auth: AUTH_JWT_SECRET unset — using an ephemeral per-boot secret (sessions reset on restart; not multi-instance safe)')
   }
   const userStore = deps.userStore ?? new UserStore()
+
+  // OAuth needs a trusted public origin for redirect_uri — don't rely on the client
+  // Host header in production. Fail closed if a provider is configured without it.
+  if (env.NODE_ENV === 'production' && configuredProviders(env).length > 0 && !env.PUBLIC_BASE_URL) {
+    throw new Error('PUBLIC_BASE_URL is required in production when OAuth providers are configured')
+  }
 
   // Aggregate run analytics via a single global bus tap (observability only).
   const stats = new StatsCollector()

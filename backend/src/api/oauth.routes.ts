@@ -19,9 +19,11 @@ export interface OAuthDeps {
 /** Public base URL the browser uses (for redirect_uri + post-login redirect). Prefer
  *  PUBLIC_BASE_URL (so it matches the URI registered with the OAuth app); else derive. */
 function baseUrl(req: FastifyRequest, env: NodeJS.ProcessEnv): string {
+  // Prefer the explicitly-configured public origin (the value registered with the OAuth
+  // app). Only fall back to forwarded/host headers in dev — they are client-controlled.
   if (env.PUBLIC_BASE_URL) return env.PUBLIC_BASE_URL.replace(/\/+$/, '')
   const proto = (req.headers['x-forwarded-proto'] as string | undefined) ?? 'http'
-  const host = req.headers.host ?? '127.0.0.1:3000'
+  const host = (req.headers['x-forwarded-host'] as string | undefined) ?? req.headers.host ?? '127.0.0.1:3000'
   return `${proto}://${host}`
 }
 
@@ -55,7 +57,7 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthDeps): void
     try {
       const token = await exchangeCode(provider, { code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri: `${base}/oauth/${provider}/callback` }, http)
       const profile = await fetchProfile(provider, token, http)
-      const user = await deps.users.upsertOAuth({ email: profile.email, name: profile.name })
+      const user = await deps.users.upsertOAuth({ externalId: profile.externalId, email: profile.email, name: profile.name })
       setSessionCookie(reply, toPublic(user), deps.secret, deps.cookie)
       return reply.redirect(`${base}/`)
     } catch {

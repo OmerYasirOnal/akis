@@ -104,7 +104,10 @@ export async function fetchProfile(provider: OAuthProviderId, accessToken: strin
     return { externalId: `github:${u.id}`, email, name: (u.name || u.login || email.split('@')[0]) as string }
   }
   // google
-  const g = (await (await http('https://www.googleapis.com/oauth2/v3/userinfo', { headers: auth })).json()) as { sub?: string; email?: string; name?: string; email_verified?: boolean }
+  const g = (await (await http('https://www.googleapis.com/oauth2/v3/userinfo', { headers: auth })).json()) as { sub?: string; email?: string; name?: string; email_verified?: boolean | string }
   if (!g.sub || !g.email) throw new Error('google profile missing sub/email')
+  // REQUIRE a provider-verified email (Google may serialize the flag as a string).
+  // Without this, an attacker-asserted unverified email could link to a victim account.
+  if (g.email_verified !== true && g.email_verified !== 'true') throw new Error('google email not verified')
   return { externalId: `google:${g.sub}`, email: g.email, name: g.name || g.email.split('@')[0]! }
 }

@@ -48,18 +48,32 @@ describe('PgUserStore', () => {
     expect(calls[0]!.params).toEqual(['newhash', 'id1'])
   })
 
-  it('upsertOAuth returns the existing user when found, else inserts an empty-password user', async () => {
-    // existing
-    const found = fakeDb([{ match: s => s.startsWith('SELECT'), rows: () => [row({ email: 'ada@akis.dev' })] }])
-    expect((await new PgUserStore(found.db).upsertOAuth({ email: 'ada@akis.dev', name: 'Ada' })).id).toBe('id1')
-    expect(found.calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
-    // new
-    const fresh = fakeDb([
-      { match: s => s.startsWith('SELECT'), rows: () => [] },
-      { match: s => s.startsWith('INSERT'), rows: p => [row({ id: p[0] as string, email: p[2] as string, password_hash: p[3] as string })] },
+  it('upsertOAuth returns the user already bound to the externalId (no email lookup/insert)', async () => {
+    const { db, calls } = fakeDb([{ match: s => s.includes('external_id'), rows: () => [row({ external_id: 'github:7' })] }])
+    const u = await new PgUserStore(db).upsertOAuth({ externalId: 'github:7', email: 'ada@akis.dev', name: 'Ada' })
+    expect(u.externalId).toBe('github:7')
+    expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
+  })
+
+  it('upsertOAuth links a verified-email account to the identity (UPDATE, no INSERT)', async () => {
+    const { db, calls } = fakeDb([
+      { match: s => s.includes('WHERE external_id'), rows: () => [] },
+      { match: s => s.includes('WHERE email'), rows: () => [row({ email: 'ada@akis.dev' })] },
+      { match: s => s.startsWith('UPDATE'), rows: () => [] },
     ])
-    const u = await new PgUserStore(fresh.db, () => 'oauth-id').upsertOAuth({ email: 'New@akis.dev', name: 'New' })
+    const u = await new PgUserStore(db).upsertOAuth({ externalId: 'github:7', email: 'ada@akis.dev', name: 'Ada' })
+    expect(u.id).toBe('id1'); expect(u.externalId).toBe('github:7')
+    expect(calls.find(c => c.text.startsWith('UPDATE'))!.params).toEqual(['github:7', 'id1'])
+    expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
+  })
+
+  it('upsertOAuth inserts a new empty-password user with external_id when nothing matches', async () => {
+    const { db, calls } = fakeDb([
+      { match: s => s.startsWith('SELECT'), rows: () => [] },
+      { match: s => s.startsWith('INSERT'), rows: p => [row({ id: p[0] as string, name: p[1] as string, email: p[2] as string, password_hash: p[3] as string, external_id: p[4] as string })] },
+    ])
+    const u = await new PgUserStore(db, () => 'oauth-id').upsertOAuth({ externalId: 'github:9', email: 'New@akis.dev', name: 'New' })
     expect(u.id).toBe('oauth-id')
-    expect(fresh.calls.find(c => c.text.startsWith('INSERT'))!.params).toEqual(['oauth-id', 'New', 'new@akis.dev', ''])
+    expect(calls.find(c => c.text.startsWith('INSERT'))!.params).toEqual(['oauth-id', 'New', 'new@akis.dev', '', 'github:9'])
   })
 })

@@ -16,7 +16,7 @@ export function Landing() {
       {/* Public nav */}
       <header className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <AkisLogo size={34} className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
+          <AkisLogo size={34} alt="" className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
           <span className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-base font-extrabold text-transparent">{t('app.title')}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -71,7 +71,7 @@ export function Landing() {
         <h2 className="text-2xl font-bold text-slate-100">{t('landing.headline')}</h2>
         <Button onClick={() => navigate('/signup')} className="px-6 py-3 text-base">{t('landing.cta.start')}</Button>
       </section>
-      <footer className="border-t border-white/10 py-8 text-center text-xs text-slate-500">{t('landing.footer')}</footer>
+      <footer className="border-t border-white/10 py-8 text-center text-xs text-slate-400">{t('landing.footer')}</footer>
     </div>
   )
 }

@@ -102,9 +102,9 @@ RULES:
 - Always return valid JSON. No markdown, no code fences.
 
 LANGUAGE REQUIREMENT (strict):
-- The AKIS UI is Turkish. \`description\`, \`suggestion\`, and \`summary\`
-  fields MUST be written in Turkish so they render cleanly in the
-  explainability surface.
+- Write \`description\`, \`suggestion\`, and \`summary\` in the SAME LANGUAGE as the
+  original user idea (Turkish idea -> Turkish; English idea -> English) so they read
+  naturally in the explainability surface.
 - Keep technical identifiers (acceptance criterion IDs like "AC-1",
   field names like "userStories", category/severity enum values) in
   their original form — those are not user-facing prose.

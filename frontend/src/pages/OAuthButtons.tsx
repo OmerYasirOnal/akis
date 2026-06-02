@@ -36,7 +36,7 @@ export function OAuthButtons({ api }: { api: ApiClient }) {
           </a>
         )}
       </div>
-      <div className="flex items-center gap-3 text-xs text-slate-500">
+      <div className="flex items-center gap-3 text-xs text-slate-400">
         <span className="h-px flex-1 bg-white/10" />{t('auth.or')}<span className="h-px flex-1 bg-white/10" />
       </div>
     </div>
