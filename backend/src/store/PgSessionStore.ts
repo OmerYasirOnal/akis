@@ -13,7 +13,9 @@ import type { SqlClient } from './pg.js'
  *    polluted patch carrying those keys is silently ignored;
  *  - ONLY {@link recordApproval}/{@link recordVerification} write the gate columns;
  *  - all three writes are optimistic-version locked (UPDATE ... WHERE id AND version),
- *    throwing the same `version conflict: <cur> !== <expected>` message on a miss.
+ *    throwing the SAME messages MockSessionStore raises: `session <id> not found` when
+ *    the row is absent (→ HTTP 404) and `version conflict: <cur> !== <expected>` when it
+ *    exists at a different version.
  */
 export class PgSessionStore implements SessionStore {
   constructor(private db: SqlClient) {}
@@ -81,9 +83,10 @@ export class PgSessionStore implements SessionStore {
 
   /**
    * Shared optimistic-locked UPDATE. Always bumps `version` and locks on
-   * `WHERE id = $ AND version = $expected RETURNING *`. On a miss (no row returned) it
-   * does a follow-up SELECT for the current version and throws the same
-   * `version conflict: <cur> !== <expected>` message MockSessionStore raises.
+   * `WHERE id = $ AND version = $expected RETURNING *`. On a miss (no row returned) a
+   * follow-up SELECT disambiguates: no row at all throws `session <id> not found`, a row
+   * at a different version throws `version conflict: <cur> !== <expected>` — matching
+   * MockSessionStore so the two seams stay behaviourally interchangeable.
    */
   private async optimisticUpdate(id: string, sets: string[], setParams: unknown[], expectedVersion: number): Promise<SessionState> {
     const idIdx = setParams.length + 1
@@ -95,8 +98,12 @@ export class PgSessionStore implements SessionStore {
     )
     if (!rows[0]) {
       const { rows: cur } = await this.db.query('SELECT version FROM sessions WHERE id = $1', [id])
-      const current = cur[0] ? Number(cur[0].version) : -1
-      throw new Error(`version conflict: ${current} !== ${expectedVersion}`)
+      // Distinguish the two miss cases to match MockSessionStore: no row at all →
+      // "session <id> not found" (the route's sendError maps this to HTTP 404); a row at a
+      // different version → "version conflict: <cur> !== <expected>" (an UNNAMED Error, so
+      // it surfaces as HTTP 500 — identical to the in-memory store, so parity holds).
+      if (!cur[0]) throw new Error(`session ${id} not found`)
+      throw new Error(`version conflict: ${Number(cur[0].version)} !== ${expectedVersion}`)
     }
     return toSession(rows[0])
   }

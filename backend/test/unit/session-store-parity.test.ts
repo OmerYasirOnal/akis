@@ -93,6 +93,11 @@ function paritySuite(name: string, make: () => SessionStore) {
       await expect(store.update('s1', { status: 'failed' }, 0)).rejects.toThrow(/version conflict: 1 !== 0/)
     })
 
+    it('mutating a non-existent session throws "session <id> not found" (404-mappable), not a version conflict', async () => {
+      const store = make()
+      await expect(store.update('ghost', { status: 'failed' }, 0)).rejects.toThrow(/^session ghost not found$/)
+    })
+
     it('recordApproval persists an approval (and isVerified stays false)', async () => {
       const store = make()
       await store.create(seed())
