@@ -15,6 +15,7 @@ import { cookieConfigFromEnv } from '../auth/cookie.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
 import { registerChatRoutes } from './chat.routes.js'
+import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore } from '../workflow/WorkflowStore.js'
@@ -53,6 +54,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const app = Fastify({ logger: false }) // logger off: never risk logging key bodies
   const env = deps.env ?? (process.env as Record<string, string | undefined>)
 
+  // AKIS_RERANK is a default QUALITY toggle (issue #7 AC3), default ON. Only an explicit
+  // 0/false disables it (wiring a NoopReranker); anything else leaves the stack default.
+  // It is a sibling of the rag flag — never a gate. Returns undefined → use the default.
+  const rerankDefault = (): boolean | undefined =>
+    env.AKIS_RERANK === undefined ? undefined : flag(env.AKIS_RERANK)
+  // Per-upload size ceiling (413 above it). Env override, else the 5 MiB default.
+  const uploadMaxBytes = Number(env.AKIS_UPLOAD_MAX_BYTES) > 0 ? Number(env.AKIS_UPLOAD_MAX_BYTES) : DEFAULT_UPLOAD_MAX_BYTES
+
   // CSRF defense (defense-in-depth, important under AUTH_COOKIE_SAMESITE=none): reject a
   // state-changing request whose browser Origin doesn't match the trusted origin. A
   // missing Origin (non-browser clients, same-origin nav, tests) is not a CSRF vector.
@@ -80,6 +89,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
       ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true } : {}),
       ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
+      ...(rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
       // Keyless DEMO: run the loop on the deterministic mock provider (no API key).
       ...(flag(env.AKIS_ALLOW_MOCK) ? { provider: new MockProvider() } : {}),
       // Demo verification: a passing mock test runner so a session reaches done+preview
@@ -119,6 +129,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
     ...(wf.rag !== undefined ? { rag: wf.rag } : {}),
+    // rerank: the workflow's per-run knob wins (issue #7 AC3); else the env default.
+    ...(wf.rerank !== undefined ? { rerank: wf.rerank } : rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
     ...(realTests ? { realTests: true } : {}),
   }))
 
@@ -164,6 +176,19 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env })
   registerAnalyticsRoutes(app, { stats })
   registerChatRoutes(app, { provider: services.provider })
+  // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
+  // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
+  // them the route is never registered (404) and there is no behavior change when RAG off.
+  if (services.uploadSource && services.repoSource && services.ragUserIdFor) {
+    registerKnowledgeRoutes(app, {
+      store: services.store,
+      uploadSource: services.uploadSource,
+      repoSource: services.repoSource,
+      ragUserIdFor: services.ragUserIdFor,
+      uploadMaxBytes,
+      userIdOf,
+    })
+  }
   return app
 }
 

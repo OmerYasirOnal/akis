@@ -5,9 +5,14 @@ import { dirname, resolve, join } from 'node:path'
 import { IngestQueue } from '../../src/knowledge/ingest/IngestQueue.js'
 import { buildRag } from '../../src/knowledge/buildRag.js'
 import { EventBus } from '../../src/events/bus.js'
+import { buildServices } from '../../src/di/services.js'
+import { MockSessionStore } from '../../src/store/MockSessionStore.js'
+import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
+import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
 
 const noBackoff = { backoffMs: () => 0 }
 const fixedNow = () => '2026-06-01T00:00:00Z'
+const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/skills/library')
 
 describe('IngestQueue (F1-AC7: async, bounded failure, never silently dropped)', () => {
   it('runs a task and counts success', async () => {
@@ -222,6 +227,94 @@ describe('Rerank pass-through via RagKnowledgePort (issue #7 AC3)', () => {
     expect(on.map(r => r.source)).not.toEqual(off.map(r => r.source))
     expect(on[0]?.source).toBe('corpus:db-heavy')
     expect(off[0]?.source).toBe('corpus:token-postgres')
+  })
+})
+
+describe('buildRag wires the repo + upload sources (issue #7 steps 4-6)', () => {
+  it('exposes uploadSource/repoSource/userIdFor on the RagStack', () => {
+    const stack = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
+    expect(stack.uploadSource).toBeDefined()
+    expect(stack.repoSource).toBeDefined()
+    // The route stamps tenancy with the SAME resolver retrieval uses, so an upload is
+    // retrievable through the port. Default single-user resolver → a constant.
+    expect(stack.userIdFor('s1')).toBe('local')
+  })
+
+  it('an uploaded file round-trips: ingest via uploadSource → retrievable via the port', async () => {
+    const stack = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
+    await stack.uploadSource.ingest({
+      sessionId: 's1', userId: stack.userIdFor('s1'),
+      filename: 'notes.md', bytes: Buffer.from('# Title\n\npostgres database migration design notes'),
+    })
+    await stack.queue.drain()
+    const hits = await stack.port.retrieve({ query: 'postgres database migration', sessionId: 's1', limit: 5 })
+    expect(hits.length).toBeGreaterThan(0)
+    expect(hits.some(h => h.source === 'upload:notes.md')).toBe(true)
+  })
+
+  it('repoSource reads the injected GitHub adapter and is incremental by head sha', async () => {
+    const github = new MockGitHubAdapter()
+    await github.createRepo('s1')
+    await github.pushFiles('s1', [{ filePath: 'README.md', content: '# Repo\n\nredis caching ttl eviction layer' }])
+    const stack = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow, github })
+
+    await stack.repoSource.ingest({ sessionId: 's1', userId: stack.userIdFor('s1') })
+    await stack.queue.drain()
+    const ingestedOnce = stack.service.getMetrics().ingested
+    expect(ingestedOnce).toBeGreaterThan(0)
+    const hits = await stack.port.retrieve({ query: 'redis caching eviction', sessionId: 's1', limit: 5 })
+    expect(hits.some(h => h.source === 'repo:README.md')).toBe(true)
+
+    // A second pass with an unchanged head sha is a whole-pass skip — no new enqueues.
+    await stack.repoSource.ingest({ sessionId: 's1', userId: stack.userIdFor('s1') })
+    await stack.queue.drain()
+    expect(stack.service.getMetrics().ingested).toBe(ingestedOnce)
+  })
+})
+
+describe('buildServices surfaces the RAG stack handles when rag is on (issue #7 step 6)', () => {
+  it('rag ON: service/queue/uploadSource/repoSource are surfaced and share the github adapter', async () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), rag: true })
+    expect(services.ragService).toBeDefined()
+    expect(services.ragQueue).toBeDefined()
+    expect(services.uploadSource).toBeDefined()
+    expect(services.repoSource).toBeDefined()
+
+    // The RepoSource reads the SAME MockGitHubAdapter the orchestrator pushes to, so a
+    // freshly pushed repo is immediately ingestable (no separate file set).
+    await services.github.pushFiles('sess-x', [{ filePath: 'doc.md', content: 'stripe billing invoices checkout flow' }])
+    await services.repoSource!.ingest({ sessionId: 'sess-x', userId: 'local' })
+    await services.ragQueue!.drain()
+    const hits = await services.knowledge.retrieve({ query: 'stripe billing checkout', sessionId: 'sess-x', limit: 5 })
+    expect(hits.some(h => h.source === 'repo:doc.md')).toBe(true)
+  })
+
+  it('rag OFF (default): no RAG handles are surfaced (behavior identical to no-RAG)', () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider() })
+    expect(services.ragService).toBeUndefined()
+    expect(services.ragQueue).toBeUndefined()
+    expect(services.uploadSource).toBeUndefined()
+    expect(services.repoSource).toBeUndefined()
+  })
+
+  it('rerank OFF deps toggle threads through buildServices → raw fused order', async () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), rag: true, rerank: false })
+    const corpus = [
+      { id: 'redis-mix', text: 'redis migration auth ttl' },
+      { id: 'invoice-db', text: 'invoice database token' },
+      { id: 'token-postgres', text: 'token postgres' },
+      { id: 'bm25-mig', text: 'bm25 migration session' },
+      { id: 'stripe', text: 'session stripe stripe' },
+      { id: 'db-heavy', text: 'database database eviction docker' },
+      { id: 'schema-bill', text: 'schema billing' },
+      { id: 'evict-mix', text: 'eviction migration query redis docker' },
+    ]
+    for (const doc of corpus) services.ragService!.ingest({ text: doc.text, source: 'corpus', sourceId: doc.id, userId: 'local', sessionId: 's1' })
+    await services.ragQueue!.drain()
+    // Default call uses the deps default (NoopReranker → raw fused order): top is the
+    // single 'postgres' match, NOT the lexical-rerank winner.
+    const def = await services.knowledge.retrieve({ query: 'postgres database schema migration', sessionId: 's1', limit: 5 })
+    expect(def[0]?.source).toBe('corpus:token-postgres')
   })
 })
 
