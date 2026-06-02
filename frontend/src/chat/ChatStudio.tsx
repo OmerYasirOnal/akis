@@ -3,6 +3,7 @@ import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { useLiveChat } from './useLiveChat.js'
 import { ChatThread } from './ChatThread.js'
+import { AkisChat } from './AkisChat.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import type { WorkflowOption } from '../live/types.js'
@@ -68,12 +69,7 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
         <div className="flex-1 overflow-y-auto px-4 py-4">
           {sessionId
             ? <ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />
-            : (
-              <div className="flex h-full items-start gap-3">
-                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
-                <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-3 text-slate-200">{t('akis.greeting')}</div>
-              </div>
-            )}
+            : <AkisChat api={api} />}
           {actionError && <div role="alert" className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
         </div>
 

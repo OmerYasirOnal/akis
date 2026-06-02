@@ -29,6 +29,8 @@ export interface OrchestratorServices {
   trace: TraceAgent
   approvalAuthority: ApprovalAuthority
   skills: Skill[]
+  /** The resolved LLM provider (feeds the agents; also used by the AKIS chat route). */
+  provider: LlmProvider
   providerName: string
   /** Per-run iterate budget (a workflow may tighten it below the default). */
   iterateBudget?: number
@@ -170,6 +172,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     trace: new TraceAgent({ bus, verifier: createVerifier(runner) }),
     approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
+    provider,
     providerName,
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
     ...(opts.gatePolicy !== undefined ? { gatePolicy: opts.gatePolicy } : {}),

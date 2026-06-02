@@ -84,6 +84,11 @@ export class ApiClient {
   }
   me(): Promise<{ user: AuthUser }> { return this.json('/auth/me') }
   logout(): Promise<{ ok: boolean }> { return this.json('/auth/logout', { method: 'POST' }) }
+
+  /** Free-form conversation WITH AKIS (the orchestrator persona) — distinct from a build. */
+  chatWithAkis(message: string, history: { role: 'user' | 'assistant'; content: string }[] = []): Promise<{ reply: string }> {
+    return this.json('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, history }) })
+  }
   listProviders(): Promise<ProviderInfo[]> { return this.json<ProviderInfo[]>('/api/providers') }
   listWorkflows(): Promise<WorkflowConfig[]> { return this.json<WorkflowConfig[]>('/api/workflows') }
   saveWorkflow(input: WorkflowConfigInput): Promise<WorkflowConfig> {
