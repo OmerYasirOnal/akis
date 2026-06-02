@@ -10,6 +10,7 @@ import { IngestionSink } from './IngestionSink.js'
 import { LocalReranker, NoopReranker } from './retrieve/Reranker.js'
 import { RepoSource } from './ingest/RepoSource.js'
 import { MockRepoReader, type RepoReader } from './ingest/RepoReader.js'
+import { RealGitHubRepoReader } from './ingest/RealGitHubRepoReader.js'
 import { UploadSource } from './ingest/UploadSource.js'
 import { MockGitHubAdapter } from '../di/MockGitHubAdapter.js'
 
@@ -34,8 +35,12 @@ export interface BuildRagOpts {
    *  ingestable. A `repoReader` override wins (real GitHub later, opt-in). */
   github?: MockGitHubAdapter
   /** Override the repo read seam directly (a real GitHub reader behind AKIS_GITHUB_TOKEN).
-   *  When omitted, a MockRepoReader over `github` (or a fresh adapter) is used. */
+   *  When omitted, the reader is selected from `env`: a RealGitHubRepoReader when
+   *  AKIS_GITHUB_TOKEN is set, else the default MockRepoReader. */
   repoReader?: RepoReader
+  /** Env source for repo-reader selection (AKIS_GITHUB_TOKEN + repo target). Defaults to
+   *  none → MockRepoReader (ZERO behavior change when no token is configured). */
+  env?: Record<string, string | undefined>
   now?: () => string
 }
 
@@ -51,6 +56,9 @@ export interface RagStack {
   /** The tenancy resolver the port retrieves with — the upload/repo routes MUST stamp
    *  ingestion with this exact resolver so a write is retrievable through the port. */
   userIdFor: (sessionId: string) => string
+  /** The selected repo read seam (RealGitHubRepoReader when AKIS_GITHUB_TOKEN is set, else
+   *  MockRepoReader). Surfaced so a host can prime/refresh the real reader's snapshot. */
+  repoReader: RepoReader
 }
 
 /**
@@ -79,10 +87,62 @@ export function buildRag(opts: BuildRagOpts): RagStack {
   })
   const port = new RagKnowledgePort(service, userIdFor)
   const sink = new IngestionSink({ bus: opts.bus, rag: service, userIdFor })
-  // Repo read seam: an explicit reader wins; else a MockRepoReader over the shared
-  // adapter (so the orchestrator's pushes are immediately readable). Offline by default.
-  const reader = opts.repoReader ?? new MockRepoReader(opts.github ?? new MockGitHubAdapter())
+  // Repo read seam (precedence): an explicit `repoReader` wins; else select from `env`
+  // (RealGitHubRepoReader when AKIS_GITHUB_TOKEN is set); else the default MockRepoReader
+  // over the shared adapter (so the orchestrator's pushes are immediately readable). The
+  // default is OFFLINE with ZERO behavior change when no token is configured.
+  const reader =
+    opts.repoReader ??
+    selectRepoReaderFromEnv(opts.env) ??
+    new MockRepoReader(opts.github ?? new MockGitHubAdapter())
   const repoSource = new RepoSource({ rag: service, queue, reader })
   const uploadSource = new UploadSource({ rag: service, queue })
-  return { service, port, sink, queue, repoSource, uploadSource, userIdFor }
+  return { service, port, sink, queue, repoSource, uploadSource, userIdFor, repoReader: reader }
+}
+
+/**
+ * Select the REAL GitHub reader iff AKIS_GITHUB_TOKEN is set (the opt-in switch). Returns
+ * undefined otherwise → the caller falls through to the default MockRepoReader (DEFAULT OFF:
+ * no token ⇒ zero behavior change).
+ *
+ * Repo target (minimal, env-driven, same spirit as the rest of server env handling):
+ *  - AKIS_GITHUB_TOKEN  — required to enable (Bearer auth; never logged/leaked).
+ *  - AKIS_GITHUB_REPO   — "owner/name" of the user's OWN repo to ingest.
+ *                         Also accepts owner+name split across AKIS_GITHUB_OWNER/REPO.
+ *  - AKIS_GITHUB_REF    — optional branch/tag/sha (defaults to the repo default branch).
+ *  - AKIS_GITHUB_API_BASE — optional, for GitHub Enterprise.
+ *
+ * If the token is set but no repo target can be resolved we fall back to the mock rather
+ * than throw — a misconfigured opt-in must never break the default boot path.
+ */
+function selectRepoReaderFromEnv(env: Record<string, string | undefined> | undefined): RepoReader | undefined {
+  const token = env?.AKIS_GITHUB_TOKEN
+  if (!token) return undefined // DEFAULT OFF
+  const target = resolveRepoTarget(env)
+  if (!target) return undefined // misconfigured opt-in → fall through to the mock default
+  return new RealGitHubRepoReader({
+    owner: target.owner,
+    repo: target.repo,
+    token,
+    ...(target.ref !== undefined ? { ref: target.ref } : {}),
+    ...(env?.AKIS_GITHUB_API_BASE ? { apiBase: env.AKIS_GITHUB_API_BASE } : {}),
+  })
+}
+
+/** Parse the owner/repo/ref target from env. Accepts AKIS_GITHUB_REPO="owner/name" or the
+ *  AKIS_GITHUB_OWNER + AKIS_GITHUB_REPO pair. Returns undefined when underspecified. */
+function resolveRepoTarget(
+  env: Record<string, string | undefined> | undefined,
+): { owner: string; repo: string; ref?: string } | undefined {
+  const ref = env?.AKIS_GITHUB_REF?.trim() || undefined
+  const owner = env?.AKIS_GITHUB_OWNER?.trim()
+  const repoRaw = env?.AKIS_GITHUB_REPO?.trim()
+  if (owner && repoRaw && !repoRaw.includes('/')) {
+    return { owner, repo: repoRaw, ...(ref ? { ref } : {}) }
+  }
+  if (repoRaw && repoRaw.includes('/')) {
+    const [o, r] = repoRaw.split('/', 2)
+    if (o && r) return { owner: o, repo: r, ...(ref ? { ref } : {}) }
+  }
+  return undefined
 }

@@ -121,7 +121,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       keyStore: deps.keyStore,
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
       ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true } : {}),
-      ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
+      // RAG on → also thread env so a configured AKIS_GITHUB_TOKEN selects the real reader.
+      ...(flag(env.AKIS_RAG) ? { rag: true, env } : {}),
       // Durable corpus: a hydrated PgVectorStore when DATABASE_URL is set (only effective with
       // RAG on); absent it, buildServices uses the in-memory default unchanged.
       ...(flag(env.AKIS_RAG) && deps.vectorStore ? { vectorStore: deps.vectorStore } : {}),
@@ -165,7 +166,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     customAgents: workflowCustomAgents(wf),
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
-    ...(wf.rag !== undefined ? { rag: wf.rag } : {}),
+    // When this run enables RAG, thread env so AKIS_GITHUB_TOKEN selects the real reader.
+    ...(wf.rag !== undefined ? { rag: wf.rag, ...(wf.rag ? { env } : {}) } : {}),
     // Durable corpus for a per-workflow run too: when that run turns RAG on AND a durable
     // store is wired (DATABASE_URL set), use it so the corpus stays shared + persistent.
     ...(wf.rag && deps.vectorStore ? { vectorStore: deps.vectorStore } : {}),
