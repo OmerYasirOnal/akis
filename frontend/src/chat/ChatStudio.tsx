@@ -25,6 +25,11 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const [busy, setBusy] = useState(false)
   const [auto, setAuto] = useState(false)            // autopilot: auto-approve + auto-confirm
   const [recent, setRecent] = useState<RecentBuild[]>(() => loadRecentBuilds())
+  // Prefer server-backed per-user history (persists across devices); fall back to the
+  // localStorage list (loaded above) if the request fails.
+  useEffect(() => {
+    void api.listMySessions().then(list => { if (list.length) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0 }))) }).catch(() => {})
+  }, [api])
   const [actionError, setActionError] = useState<string | undefined>()
 
   const live = useLiveChat(sessionId, sent, api, baseUrl, makeClient)

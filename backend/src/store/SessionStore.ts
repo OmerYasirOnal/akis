@@ -18,4 +18,6 @@ export interface SessionStore {
   recordApproval(id: string, approval: ApprovalToken, expectedVersion: number): Promise<SessionState>
   /** Gate 3: the only way to persist a verify token. */
   recordVerification(id: string, token: VerifyToken, expectedVersion: number): Promise<SessionState>
+  /** All sessions owned by a user, newest first (per-user build history). */
+  listByOwner(ownerId: string): Promise<SessionState[]>
 }

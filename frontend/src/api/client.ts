@@ -9,6 +9,9 @@ export interface PreviewEntry { sessionId: string; status: 'starting' | 'ready' 
 /** The authenticated user projection (matches the backend PublicUser). */
 export interface AuthUser { id: string; name: string; email: string }
 
+/** A build-history row from GET /sessions/mine. */
+export interface SessionSummary { id: string; idea: string; status: string; verified: boolean }
+
 /** Per-agent activity counts for the analytics dashboard. */
 export interface AgentStat { agent: string; runs: number; ok: number }
 /** Aggregate run analytics surfaced on the Agents tab. */
@@ -59,6 +62,8 @@ export class ApiClient {
   getSession(id: string): Promise<SessionState> {
     return this.json<SessionState>(`/sessions/${id}`)
   }
+  /** The current user's build history (newest first; auth required). */
+  listMySessions(): Promise<SessionSummary[]> { return this.json<SessionSummary[]>('/sessions/mine') }
   /** The retained {seq,event}[] log — fetched on an SSE `reset` to rebuild the live view. */
   async getSessionLog(id: string): Promise<SeqEvent[]> {
     const { events } = await this.json<{ events: SeqEvent[]; head: number }>(`/sessions/${id}/log`)
