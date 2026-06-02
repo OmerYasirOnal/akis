@@ -80,6 +80,26 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
                 </div>
               </div>
             )
+          case 'code_review': {
+            // READ-ONLY status card — the critic's automatic verdict, NOT a human gate (no button).
+            const tone = m.critical
+              ? 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'
+              : m.approved
+                ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200'
+                : 'border-amber-400/30 bg-amber-400/[0.06] text-amber-200'
+            const verdict = m.critical ? t('chat.codeReview.critical') : m.approved ? t('chat.codeReview.approved') : t('chat.codeReview.rejected')
+            return (
+              <div key={m.id} className="flex items-start gap-3">
+                <Avatar role="critic" />
+                <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${tone}`}>
+                  <span className="text-xs uppercase tracking-widest opacity-70">{t('chat.codeReview.label')}</span>
+                  {' · '}{verdict}
+                  {' · '}{m.findings} {t('chat.codeReview.findings')}
+                  {m.iteration > 1 ? <> · {t('chat.codeReview.iteration')} {m.iteration}</> : null}
+                </div>
+              </div>
+            )
+          }
           case 'preview':
             return (
               <div key={m.id} className="flex items-start gap-3">

@@ -56,6 +56,15 @@ export interface PreviewState {
   starting?: boolean
 }
 
+/** The critic's READ-ONLY code-review verdict (a status card, NOT a human gate).
+ *  Structured only — booleans + bounded counts; never carries free-form prose. */
+export interface CodeReviewState {
+  approved: boolean
+  findings: number
+  critical: boolean
+  iteration: number
+}
+
 export type SessionStatus = 'started' | 'running' | 'done' | 'failed' | 'unknown'
 
 /** A selectable saved workflow preset (id + display name) for the build composer. */
@@ -70,6 +79,8 @@ export interface SessionView {
   tests: TestStats
   preview: PreviewState
   errors: string[]
+  /** Latest critic code-review verdict (read-only status card); undefined until reviewed. */
+  codeReview?: CodeReviewState
   provider?: string
   verified?: boolean
 }

@@ -16,6 +16,11 @@ export type AkisEvent =
   | (BaseEvent & { kind: 'tool_result'; tool: ToolName; ok: boolean; result?: unknown })
   | (BaseEvent & { kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: 'awaiting' | 'satisfied' | 'rejected' })
   | (BaseEvent & { kind: 'verify'; testsRun: number; passed: boolean })   // verifier-only — FROZEN (gate source of truth)
+  // Critic's READ-ONLY code-review verdict (Orchestrator.reviewCode). It is automatic
+  // (NOT a human gate) and surfaced as a status card. STRUCTURED ONLY — booleans +
+  // bounded counts, never free-form LLM prose — so it can never become trusted RAG
+  // grounding (IngestionSink ingests only non-ephemeral `text`).
+  | (BaseEvent & { kind: 'code_review'; approved: boolean; findings: number; critical: boolean; iteration: number })
   | (BaseEvent & { kind: 'preview'; url: string })
   // Rich preview/test telemetry (the dashboard renders these; `verify` stays the gate's truth).
   | (BaseEvent & { kind: 'preview_status'; status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; url?: string; reason?: string })
