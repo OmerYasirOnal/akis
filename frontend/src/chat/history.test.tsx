@@ -1,0 +1,77 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import type { ReactNode } from 'react'
+import { HistoryMenu } from './HistoryMenu.js'
+import { HistoryPage } from '../pages/HistoryPage.js'
+import { ChatStudio } from './ChatStudio.js'
+import { I18nProvider } from '../i18n/I18nContext.js'
+import { RouterProvider } from '../router/router.js'
+import { ApiClient } from '../api/client.js'
+import { EventStreamClient } from '../live/EventStreamClient.js'
+import type { AkisEvent } from '@akis/shared'
+
+const wrap = (ui: ReactNode) => <I18nProvider><RouterProvider>{ui}</RouterProvider></I18nProvider>
+
+describe('HistoryMenu', () => {
+  it('is visible and opens a dropdown of builds; clicking one calls onOpen', async () => {
+    const onOpen = vi.fn()
+    const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }, { id: 's2', idea: 'a QR generator', ts: 0 }]
+    render(<I18nProvider><HistoryMenu builds={builds} onOpen={onOpen} /></I18nProvider>)
+    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('menuitem', { name: 'a QR generator' }))
+    expect(onOpen).toHaveBeenCalledWith(builds[1])
+  })
+  it('shows an empty state when there are no builds', async () => {
+    render(<I18nProvider><HistoryMenu builds={[]} onOpen={() => {}} /></I18nProvider>)
+    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    expect(screen.getByText(/No builds yet/)).toBeInTheDocument()
+  })
+})
+
+describe('HistoryPage', () => {
+  it('lists builds with idea + status and opens one via /?s=<id>', async () => {
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 's1', idea: 'a todo app', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<HistoryPage api={api} />))
+    await waitFor(() => expect(screen.getByText('a todo app')).toBeInTheDocument())
+    expect(screen.getByText('done')).toBeInTheDocument()
+    await userEvent.click(screen.getByText('a todo app'))
+    expect(window.location.search).toBe('?s=s1')
+  })
+  it('renders a graceful empty state', async () => {
+    const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ([]), text: async () => '' } as unknown as Response))
+    render(wrap(<HistoryPage api={new ApiClient('', fetchFn)} />))
+    await waitFor(() => expect(screen.getByText(/No builds yet/)).toBeInTheDocument())
+  })
+})
+
+/** A controllable fake stream client (EventStreamClient-shaped). */
+class FakeStream {
+  connectedUrl?: string
+  private onEvent?: (e: AkisEvent, seq: number) => void
+  connect(url: string, h: { onEvent: (e: AkisEvent, seq: number) => void }): void { this.connectedUrl = url; this.onEvent = h.onEvent }
+  close(): void {}
+  emit(e: AkisEvent, seq: number): void { this.onEvent?.(e, seq) }
+}
+
+describe('ChatStudio ?s= deep-link', () => {
+  beforeEach(() => { window.history.replaceState({}, '', '/?s=s1') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  it('opens the deep-linked session on mount and connects to its event stream', async () => {
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 's1', idea: 'deep linked app', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(<I18nProvider><RouterProvider><ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} /></RouterProvider></I18nProvider>)
+    // The deep-linked session loads: its idea bubble appears and the live stream connects.
+    await waitFor(() => expect(screen.getByText('deep linked app')).toBeInTheDocument())
+    expect(fake.connectedUrl).toBe('/sessions/s1/events')
+  })
+})

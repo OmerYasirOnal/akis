@@ -3,8 +3,11 @@ import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { useLiveChat } from './useLiveChat.js'
 import { ChatThread } from './ChatThread.js'
+import { RunPipeline } from './RunPipeline.js'
 import { AkisChat } from './AkisChat.js'
 import { loadRecentBuilds, recordRecentBuild, type RecentBuild } from './recentBuilds.js'
+import { HistoryMenu } from './HistoryMenu.js'
+import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import type { WorkflowOption } from '../live/types.js'
@@ -25,10 +28,25 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const [busy, setBusy] = useState(false)
   const [auto, setAuto] = useState(false)            // autopilot: auto-approve + auto-confirm
   const [recent, setRecent] = useState<RecentBuild[]>(() => loadRecentBuilds())
+  // Deep-link target from /?s=<id> (History page → open in Studio). Read once on mount.
+  const deepLinkId = useRef<string | undefined>(typeof window !== 'undefined' ? sessionIdFromSearch(window.location.search) : undefined)
   // Prefer server-backed per-user history (persists across devices); fall back to the
   // localStorage list (loaded above) if the request fails.
   useEffect(() => {
-    void api.listMySessions().then(list => { if (list.length) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0 }))) }).catch(() => {})
+    void api.listMySessions().then(list => {
+      if (list.length) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0 })))
+      // Resolve the /?s= deep-link: open that build (with its idea, for the user bubble).
+      const id = deepLinkId.current
+      if (id) {
+        deepLinkId.current = undefined
+        const hit = list.find(s => s.id === id)
+        setSent(hit?.idea ?? ''); setSessionId(id)
+      }
+    }).catch(() => {
+      // Even if the list fails, still honor a deep-link by id (replay rebuilds the thread).
+      const id = deepLinkId.current
+      if (id) { deepLinkId.current = undefined; setSent(''); setSessionId(id) }
+    })
   }, [api])
   const [actionError, setActionError] = useState<string | undefined>()
 
@@ -56,7 +74,11 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const approve = (): Promise<void> => act(async () => { if (sessionId) { await api.approve(sessionId); await api.run(sessionId) } })
   const confirm = (): Promise<void> => act(async () => { if (sessionId) await api.confirm(sessionId) })
   const runApp = (): Promise<void> => act(async () => { if (sessionId) await api.startPreview(sessionId) })
-  const newChat = (): void => { setSessionId(undefined); setSent(''); setActionError(undefined) }
+  const newChat = (): void => {
+    setSessionId(undefined); setSent(''); setActionError(undefined)
+    // Drop a stale /?s= deep-link from the address bar so a refresh starts clean.
+    if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
+  }
 
   // Auto-run the local preview once a build ships, so the app appears live with no
   // extra click (once per session; the user can re-run from the rail). Best-effort.
@@ -87,12 +109,23 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
       <section className="flex min-h-[64vh] flex-col rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
         <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
           <AgentRoster view={live.view} />
-          {sessionId && <button onClick={newChat} className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 hover:text-slate-200">{t('chat.new')}</button>}
+          <div className="flex shrink-0 items-center gap-2">
+            <HistoryMenu builds={recent} onOpen={openSession} />
+            {sessionId && <button onClick={newChat} className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 hover:text-slate-200">{t('chat.new')}</button>}
+          </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-4">
           {sessionId
-            ? <ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />
+            ? (
+              <RunPipeline
+                view={live.view}
+                onApprove={approve}
+                onConfirm={confirm}
+                busy={busy}
+                details={<ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />}
+              />
+            )
             : (
               <div className="flex flex-col gap-4">
                 <AkisChat api={api} />

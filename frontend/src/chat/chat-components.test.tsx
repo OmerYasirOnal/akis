@@ -65,8 +65,10 @@ describe('ChatStudio', () => {
       fake.emit(ev({ kind: 'agent_start', role: 'scribe', agent: 'scribe' }), 1)
       fake.emit(ev({ kind: 'gate', gate: 'spec_approval', state: 'awaiting' }), 2)
     })
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Approve spec' })).toBeInTheDocument())
-    // "Scribe" appears both in the always-on roster strip and the live thread bubble.
+    // The awaiting spec gate surfaces an Approve button both inline in the new run pipeline
+    // and (collapsed) in the raw-log thread — so there are >=1; both fire onApprove.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Approve spec' }).length).toBeGreaterThanOrEqual(1))
+    // "Scribe" appears in the always-on roster strip, the pipeline step, and the thread bubble.
     expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(2)
   })
 
