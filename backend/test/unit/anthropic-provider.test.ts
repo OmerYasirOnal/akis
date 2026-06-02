@@ -41,6 +41,20 @@ describe('AnthropicProvider', () => {
     expect(r.stopReason).toBe('tool_use')
   })
 
+  it('falls back to the configured model when the request model is an EMPTY string (not just undefined)', async () => {
+    // The "(default)" model picker passes model:"" per agent. `??` would forward "" to the
+    // API → Anthropic 400 "model: String should have at least 1 character". Must use `||`.
+    let captured: { init: RequestInit } | undefined
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      captured = { init }
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+    const p = new AnthropicProvider({ apiKey: 'sk-ant-x', model: 'claude-haiku-4-5-20251001', fetchFn })
+    await p.chat({ system: 'S', model: '', messages: [{ role: 'user', content: 'go' }] })
+    const body = JSON.parse(captured!.init.body as string)
+    expect(body.model).toBe('claude-haiku-4-5-20251001')
+  })
+
   it('maps a tool result message to a user tool_result block', async () => {
     let captured: { init: RequestInit } | undefined
     const fetchFn = (async (_url: string, init: RequestInit) => {

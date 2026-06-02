@@ -46,6 +46,12 @@ describe('createProvider — fail-closed (X-AC6 / CF6)', () => {
     expect(createProvider({ env: { OPENAI_API_KEY: 'sk-proj-x', NODE_ENV: 'production' } }).name).toBe('openai')
     expect(createProvider({ env: { GEMINI_API_KEY: 'AIza-x', NODE_ENV: 'production' } }).name).toBe('google')
   })
+  it('falls back to the catalog default when AI_MODEL is EMPTY (not just unset)', () => {
+    // A .env template ships `AI_MODEL=` (empty). That must resolve to the catalog default,
+    // never a literal "" model (real provider APIs 400 on "model: at least 1 character").
+    const p = createProvider({ env: { ANTHROPIC_API_KEY: 'sk-ant-x', AI_MODEL: '', NODE_ENV: 'production' } })
+    expect(p.model).toBe('claude-haiku-4-5-20251001')
+  })
   it('honors AI_MODEL override', () => {
     const p = createProvider({ provider: 'anthropic', model: 'claude-opus-4-8', env: { ANTHROPIC_API_KEY: 'sk-ant-x', NODE_ENV: 'production' } })
     expect(p.model).toBe('claude-opus-4-8')

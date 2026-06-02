@@ -43,7 +43,7 @@ export class AnthropicProvider implements LlmProvider {
 
   async chat(req: ChatRequest): Promise<ChatResult> {
     const body: Record<string, unknown> = {
-      model: req.model ?? this.model,
+      model: req.model || this.model, // `||` not `??`: an empty per-agent model ("(default)") must fall back, not send ""
       max_tokens: req.maxTokens ?? this.maxTokens,
       system: req.system,
       messages: req.messages.map(m => this.mapMessage(m)),

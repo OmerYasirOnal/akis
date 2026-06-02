@@ -13,7 +13,9 @@ export function workflowToAgentModels(wf: WorkflowConfig): Partial<Record<Role, 
   const out: Partial<Record<Role, AgentModel>> = {}
   for (const a of wf.agents) {
     if (isCoreRole(a.role) && a.model?.providerId) {
-      out[a.role] = { provider: a.model.providerId as ProviderId, ...(a.model.modelId !== undefined ? { model: a.model.modelId } : {}) }
+      // Only emit a model when it's a NON-EMPTY id — an empty "(default)" picker value
+      // must NOT reach the provider as model:"" (real APIs 400 on an empty model string).
+      out[a.role] = { provider: a.model.providerId as ProviderId, ...(a.model.modelId ? { model: a.model.modelId } : {}) }
     }
   }
   return out
