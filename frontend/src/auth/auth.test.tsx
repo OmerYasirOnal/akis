@@ -64,7 +64,7 @@ describe('Login page', () => {
       '/auth/login': () => ({ ok: true, status: 200, body: { user: { id: '1', name: 'Ada', email: 'a@b.com' } } }),
     })
     window.history.pushState({}, '', '/login')
-    render(<I18nProvider><RouterProvider><AuthProvider api={api}><Login /></AuthProvider></RouterProvider></I18nProvider>)
+    render(<I18nProvider><RouterProvider><AuthProvider api={api}><Login api={api} /></AuthProvider></RouterProvider></I18nProvider>)
     await userEvent.type(screen.getByLabelText('Email'), 'a@b.com')
     await userEvent.type(screen.getByLabelText('Password'), 'hunter2hunter')
     await userEvent.click(screen.getByRole('button', { name: /sign in/i }))

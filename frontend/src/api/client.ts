@@ -90,6 +90,10 @@ export class ApiClient {
   resetPassword(token: string, password: string): Promise<{ user: AuthUser }> {
     return this.json('/auth/reset-password', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ token, password }) })
   }
+  /** Which OAuth providers are configured server-side (drives which buttons to show). */
+  getOAuthProviders(): Promise<{ providers: string[] }> { return this.json('/oauth/providers') }
+  /** Full-page redirect target to begin an OAuth flow. */
+  oauthAuthorizeUrl(provider: string): string { return `${this.baseUrl}/oauth/${provider}/authorize` }
 
   /** Free-form conversation WITH AKIS (the orchestrator persona) — distinct from a build. */
   chatWithAkis(message: string, history: { role: 'user' | 'assistant'; content: string }[] = []): Promise<{ reply: string }> {

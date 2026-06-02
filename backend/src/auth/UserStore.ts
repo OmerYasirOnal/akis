@@ -27,6 +27,16 @@ export class UserStore {
   }
   async findByEmail(email: string): Promise<AuthUser | undefined> { return this.byEmail.get(email.trim().toLowerCase()) }
   async findById(id: string): Promise<AuthUser | undefined> { return this.byId.get(id) }
+  /** Find-or-create a user from an OAuth profile (no password — `passwordHash` is empty,
+   *  which never verifies, so the account is OAuth-only until a reset sets a password). */
+  async upsertOAuth(input: { email: string; name: string }): Promise<AuthUser> {
+    const email = input.email.trim().toLowerCase()
+    const existing = this.byEmail.get(email)
+    if (existing) return existing
+    const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock() }
+    this.byEmail.set(email, u); this.byId.set(u.id, u)
+    return u
+  }
   /** Replace a user's password hash (password reset). No-op if the id is unknown. */
   async updatePassword(id: string, passwordHash: string): Promise<void> {
     const u = this.byId.get(id)

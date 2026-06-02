@@ -1,19 +1,23 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
-import { ApiError } from '../api/client.js'
+import { ApiClient, ApiError } from '../api/client.js'
 import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
+import { OAuthButtons } from './OAuthButtons.js'
 
-export function Login() {
+export function Login({ api }: { api: ApiClient }) {
   const { login } = useAuth()
   const { navigate } = useRouter()
   const { t } = useI18n()
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
-  const [err, setErr] = useState<string | undefined>()
+  // Surface an OAuth callback error passed back as ?error=… (generic message).
+  const [err, setErr] = useState<string | undefined>(
+    new URLSearchParams(window.location.search).get('error') ? t('auth.oauth.error') : undefined,
+  )
 
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault()
@@ -26,6 +30,7 @@ export function Login() {
   return (
     <AuthShell title={t('auth.login.title')} subtitle={t('auth.login.subtitle')}
       footer={<>{t('auth.noAccount')} <Link to="/signup" className="font-semibold text-[#07D1AF] hover:underline">{t('auth.signup.cta')}</Link></>}>
+      <div className="mb-4"><OAuthButtons api={api} /></div>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.email')}>
           <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
