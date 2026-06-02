@@ -18,6 +18,7 @@ export class WorkflowStore {
       ...(input.gatePolicy !== undefined ? { gatePolicy: input.gatePolicy } : {}),
       ...(input.iterateBudget !== undefined ? { iterateBudget: input.iterateBudget } : {}),
       ...(input.rag !== undefined ? { rag: input.rag } : {}),
+      ...(input.rerank !== undefined ? { rerank: input.rerank } : {}),
     }
     this.versions.set(id, [...prior, saved])
     return saved

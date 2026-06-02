@@ -13,8 +13,10 @@
   },
   "dependencies": {
     "@akis/shared": "workspace:*",
+    "@fastify/multipart": "^8.3.1",
     "fastify": "^4.28.0",
-    "gray-matter": "^4.0.3"
+    "gray-matter": "^4.0.3",
+    "pdf-parse": "1.1.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

@@ -14,6 +14,6 @@ export class RagKnowledgePort implements KnowledgePort {
   constructor(private rag: RagService, private userIdFor: (sessionId: string) => string) {}
 
   async retrieve(q: RetrieveQuery): Promise<KnowledgeChunk[]> {
-    return this.rag.retrieve(q.query, { userId: this.userIdFor(q.sessionId), sessionId: q.sessionId }, q.limit ?? 6)
+    return this.rag.retrieve(q.query, { userId: this.userIdFor(q.sessionId), sessionId: q.sessionId }, q.limit ?? 6, q.rerank)
   }
 }
