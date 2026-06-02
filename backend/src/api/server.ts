@@ -9,7 +9,8 @@ import { registerSessionRoutes } from './sessions.routes.js'
 import { registerPreviewRoutes } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
 import { registerAuthRoutes } from './auth.routes.js'
-import { UserStore } from '../auth/UserStore.js'
+import { UserStore, type UserStorePort } from '../auth/UserStore.js'
+import { createPgUserStore } from '../auth/PgUserStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
@@ -37,8 +38,8 @@ export interface ServerDeps {
   skillsDir?: string
   /** Workflow preset store (in-memory by default; injectable for tests/persistence). */
   workflowStore?: WorkflowStore
-  /** User store for auth (in-memory by default; injectable for tests/persistence). */
-  userStore?: UserStore
+  /** User store for auth (in-memory by default; a PgUserStore when DATABASE_URL is set). */
+  userStore?: UserStorePort
 }
 
 const defaultSkillsDir = (): string =>
@@ -139,7 +140,13 @@ export async function start(): Promise<void> {
   // Default OUTSIDE the repo so an encrypted key blob can never be committed.
   const file = process.env.AI_KEY_STORE_PATH ?? join(homedir(), '.config', 'akis', 'keys.json')
   const keyStore = new JsonFileKeyStore(file, master)
-  const app = buildServer({ keyStore })
+  // Durable user store when DATABASE_URL is configured; else in-memory (dev/self-host).
+  let userStore: UserStorePort | undefined
+  if (process.env.DATABASE_URL) {
+    try { userStore = await createPgUserStore(process.env.DATABASE_URL); console.log('auth: using Postgres user store') }
+    catch (e) { console.error('auth: Postgres unavailable, using in-memory store —', (e as Error).message) }
+  }
+  const app = buildServer({ keyStore, ...(userStore ? { userStore } : {}) })
   const port = Number(process.env.PORT ?? 3000)
   await app.listen({ port, host: '127.0.0.1' })
   // eslint-disable-next-line no-console

@@ -7,12 +7,22 @@ export const toPublic = (u: AuthUser): PublicUser => ({ id: u.id, name: u.name, 
 
 export class EmailTakenError extends Error { constructor() { super('email already registered'); this.name = 'EmailTakenError' } }
 
+/** The persistence seam used by the auth/oauth routes — implemented by the in-memory
+ *  UserStore and the Postgres-backed PgUserStore. */
+export interface UserStorePort {
+  create(input: { name: string; email: string; passwordHash: string }): Promise<AuthUser>
+  findByEmail(email: string): Promise<AuthUser | undefined>
+  findById(id: string): Promise<AuthUser | undefined>
+  updatePassword(id: string, passwordHash: string): Promise<void>
+  upsertOAuth(input: { email: string; name: string }): Promise<AuthUser>
+}
+
 /**
  * In-memory user store — the seam a DB-backed store (Postgres/Drizzle, per the platform)
  * slots behind later. Email is the unique key, normalized to lowercase. The password
  * hash is held internally and only ever leaves via `toPublic` (which drops it).
  */
-export class UserStore {
+export class UserStore implements UserStorePort {
   private byEmail = new Map<string, AuthUser>()
   private byId = new Map<string, AuthUser>()
   constructor(private genId: () => string = randomUUID, private clock: () => string = () => new Date().toISOString()) {}

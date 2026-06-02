@@ -1,12 +1,12 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { UserStore, EmailTakenError, toPublic, type PublicUser } from '../auth/UserStore.js'
+import { EmailTakenError, toPublic, type PublicUser, type UserStorePort } from '../auth/UserStore.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { verifyJwt, signResetToken, verifyResetToken } from '../auth/jwt.js'
 import { serializeCookie, parseCookies, type CookieConfig } from '../auth/cookie.js'
 import { setSessionCookie } from '../auth/session.js'
 
 export interface AuthDeps {
-  users: UserStore
+  users: UserStorePort
   /** HS256 signing secret (AUTH_JWT_SECRET). */
   secret: string
   cookie: CookieConfig
