@@ -106,6 +106,14 @@ durable Postgres-backed store instead of the in-memory one. Drop `DATABASE_URL`
 (remove the `db` service / unset the var) and AKIS falls back to fast in-memory
 state that resets on restart — handy for an ephemeral demo.
 
+**Boot is fail-closed in production.** When `DATABASE_URL` is set with
+`NODE_ENV=production` (the compose default) but Postgres is unreachable at boot, the
+backend **refuses to start** rather than silently running in-memory and losing your
+data on the next restart. The bundled stack's `db` healthcheck + `depends_on`
+ordering make this a non-issue; if you point AKIS at an external database, make sure
+it is reachable. `GET /health` reports the active mode:
+`{ "ok": true, "persistence": "postgres" | "memory" }`.
+
 What persists with `DATABASE_URL` set:
 
 - **Users + auth sessions** (the Postgres user store)
@@ -168,6 +176,13 @@ docker compose up --build      # rebuilds the image; volumes (your data) are pre
 
 `docker compose down` keeps volumes; `docker compose down -v` **deletes** them —
 use `-v` only when you intend to wipe all data.
+
+Migrations run automatically on boot and are idempotent. One edge case: upgrading a
+database first created before AKIS added OAuth identities applies a uniqueness
+constraint on `external_id`. If an earlier (buggy) build had recorded **duplicate**
+OAuth identities, that migration — and therefore boot — fails until you de-duplicate.
+This is intentional fail-closed behavior: merge/remove `users` rows that share an
+`external_id`, then restart.
 
 ---
 

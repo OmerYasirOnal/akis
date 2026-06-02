@@ -57,6 +57,10 @@ export interface ServerDeps {
   /** Built-frontend dist dir for single-container static serving (defaults to
    *  frontend/dist resolved next to the sources; overridable for tests/hosts). */
   staticRoot?: string
+  /** Active persistence mode, surfaced on /health for observability (a degraded
+   *  in-memory fallback otherwise looks identical to a healthy durable boot). Defaults
+   *  to 'memory'; start() sets 'postgres' when the durable stores are wired. */
+  persistence?: 'postgres' | 'memory'
 }
 
 const defaultSkillsDir = (): string =>
@@ -191,7 +195,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     try { return userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }) } catch { return undefined }
   }
 
-  app.get('/health', async () => ({ ok: true }))
+  app.get('/health', async () => ({ ok: true, persistence: deps.persistence ?? 'memory' }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env, requireAuth: hasSession })
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator, userIdOf })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
@@ -232,6 +236,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 export function resolveListenHost(env: Record<string, string | undefined>): string {
   const host = env.HOST
   return host && host.length > 0 ? host : '127.0.0.1'
+}
+
+/**
+ * Whether durable persistence is REQUIRED (vs. best-effort). Setting DATABASE_URL is the
+ * operator's "persist my data" signal; in production we must not silently degrade to
+ * in-memory (which loses users/sessions/workflows on the next restart). True only in
+ * production with DATABASE_URL set — dev/self-host keeps the convenient in-memory fallback.
+ */
+export function persistenceRequired(env: Record<string, string | undefined>): boolean {
+  return env.NODE_ENV === 'production' && !!env.DATABASE_URL
 }
 
 /** The durable stores selected together when DATABASE_URL is set — built over ONE shared
@@ -276,10 +290,22 @@ export async function start(): Promise<void> {
   const file = process.env.AI_KEY_STORE_PATH ?? join(homedir(), '.config', 'akis', 'keys.json')
   const keyStore = new JsonFileKeyStore(file, master)
   // Durable stores when DATABASE_URL is configured; else in-memory (dev/self-host). One
-  // shared pool migrated once backs all three; on failure we fall back in-memory.
+  // shared pool migrated once backs all three; on failure buildPgStores returns undefined.
   const pg = process.env.DATABASE_URL ? await buildPgStores(process.env.DATABASE_URL) : undefined
+  // Fail CLOSED in production: if persistence was explicitly requested (DATABASE_URL set)
+  // but the DB is unreachable, refuse to boot rather than silently run on in-memory stores
+  // and lose data on the next restart. The dev/self-host fallback (no NODE_ENV=production)
+  // is preserved — buildPgStores already logged the underlying error.
+  if (!pg && persistenceRequired(process.env)) {
+    throw new Error(
+      'DATABASE_URL is set but Postgres is unreachable — refusing to boot on in-memory stores in production ' +
+      '(data would be silently lost on restart). Fix the database, or unset NODE_ENV=production to allow the ' +
+      'in-memory fallback.',
+    )
+  }
   const app = buildServer({
     keyStore,
+    persistence: pg ? 'postgres' : 'memory',
     ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore } : {}),
   })
   const port = Number(process.env.PORT ?? 3000)

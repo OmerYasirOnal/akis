@@ -64,7 +64,12 @@ export class PgUserStore implements UserStorePort {
     // 2) link to the (provider-verified) email account, recording the identity.
     const byEmail = await this.findByEmail(email)
     if (byEmail) {
-      if (!byEmail.externalId) await this.db.query('UPDATE users SET external_id = $1 WHERE id = $2', [input.externalId, byEmail.id])
+      // Link this provider identity to the verified-email account ONLY if it isn't
+      // already bound. If it already carries a (different) identity, do NOT clobber it
+      // and return it UNCHANGED — mirroring the in-memory store, which returns `existing`
+      // with its original externalId rather than a fabricated one that was never persisted.
+      if (byEmail.externalId) return byEmail
+      await this.db.query('UPDATE users SET external_id = $1 WHERE id = $2', [input.externalId, byEmail.id])
       return { ...byEmail, externalId: input.externalId }
     }
     // 3) create — race-safe: a concurrent first login may insert the same email/identity.

@@ -59,13 +59,13 @@ services:
       - akis_config:/home/node/.config/akis
     healthcheck:
       # Liveness via the cheap /health route (reserved from the SPA fallback). The
-      # container always listens on 3000 (see ports note). /health is a static
-      # `{ ok: true }` handler, so this is a LIVENESS probe — it proves Fastify is up
-      # and accepting connections (catching a crashed/unresponsive process that
-      # `restart: unless-stopped`, which only reacts to process EXIT, would miss) and
-      # gives `docker compose ps` a real readiness signal. It does NOT assert DB
-      # reachability or orchestrator health. wget ships with the node:alpine busybox;
-      # start_period covers boot + (optional) DB migrations.
+      # container always listens on 3000 (see ports note). /health is a static handler
+      # (returns `{ ok, persistence }` without touching the DB), so this is a LIVENESS
+      # probe — it proves Fastify is up and accepting connections (catching a crashed/
+      # unresponsive process that `restart: unless-stopped`, which only reacts to process
+      # EXIT, would miss) and gives `docker compose ps` a real readiness signal. It does
+      # NOT assert DB reachability or orchestrator health (the probe ignores the body).
+      # wget ships with the node:alpine busybox; start_period covers boot + DB migrations.
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000/health || exit 1"]
       interval: 10s
       timeout: 5s
