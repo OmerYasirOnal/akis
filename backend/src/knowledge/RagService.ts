@@ -114,4 +114,11 @@ export class RagService {
     this.deps.bm25.deleteBy(m => m.source === source && m.sourceId === sourceId)
     return this.deps.vectorStore.deleteBy(m => m.source === source && m.sourceId === sourceId)
   }
+  /** Right-to-forget scoped to ONE tenant — used by incremental sources to prune a file
+   *  removed from a single (user,session)'s repo WITHOUT deleting another tenant's
+   *  identically-pathed file (deleteBySource matches source+sourceId across all tenants). */
+  deleteBySourceFor(source: string, sourceId: string, scope: { userId: string; sessionId: string }): number {
+    this.deps.bm25.deleteBy(m => m.source === source && m.sourceId === sourceId && m.userId === scope.userId && m.sessionId === scope.sessionId)
+    return this.deps.vectorStore.deleteBy(m => m.source === source && m.sourceId === sourceId && m.userId === scope.userId && m.sessionId === scope.sessionId)
+  }
 }

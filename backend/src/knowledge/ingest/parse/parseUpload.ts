@@ -47,8 +47,8 @@ type DetectedType = 'markdown' | 'text' | 'code' | 'pdf'
  *
  *  - markdown → gray-matter strips YAML frontmatter, keeps the body
  *  - text / code → UTF-8 passthrough (binary content is rejected, never embedded)
- *  - pdf → pdf-parse extracted text (a parse failure → UploadParseError so it can
- *          dead-letter, never crash the route)
+ *  - pdf → pdf-parse extracted text (a parse failure → UploadParseError, surfaced
+ *          synchronously as 415; parsing is inline, so it never crashes the route)
  *
  * Uploads are TRUSTED SOURCE content; this only extracts text — exclusion of
  * secrets/binary at embed time is the Source's job via shouldExclude.
@@ -98,7 +98,8 @@ async function parsePdf(bytes: Buffer): Promise<string> {
     return text
   } catch (err) {
     // A malformed/encrypted/empty PDF must never crash the route — surface a typed
-    // error the caller dead-letters via the queue (or returns 415).
+    // error the caller returns as 415. Parsing is inline (before any enqueue), so a bad
+    // upload never reaches the queue / a dead-letter path.
     throw new UploadParseError(`pdf parse failed: ${err instanceof Error ? err.message : String(err)}`)
   }
 }

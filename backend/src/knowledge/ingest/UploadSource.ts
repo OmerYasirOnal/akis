@@ -35,8 +35,9 @@ export interface UploadIngestInput {
  * and trusts the {userId,sessionId} it is handed.
  *
  * A parseUpload failure (unsupported/binary/unparsable PDF) throws UploadParseError and
- * NOTHING is ingested — the caller maps it to 415 or dead-letters it; the corpus is
- * never mutated by a bad upload.
+ * NOTHING is ingested — the caller maps it to 415 synchronously. Parsing happens inline
+ * (before any enqueue), so a bad upload never reaches the queue / a dead-letter path; the
+ * corpus is never mutated by a bad upload.
  */
 export class UploadSource {
   constructor(private deps: UploadSourceDeps) {}
