@@ -100,6 +100,13 @@ export class ApiClient {
     return this.json('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, history }) })
   }
   listProviders(): Promise<ProviderInfo[]> { return this.json<ProviderInfo[]>('/api/providers') }
+  /** Save a provider API key (stored encrypted server-side; response never echoes it). */
+  setProviderKey(provider: string, apiKey: string): Promise<{ provider: string; last4: string }> {
+    return this.json(`/api/providers/${provider}/key`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ apiKey }) })
+  }
+  removeProviderKey(provider: string): Promise<{ provider: string; removed: boolean }> {
+    return this.json(`/api/providers/${provider}/key`, { method: 'DELETE' })
+  }
   listWorkflows(): Promise<WorkflowConfig[]> { return this.json<WorkflowConfig[]>('/api/workflows') }
   saveWorkflow(input: WorkflowConfigInput): Promise<WorkflowConfig> {
     return this.json<WorkflowConfig>('/api/workflows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
