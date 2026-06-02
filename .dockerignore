@@ -1,0 +1,87 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Docker build context exclusions — keep the context small, reproducible, and
+# SECRET-FREE. node_modules + frontend/dist are REBUILT inside the image (frozen
+# lockfile install + `pnpm -r build`), so shipping host copies would only risk a
+# stale/arch-mismatched layer. Everything secret (.env, encrypted key store,
+# runtime .akis JSON) is excluded so it can never leak into an image layer.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Dependencies — reinstalled frozen in the builder stage (never copy host arch)
+node_modules/
+**/node_modules/
+.pnpm-store/
+
+# Build output — frontend/dist is rebuilt by `pnpm -r build`; never ship host copy
+dist/
+**/dist/
+build/
+**/build/
+*.tsbuildinfo
+**/*.tsbuildinfo
+
+# Emitted TS artifacts that must never shadow the .ts sources (project is
+# typecheck-only / tsx-run; any .js next to src/test/scripts is garbage)
+backend/src/**/*.js
+backend/src/**/*.js.map
+backend/src/**/*.d.ts
+!backend/src/types/*.d.ts
+backend/test/**/*.js
+backend/test/**/*.js.map
+backend/test/**/*.d.ts
+backend/scripts/**/*.js
+backend/scripts/**/*.js.map
+backend/scripts/**/*.d.ts
+shared/src/**/*.js
+shared/src/**/*.js.map
+shared/src/**/*.d.ts
+frontend/src/**/*.js
+frontend/src/**/*.js.map
+
+# Git
+.git/
+.gitignore
+.gitattributes
+
+# Env & secrets — NEVER bake into an image layer
+.env
+.env.*
+!.env.example
+*.local
+
+# Encrypted key store + ephemeral runtime session state (live sessionId/pid)
+**/.akis/keys.json
+**/.akis/*.json
+.akis/
+
+# Logs
+*.log
+logs/
+
+# Test / coverage artifacts
+coverage/
+.nyc_output/
+
+# Claude Code runtime state (ephemeral)
+.claude/*.lock
+.claude/scheduled_tasks.lock
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Docker / CI / docs that have no place in a runtime image
+Dockerfile
+.dockerignore
+docker-compose.yml
+docker-compose*.yml
+.github/
+
+# Repo docs / planning (not needed at runtime)
+*.md
+docs/
+
+# Misc
+tmp/
+.cache/

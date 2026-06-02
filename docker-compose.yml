@@ -1,0 +1,72 @@
+# ═══════════════════════════════════════════════════════════════════════════════
+# AKIS — one-command self-host stack (like Ollama):  `docker compose up`
+#
+#   • app — the single bundled image (backend serves the built frontend AND the
+#     API on ONE port, default 3000). HOST=0.0.0.0 so the container is reachable;
+#     SERVE_STATIC=1 turns on static serving of frontend/dist.
+#   • db  — postgres:16-alpine. Setting DATABASE_URL activates persistence, so
+#     users + sessions + workflows survive `docker compose down && up`.
+#
+# SECURITY: AKIS runs AI-generated code as host child processes with NO sandbox
+# (see THREAT-MODEL.md + docs/SELF_HOSTING.md). This stack is SINGLE-USER. Do NOT
+# expose port 3000 to untrusted users or the public internet without your own
+# isolation. The published port binds 127.0.0.1 by default for that reason.
+# ═══════════════════════════════════════════════════════════════════════════════
+
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      # Persistence: matches the db service creds below → users/sessions/workflows persist.
+      DATABASE_URL: postgres://akis:akis@db:5432/akis
+      # Bind all interfaces INSIDE the container (the backend defaults to 127.0.0.1,
+      # which would be unreachable from the published port).
+      HOST: "0.0.0.0"
+      # Serve the bundled frontend/dist alongside the API on the same port.
+      SERVE_STATIC: "1"
+      PORT: "3000"
+      NODE_ENV: production
+      # ── Pass-throughs from your shell / .env (unset → empty; see backend/.env.example) ──
+      # AUTH_JWT_SECRET is REQUIRED for stable sessions in production — set it in a
+      # .env file next to this compose file (compose auto-loads it) or your shell.
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-}
+      # Browser-facing origin (OAuth + cross-site cookies). e.g. http://localhost:3000
+      PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Optional: a provider key enables REAL builds (else the keyless mock demo).
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      # Publish on the host (127.0.0.1 ONLY — single-user posture). Override the
+      # host port with PORT in your environment; the container always listens on 3000.
+      - "127.0.0.1:${PORT:-3000}:3000"
+    volumes:
+      # Persist preview workspaces + the encrypted key store across restarts.
+      - akis_home:/home/node/.akis
+      - akis_config:/home/node/.config/akis
+
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: akis
+      POSTGRES_PASSWORD: akis
+      POSTGRES_DB: akis
+    volumes:
+      - akis_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      # `app` waits for this to pass (depends_on: condition: service_healthy).
+      test: ["CMD-SHELL", "pg_isready -U akis -d akis"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  akis_pgdata:
+  akis_home:
+  akis_config:
