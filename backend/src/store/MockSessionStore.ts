@@ -35,4 +35,9 @@ export class MockSessionStore implements SessionStore {
   async recordVerification(id: string, token: VerifyToken, expectedVersion: number): Promise<SessionState> {
     return this.commit(id, expectedVersion, cur => ({ ...cur, verifyToken: token }))
   }
+
+  async listByOwner(ownerId: string): Promise<SessionState[]> {
+    // Map preserves insertion order; reverse for newest-first.
+    return [...this.map.values()].filter(s => s.ownerId === ownerId).reverse().map(s => ({ ...s }))
+  }
 }

@@ -150,10 +150,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const hasSession = (req: Parameters<typeof userIdFromRequest>[0]): boolean => {
     try { userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }); return true } catch { return false }
   }
+  // Resolve the user id from a request (undefined if unauthenticated) — for per-user history.
+  const userIdOf = (req: Parameters<typeof userIdFromRequest>[0]): string | undefined => {
+    try { return userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }) } catch { return undefined }
+  }
 
   app.get('/health', async () => ({ ok: true }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env, requireAuth: hasSession })
-  registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator })
+  registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator, userIdOf })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   registerWorkflowRoutes(app, { store: workflowStore })
   registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie, devEcho: env.NODE_ENV !== 'production' })
