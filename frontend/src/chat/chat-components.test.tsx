@@ -69,4 +69,23 @@ describe('ChatStudio', () => {
     // "Scribe" appears both in the always-on roster strip and the live thread bubble.
     expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(2)
   })
+
+  it('autopilot auto-approves the spec gate when it opens (no human click)', async () => {
+    const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/sessions') && init?.method === 'POST') return { ok: true, status: 201, json: async () => ({ id: 's1', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.click(screen.getByLabelText('Autopilot'))
+    await userEvent.type(screen.getByLabelText('idea'), 'build a QR app')
+    await userEvent.click(screen.getByRole('button', { name: 'Build' }))
+    act(() => { fake.emit(ev({ kind: 'gate', gate: 'spec_approval', state: 'awaiting' }), 1) })
+
+    // autopilot should POST /approve and /run without any human interaction
+    await waitFor(() => expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining('/sessions/s1/approve'), expect.objectContaining({ method: 'POST' })))
+    expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining('/sessions/s1/run'), expect.objectContaining({ method: 'POST' }))
+  })
 })
