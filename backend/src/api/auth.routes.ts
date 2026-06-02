@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { UserStore, EmailTakenError, toPublic, type PublicUser } from '../auth/UserStore.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
-import { signJwt, verifyJwt, signResetToken, verifyResetToken, JwtError } from '../auth/jwt.js'
+import { verifyJwt, signResetToken, verifyResetToken } from '../auth/jwt.js'
 import { serializeCookie, parseCookies, type CookieConfig } from '../auth/cookie.js'
+import { setSessionCookie } from '../auth/session.js'
 
 export interface AuthDeps {
   users: UserStore
@@ -34,8 +35,7 @@ export function userIdFromRequest(req: FastifyRequest, deps: AuthDeps): string {
 }
 
 function setSession(reply: FastifyReply, user: PublicUser, deps: AuthDeps): void {
-  const token = signJwt({ sub: user.id, email: user.email, name: user.name }, deps.secret, Math.floor(deps.cookie.maxAgeMs / 1000))
-  reply.header('set-cookie', serializeCookie(deps.cookie.name, token, { ...deps.cookie, httpOnly: true }))
+  setSessionCookie(reply, user, deps.secret, deps.cookie)
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {

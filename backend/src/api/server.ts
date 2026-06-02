@@ -14,6 +14,7 @@ import { cookieConfigFromEnv } from '../auth/cookie.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
 import { registerChatRoutes } from './chat.routes.js'
+import { registerOAuthRoutes } from './oauth.routes.js'
 import { WorkflowStore } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
@@ -126,6 +127,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   registerWorkflowRoutes(app, { store: workflowStore })
   registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env), devEcho: env.NODE_ENV !== 'production' })
+  registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env), env })
   registerAnalyticsRoutes(app, { stats })
   registerChatRoutes(app, { provider: services.provider })
   return app

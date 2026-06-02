@@ -128,8 +128,8 @@ function Shell({ api }: { api: ApiClient }) {
   const { user, loading } = useAuth()
   const { path } = useRouter()
   if (loading) return <Loader />
-  if (path === '/login') return user ? <Navigate to="/" /> : <PublicFrame><Login /></PublicFrame>
-  if (path === '/signup') return user ? <Navigate to="/" /> : <PublicFrame><Signup /></PublicFrame>
+  if (path === '/login') return user ? <Navigate to="/" /> : <PublicFrame><Login api={api} /></PublicFrame>
+  if (path === '/signup') return user ? <Navigate to="/" /> : <PublicFrame><Signup api={api} /></PublicFrame>
   // Reset works in either auth state (the link arrives by email/out-of-band).
   if (path === '/forgot-password') return <PublicFrame><ForgotPassword api={api} /></PublicFrame>
   if (path === '/reset-password') return <PublicFrame><ResetPassword api={api} /></PublicFrame>
