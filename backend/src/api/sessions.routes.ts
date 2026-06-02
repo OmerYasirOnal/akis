@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { type WorkflowConfig, isVerified } from '@akis/shared'
+import { type WorkflowConfig, type SessionState, isVerified } from '@akis/shared'
 import type { Orchestrator } from '../orchestrator/Orchestrator.js'
 import type { OrchestratorServices } from '../di/services.js'
 import type { SeqEvent } from '../events/bus.js'
@@ -60,6 +60,20 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const bound = new Map<string, Orchestrator>()
   const orchestratorFor = (id: string): Orchestrator => bound.get(id) ?? orchestrator
 
+  // Owner-scope single-session access: a session that carries an `ownerId` (started
+  // while authenticated) is PRIVATE to that owner. An anonymous session (no ownerId —
+  // keyless/unauthenticated runs, tests) stays open for backward compatibility.
+  // Returns the session when the caller may access it, else null → the caller replies
+  // 404 (so a non-owner can't even confirm someone else's session exists).
+  const accessibleSession = async (req: FastifyRequest, id: string): Promise<SessionState | null> => {
+    const s = await services.store.get(id)
+    if (!s) return null
+    if (s.ownerId && deps.userIdOf?.(req) !== s.ownerId) return null
+    return s
+  }
+  const notFound = (reply: FastifyReply, id: string): FastifyReply =>
+    reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
+
   app.post<{ Body: { idea?: string; workflowId?: string } }>('/sessions', async (req, reply) => {
     const idea = typeof req.body?.idea === 'string' ? req.body.idea.trim() : ''
     if (!idea) return reply.code(400).send({ error: 'idea required', code: 'BadRequest' })
@@ -88,18 +102,22 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   })
 
   app.get<{ Params: { id: string } }>('/sessions/:id', async (req, reply) => {
-    const s = await services.store.get(req.params.id)
-    if (!s) return reply.code(404).send({ error: `session ${req.params.id} not found`, code: 'NotFound' })
+    const s = await accessibleSession(req, req.params.id)
+    if (!s) return notFound(reply, req.params.id)
     return reply.send(s)
   })
 
   const TERMINAL = new Set(['done', 'failed', 'cancelled'])
   const action = (run: (id: string) => Promise<unknown>) =>
-    async (req: { params: { id: string } }, reply: FastifyReply) => {
+    async (req: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+      const id = req.params.id
+      // Owner-scope: an owned session can only be driven by its owner (else 404,
+      // before any orchestrator action runs).
+      if (!(await accessibleSession(req, id))) return notFound(reply, id)
       try {
-        const r = await run(req.params.id)
+        const r = await run(id)
         // Release the per-session orchestrator once the run is terminal (no leak).
-        if (r && typeof r === 'object' && 'status' in r && TERMINAL.has(String((r as { status: unknown }).status))) bound.delete(req.params.id)
+        if (r && typeof r === 'object' && 'status' in r && TERMINAL.has(String((r as { status: unknown }).status))) bound.delete(id)
         return reply.send(r)
       } catch (err) { return sendError(reply, err) }
     }
@@ -113,9 +131,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   // stream alone can't, after a buffer drop), then resumes live from head (F2-AC12).
   app.get<{ Params: { id: string } }>('/sessions/:id/log', async (req, reply) => {
     const id = req.params.id
-    if (services.bus.head(id) === 0 && !(await services.store.get(id))) {
-      return reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
-    }
+    const stored = await services.store.get(id)
+    if (stored?.ownerId && deps.userIdOf?.(req) !== stored.ownerId) return notFound(reply, id) // owner-scope: no cross-user log read
+    if (services.bus.head(id) === 0 && !stored) return notFound(reply, id)
     const { events, dropped } = services.bus.replaySince(id, 0)
     // `truncated` = the buffer already evicted head events (a >cap-event session), so
     // this log is a tail, not the full history — the client can surface that honestly.
@@ -127,10 +145,11 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     '/sessions/:id/events',
     async (req, reply) => {
       const id = req.params.id
+      const stored = await services.store.get(id)
+      // Owner-scope: a non-owner cannot stream someone else's owned session (404 before hijack).
+      if (stored?.ownerId && deps.userIdOf?.(req) !== stored.ownerId) return notFound(reply, id)
       // 404 only when the session is truly unknown AND has emitted nothing.
-      if (services.bus.head(id) === 0 && !(await services.store.get(id))) {
-        return reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
-      }
+      if (services.bus.head(id) === 0 && !stored) return notFound(reply, id)
 
       // Take over the response lifecycle: we stream on reply.raw and keep the
       // socket open, so Fastify must NOT try to send/close a reply for us.
