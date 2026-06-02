@@ -6,6 +6,7 @@ import { IngestQueue, type IngestQueueOpts } from './ingest/IngestQueue.js'
 import { RagService } from './RagService.js'
 import { RagKnowledgePort } from './RagKnowledgePort.js'
 import { IngestionSink } from './IngestionSink.js'
+import { LocalReranker, NoopReranker } from './retrieve/Reranker.js'
 
 export interface BuildRagOpts {
   bus: EventBus
@@ -14,6 +15,10 @@ export interface BuildRagOpts {
   /** Single-user MVP → a constant tenant; multi-tenant resolves a real user id later. */
   userIdFor?: (sessionId: string) => string
   queue?: IngestQueueOpts
+  /** Default second-stage rerank toggle (issue #7 AC3). Defaults to true (on).
+   *  false wires a NoopReranker so retrieval returns the raw fused order. A skippable
+   *  quality knob, never a gate. Per-call `rerank` can still override. */
+  rerank?: boolean
   now?: () => string
 }
 
@@ -33,11 +38,16 @@ export function buildRag(opts: BuildRagOpts): RagStack {
   const embedding = opts.embedding ?? new LocalEmbeddingProvider()
   const userIdFor = opts.userIdFor ?? (() => 'local')
   const queue = new IngestQueue(opts.queue ?? {})
+  const rerankOn = opts.rerank ?? true
   const service = new RagService({
     embedding,
     vectorStore: new MemoryVectorStore(),
     bm25: new Bm25Index(),
     queue,
+    // Default reranker is the offline LocalReranker; a default-off stack wires the
+    // NoopReranker so retrieval returns the raw fused order even on default calls.
+    reranker: rerankOn ? new LocalReranker() : new NoopReranker(),
+    rerankDefault: rerankOn,
     ...(opts.now ? { now: opts.now } : {}),
   })
   const port = new RagKnowledgePort(service, userIdFor)

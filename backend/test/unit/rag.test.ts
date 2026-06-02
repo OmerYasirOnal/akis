@@ -149,20 +149,103 @@ describe('Golden eval (F1-AC8: hybrid retrieval top-5 >= 80%)', () => {
   })
 })
 
+describe('Rerank hook (issue #7 AC3): pluggable, skippable, default-on', () => {
+  // A crafted corpus where the hybrid (rrf) order and the lexical-rerank order
+  // genuinely DIVERGE for the query below (verified empirically): the raw fused order
+  // tops `token-postgres` (matches 'postgres' once), but the lexical reranker promotes
+  // `db-heavy` (matches 'database' twice → higher lexical-cosine on the query) above it.
+  const RR_QUERY = 'postgres database schema migration'
+  const RR_CORPUS: Array<{ id: string; text: string }> = [
+    { id: 'redis-mix', text: 'redis migration auth ttl' },
+    { id: 'invoice-db', text: 'invoice database token' },
+    { id: 'token-postgres', text: 'token postgres' },
+    { id: 'bm25-mig', text: 'bm25 migration session' },
+    { id: 'stripe', text: 'session stripe stripe' },
+    { id: 'db-heavy', text: 'database database eviction docker' },
+    { id: 'schema-bill', text: 'schema billing' },
+    { id: 'evict-mix', text: 'eviction migration query redis docker' },
+  ]
+  const seedInto = async (stack: ReturnType<typeof buildRag>): Promise<ReturnType<typeof buildRag>> => {
+    for (const doc of RR_CORPUS) {
+      stack.service.ingest({ text: doc.text, source: 'corpus', sourceId: doc.id, userId: 'u1', sessionId: 'seed' })
+    }
+    await stack.queue.drain()
+    return stack
+  }
+  const seed = (): Promise<ReturnType<typeof buildRag>> =>
+    seedInto(buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow }))
+
+  it('rerank:false skips reranking → different top-k order than rerank:true', async () => {
+    const stack = await seed()
+    const on = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5, true)
+    const off = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5, false)
+    expect(on.map(r => r.source)).not.toEqual(off.map(r => r.source))
+    // The reranker promotes the doc lexically dominated by the query ('database' x2)
+    // to the top; the raw fused order does not.
+    expect(on[0]?.source).toBe('corpus:db-heavy')
+    expect(off[0]?.source).toBe('corpus:token-postgres')
+  })
+
+  it('defaults to the deps reranker (on) when no per-call flag is given', async () => {
+    const stack = await seed()
+    const def = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5)
+    const on = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5, true)
+    expect(def.map(r => r.source)).toEqual(on.map(r => r.source))
+  })
+
+  it('a deps-level rerank-default off (NoopReranker) yields the raw fused order', async () => {
+    const stack = await seedInto(buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow, rerank: false }))
+    const def = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5)
+    const off = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5, false)
+    expect(def.map(r => r.source)).toEqual(off.map(r => r.source))
+    expect(def[0]?.source).toBe('corpus:token-postgres')
+  })
+})
+
+describe('Rerank pass-through via RagKnowledgePort (issue #7 AC3)', () => {
+  it('threads RetrieveQuery.rerank into the service', async () => {
+    const stack = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
+    const corpus = [
+      { id: 'redis-mix', text: 'redis migration auth ttl' },
+      { id: 'invoice-db', text: 'invoice database token' },
+      { id: 'token-postgres', text: 'token postgres' },
+      { id: 'bm25-mig', text: 'bm25 migration session' },
+      { id: 'stripe', text: 'session stripe stripe' },
+      { id: 'db-heavy', text: 'database database eviction docker' },
+      { id: 'schema-bill', text: 'schema billing' },
+      { id: 'evict-mix', text: 'eviction migration query redis docker' },
+    ]
+    for (const doc of corpus) stack.service.ingest({ text: doc.text, source: 'corpus', sourceId: doc.id, userId: 'local', sessionId: 's1' })
+    await stack.queue.drain()
+    const on = await stack.port.retrieve({ query: 'postgres database schema migration', sessionId: 's1', limit: 5, rerank: true })
+    const off = await stack.port.retrieve({ query: 'postgres database schema migration', sessionId: 's1', limit: 5, rerank: false })
+    expect(on.map(r => r.source)).not.toEqual(off.map(r => r.source))
+    expect(on[0]?.source).toBe('corpus:db-heavy')
+    expect(off[0]?.source).toBe('corpus:token-postgres')
+  })
+})
+
 describe('AC10: no knowledge module imports a gate minter', () => {
   it('no file under src/knowledge references a gate minter/gate module', () => {
     const dir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/knowledge')
     const offenders: string[] = []
+    const seen: string[] = []
     const walk = (d: string): void => {
       for (const name of readdirSync(d)) {
         const p = join(d, name)
         if (statSync(p).isDirectory()) { walk(p); continue }
         if (!p.endsWith('.ts')) continue
+        seen.push(p)
         const src = readFileSync(p, 'utf8')
         if (/gates\/|specGate|pushGate|mintApproved|createVerifier/.test(src)) offenders.push(p)
       }
     }
     walk(dir)
     expect(offenders).toEqual([])
+    // The guard must actually walk the NEW M2 source files (issue #7), not just the
+    // originals — assert their presence so a future move can't silently un-cover them.
+    const names = seen.map(p => p.replace(/^.*\/src\/knowledge\//, ''))
+    expect(names).toContain('ingest/structureChunk.ts')
+    expect(names).toContain('retrieve/Reranker.ts')
   })
 })
