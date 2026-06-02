@@ -247,5 +247,10 @@ describe('AC10: no knowledge module imports a gate minter', () => {
     const names = seen.map(p => p.replace(/^.*\/src\/knowledge\//, ''))
     expect(names).toContain('ingest/structureChunk.ts')
     expect(names).toContain('retrieve/Reranker.ts')
+    // The new RAG sources (issue #7 steps 4-5) are also covered: none may import a gate.
+    expect(names).toContain('ingest/RepoReader.ts')
+    expect(names).toContain('ingest/RepoSource.ts')
+    expect(names).toContain('ingest/UploadSource.ts')
+    expect(names).toContain('ingest/parse/parseUpload.ts')
   })
 })
