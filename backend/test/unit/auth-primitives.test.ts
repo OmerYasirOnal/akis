@@ -58,8 +58,12 @@ describe('cookie helpers', () => {
   })
   it('reads config from AUTH_COOKIE_* with safe defaults', () => {
     expect(cookieConfigFromEnv({}).name).toBe('akis_session')
+    expect(cookieConfigFromEnv({}).maxAgeMs).toBe(604800000) // 7d default
     const c = cookieConfigFromEnv({ AUTH_COOKIE_NAME: 'sess', AUTH_COOKIE_SECURE: 'true', AUTH_COOKIE_SAMESITE: 'strict' })
     expect(c.name).toBe('sess'); expect(c.secure).toBe(true); expect(c.sameSite).toBe('strict')
+  })
+  it('interprets AUTH_COOKIE_MAXAGE as SECONDS (platform convention)', () => {
+    expect(cookieConfigFromEnv({ AUTH_COOKIE_MAXAGE: '604800' }).maxAgeMs).toBe(604800000) // 7d, not 604s
   })
   it('forces Secure when SameSite=None (browsers drop None without Secure)', () => {
     const c = cookieConfigFromEnv({ AUTH_COOKIE_SAMESITE: 'none', AUTH_COOKIE_SECURE: 'false' })

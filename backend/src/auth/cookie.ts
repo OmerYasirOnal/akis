@@ -8,9 +8,11 @@ const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
 export function cookieConfigFromEnv(env: NodeJS.ProcessEnv): CookieConfig {
   const ss = (env.AUTH_COOKIE_SAMESITE ?? '').toLowerCase()
   const sameSite: SameSite = ss === 'strict' || ss === 'none' ? (ss as SameSite) : 'lax'
+  // AUTH_COOKIE_MAXAGE is in SECONDS (the platform's convention, e.g. 604800 = 7d).
+  const maxAgeSec = Number(env.AUTH_COOKIE_MAXAGE) || 604800
   return {
     name: env.AUTH_COOKIE_NAME || 'akis_session',
-    maxAgeMs: Number(env.AUTH_COOKIE_MAXAGE) || 604800000, // 7d
+    maxAgeMs: maxAgeSec * 1000,
     // SameSite=None cookies MUST be Secure or browsers drop them — force it.
     secure: env.AUTH_COOKIE_SECURE === 'true' || sameSite === 'none',
     sameSite,
