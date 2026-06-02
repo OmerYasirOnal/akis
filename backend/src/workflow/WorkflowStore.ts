@@ -2,14 +2,30 @@ import { randomUUID } from 'node:crypto'
 import type { WorkflowConfig, WorkflowConfigInput } from '@akis/shared'
 
 /**
- * Versioned workflow store. Saving an EXISTING id appends a NEW version (F2-AC10:
- * editing never mutates a prior version, so an in-flight run that captured version N
- * is unaffected). In-memory for the MVP (a DB impl drops in behind the same shape).
+ * The workflow preset store seam. ASYNC so the in-memory store and the durable
+ * {@link PgWorkflowStore} are interchangeable (selected by DATABASE_URL): save/get/list
+ * all resolve Promises. Workflows are VERSIONED — saving an EXISTING id appends a NEW
+ * version (F2-AC10: editing never mutates a prior version, so an in-flight run that
+ * captured version N is unaffected).
  */
-export class WorkflowStore {
+export interface WorkflowStorePort {
+  /** Save (create or, for an existing id, append a new version). Resolves the saved config. */
+  save(input: WorkflowConfigInput): Promise<WorkflowConfig>
+  /** Latest version (or a specific one) of a workflow; undefined when unknown. */
+  get(id: string, version?: number): Promise<WorkflowConfig | undefined>
+  /** The latest version of every workflow. */
+  list(): Promise<WorkflowConfig[]>
+}
+
+/**
+ * In-memory {@link WorkflowStorePort} (the default, current behavior). The methods are
+ * async to match the port; a real DB impl (PgWorkflowStore) drops in behind the same
+ * shape. Versioned exactly as before.
+ */
+export class WorkflowStore implements WorkflowStorePort {
   private versions = new Map<string, WorkflowConfig[]>()
 
-  save(input: WorkflowConfigInput): WorkflowConfig {
+  async save(input: WorkflowConfigInput): Promise<WorkflowConfig> {
     const id = input.id ?? randomUUID()
     const prior = this.versions.get(id) ?? []
     const version = prior.length === 0 ? 1 : prior[prior.length - 1]!.version + 1
@@ -25,7 +41,7 @@ export class WorkflowStore {
   }
 
   /** Latest version (or a specific one) of a workflow. */
-  get(id: string, version?: number): WorkflowConfig | undefined {
+  async get(id: string, version?: number): Promise<WorkflowConfig | undefined> {
     const all = this.versions.get(id)
     if (!all || all.length === 0) return undefined
     if (version === undefined) return all[all.length - 1]
@@ -33,7 +49,7 @@ export class WorkflowStore {
   }
 
   /** The latest version of every workflow. */
-  list(): WorkflowConfig[] {
+  async list(): Promise<WorkflowConfig[]> {
     return [...this.versions.values()].map(vs => vs[vs.length - 1]!).filter(Boolean)
   }
 }
