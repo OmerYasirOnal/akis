@@ -64,34 +64,34 @@ describe('validateWorkflowConfig (F2-AC4/AC5)', () => {
 })
 
 describe('WorkflowConfig.rerank persists round-trip through the store (issue #7 AC3)', () => {
-  it('a saved workflow keeps its rerank toggle', () => {
+  it('a saved workflow keeps its rerank toggle', async () => {
     const store = new WorkflowStore()
-    const wf: WorkflowConfig = store.save({ name: 'rr-off', agents: [{ role: 'scribe' }], rag: true, rerank: false })
+    const wf: WorkflowConfig = await store.save({ name: 'rr-off', agents: [{ role: 'scribe' }], rag: true, rerank: false })
     expect(wf.rerank).toBe(false)
-    expect(store.get(wf.id)!.rerank).toBe(false)
-    const on = store.save({ name: 'rr-on', agents: [{ role: 'proto' }], rerank: true })
-    expect(store.get(on.id)!.rerank).toBe(true)
+    expect((await store.get(wf.id))!.rerank).toBe(false)
+    const on = await store.save({ name: 'rr-on', agents: [{ role: 'proto' }], rerank: true })
+    expect((await store.get(on.id))!.rerank).toBe(true)
   })
 })
 
 describe('WorkflowStore (F2-AC10 versioning)', () => {
-  it('assigns version 1 on create and bumps on edit (never mutating the old version)', () => {
+  it('assigns version 1 on create and bumps on edit (never mutating the old version)', async () => {
     const store = new WorkflowStore()
-    const v1 = store.save({ name: 'wf', agents: [{ role: 'scribe' }] })
+    const v1 = await store.save({ name: 'wf', agents: [{ role: 'scribe' }] })
     expect(v1.version).toBe(1)
-    const v2 = store.save({ id: v1.id, name: 'wf', agents: [{ role: 'scribe' }, { role: 'proto' }] })
+    const v2 = await store.save({ id: v1.id, name: 'wf', agents: [{ role: 'scribe' }, { role: 'proto' }] })
     expect(v2.version).toBe(2)
     expect(v2.id).toBe(v1.id)
     // The old version is still retrievable unchanged (in-flight runs keep their version).
-    expect(store.get(v1.id, 1)!.agents).toHaveLength(1)
-    expect(store.get(v1.id)!.version).toBe(2) // latest
+    expect((await store.get(v1.id, 1))!.agents).toHaveLength(1)
+    expect((await store.get(v1.id))!.version).toBe(2) // latest
   })
-  it('lists the latest of each workflow', () => {
+  it('lists the latest of each workflow', async () => {
     const store = new WorkflowStore()
-    const a = store.save({ name: 'a', agents: [{ role: 'scribe' }] })
-    store.save({ id: a.id, name: 'a', agents: [{ role: 'scribe' }] })
-    store.save({ name: 'b', agents: [{ role: 'proto' }] })
-    const list = store.list()
+    const a = await store.save({ name: 'a', agents: [{ role: 'scribe' }] })
+    await store.save({ id: a.id, name: 'a', agents: [{ role: 'scribe' }] })
+    await store.save({ name: 'b', agents: [{ role: 'proto' }] })
+    const list = await store.list()
     expect(list).toHaveLength(2)
     expect(list.find(w => w.id === a.id)!.version).toBe(2)
   })

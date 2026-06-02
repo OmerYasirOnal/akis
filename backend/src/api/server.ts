@@ -10,7 +10,10 @@ import { registerPreviewRoutes } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
 import { registerAuthRoutes, userIdFromRequest } from './auth.routes.js'
 import { UserStore, type UserStorePort } from '../auth/UserStore.js'
-import { createPgUserStore } from '../auth/PgUserStore.js'
+import { createPgUserStoreWithClient } from '../auth/PgUserStore.js'
+import { createPgPool, runMigrations } from '../store/pg.js'
+import { PgSessionStore } from '../store/PgSessionStore.js'
+import { PgWorkflowStore } from '../workflow/PgWorkflowStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
@@ -18,12 +21,14 @@ import { registerChatRoutes } from './chat.routes.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
-import { WorkflowStore } from '../workflow/WorkflowStore.js'
+import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels, workflowCustomAgents } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
+import type { SessionStore } from '../store/SessionStore.js'
+import { registerStatic, staticServingEnabled, defaultStaticRoot } from './static.js'
 import { PreviewRegistry } from '../preview/PreviewRegistry.js'
 import { LocalDirectSandbox } from '../exec/Sandbox.js'
 import { MockProvider } from '../agent/providers/mock/MockProvider.js'
@@ -38,10 +43,17 @@ export interface ServerDeps {
   orchestrator?: Orchestrator
   /** Skills library dir; defaults to the bundled library next to the sources. */
   skillsDir?: string
-  /** Workflow preset store (in-memory by default; injectable for tests/persistence). */
-  workflowStore?: WorkflowStore
+  /** Workflow preset store (in-memory by default; injectable for tests/persistence —
+   *  a PgWorkflowStore when DATABASE_URL is set). */
+  workflowStore?: WorkflowStorePort
   /** User store for auth (in-memory by default; a PgUserStore when DATABASE_URL is set). */
   userStore?: UserStorePort
+  /** Session store (MockSessionStore by default; a PgSessionStore when DATABASE_URL is
+   *  set). Injected so the durable store flows through buildServices unchanged. */
+  sessionStore?: SessionStore
+  /** Built-frontend dist dir for single-container static serving (defaults to
+   *  frontend/dist resolved next to the sources; overridable for tests/hosts). */
+  staticRoot?: string
 }
 
 const defaultSkillsDir = (): string =>
@@ -83,7 +95,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const services =
     deps.services ??
     buildServices({
-      store: new MockSessionStore(),
+      store: deps.sessionStore ?? new MockSessionStore(),
       skillsDir: deps.skillsDir ?? defaultSkillsDir(),
       keyStore: deps.keyStore,
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
@@ -189,7 +201,57 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       userIdOf,
     })
   }
+
+  // Single-container static serving (self-host): serve the built frontend + own the SPA
+  // fallback. Gated behind SERVE_STATIC (or auto when a built dist exists). Registered
+  // LAST so it never shadows an API route; the fallback is API-prefix aware. Default
+  // (no SERVE_STATIC, no dist) is byte-for-byte unchanged — the plugin is never touched.
+  const staticRoot = deps.staticRoot ?? defaultStaticRoot()
+  if (staticServingEnabled(env, staticRoot)) registerStatic(app, { root: staticRoot })
+
   return app
+}
+
+/**
+ * Resolve the listen host. The default stays loopback (127.0.0.1) for dev SAFETY — the
+ * backend is NEVER auto-exposed; a container/host opts in to all-interfaces by setting
+ * HOST=0.0.0.0. An empty HOST is treated as unset.
+ */
+export function resolveListenHost(env: Record<string, string | undefined>): string {
+  const host = env.HOST
+  return host && host.length > 0 ? host : '127.0.0.1'
+}
+
+/** The durable stores selected together when DATABASE_URL is set — built over ONE shared
+ *  pool whose schema was migrated once. */
+interface PgStores {
+  userStore: UserStorePort
+  sessionStore: SessionStore
+  workflowStore: WorkflowStorePort
+}
+
+/**
+ * When DATABASE_URL is set, build ONE shared pool, run migrations ONCE, then select the
+ * Postgres-backed user/session/workflow stores TOGETHER over that single pool. Returns
+ * undefined (and logs) on any failure so the caller falls back to the in-memory default
+ * — DEFAULT behavior is never blocked by an unreachable DB.
+ */
+async function buildPgStores(connectionString: string): Promise<PgStores | undefined> {
+  try {
+    const pool = await createPgPool(connectionString)
+    await runMigrations(pool)
+    // eslint-disable-next-line no-console
+    console.log('persistence: using Postgres (users + sessions + workflows)')
+    return {
+      userStore: createPgUserStoreWithClient(pool),
+      sessionStore: new PgSessionStore(pool),
+      workflowStore: new PgWorkflowStore(pool),
+    }
+  } catch (e) {
+    // eslint-disable-next-line no-console
+    console.error('persistence: Postgres unavailable, using in-memory stores —', (e as Error).message)
+    return undefined
+  }
 }
 
 /** Production entry: build a JSON-file KeyStore from env + listen. */
@@ -198,15 +260,16 @@ export async function start(): Promise<void> {
   // Default OUTSIDE the repo so an encrypted key blob can never be committed.
   const file = process.env.AI_KEY_STORE_PATH ?? join(homedir(), '.config', 'akis', 'keys.json')
   const keyStore = new JsonFileKeyStore(file, master)
-  // Durable user store when DATABASE_URL is configured; else in-memory (dev/self-host).
-  let userStore: UserStorePort | undefined
-  if (process.env.DATABASE_URL) {
-    try { userStore = await createPgUserStore(process.env.DATABASE_URL); console.log('auth: using Postgres user store') }
-    catch (e) { console.error('auth: Postgres unavailable, using in-memory store —', (e as Error).message) }
-  }
-  const app = buildServer({ keyStore, ...(userStore ? { userStore } : {}) })
+  // Durable stores when DATABASE_URL is configured; else in-memory (dev/self-host). One
+  // shared pool migrated once backs all three; on failure we fall back in-memory.
+  const pg = process.env.DATABASE_URL ? await buildPgStores(process.env.DATABASE_URL) : undefined
+  const app = buildServer({
+    keyStore,
+    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore } : {}),
+  })
   const port = Number(process.env.PORT ?? 3000)
-  await app.listen({ port, host: '127.0.0.1' })
+  const host = resolveListenHost(process.env)
+  await app.listen({ port, host })
   // eslint-disable-next-line no-console
-  console.log(`AKIS backend on http://127.0.0.1:${port}`)
+  console.log(`AKIS backend on http://${host}:${port}`)
 }
