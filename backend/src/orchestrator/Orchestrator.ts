@@ -49,6 +49,13 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'gate', gate, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
   }
 
+  /** Surface the critic's READ-ONLY code-review verdict as a status card. It is
+   *  AUTOMATIC (not a human gate) and STRUCTURED ONLY — booleans + bounded counts,
+   *  no free-form prose — so it is never ingested as trusted RAG grounding. */
+  private emitCodeReview(sessionId: string, v: { approved: boolean; findings: number; critical: boolean; iteration: number }): void {
+    this.s.bus.emit({ kind: 'code_review', ...v, agent: 'critic', laneId: 'main', sessionId, ts: nextTs() })
+  }
+
   /** Emit the terminal `session/failed` so live consumers (and the RAG ingestion
    *  sink) can close out the session — used on unrecoverable throws, NOT on the
    *  retryable push_failed path. */
@@ -173,6 +180,15 @@ export class Orchestrator {
       }
       const approvedCode = review.data.approved && validation.passed
       const critical = review.data.hasCriticalFinding
+      // Surface the critic verdict as a read-only status card (automatic, not a gate).
+      // `approved` reflects the full produce-able verdict (critic approval AND validator),
+      // matching the branch the orchestrator actually takes below.
+      this.emitCodeReview(id, {
+        approved: approvedCode,
+        findings: review.data.findings.length,
+        critical,
+        iteration: review.data.iteration,
+      })
 
       if (approvedCode) {
         session = await this.s.store.update(id, { code: { files: proto.files } }, session.version)
