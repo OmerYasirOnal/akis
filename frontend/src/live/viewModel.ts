@@ -81,11 +81,17 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         v.tests = { ...v.tests, testsRun: e.testsRun, passed: e.passed, ran: true }
         break
       case 'preview':
-        v.preview = { url: e.url, ready: true }
+        // The shipped artifact (e.g. pushed repo URL): a link, not the embedded app.
+        v.preview = { ...v.preview, ...(e.url !== undefined ? { artifactUrl: e.url } : {}) }
         break
       case 'preview_status':
-        // Live local-preview lifecycle: ready → embed the same-origin /preview/:id url.
-        v.preview = { ready: e.status === 'ready', ...(e.url !== undefined ? { url: e.url } : v.preview.url !== undefined ? { url: v.preview.url } : {}) }
+        // Live local-preview lifecycle: 'ready' → embed the same-origin /preview/:id app.
+        v.preview = {
+          ...v.preview,
+          ready: e.status === 'ready',
+          starting: e.status === 'starting',
+          ...(e.url !== undefined ? { url: e.url } : {}),
+        }
         break
       case 'test_stats':
         // Rich BDD/E2E telemetry for the dashboard (verify stays the gate's truth).

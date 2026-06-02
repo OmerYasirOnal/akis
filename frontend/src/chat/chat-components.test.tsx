@@ -66,6 +66,7 @@ describe('ChatStudio', () => {
       fake.emit(ev({ kind: 'gate', gate: 'spec_approval', state: 'awaiting' }), 2)
     })
     await waitFor(() => expect(screen.getByRole('button', { name: 'Approve spec' })).toBeInTheDocument())
-    expect(screen.getByText('Scribe')).toBeInTheDocument()
+    // "Scribe" appears both in the always-on roster strip and the live thread bubble.
+    expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(2)
   })
 })

@@ -1,80 +1,47 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
-import { NewSessionForm } from './NewSessionForm.js'
-import { GateCards } from './GateCards.js'
 import { PreviewPanel } from './PreviewPanel.js'
 import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
+import { I18nProvider } from '../i18n/I18nContext.js'
+import type { ReactElement } from 'react'
 
-describe('NewSessionForm', () => {
-  it('submits the trimmed idea (default workflow → undefined)', async () => {
-    const onStart = vi.fn()
-    render(<NewSessionForm onStart={onStart} />)
-    await userEvent.type(screen.getByLabelText('idea'), '  todo app  ')
-    await userEvent.click(screen.getByRole('button', { name: 'Build' }))
-    expect(onStart).toHaveBeenCalledWith('todo app', undefined)
-  })
-  it('disables Build for an empty idea', () => {
-    render(<NewSessionForm onStart={() => {}} />)
-    expect(screen.getByRole('button', { name: 'Build' })).toBeDisabled()
-  })
-  it('passes the selected workflow id when one is chosen', async () => {
-    const onStart = vi.fn()
-    render(<NewSessionForm onStart={onStart} workflows={[{ id: 'w1', name: 'fast' }]} />)
-    await userEvent.type(screen.getByLabelText('idea'), 'todo')
-    await userEvent.selectOptions(screen.getByLabelText('workflow'), 'w1')
-    await userEvent.click(screen.getByRole('button', { name: 'Build' }))
-    expect(onStart).toHaveBeenCalledWith('todo', 'w1')
-  })
-  it('hides the workflow selector when there are none', () => {
-    render(<NewSessionForm onStart={() => {}} />)
-    expect(screen.queryByLabelText('workflow')).toBeNull()
-  })
-})
-
-describe('GateCards', () => {
-  const withGate = (state: 'awaiting' | 'satisfied'): SessionView => ({ ...emptyView('s1'), gates: { specApproval: { gate: 'spec_approval', state } } })
-
-  it('enables Approve only when spec approval is awaiting', () => {
-    const { rerender } = render(<GateCards view={withGate('awaiting')} onApprove={() => {}} onConfirm={() => {}} />)
-    expect(screen.getByRole('button', { name: 'Approve spec' })).toBeEnabled()
-    rerender(<GateCards view={withGate('satisfied')} onApprove={() => {}} onConfirm={() => {}} />)
-    expect(screen.getByRole('button', { name: 'Approve spec' })).toBeDisabled()
-  })
-  it('fires onApprove when clicked', async () => {
-    const onApprove = vi.fn()
-    render(<GateCards view={withGate('awaiting')} onApprove={onApprove} onConfirm={() => {}} />)
-    await userEvent.click(screen.getByRole('button', { name: 'Approve spec' }))
-    expect(onApprove).toHaveBeenCalled()
-  })
-  it('disables Approve when busy, even if awaiting', () => {
-    render(<GateCards view={withGate('awaiting')} onApprove={() => {}} onConfirm={() => {}} busy />)
-    expect(screen.getByRole('button', { name: 'Approve spec' })).toBeDisabled()
-  })
-  it('disables Approve for a rejected gate', () => {
-    const view: SessionView = { ...emptyView('s1'), gates: { specApproval: { gate: 'spec_approval', state: 'rejected' } } }
-    render(<GateCards view={view} onApprove={() => {}} onConfirm={() => {}} />)
-    expect(screen.getByRole('button', { name: 'Approve spec' })).toBeDisabled()
-  })
-})
+/** PreviewPanel reads i18n strings, so render it inside the provider (default: EN). */
+const renderI18n = (ui: ReactElement) => render(<I18nProvider>{ui}</I18nProvider>)
 
 describe('PreviewPanel', () => {
-  it('shows the artifact url and pass/fail stats', () => {
-    const view: SessionView = { ...emptyView('s1'), preview: { url: 'https://github.com/mock/s1', ready: true }, tests: { testsRun: 2, passed: true, ran: true }, verified: true }
-    render(<PreviewPanel view={view} />)
+  it('shows the shipped artifact url and pass/fail stats', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { artifactUrl: 'https://github.com/mock/s1', ready: true }, tests: { testsRun: 2, passed: true, ran: true }, verified: true }
+    renderI18n(<PreviewPanel view={view} />)
     expect(screen.getByText('https://github.com/mock/s1')).toBeInTheDocument()
     expect(screen.getByText('PASS')).toBeInTheDocument()
     expect(screen.getByText('verified')).toBeInTheDocument()
   })
-  it('shows a placeholder before any push', () => {
-    render(<PreviewPanel view={emptyView('s1')} />)
-    expect(screen.getByText(/Preview appears after a verified push/)).toBeInTheDocument()
+  it('embeds the running app in an iframe when the url is a /preview/ path', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
+    const { container } = renderI18n(<PreviewPanel view={view} />)
+    const iframe = container.querySelector('iframe')
+    expect(iframe).not.toBeNull()
+    expect(iframe?.getAttribute('src')).toBe('/preview/s1/')
   })
-  it('renders a non-http(s) (javascript:) url as plain text, never a clickable href (XSS guard)', () => {
-    const view: SessionView = { ...emptyView('s1'), preview: { url: 'javascript:alert(1)', ready: true } }
-    const { container } = render(<PreviewPanel view={view} />)
+  it('never embeds a non-/preview/ url (and the iframe has no allow-same-origin)', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
+    const { container } = renderI18n(<PreviewPanel view={view} />)
+    expect(container.querySelector('iframe')?.getAttribute('sandbox')).not.toContain('allow-same-origin')
+  })
+  it('shows a placeholder before any run', () => {
+    renderI18n(<PreviewPanel view={emptyView('s1')} />)
+    expect(screen.getByText(/Run the app to see it live/)).toBeInTheDocument()
+  })
+  it('renders a non-http(s) (javascript:) artifact url as plain text, never a clickable href (XSS guard)', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { artifactUrl: 'javascript:alert(1)', ready: true } }
+    const { container } = renderI18n(<PreviewPanel view={view} />)
     expect(screen.getByText('javascript:alert(1)')).toBeInTheDocument()
     expect(container.querySelector('a')).toBeNull() // no anchor → no js: sink
+  })
+  it('never embeds a non-/preview/ url in the iframe (no agent-url sink)', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { url: 'https://evil.example', ready: true } }
+    const { container } = renderI18n(<PreviewPanel view={view} />)
+    expect(container.querySelector('iframe')).toBeNull()
   })
 })

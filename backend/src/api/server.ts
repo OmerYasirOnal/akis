@@ -3,10 +3,16 @@ import { homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
+import { randomBytes } from 'node:crypto'
 import { registerProviderRoutes } from './providers.routes.js'
 import { registerSessionRoutes } from './sessions.routes.js'
 import { registerPreviewRoutes } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
+import { registerAuthRoutes } from './auth.routes.js'
+import { UserStore } from '../auth/UserStore.js'
+import { cookieConfigFromEnv } from '../auth/cookie.js'
+import { registerAnalyticsRoutes } from './analytics.routes.js'
+import { StatsCollector } from '../analytics/StatsCollector.js'
 import { WorkflowStore } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
@@ -29,10 +35,14 @@ export interface ServerDeps {
   skillsDir?: string
   /** Workflow preset store (in-memory by default; injectable for tests/persistence). */
   workflowStore?: WorkflowStore
+  /** User store for auth (in-memory by default; injectable for tests/persistence). */
+  userStore?: UserStore
 }
 
 const defaultSkillsDir = (): string =>
   resolve(dirname(fileURLToPath(import.meta.url)), '../skills/library')
+
+const flag = (v: string | undefined): boolean => v === '1' || v === 'true'
 
 /** Build the Fastify app with injected deps (testable via app.inject / listen). */
 export function buildServer(deps: ServerDeps): FastifyInstance {
@@ -49,15 +59,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       skillsDir: deps.skillsDir ?? defaultSkillsDir(),
       keyStore: deps.keyStore,
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
-      ...(env.AKIS_REAL_TESTS === '1' || env.AKIS_REAL_TESTS === 'true' ? { realTests: true } : {}),
-      ...(env.AKIS_RAG === '1' || env.AKIS_RAG === 'true' ? { rag: true } : {}),
-      // Keyless DEMO: run the whole loop on the deterministic mock provider (no API key)
-      // AND a passing mock test runner so a session reaches done+preview end-to-end.
-      // Explicit opt-in only — the default stays fail-closed (prod never auto-mocks /
-      // auto-verifies; verification still needs a real >=1-test pass without this flag).
-      ...(env.AKIS_ALLOW_MOCK === '1' || env.AKIS_ALLOW_MOCK === 'true'
-        ? { provider: new MockProvider(), testRunner: createMockTestRunner({ testsRun: 2, passed: true }) }
-        : {}),
+      ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true } : {}),
+      ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
+      // Keyless DEMO: run the loop on the deterministic mock provider (no API key).
+      ...(flag(env.AKIS_ALLOW_MOCK) ? { provider: new MockProvider() } : {}),
+      // Demo verification: a passing mock test runner so a session reaches done+preview
+      // WITHOUT real browsers — useful with REAL keys (real Claude output + a complete
+      // loop). Implied by AKIS_ALLOW_MOCK. Explicit opt-in only; the default stays
+      // fail-closed (real verification still needs AKIS_REAL_TESTS / a real >=1-test pass).
+      ...(flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY) ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     })
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
 
@@ -75,13 +85,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   // One shared workflow store (workflow CRUD + session-bound runs use the same one).
   const workflowStore = deps.workflowStore ?? new WorkflowStore()
-  const realTests = env.AKIS_REAL_TESTS === '1' || env.AKIS_REAL_TESTS === 'true'
+  const realTests = flag(env.AKIS_REAL_TESTS)
+  const demoVerify = flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY)
   // Build a per-session orchestrator that applies a saved workflow (F2-AC9/AC10),
   // sharing the same store + bus so the SSE stream and routes see its run.
   const makeOrchestrator = (wf: WorkflowConfig): Orchestrator => new Orchestrator(buildServices({
     store: services.store, bus: services.bus,
     skillsDir: deps.skillsDir ?? defaultSkillsDir(),
     ...(deps.keyStore ? { keyStore: deps.keyStore } : {}),
+    ...(flag(env.AKIS_ALLOW_MOCK) ? { provider: new MockProvider() } : {}),
+    ...(demoVerify ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     agentModels: workflowToAgentModels(wf),
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
@@ -89,11 +102,30 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(realTests ? { realTests: true } : {}),
   }))
 
+  // Auth: JWT-in-cookie (reusing AUTH_JWT_SECRET + AUTH_COOKIE_* from env). Fail CLOSED
+  // in production if no secret is set; in dev fall back to an ephemeral per-boot secret
+  // (with a clear warning) so local work isn't blocked — sessions just reset on restart
+  // and it is not multi-instance safe.
+  let authSecret = env.AUTH_JWT_SECRET
+  if (!authSecret) {
+    if (env.NODE_ENV === 'production') throw new Error('AUTH_JWT_SECRET is required in production')
+    authSecret = randomBytes(32).toString('hex')
+    // eslint-disable-next-line no-console
+    console.warn('auth: AUTH_JWT_SECRET unset — using an ephemeral per-boot secret (sessions reset on restart; not multi-instance safe)')
+  }
+  const userStore = deps.userStore ?? new UserStore()
+
+  // Aggregate run analytics via a single global bus tap (observability only).
+  const stats = new StatsCollector()
+  stats.attach(services.bus)
+
   app.get('/health', async () => ({ ok: true }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env })
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   registerWorkflowRoutes(app, { store: workflowStore })
+  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env) })
+  registerAnalyticsRoutes(app, { stats })
   return app
 }
 
