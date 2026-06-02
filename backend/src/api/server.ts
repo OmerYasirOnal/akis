@@ -29,6 +29,8 @@ import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
 import type { SessionStore } from '../store/SessionStore.js'
 import { registerStatic, staticServingEnabled, defaultStaticRoot } from './static.js'
+import { installGracefulShutdown } from './shutdown.js'
+import type { SqlClient } from '../store/pg.js'
 import { PreviewRegistry } from '../preview/PreviewRegistry.js'
 import { LocalDirectSandbox } from '../exec/Sandbox.js'
 import { MockProvider } from '../agent/providers/mock/MockProvider.js'
@@ -233,11 +235,13 @@ export function resolveListenHost(env: Record<string, string | undefined>): stri
 }
 
 /** The durable stores selected together when DATABASE_URL is set — built over ONE shared
- *  pool whose schema was migrated once. */
+ *  pool whose schema was migrated once. The pool itself is returned so graceful shutdown
+ *  can drain it on SIGTERM/SIGINT. */
 interface PgStores {
   userStore: UserStorePort
   sessionStore: SessionStore
   workflowStore: WorkflowStorePort
+  pool: SqlClient
 }
 
 /**
@@ -256,6 +260,7 @@ async function buildPgStores(connectionString: string): Promise<PgStores | undef
       userStore: createPgUserStoreWithClient(pool),
       sessionStore: new PgSessionStore(pool),
       workflowStore: new PgWorkflowStore(pool),
+      pool,
     }
   } catch (e) {
     // eslint-disable-next-line no-console
@@ -282,4 +287,15 @@ export async function start(): Promise<void> {
   await app.listen({ port, host })
   // eslint-disable-next-line no-console
   console.log(`AKIS backend on http://${host}:${port}`)
+
+  // Graceful shutdown: on `docker stop` / Ctrl-C, stop accepting connections and let
+  // in-flight requests drain (app.close), THEN close the shared Postgres pool, before
+  // exiting. Pool teardown is best-effort and last so a clean HTTP drain still happens
+  // even if the DB socket is already gone.
+  installGracefulShutdown({
+    close: async () => {
+      await app.close()
+      if (pg?.pool.end) await pg.pool.end()
+    },
+  })
 }
