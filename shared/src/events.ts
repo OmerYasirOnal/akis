@@ -9,7 +9,7 @@ export interface BaseEvent {
 
 export type AkisEvent =
   | (BaseEvent & { kind: 'session'; status: 'started' | 'failed' | 'done' })
-  | (BaseEvent & { kind: 'text'; text: string })
+  | (BaseEvent & { kind: 'text'; text: string; ephemeral?: boolean })   // ephemeral=true → shown live but NOT ingested into RAG (free-form/untrusted narration)
   | (BaseEvent & { kind: 'agent_start'; role: Role })
   | (BaseEvent & { kind: 'agent_end'; role: Role; ok: boolean })
   | (BaseEvent & { kind: 'tool_call'; tool: ToolName; args: unknown })

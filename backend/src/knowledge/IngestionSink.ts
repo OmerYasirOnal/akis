@@ -32,9 +32,12 @@ export class IngestionSink {
     return unsub
   }
 
-  /** Map an event to ingestible content, or null if it carries nothing to ingest. */
+  /** Map an event to ingestible content, or null if it carries nothing to ingest.
+   *  Ephemeral text (free-form/untrusted narration, e.g. advisory-agent notes) is
+   *  shown live but NEVER ingested — it must not become trusted RAG grounding that
+   *  is replayed into core-producer prompts (closes the advisory→RAG injection loop). */
   private toIngest(event: AkisEvent, sessionId: string, userId: string): IngestInput | null {
-    if (event.kind === 'text' && event.text.trim()) {
+    if (event.kind === 'text' && !event.ephemeral && event.text.trim()) {
       return { text: event.text, source: 'conversation', sourceId: sessionId, userId, sessionId, agent: event.agent }
     }
     return null

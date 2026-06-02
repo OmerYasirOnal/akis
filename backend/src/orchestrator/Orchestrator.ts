@@ -6,8 +6,7 @@ import { nextTs } from '../events/clock.js'
 import { assembleSharedContext } from '../context/assemble.js'
 import type { SharedContext } from '@akis/shared'
 import type { OrchestratorServices } from '../di/services.js'
-import { ToolRegistry } from '../agent/tools/ToolRegistry.js'
-import { retrieveKnowledgeTool } from '../agent/tools/retrieveKnowledgeTool.js'
+import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 
 export interface StartInput { idea: string }
@@ -42,8 +41,8 @@ const DEFAULT_MAX_ITERATE = 3
 export class Orchestrator {
   constructor(private s: OrchestratorServices) {}
 
-  private narrate(sessionId: string, text: string): void {
-    this.s.bus.emit({ kind: 'text', text, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
+  private narrate(sessionId: string, text: string, opts?: { ephemeral?: boolean }): void {
+    this.s.bus.emit({ kind: 'text', text, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs(), ...(opts?.ephemeral ? { ephemeral: true } : {}) })
   }
 
   private emitGate(sessionId: string, gate: 'spec_approval' | 'push_confirm', state: 'awaiting' | 'satisfied' | 'rejected'): void {
@@ -74,20 +73,19 @@ export class Orchestrator {
     if (!registry || registry.size === 0) return
     const ctx = await this.ctx(sessionId, objective)
     for (const { agent, capabilities } of registry.list()) {
-      // Per-agent tool registry: only the non-gate tools it declared that we support.
-      // (A gate tool can never be here — registration already rejected gate caps.)
-      const tools = new ToolRegistry()
-      if (capabilities.has('retrieve_knowledge')) {
-        tools.register(retrieveKnowledgeTool({ knowledge: this.s.knowledge, sessionId }))
-      }
+      // Per-agent tool registry: only the non-gate tools it declared that we support
+      // (a gate tool can never be here — registration already rejected gate caps).
+      const tools = buildAdvisoryTools(capabilities, { knowledge: this.s.knowledge, sessionId })
       try {
         const note = await agent.advise({
           sessionId, phase, objective, ctx, tools,
-          onTool: call => this.narrate(sessionId, `Advisory ${agent.role} used ${call.name}`),
+          // Advisory narration is EPHEMERAL: shown live but not ingested into RAG, so
+          // free-form/untrusted advisory text can never become trusted grounding.
+          onTool: call => this.narrate(sessionId, `Advisory ${agent.role} used ${call.name}`, { ephemeral: true }),
         })
-        this.narrate(sessionId, `💡 Advisory (${note.role}/${phase}): ${note.text}`)
+        this.narrate(sessionId, `💡 Advisory (${note.role}/${phase}): ${note.text}`, { ephemeral: true })
       } catch (e) {
-        this.narrate(sessionId, `Advisory (${agent.role}) skipped: ${e instanceof Error ? e.message : String(e)}`)
+        this.narrate(sessionId, `Advisory (${agent.role}) skipped: ${e instanceof Error ? e.message : String(e)}`, { ephemeral: true })
       }
     }
   }
