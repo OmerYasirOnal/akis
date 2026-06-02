@@ -15,6 +15,10 @@
  *  (`query(text, params) → { rows }`) and trivially faked in tests. */
 export interface SqlClient {
   query(text: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>
+  /** Optional pool teardown for graceful shutdown — a `pg.Pool` provides `.end()`,
+   *  which drains idle clients and closes sockets. Optional so the in-memory fakes
+   *  (and any non-pool client) need not implement it. */
+  end?(): Promise<void>
 }
 
 /** Idempotent DDL for the `users` table (the auth/oauth identity store). */
