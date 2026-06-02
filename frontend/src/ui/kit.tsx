@@ -44,14 +44,14 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className={`w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 placeholder:text-slate-600 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 ${className}`}
+      className={`w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 ${className}`}
       {...rest}
     />
   )
 }
 
 export function ErrorNote({ children }: { children: ReactNode }) {
-  return <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{children}</div>
+  return <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-300">{children}</div>
 }
 
 /** A stat tile used across Analytics / Settings for a unified dashboard look. */

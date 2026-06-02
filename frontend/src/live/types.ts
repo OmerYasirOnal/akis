@@ -58,6 +58,9 @@ export interface PreviewState {
 
 export type SessionStatus = 'started' | 'running' | 'done' | 'failed' | 'unknown'
 
+/** A selectable saved workflow preset (id + display name) for the build composer. */
+export interface WorkflowOption { id: string; name: string }
+
 /** The full live view of a session — a pure projection of its AkisEvent stream. */
 export interface SessionView {
   sessionId: string

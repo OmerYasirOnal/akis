@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ApiClient } from '../api/client.js'
-import { type WorkflowOption } from '../components/NewSessionForm.js'
+import { type WorkflowOption } from '../live/types.js'
 import { ChatStudio } from '../chat/ChatStudio.js'
 import { CosmicBackground } from '../components/CosmicBackground.js'
 import { AkisLogo } from '../components/AkisLogo.js'
@@ -53,21 +53,22 @@ function AppFrame({ api }: { api: ApiClient }) {
   return (
     <div className="relative min-h-screen text-slate-100">
       <CosmicBackground />
-      <div className="relative z-10 mx-auto max-w-6xl px-6 py-6">
-        <header className="mb-6 flex items-center justify-between gap-4">
+      <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 sm:px-6">
+        <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <Brand />
-          <nav className="flex items-center gap-1">
+          <nav className="order-3 flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto">
             <NavLink to="/" label={t('nav.dashboard')} />
             <NavLink to="/analytics" label={t('nav.analytics')} />
             <NavLink to="/settings" label={t('nav.settings')} />
             <NavLink to="/docs" label={t('nav.docs')} />
           </nav>
           <div className="flex items-center gap-2">
-            <button onClick={() => setLocale(locale === 'en' ? 'tr' : 'en')} className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-slate-300 hover:border-white/20">{locale.toUpperCase()}</button>
+            <button onClick={() => setLocale(locale === 'en' ? 'tr' : 'en')} aria-label={t('nav.toggleLanguage')}
+              className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-slate-300 hover:border-white/20">{locale.toUpperCase()}</button>
             <div className="hidden text-right sm:block">
               <div className="text-xs font-medium text-slate-200">{user?.name}</div>
             </div>
-            <button onClick={() => void logout()} title={t('nav.logout')}
+            <button onClick={() => void logout()} title={t('nav.logout')} aria-label={t('nav.logout')}
               className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-xs font-black text-slate-950">
               {(user?.name ?? '?').slice(0, 1).toUpperCase()}
             </button>

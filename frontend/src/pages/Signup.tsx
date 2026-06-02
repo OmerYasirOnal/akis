@@ -30,13 +30,13 @@ export function Signup() {
       footer={<>{t('auth.haveAccount')} <Link to="/login" className="font-semibold text-[#07D1AF] hover:underline">{t('auth.login.cta')}</Link></>}>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.name')}>
-          <Input autoComplete="name" aria-label="name" value={name} onChange={e => setName(e.target.value)} placeholder="Ada Lovelace" required />
+          <Input autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Ada Lovelace" required />
         </Field>
         <Field label={t('auth.email')}>
-          <Input type="email" autoComplete="email" aria-label="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
+          <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label={t('auth.password')} hint={t('auth.pwHint')}>
-          <Input type="password" autoComplete="new-password" aria-label="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <Input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
         <Button type="submit" full disabled={busy || !name || !email || password.length < 8}>{busy ? '…' : t('auth.signup.cta')}</Button>

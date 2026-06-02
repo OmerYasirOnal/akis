@@ -26,7 +26,9 @@ export function AuthProvider({ api, children }: { api: ApiClient; children: Reac
 
   const login = async (email: string, password: string): Promise<void> => { setUser((await api.login(email, password)).user) }
   const signup = async (name: string, email: string, password: string): Promise<void> => { setUser((await api.signup({ name, email, password })).user) }
-  const logout = async (): Promise<void> => { await api.logout(); setUser(null) }
+  // Clear local state even if the network/server call fails — never leave a user
+  // looking signed-in after a logout attempt.
+  const logout = async (): Promise<void> => { try { await api.logout() } finally { setUser(null) } }
 
   return <AuthCtx.Provider value={{ user, loading, login, signup, logout }}>{children}</AuthCtx.Provider>
 }

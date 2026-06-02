@@ -28,10 +28,10 @@ export function Login() {
       footer={<>{t('auth.noAccount')} <Link to="/signup" className="font-semibold text-[#07D1AF] hover:underline">{t('auth.signup.cta')}</Link></>}>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.email')}>
-          <Input type="email" autoComplete="email" aria-label="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
+          <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label={t('auth.password')}>
-          <Input type="password" autoComplete="current-password" aria-label="password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <Input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
         <Button type="submit" full disabled={busy || !email || !password}>{busy ? '…' : t('auth.login.cta')}</Button>

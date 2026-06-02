@@ -27,14 +27,14 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
           )}
           {onRun && canRun && (
             <button onClick={onRun} disabled={busy}
-              className="rounded-md border border-cyan-400/30 bg-cyan-400/10 px-2 py-0.5 text-xs text-cyan-200 hover:bg-cyan-400/20 disabled:opacity-40">
+              className="rounded-md border border-teal-400/30 bg-teal-400/10 px-2 py-0.5 text-xs text-teal-200 hover:bg-teal-400/20 disabled:opacity-40">
               {view.preview.starting ? t('preview.starting') : `▶ ${t('preview.run')}`}
             </button>
           )}
         </div>
       </div>
 
-      <div className="relative flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(56,189,248,0.08)_inset]">
+      <div className="relative flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
         {embeddable ? (
           // The framed app is UNTRUSTED agent-generated code served same-origin from
           // /preview/:id/. Deliberately NO allow-same-origin: that would let it reach
@@ -44,7 +44,7 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
           <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-popups" />
         ) : view.preview.starting ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
-            <span className="h-6 w-6 animate-spin rounded-full border-2 border-cyan-400/40 border-t-cyan-300" />
+            <span className="h-6 w-6 animate-spin rounded-full border-2 border-teal-400/40 border-t-teal-300" />
             <span className="text-xs text-slate-400">{t('preview.booting')}</span>
           </div>
         ) : (
@@ -52,7 +52,7 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
             <span className="text-sm text-slate-500">{t('preview.empty')}</span>
             {onRun && canRun && (
               <button onClick={onRun} disabled={busy}
-                className="mt-1 rounded-lg bg-gradient-to-r from-cyan-400 to-violet-500 px-3 py-1.5 text-sm font-semibold text-slate-900 disabled:opacity-40">
+                className="mt-1 rounded-lg bg-gradient-to-r from-teal-400 to-violet-500 px-3 py-1.5 text-sm font-semibold text-slate-900 disabled:opacity-40">
                 ▶ {t('preview.run')}
               </button>
             )}
@@ -64,7 +64,7 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
         <div className="truncate text-[11px] text-slate-500">
           {t('preview.shipped')}{' '}
           {artifactSafe
-            ? <a href={artifact} target="_blank" rel="noreferrer" className="text-cyan-300/80 underline">{artifact}</a>
+            ? <a href={artifact} target="_blank" rel="noreferrer" className="text-teal-300/80 underline">{artifact}</a>
             : <span className="text-slate-400">{artifact}</span>}
         </div>
       )}

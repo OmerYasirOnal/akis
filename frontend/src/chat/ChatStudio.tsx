@@ -5,7 +5,7 @@ import { useLiveChat } from './useLiveChat.js'
 import { ChatThread } from './ChatThread.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { AgentRoster } from '../components/AgentRoster.js'
-import type { WorkflowOption } from '../components/NewSessionForm.js'
+import type { WorkflowOption } from '../live/types.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 
 /**
@@ -70,24 +70,24 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
             ? <ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />
             : (
               <div className="flex h-full items-start gap-3">
-                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-cyan-400 to-violet-500 text-[10px] font-black text-slate-950">AK</div>
+                <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
                 <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-3 text-slate-200">{t('akis.greeting')}</div>
               </div>
             )}
-          {actionError && <div className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
+          {actionError && <div role="alert" className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
         </div>
 
         {/* Composer */}
         <form className="flex flex-wrap gap-2 border-t border-white/10 p-3" onSubmit={e => { e.preventDefault(); void send() }}>
           <input aria-label="idea" value={idea} onChange={e => setIdea(e.target.value)} placeholder={t('chat.placeholder')}
-            className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-100 placeholder:text-slate-600 focus:border-cyan-400 focus:outline-none" />
+            className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none" />
           {workflows.length > 0 && (
             <select aria-label="workflow" value={workflowId} onChange={e => setWorkflowId(e.target.value)} className="rounded-xl border border-white/10 bg-white/[0.04] px-2 py-2 text-sm text-slate-100">
               <option value="">{t('chat.defaultWorkflow')}</option>
               {workflows.map(w => <option key={w.id} value={w.id}>{w.name}</option>)}
             </select>
           )}
-          <button type="submit" disabled={busy || idea.trim() === ''} className="rounded-xl bg-gradient-to-r from-cyan-400 to-violet-500 px-4 py-2 font-semibold text-slate-900 shadow-[0_0_20px_rgba(34,211,238,0.35)] disabled:opacity-40">{t('chat.send')}</button>
+          <button type="submit" disabled={busy || idea.trim() === ''} className="rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 font-semibold text-slate-900 shadow-[0_0_20px_rgba(7,209,175,0.35)] disabled:opacity-40">{t('chat.send')}</button>
         </form>
       </section>
 

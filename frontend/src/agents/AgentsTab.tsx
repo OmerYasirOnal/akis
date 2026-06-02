@@ -18,7 +18,9 @@ export function AgentsTab({ api }: { api: ApiClient }) {
   const [saved, setSaved] = useState(false)
   const [busy, setBusy] = useState(false)
 
-  useEffect(() => { void api.listProviders().then(setProviders) }, [api])
+  // On failure, fall back to an empty list so the tab renders (no infinite "loading"
+  // and no unhandled rejection).
+  useEffect(() => { void api.listProviders().then(setProviders).catch(() => setProviders([])) }, [api])
 
   // Show every catalog provider (configured or not) so the user can pick a model and
   // add its key in Settings; availability is per-row info, not a hide filter.
