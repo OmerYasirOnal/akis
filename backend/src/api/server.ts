@@ -115,7 +115,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       keyStore: deps.keyStore,
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
       ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true } : {}),
-      ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
+      ...(flag(env.AKIS_RAG) ? { rag: true, env } : {}),
       ...(rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
       // Keyless DEMO: run the loop on the deterministic mock provider (no API key).
       // Gated by `useMock` so a configured real key wins over the demo flag.
@@ -156,7 +156,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     customAgents: workflowCustomAgents(wf),
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
-    ...(wf.rag !== undefined ? { rag: wf.rag } : {}),
+    // When this run enables RAG, thread env so AKIS_GITHUB_TOKEN selects the real reader.
+    ...(wf.rag !== undefined ? { rag: wf.rag, ...(wf.rag ? { env } : {}) } : {}),
     // rerank: the workflow's per-run knob wins (issue #7 AC3); else the env default.
     ...(wf.rerank !== undefined ? { rerank: wf.rerank } : rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
     ...(realTests ? { realTests: true } : {}),
