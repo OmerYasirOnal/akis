@@ -3,7 +3,7 @@ import { type WorkflowConfig, type SessionState, isVerified } from '@akis/shared
 import type { Orchestrator } from '../orchestrator/Orchestrator.js'
 import type { OrchestratorServices } from '../di/services.js'
 import type { SeqEvent } from '../events/bus.js'
-import type { WorkflowStore } from '../workflow/WorkflowStore.js'
+import type { WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { sseEvent, sseControl, sseComment } from './sse.js'
 
 export interface SessionsDeps {
@@ -12,7 +12,7 @@ export interface SessionsDeps {
   /** A session may be started bound to a saved workflow (F2-AC9/AC10): the route
    *  resolves it and builds a per-session orchestrator that applies its per-agent
    *  models + iterate budget + RAG, sharing the same store + bus. */
-  workflowStore?: WorkflowStore
+  workflowStore?: WorkflowStorePort
   makeOrchestrator?: (wf: WorkflowConfig) => Orchestrator
   /** Resolve the authenticated user id from a request (for per-user build history);
    *  returns undefined when unauthenticated. */
@@ -80,7 +80,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     let orch = orchestrator
     const workflowId = req.body?.workflowId
     if (workflowId && deps.workflowStore && deps.makeOrchestrator) {
-      const wf = deps.workflowStore.get(workflowId)
+      const wf = await deps.workflowStore.get(workflowId)
       if (!wf) return reply.code(404).send({ error: `workflow ${workflowId} not found`, code: 'NotFound' })
       orch = deps.makeOrchestrator(wf)
     }
