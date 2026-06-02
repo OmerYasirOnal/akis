@@ -18,7 +18,7 @@ import { registerChatRoutes } from './chat.routes.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
-import { WorkflowStore } from '../workflow/WorkflowStore.js'
+import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels, workflowCustomAgents } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
@@ -38,8 +38,9 @@ export interface ServerDeps {
   orchestrator?: Orchestrator
   /** Skills library dir; defaults to the bundled library next to the sources. */
   skillsDir?: string
-  /** Workflow preset store (in-memory by default; injectable for tests/persistence). */
-  workflowStore?: WorkflowStore
+  /** Workflow preset store (in-memory by default; injectable for tests/persistence —
+   *  a PgWorkflowStore when DATABASE_URL is set). */
+  workflowStore?: WorkflowStorePort
   /** User store for auth (in-memory by default; a PgUserStore when DATABASE_URL is set). */
   userStore?: UserStorePort
 }
