@@ -37,9 +37,10 @@ export interface ProviderInfo {
   updatedAt?: string
 }
 
-/** Typed error for non-2xx responses (gate 409s carry a `code`). */
+/** Typed error for non-2xx responses (gate 409s carry a `code`; workflow 400s carry the
+ *  `errors[]` field-level validation list from validateWorkflowConfig). */
 export class ApiError extends Error {
-  constructor(readonly status: number, message: string, readonly code?: string) {
+  constructor(readonly status: number, message: string, readonly code?: string, readonly errors?: string[]) {
     super(message)
     this.name = 'ApiError'
   }
@@ -138,8 +139,9 @@ export class ApiClient {
     const res = await this.fetchFn(this.baseUrl + path, { credentials: 'include', ...init })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) {
-      const b = body as { error?: string; code?: string }
-      throw new ApiError(res.status, b.error ?? `HTTP ${res.status}`, b.code)
+      const b = body as { error?: string; code?: string; errors?: unknown }
+      const errors = Array.isArray(b.errors) ? b.errors.filter((e): e is string => typeof e === 'string') : undefined
+      throw new ApiError(res.status, b.error ?? `HTTP ${res.status}`, b.code, errors)
     }
     return body as T
   }
