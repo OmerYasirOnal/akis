@@ -119,6 +119,16 @@ export function createProvider(opts: CreateProviderOpts = {}): LlmProvider {
   if (!real) {
     real = apiKey ? detectProviderFromKey(apiKey) : anyKey(env)?.provider
   }
+  // No env key / forced provider, but a provider may be configured ONLY via the KeyStore
+  // (the Settings UI saves a key with no env var). hasRealProviderKey counts such a key —
+  // disabling the keyless mock — so createProvider MUST resolve the provider from the
+  // KeyStore too, or boot would disable the mock yet fail to build a provider. Mirror
+  // hasRealProviderKey's KeyStore scan (same CATALOG order) to keep the two consistent.
+  if (!real && opts.keyStore) {
+    for (const provider of Object.keys(CATALOG) as RealProvider[]) {
+      if (opts.keyStore.get(provider)) { real = provider; break }
+    }
+  }
   if (!real) {
     throw new ProviderConfigError('No AI provider configured. Set ANTHROPIC_API_KEY (or another provider key) in env or the KeyStore, or pass allowMock for the mock.')
   }
