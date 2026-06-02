@@ -13,7 +13,13 @@ afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
 function app(env: Record<string, string | undefined> = {}) {
   const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
-  return buildServer({ keyStore, env })
+  return buildServer({ keyStore, env: { AUTH_JWT_SECRET: 'providers-test-secret', ...env } })
+}
+
+/** Sign up to obtain a session cookie (provider-key writes require auth). */
+async function authCookie(server: ReturnType<typeof app>): Promise<string> {
+  const res = await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Op', email: 'op@akis.dev', password: 'operator1234' } })
+  return (res.headers['set-cookie'] as string).split(';')[0]!
 }
 
 describe('provider endpoints', () => {
@@ -32,8 +38,8 @@ describe('provider endpoints', () => {
   })
 
   it('PUT stores a key (last4 only, never echoes), GET then shows available, DELETE removes', async () => {
-    const a = app()
-    const put = await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: 'sk-ant-12345' } })
+    const a = app(); const cookie = await authCookie(a)
+    const put = await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: 'sk-ant-12345' }, headers: { cookie } })
     expect(put.statusCode).toBe(200)
     expect(put.json().last4).toBe('2345')
     expect(JSON.stringify(put.json())).not.toContain('sk-ant-12345')
@@ -41,19 +47,25 @@ describe('provider endpoints', () => {
     const after = (await a.inject({ method: 'GET', url: '/api/providers' })).json()
     expect(after.find((p: { id: string }) => p.id === 'anthropic').available).toBe(true)
 
-    const del = await a.inject({ method: 'DELETE', url: '/api/providers/anthropic/key' })
+    const del = await a.inject({ method: 'DELETE', url: '/api/providers/anthropic/key', headers: { cookie } })
     expect(del.statusCode).toBe(200)
   })
 
-  it('rejects an unknown provider and an empty key', async () => {
+  it('requires authentication to write a provider key (401 without a session)', async () => {
     const a = app()
-    expect((await a.inject({ method: 'PUT', url: '/api/providers/nope/key', payload: { apiKey: 'x' } })).statusCode).toBe(400)
-    expect((await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: '  ' } })).statusCode).toBe(400)
+    expect((await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: 'sk-ant-x' } })).statusCode).toBe(401)
+    expect((await a.inject({ method: 'DELETE', url: '/api/providers/anthropic/key' })).statusCode).toBe(401)
+  })
+
+  it('rejects an unknown provider and an empty key', async () => {
+    const a = app(); const cookie = await authCookie(a)
+    expect((await a.inject({ method: 'PUT', url: '/api/providers/nope/key', payload: { apiKey: 'x' }, headers: { cookie } })).statusCode).toBe(400)
+    expect((await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: '  ' }, headers: { cookie } })).statusCode).toBe(400)
   })
 
   it('GET never leaks the full stored key (only last4)', async () => {
-    const a = app()
-    await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: 'sk-ant-SUPERSECRET-9999' } })
+    const a = app(); const cookie = await authCookie(a)
+    await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: 'sk-ant-SUPERSECRET-9999' }, headers: { cookie } })
     const body = (await a.inject({ method: 'GET', url: '/api/providers' })).body
     expect(body).not.toContain('SUPERSECRET')
     expect(body).toContain('9999') // last4 only

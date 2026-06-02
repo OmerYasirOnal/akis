@@ -8,7 +8,7 @@ import { registerProviderRoutes } from './providers.routes.js'
 import { registerSessionRoutes } from './sessions.routes.js'
 import { registerPreviewRoutes } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
-import { registerAuthRoutes } from './auth.routes.js'
+import { registerAuthRoutes, userIdFromRequest } from './auth.routes.js'
 import { UserStore, type UserStorePort } from '../auth/UserStore.js'
 import { createPgUserStore } from '../auth/PgUserStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
@@ -129,13 +129,19 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const stats = new StatsCollector()
   stats.attach(services.bus)
 
+  const cookie = cookieConfigFromEnv(env)
+  // A valid-session guard reused to protect provider-key writes.
+  const hasSession = (req: Parameters<typeof userIdFromRequest>[0]): boolean => {
+    try { userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }); return true } catch { return false }
+  }
+
   app.get('/health', async () => ({ ok: true }))
-  void registerProviderRoutes(app, { keyStore: deps.keyStore, env })
+  void registerProviderRoutes(app, { keyStore: deps.keyStore, env, requireAuth: hasSession })
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   registerWorkflowRoutes(app, { store: workflowStore })
-  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env), devEcho: env.NODE_ENV !== 'production' })
-  registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie: cookieConfigFromEnv(env), env })
+  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie, devEcho: env.NODE_ENV !== 'production' })
+  registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env })
   registerAnalyticsRoutes(app, { stats })
   registerChatRoutes(app, { provider: services.provider })
   return app

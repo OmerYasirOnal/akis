@@ -1,10 +1,13 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { KeyStore } from '../keys/KeyStore.js'
 import { CATALOG, REAL_PROVIDERS, type ProviderId } from '../agent/providers/catalog.js'
 
 export interface ProvidersDeps {
   keyStore: KeyStore
   env: Record<string, string | undefined>
+  /** Optional auth guard for write endpoints: returns true if the request is a valid
+   *  session. When provided, setting/removing a provider key requires authentication. */
+  requireAuth?: (req: FastifyRequest) => boolean
 }
 
 function envKeyPresent(env: Record<string, string | undefined>, provider: Exclude<ProviderId, 'mock'>): boolean {
@@ -37,6 +40,7 @@ export async function registerProviderRoutes(app: FastifyInstance, deps: Provide
   app.put<{ Params: { provider: string }; Body: { apiKey?: string } }>(
     '/api/providers/:provider/key',
     async (req, reply) => {
+      if (deps.requireAuth && !deps.requireAuth(req)) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
       const provider = req.params.provider
       if (!(REAL_PROVIDERS as string[]).includes(provider)) {
         return reply.code(400).send({ error: 'unknown provider' })
@@ -51,6 +55,7 @@ export async function registerProviderRoutes(app: FastifyInstance, deps: Provide
   app.delete<{ Params: { provider: string } }>(
     '/api/providers/:provider/key',
     async (req, reply) => {
+      if (deps.requireAuth && !deps.requireAuth(req)) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
       const provider = req.params.provider
       if (!(REAL_PROVIDERS as string[]).includes(provider)) {
         return reply.code(400).send({ error: 'unknown provider' })
