@@ -3,9 +3,12 @@
  *
  * Home of the {@link SqlClient} interface (the minimal `query(text, params?) → { rows }`
  * shape every Pg store depends on, trivially faked in tests), a LAZY `pg` pool
- * factory, and the idempotent schema migrations. Nothing here imports the real `pg`
- * package at module-load: `pg` is an OPTIONAL runtime dependency, only required when
- * DATABASE_URL is set. The in-memory default builds and runs with `pg` NOT installed.
+ * factory, and the idempotent schema migrations. `pg` is shipped as a `dependency`
+ * (the self-host image needs it), but it is imported LAZILY (via a non-literal
+ * specifier) and only when DATABASE_URL is set — so it is never loaded on the
+ * in-memory default path, tsc never resolves it at build time, and a pruned/library
+ * install WITHOUT `pg` still builds and runs (the factory throws a clear error only if
+ * a connection is actually attempted without it).
  */
 
 /** The minimal client shape the Pg stores need — satisfied by a `pg` Pool/Client
