@@ -19,6 +19,7 @@ export interface PreviewEntry {
   port?: number
   url?: string        // same-origin proxy path the FE iframe embeds
   dir: string
+  type?: AppType      // how it's served — 'static' is served from `dir`, no process/port
   reason?: string
 }
 
@@ -77,8 +78,13 @@ export class PreviewRegistry {
 
   async start(sessionId: string, dir: string, type: AppType): Promise<PreviewEntry> {
     await this.stop(sessionId) // replace any prior preview for this session
+    // Static apps need no install or process: serve the materialized files directly
+    // through the proxy. Instant + the smallest attack surface (no agent code runs).
+    if (type === 'static') {
+      return this.set({ sessionId, status: 'ready', dir, type, url: `/preview/${sessionId}/` })
+    }
     const spec = startSpec(type, 0)
-    if (!spec) { await teardown(dir).catch(() => {}); return this.set({ sessionId, status: 'unsupported', dir, reason: `app type '${type}' not previewable` }) }
+    if (!spec) { await teardown(dir).catch(() => {}); return this.set({ sessionId, status: 'unsupported', dir, type, reason: `app type '${type}' not previewable` }) }
 
     this.set({ sessionId, status: 'starting', dir })
     const install = installSpec()
@@ -114,5 +120,11 @@ export class PreviewRegistry {
   portFor(sessionId: string): number | undefined {
     const e = this.entries.get(sessionId)
     return e?.status === 'ready' ? e.port : undefined
+  }
+
+  /** Materialized dir for a ready STATIC preview (served from disk, no port). */
+  staticDirFor(sessionId: string): string | undefined {
+    const e = this.entries.get(sessionId)
+    return e?.status === 'ready' && e.type === 'static' ? e.dir : undefined
   }
 }

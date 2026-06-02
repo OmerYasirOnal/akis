@@ -60,8 +60,9 @@ describe('foldSessionView (pure live view-model)', () => {
     ]
     const v = foldSessionView('s1', events)
     expect(v.tests).toMatchObject({ testsRun: 3, passed: true, ran: true })
-    expect(v.preview.url).toBe('https://github.com/mock/s1')
-    expect(v.preview.ready).toBe(true)
+    // A `preview` event is the SHIPPED artifact (a link), not the running app.
+    expect(v.preview.artifactUrl).toBe('https://github.com/mock/s1')
+    expect(v.preview.url).toBeUndefined()
     expect(v.errors.some(e => e.includes('boom'))).toBe(true)
     expect(v.errors.some(e => e.includes('push failed'))).toBe(true)
     expect(v.status).toBe('done')
@@ -75,7 +76,7 @@ describe('foldSessionView (pure live view-model)', () => {
       ev({ kind: 'test_stats', built: 4, running: 4, passed: 4, failed: 0, durationMs: 1200 }),
       ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
     ])
-    expect(v.preview).toEqual({ ready: true, url: '/preview/s1/' })
+    expect(v.preview).toEqual({ ready: true, starting: false, url: '/preview/s1/' })
     expect(v.tests.ran).toBe(true)
     expect(v.tests.scenariosBuilt).toBe(4)
     expect(v.tests.scenariosRunning).toBe(4)

@@ -34,6 +34,14 @@ describe('createProvider — fail-closed (X-AC6 / CF6)', () => {
     const p = createProvider({ env: { ANTHROPIC_API_KEY: 'sk-ant-x', NODE_ENV: 'production' } })
     expect(p.name).toBe('anthropic')
   })
+  it('honors the generic AI_PROVIDER + AI_API_KEY + AI_MODEL scheme (BYO .env)', () => {
+    const p = createProvider({ env: { AI_PROVIDER: 'anthropic', AI_API_KEY: 'sk-ant-x', AI_MODEL: 'claude-opus-4-8', NODE_ENV: 'production' } })
+    expect(p.name).toBe('anthropic')
+    expect(p.model).toBe('claude-opus-4-8')
+  })
+  it('does NOT apply AI_API_KEY without a named provider (no wrong-provider key)', () => {
+    expect(() => createProvider({ env: { AI_API_KEY: 'somekey', NODE_ENV: 'production' } })).toThrow(ProviderConfigError)
+  })
   it('auto-detects provider from a present key (non-test)', () => {
     expect(createProvider({ env: { OPENAI_API_KEY: 'sk-proj-x', NODE_ENV: 'production' } }).name).toBe('openai')
     expect(createProvider({ env: { GEMINI_API_KEY: 'AIza-x', NODE_ENV: 'production' } }).name).toBe('google')
