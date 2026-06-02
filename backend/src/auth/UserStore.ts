@@ -27,5 +27,10 @@ export class UserStore {
   }
   async findByEmail(email: string): Promise<AuthUser | undefined> { return this.byEmail.get(email.trim().toLowerCase()) }
   async findById(id: string): Promise<AuthUser | undefined> { return this.byId.get(id) }
+  /** Replace a user's password hash (password reset). No-op if the id is unknown. */
+  async updatePassword(id: string, passwordHash: string): Promise<void> {
+    const u = this.byId.get(id)
+    if (u) u.passwordHash = passwordHash
+  }
   count(): number { return this.byId.size }
 }

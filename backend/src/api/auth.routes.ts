@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { UserStore, EmailTakenError, toPublic, type PublicUser } from '../auth/UserStore.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
-import { signJwt, verifyJwt, JwtError } from '../auth/jwt.js'
+import { signJwt, verifyJwt, signResetToken, verifyResetToken, JwtError } from '../auth/jwt.js'
 import { serializeCookie, parseCookies, type CookieConfig } from '../auth/cookie.js'
 
 export interface AuthDeps {
@@ -9,6 +9,9 @@ export interface AuthDeps {
   /** HS256 signing secret (AUTH_JWT_SECRET). */
   secret: string
   cookie: CookieConfig
+  /** Dev convenience: echo the password-reset token/link in the response (no email
+   *  service). MUST be false in production (would leak a reset capability). */
+  devEcho?: boolean
 }
 
 export class UnauthorizedError extends Error { constructor() { super('unauthorized'); this.name = 'UnauthorizedError' } }
@@ -80,5 +83,32 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     // Expire the cookie (Max-Age 0) with the same attributes so it actually clears.
     reply.header('set-cookie', serializeCookie(deps.cookie.name, '', { ...deps.cookie, maxAgeMs: 0, httpOnly: true }))
     return reply.send({ ok: true })
+  })
+
+  app.post<{ Body: { email?: unknown } }>('/auth/forgot-password', async (req, reply) => {
+    const email = isStr(req.body?.email) ? req.body.email.trim() : ''
+    // Always the SAME generic response whether or not the email exists (no enumeration).
+    const generic: Record<string, unknown> = { message: 'If that email has an account, a reset link has been sent.' }
+    if (!EMAIL_RE.test(email)) return reply.send(generic)
+    const user = await deps.users.findByEmail(email)
+    if (user) {
+      const token = signResetToken(user.id, deps.secret) // 15-min, purpose-scoped
+      // No email service here: in DEV, echo the link so the flow is usable. NEVER in prod.
+      if (deps.devEcho) { generic.resetToken = token; generic.resetUrl = `/reset-password?token=${encodeURIComponent(token)}` }
+    }
+    return reply.send(generic)
+  })
+
+  app.post<{ Body: { token?: unknown; password?: unknown } }>('/auth/reset-password', async (req, reply) => {
+    const token = isStr(req.body?.token) ? req.body.token : ''
+    const password = isStr(req.body?.password) ? req.body.password : ''
+    if (password.length < 8) return reply.code(400).send({ error: 'password must be at least 8 characters', code: 'WeakPassword' })
+    let sub: string
+    try { sub = verifyResetToken(token, deps.secret).sub } catch { return reply.code(400).send({ error: 'invalid or expired reset link', code: 'BadToken' }) }
+    const user = await deps.users.findById(sub)
+    if (!user) return reply.code(400).send({ error: 'invalid or expired reset link', code: 'BadToken' })
+    await deps.users.updatePassword(user.id, await hashPassword(password))
+    setSession(reply, toPublic(user), deps) // reset succeeds → sign the user in
+    return reply.send({ user: toPublic(user) })
   })
 }

@@ -32,12 +32,16 @@ export function Button({ variant = 'primary', full, className = '', ...rest }: B
 }
 
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
+  // The hint lives OUTSIDE the <label> so it doesn't pollute the control's accessible
+  // name (the label text alone names the input).
   return (
-    <label className="block">
-      <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">{label}</span>
-      {children}
+    <div>
+      <label className="block">
+        <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">{label}</span>
+        {children}
+      </label>
       {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
-    </label>
+    </div>
   )
 }
 
