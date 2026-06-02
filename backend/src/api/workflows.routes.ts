@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify'
 import type { WorkflowConfigInput } from '@akis/shared'
-import type { WorkflowStore } from '../workflow/WorkflowStore.js'
+import type { WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { validateWorkflowConfig } from '../workflow/validate.js'
 
-export interface WorkflowsDeps { store: WorkflowStore }
+export interface WorkflowsDeps { store: WorkflowStorePort }
 
 /**
  * Workflow preset CRUD. POST validates against the catalog + the role/gate matrix
@@ -16,7 +16,7 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowsDeps
 
   app.get<{ Params: { id: string }; Querystring: { version?: string } }>('/api/workflows/:id', async (req, reply) => {
     const version = req.query.version !== undefined ? Number.parseInt(req.query.version, 10) : undefined
-    const wf = deps.store.get(req.params.id, Number.isFinite(version as number) ? version : undefined)
+    const wf = await deps.store.get(req.params.id, Number.isFinite(version as number) ? version : undefined)
     if (!wf) return reply.code(404).send({ error: 'workflow not found', code: 'NotFound' })
     return wf
   })
@@ -25,6 +25,6 @@ export function registerWorkflowRoutes(app: FastifyInstance, deps: WorkflowsDeps
     const input = req.body
     const result = validateWorkflowConfig(input)
     if (!result.ok) return reply.code(400).send({ error: 'invalid workflow', code: 'Invalid', errors: result.errors })
-    return reply.code(201).send(deps.store.save(input))
+    return reply.code(201).send(await deps.store.save(input))
   })
 }

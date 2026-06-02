@@ -1,11 +1,10 @@
 import { randomUUID } from 'node:crypto'
 import { type AuthUser, type UserStorePort, EmailTakenError } from './UserStore.js'
+import { type SqlClient, createPgPool, runMigrations } from '../store/pg.js'
 
-/** The minimal client shape PgUserStore needs — satisfied by a `pg` Pool/Client
- *  (`query(text, params) → { rows }`) and trivially faked in tests. */
-export interface SqlClient {
-  query(text: string, params?: unknown[]): Promise<{ rows: Array<Record<string, unknown>> }>
-}
+/** Re-exported from the shared Pg seam (store/pg.ts) for backward compatibility —
+ *  callers and tests that import `SqlClient` from here keep working. */
+export type { SqlClient }
 
 interface Row { id: string; name: string; email: string; password_hash: string; created_at: string | Date; external_id?: string | null }
 const toUser = (r: Row): AuthUser => ({
@@ -15,18 +14,6 @@ const toUser = (r: Row): AuthUser => ({
 })
 const norm = (e: string): string => e.trim().toLowerCase()
 const PG_UNIQUE_VIOLATION = '23505'
-
-export const CREATE_USERS_TABLE = `
-CREATE TABLE IF NOT EXISTS users (
-  id            text PRIMARY KEY,
-  name          text NOT NULL,
-  email         text NOT NULL UNIQUE,
-  password_hash text NOT NULL DEFAULT '',
-  external_id   text UNIQUE,
-  created_at    timestamptz NOT NULL DEFAULT now()
-)`
-/** Idempotent migration for pre-existing tables (added in the OAuth-identity fix). */
-export const ADD_EXTERNAL_ID = `ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id text`
 
 /**
  * Postgres-backed user store (the DB seam behind UserStorePort). Email is the unique
@@ -97,23 +84,20 @@ export class PgUserStore implements UserStorePort {
   }
 }
 
+/** Wrap an already-built SqlClient (the shared pool) in a PgUserStore. Used by the DI
+ *  container so users + sessions + workflows all share ONE pool whose schema was
+ *  migrated once via runMigrations — no second pool, no re-running migrations here. */
+export function createPgUserStoreWithClient(db: SqlClient): PgUserStore {
+  return new PgUserStore(db)
+}
+
 /**
- * Build a PgUserStore from a connection string: lazily import `pg` (so it's only a
- * runtime requirement when DATABASE_URL is set), create a Pool, ensure the schema,
+ * Build a PgUserStore from a connection string: lazily create the shared pool (only a
+ * runtime requirement when DATABASE_URL is set), ensure the schema via runMigrations,
  * and return the store. Throws a clear error if `pg` isn't installed.
  */
 export async function createPgUserStore(connectionString: string): Promise<PgUserStore> {
-  let pg: { Pool: new (cfg: { connectionString: string }) => SqlClient }
-  try {
-    // Non-literal specifier: `pg` is an OPTIONAL runtime dependency, so tsc must not
-    // try to resolve it at build time (it's only needed when DATABASE_URL is set).
-    const spec = 'pg'
-    pg = (await import(spec)) as unknown as { Pool: new (cfg: { connectionString: string }) => SqlClient }
-  } catch {
-    throw new Error('DATABASE_URL is set but the `pg` package is not installed (run: pnpm -C backend add pg)')
-  }
-  const pool = new pg.Pool({ connectionString })
-  await pool.query(CREATE_USERS_TABLE)
-  await pool.query(ADD_EXTERNAL_ID) // migrate pre-existing tables
-  return new PgUserStore(pool)
+  const pool = await createPgPool(connectionString)
+  await runMigrations(pool)
+  return createPgUserStoreWithClient(pool)
 }
