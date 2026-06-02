@@ -39,3 +39,35 @@ describe('per-user build history', () => {
     expect((await s.inject({ method: 'GET', url: '/sessions/mine', headers: { cookie: bo } })).json()).toEqual([])
   })
 })
+
+describe('owned sessions are private (no cross-user IDOR)', () => {
+  it("a different / anonymous caller cannot read, drive, or stream another user's owned build", async () => {
+    const s = app()
+    const ada = cookieOf(await signup(s, 'ada2@akis.dev'))
+    const bo = cookieOf(await signup(s, 'bo2@akis.dev'))
+    const id = (await s.inject({ method: 'POST', url: '/sessions', payload: { idea: 'ada private app' }, headers: { cookie: ada } })).json().id
+
+    const routes = [
+      { method: 'GET' as const, url: `/sessions/${id}` },
+      { method: 'POST' as const, url: `/sessions/${id}/approve` },
+      { method: 'GET' as const, url: `/sessions/${id}/log` },
+      { method: 'GET' as const, url: `/sessions/${id}/events` }, // 404 fires before SSE hijack
+    ]
+    for (const route of routes) {
+      expect((await s.inject({ ...route, headers: { cookie: bo } })).statusCode).toBe(404) // a different authed user
+      expect((await s.inject(route)).statusCode).toBe(404)                                  // an unauthenticated caller
+    }
+    // The owner keeps full access.
+    expect((await s.inject({ method: 'GET', url: `/sessions/${id}`, headers: { cookie: ada } })).statusCode).toBe(200)
+    expect((await s.inject({ method: 'GET', url: `/sessions/${id}/log`, headers: { cookie: ada } })).statusCode).toBe(200)
+  })
+
+  it('an anonymous (unauthenticated) session stays open — backward compatible', async () => {
+    const s = app()
+    const created = await s.inject({ method: 'POST', url: '/sessions', payload: { idea: 'anon app' } })
+    const id = created.json().id
+    expect(created.json().ownerId).toBeUndefined()
+    expect((await s.inject({ method: 'GET', url: `/sessions/${id}` })).statusCode).toBe(200)
+    expect((await s.inject({ method: 'GET', url: `/sessions/${id}/log` })).statusCode).toBe(200)
+  })
+})
