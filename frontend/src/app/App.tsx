@@ -9,6 +9,7 @@ import { DocsPage } from '../pages/DocsPage.js'
 import { SettingsPage } from '../pages/SettingsPage.js'
 import { Login } from '../pages/Login.js'
 import { Signup } from '../pages/Signup.js'
+import { Landing } from '../pages/Landing.js'
 import { I18nProvider, useI18n } from '../i18n/I18nContext.js'
 import { RouterProvider, useRouter, Link, Navigate } from '../router/router.js'
 import { AuthProvider, useAuth } from '../auth/AuthContext.js'
@@ -104,13 +105,30 @@ function Loader() {
   )
 }
 
+/** Public Docs view (anon) — a minimal branded header over the shared DocsPage. */
+function PublicDocs() {
+  const { t } = useI18n()
+  return (
+    <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
+      <header className="mb-8 flex items-center justify-between">
+        <Link to="/" className="flex items-center gap-3">
+          <AkisLogo size={30} className="drop-shadow-[0_0_14px_rgba(7,209,175,0.5)]" />
+          <span className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-sm font-extrabold text-transparent">{t('app.title')}</span>
+        </Link>
+        <Link to="/login" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-slate-200 hover:border-white/20">{t('landing.cta.signin')}</Link>
+      </header>
+      <DocsPage />
+    </div>
+  )
+}
+
 function Shell({ api }: { api: ApiClient }) {
   const { user, loading } = useAuth()
   const { path } = useRouter()
   if (loading) return <Loader />
   if (path === '/login') return user ? <Navigate to="/" /> : <PublicFrame><Login /></PublicFrame>
   if (path === '/signup') return user ? <Navigate to="/" /> : <PublicFrame><Signup /></PublicFrame>
-  if (!user) return <PublicFrame><Navigate to="/login" /></PublicFrame>
+  if (!user) return <PublicFrame>{path === '/docs' ? <PublicDocs /> : <Landing />}</PublicFrame>
   return <AppFrame api={api} />
 }
 
