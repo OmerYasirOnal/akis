@@ -7,11 +7,13 @@ const cap = (s: string): string => s.charAt(0).toUpperCase() + s.slice(1)
  *  with safe defaults for local dev. */
 export function cookieConfigFromEnv(env: NodeJS.ProcessEnv): CookieConfig {
   const ss = (env.AUTH_COOKIE_SAMESITE ?? '').toLowerCase()
+  const sameSite: SameSite = ss === 'strict' || ss === 'none' ? (ss as SameSite) : 'lax'
   return {
     name: env.AUTH_COOKIE_NAME || 'akis_session',
     maxAgeMs: Number(env.AUTH_COOKIE_MAXAGE) || 604800000, // 7d
-    secure: env.AUTH_COOKIE_SECURE === 'true',
-    sameSite: ss === 'strict' || ss === 'none' ? (ss as SameSite) : 'lax',
+    // SameSite=None cookies MUST be Secure or browsers drop them — force it.
+    secure: env.AUTH_COOKIE_SECURE === 'true' || sameSite === 'none',
+    sameSite,
     ...(env.AUTH_COOKIE_DOMAIN ? { domain: env.AUTH_COOKIE_DOMAIN } : {}),
   }
 }
@@ -36,7 +38,11 @@ export function parseCookies(header: string | undefined): Record<string, string>
     const i = part.indexOf('=')
     if (i <= 0) continue
     const k = part.slice(0, i).trim()
-    if (k) out[k] = decodeURIComponent(part.slice(i + 1).trim())
+    if (!k) continue
+    const raw = part.slice(i + 1).trim()
+    // Tolerate malformed percent-encoding (e.g. "%zz") on an attacker-controlled
+    // header: fall back to the raw value rather than throwing into the caller.
+    try { out[k] = decodeURIComponent(raw) } catch { out[k] = raw }
   }
   return out
 }

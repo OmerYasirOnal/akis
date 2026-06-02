@@ -84,4 +84,24 @@ describe('auth routes', () => {
     const res = await app().inject({ method: 'GET', url: '/auth/me', headers: { cookie: 'akis_session=not.a.jwt' } })
     expect(res.statusCode).toBe(401)
   })
+
+  it('fails closed in production when AUTH_JWT_SECRET is missing', () => {
+    const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
+    expect(() => buildServer({ keyStore, env: { NODE_ENV: 'production' } })).toThrow(/AUTH_JWT_SECRET/)
+  })
+
+  it('login runs equal work for unknown email vs wrong password (no timing oracle)', async () => {
+    const server = app()
+    await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'known@akis.dev', password: 'hunter2hunter' } })
+    const t = async (email: string): Promise<number> => {
+      const start = performance.now()
+      await server.inject({ method: 'POST', url: '/auth/login', payload: { email, password: 'definitely-wrong-pw' } })
+      return performance.now() - start
+    }
+    const known = await t('known@akis.dev')   // wrong password on a real account
+    const unknown = await t('ghost@akis.dev')  // no such account
+    // Both run one scrypt compare; allow generous slack (CI jitter) — the point is the
+    // unknown path is NOT trivially fast (which it was before the dummy-hash fix).
+    expect(unknown).toBeGreaterThan(known * 0.25)
+  })
 })

@@ -38,5 +38,6 @@ export function verifyJwt(token: string, secret: string, now = nowSec()): JwtCla
   try { claims = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as JwtClaims } catch { throw new JwtError('bad payload') }
   if (typeof claims.exp !== 'number' || claims.exp < now) throw new JwtError('expired')
   if (typeof claims.sub !== 'string' || !claims.sub) throw new JwtError('no subject')
+  if (typeof claims.email !== 'string' || typeof claims.name !== 'string') throw new JwtError('bad claims')
   return claims
 }

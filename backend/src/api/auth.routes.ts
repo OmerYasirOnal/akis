@@ -16,6 +16,12 @@ export class UnauthorizedError extends Error { constructor() { super('unauthoriz
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
 const isStr = (v: unknown): v is string => typeof v === 'string'
 
+// A fixed dummy hash so the unknown-email login path still runs one scrypt compare —
+// closing the timing side channel that would otherwise reveal which emails exist.
+// Computed once, lazily (so importing this module costs nothing).
+let dummyHashP: Promise<string> | undefined
+const dummyHash = (): Promise<string> => (dummyHashP ??= hashPassword('timing-equalizer-not-a-real-password'))
+
 /** Resolve the authenticated user id from the session cookie, or throw Unauthorized.
  *  Exported so other protected routes can guard with the same logic. */
 export function userIdFromRequest(req: FastifyRequest, deps: AuthDeps): string {
@@ -51,8 +57,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     const email = isStr(req.body?.email) ? req.body.email.trim() : ''
     const password = isStr(req.body?.password) ? req.body.password : ''
     const user = await deps.users.findByEmail(email)
-    // Same response for unknown-email and wrong-password (no account enumeration).
-    if (!user || !(await verifyPassword(password, user.passwordHash))) {
+    // Same response AND same work for unknown-email and wrong-password: always run one
+    // scrypt compare (against a dummy hash when the email is unknown) so neither the
+    // body, the status, nor the response TIME reveals whether an account exists.
+    const ok = await verifyPassword(password, user?.passwordHash ?? await dummyHash())
+    if (!user || !ok) {
       return reply.code(401).send({ error: 'invalid email or password', code: 'BadCredentials' })
     }
     setSession(reply, toPublic(user), deps)

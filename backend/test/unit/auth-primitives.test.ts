@@ -61,6 +61,14 @@ describe('cookie helpers', () => {
     const c = cookieConfigFromEnv({ AUTH_COOKIE_NAME: 'sess', AUTH_COOKIE_SECURE: 'true', AUTH_COOKIE_SAMESITE: 'strict' })
     expect(c.name).toBe('sess'); expect(c.secure).toBe(true); expect(c.sameSite).toBe('strict')
   })
+  it('forces Secure when SameSite=None (browsers drop None without Secure)', () => {
+    const c = cookieConfigFromEnv({ AUTH_COOKIE_SAMESITE: 'none', AUTH_COOKIE_SECURE: 'false' })
+    expect(c.sameSite).toBe('none'); expect(c.secure).toBe(true)
+  })
+  it('parseCookies tolerates malformed percent-encoding (no throw on attacker input)', () => {
+    expect(() => parseCookies('akis_session=%zz; x=ok')).not.toThrow()
+    expect(parseCookies('akis_session=%zz; x=ok').x).toBe('ok')
+  })
 })
 
 describe('UserStore', () => {

@@ -102,10 +102,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(realTests ? { realTests: true } : {}),
   }))
 
-  // Auth: JWT-in-cookie (reusing AUTH_JWT_SECRET + AUTH_COOKIE_* from env). If no
-  // secret is configured we fall back to an ephemeral per-boot secret so dev still
-  // works (sessions just don't survive a restart); a real deploy sets AUTH_JWT_SECRET.
-  const authSecret = env.AUTH_JWT_SECRET || randomBytes(32).toString('hex')
+  // Auth: JWT-in-cookie (reusing AUTH_JWT_SECRET + AUTH_COOKIE_* from env). Fail CLOSED
+  // in production if no secret is set; in dev fall back to an ephemeral per-boot secret
+  // (with a clear warning) so local work isn't blocked — sessions just reset on restart
+  // and it is not multi-instance safe.
+  let authSecret = env.AUTH_JWT_SECRET
+  if (!authSecret) {
+    if (env.NODE_ENV === 'production') throw new Error('AUTH_JWT_SECRET is required in production')
+    authSecret = randomBytes(32).toString('hex')
+    // eslint-disable-next-line no-console
+    console.warn('auth: AUTH_JWT_SECRET unset — using an ephemeral per-boot secret (sessions reset on restart; not multi-instance safe)')
+  }
   const userStore = deps.userStore ?? new UserStore()
 
   // Aggregate run analytics via a single global bus tap (observability only).
