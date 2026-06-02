@@ -6,6 +6,8 @@ import { nextTs } from '../events/clock.js'
 import { assembleSharedContext } from '../context/assemble.js'
 import type { SharedContext } from '@akis/shared'
 import type { OrchestratorServices } from '../di/services.js'
+import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
+import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 
 export interface StartInput { idea: string }
 
@@ -39,8 +41,8 @@ const DEFAULT_MAX_ITERATE = 3
 export class Orchestrator {
   constructor(private s: OrchestratorServices) {}
 
-  private narrate(sessionId: string, text: string): void {
-    this.s.bus.emit({ kind: 'text', text, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
+  private narrate(sessionId: string, text: string, opts?: { ephemeral?: boolean }): void {
+    this.s.bus.emit({ kind: 'text', text, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs(), ...(opts?.ephemeral ? { ephemeral: true } : {}) })
   }
 
   private emitGate(sessionId: string, gate: 'spec_approval' | 'push_confirm', state: 'awaiting' | 'satisfied' | 'rejected'): void {
@@ -61,6 +63,34 @@ export class Orchestrator {
     return assembleSharedContext(sessionId, { store: this.s.store, bus: this.s.bus, knowledge: this.s.knowledge }, { query })
   }
 
+  /** Dynamic dispatch (CF4): AKIS consults each registered advisory (edge) agent at
+   *  a pipeline edge. ADVISORY ONLY — each agent reads context + non-gate tools and
+   *  its note is narrated EPHEMERALLY into the live stream (shown live but NOT ingested
+   *  into RAG — closes the advisory→RAG injection loop); it never touches a
+   *  gate, and a failing/throwing advisor is skipped. So this can never block, fake, or
+   *  alter the verified pipeline. No-op when no advisory agents are registered. */
+  private async runAdvisory(sessionId: string, phase: AdvisoryPhase, objective: string): Promise<void> {
+    const registry = this.s.advisoryAgents
+    if (!registry || registry.size === 0) return
+    const ctx = await this.ctx(sessionId, objective)
+    for (const { agent, capabilities } of registry.list()) {
+      // Per-agent tool registry: only the non-gate tools it declared that we support
+      // (a gate tool can never be here — registration already rejected gate caps).
+      const tools = buildAdvisoryTools(capabilities, { knowledge: this.s.knowledge, sessionId })
+      try {
+        const note = await agent.advise({
+          sessionId, phase, objective, ctx, tools,
+          // Advisory narration is EPHEMERAL: shown live but not ingested into RAG, so
+          // free-form/untrusted advisory text can never become trusted grounding.
+          onTool: call => this.narrate(sessionId, `Advisory ${agent.role} used ${call.name}`, { ephemeral: true }),
+        })
+        this.narrate(sessionId, `💡 Advisory (${note.role}/${phase}): ${note.text}`, { ephemeral: true })
+      } catch (e) {
+        this.narrate(sessionId, `Advisory (${agent.role}) skipped: ${e instanceof Error ? e.message : String(e)}`, { ephemeral: true })
+      }
+    }
+  }
+
   async start(input: StartInput): Promise<SessionState> {
     const id = randomUUID()
     let session = initialSession(id, input.idea)
@@ -70,6 +100,10 @@ export class Orchestrator {
     this.s.ingestionSink?.subscribeSession(id)
     this.s.bus.emit({ kind: 'session', status: 'started', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     this.narrate(id, `Planning: ${input.idea}`)
+
+    // Edge (advisory): consult any custom agents before drafting the spec. No-op
+    // without advisory agents; never gates — only narrates research notes.
+    await this.runAdvisory(id, 'pre_scribe', `Research before drafting a spec for: ${input.idea}`)
 
     const scribeCtx = await this.ctx(id, input.idea)
     const scribeOut = await this.s.scribe.run({ sessionId: id, laneId: 'main', idea: input.idea, ctx: scribeCtx })
@@ -156,6 +190,10 @@ export class Orchestrator {
       feedback = review.data.summary
       this.narrate(id, `Iterating (attempt ${attempt}) on Proto with feedback.`)
     }
+
+    // Edge (advisory): consult any custom agents on the reviewed build before
+    // verification. No-op without advisory agents; never gates — only narrates.
+    await this.runAdvisory(id, 'post_code_review', `Advise on the reviewed build for: ${session.idea}`)
 
     // Gate 2 + 3: only Trace holds a TestRunner; verification is the persisted token.
     const token = await this.s.trace.run({ sessionId: id, laneId: 'verify', files: lastFiles })

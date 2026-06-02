@@ -31,6 +31,38 @@ describe('GeminiProvider', () => {
     expect(r.usage).toEqual({ inTokens: 2, outTokens: 3 })
   })
 
+  it('passes generationConfig (temperature → temperature, maxTokens → maxOutputTokens) and maps finishReason → stopReason', async () => {
+    let captured: { url: string; init: RequestInit } | undefined
+    const resBody = {
+      candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }],
+      usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 1 },
+    }
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      captured = { url, init }
+      return new Response(JSON.stringify(resBody), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+
+    const p = new GeminiProvider({ apiKey: 'AIza-x', model: 'm', fetchFn })
+    const r = await p.chat({ system: 's', messages: [{ role: 'user', content: 'go' }], temperature: 0.2, maxTokens: 256 })
+
+    const reqBody = JSON.parse(captured!.init.body as string)
+    expect(reqBody.generationConfig).toEqual({ temperature: 0.2, maxOutputTokens: 256 })
+    expect(r.stopReason).toBe('STOP')
+  })
+
+  it('omits generationConfig when no generation params are set', async () => {
+    let captured: { url: string; init: RequestInit } | undefined
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      captured = { url, init }
+      return new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: 'ok' }] } }] }), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+    const p = new GeminiProvider({ apiKey: 'AIza-x', model: 'm', fetchFn })
+    const r = await p.chat({ system: 's', messages: [{ role: 'user', content: 'go' }] })
+    const reqBody = JSON.parse(captured!.init.body as string)
+    expect(reqBody.generationConfig).toBeUndefined()
+    expect(r.stopReason).toBeUndefined()
+  })
+
   it('maps a 400 PERMISSION_DENIED to AuthError', async () => {
     const fetchFn = (async () => new Response(JSON.stringify({ error: { status: 'PERMISSION_DENIED' } }), { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
     const p = new GeminiProvider({ apiKey: 'bad', model: 'm', fetchFn })
