@@ -18,7 +18,7 @@ import { registerChatRoutes } from './chat.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore } from '../workflow/WorkflowStore.js'
-import { workflowToAgentModels } from '../workflow/resolve.js'
+import { workflowToAgentModels, workflowCustomAgents } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
@@ -115,6 +115,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(flag(env.AKIS_ALLOW_MOCK) ? { provider: new MockProvider() } : {}),
     ...(demoVerify ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     agentModels: workflowToAgentModels(wf),
+    customAgents: workflowCustomAgents(wf),
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
     ...(wf.rag !== undefined ? { rag: wf.rag } : {}),
