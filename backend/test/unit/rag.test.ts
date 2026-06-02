@@ -5,9 +5,14 @@ import { dirname, resolve, join } from 'node:path'
 import { IngestQueue } from '../../src/knowledge/ingest/IngestQueue.js'
 import { buildRag } from '../../src/knowledge/buildRag.js'
 import { EventBus } from '../../src/events/bus.js'
+import { buildServices } from '../../src/di/services.js'
+import { MockSessionStore } from '../../src/store/MockSessionStore.js'
+import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
+import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
 
 const noBackoff = { backoffMs: () => 0 }
 const fixedNow = () => '2026-06-01T00:00:00Z'
+const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/skills/library')
 
 describe('IngestQueue (F1-AC7: async, bounded failure, never silently dropped)', () => {
   it('runs a task and counts success', async () => {
@@ -149,20 +154,196 @@ describe('Golden eval (F1-AC8: hybrid retrieval top-5 >= 80%)', () => {
   })
 })
 
+describe('Rerank hook (issue #7 AC3): pluggable, skippable, default-on', () => {
+  // A crafted corpus where the hybrid (rrf) order and the lexical-rerank order
+  // genuinely DIVERGE for the query below (verified empirically): the raw fused order
+  // tops `token-postgres` (matches 'postgres' once), but the lexical reranker promotes
+  // `db-heavy` (matches 'database' twice → higher lexical-cosine on the query) above it.
+  const RR_QUERY = 'postgres database schema migration'
+  const RR_CORPUS: Array<{ id: string; text: string }> = [
+    { id: 'redis-mix', text: 'redis migration auth ttl' },
+    { id: 'invoice-db', text: 'invoice database token' },
+    { id: 'token-postgres', text: 'token postgres' },
+    { id: 'bm25-mig', text: 'bm25 migration session' },
+    { id: 'stripe', text: 'session stripe stripe' },
+    { id: 'db-heavy', text: 'database database eviction docker' },
+    { id: 'schema-bill', text: 'schema billing' },
+    { id: 'evict-mix', text: 'eviction migration query redis docker' },
+  ]
+  const seedInto = async (stack: ReturnType<typeof buildRag>): Promise<ReturnType<typeof buildRag>> => {
+    for (const doc of RR_CORPUS) {
+      stack.service.ingest({ text: doc.text, source: 'corpus', sourceId: doc.id, userId: 'u1', sessionId: 'seed' })
+    }
+    await stack.queue.drain()
+    return stack
+  }
+  const seed = (): Promise<ReturnType<typeof buildRag>> =>
+    seedInto(buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow }))
+
+  it('rerank:false skips reranking → different top-k order than rerank:true', async () => {
+    const stack = await seed()
+    const on = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5, true)
+    const off = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5, false)
+    expect(on.map(r => r.source)).not.toEqual(off.map(r => r.source))
+    // The reranker promotes the doc lexically dominated by the query ('database' x2)
+    // to the top; the raw fused order does not.
+    expect(on[0]?.source).toBe('corpus:db-heavy')
+    expect(off[0]?.source).toBe('corpus:token-postgres')
+  })
+
+  it('defaults to the deps reranker (on) when no per-call flag is given', async () => {
+    const stack = await seed()
+    const def = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5)
+    const on = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5, true)
+    expect(def.map(r => r.source)).toEqual(on.map(r => r.source))
+  })
+
+  it('a deps-level rerank-default off (NoopReranker) yields the raw fused order', async () => {
+    const stack = await seedInto(buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow, rerank: false }))
+    const def = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5)
+    const off = await stack.service.retrieve(RR_QUERY, { userId: 'u1' }, 5, false)
+    expect(def.map(r => r.source)).toEqual(off.map(r => r.source))
+    expect(def[0]?.source).toBe('corpus:token-postgres')
+  })
+})
+
+describe('Rerank pass-through via RagKnowledgePort (issue #7 AC3)', () => {
+  it('threads RetrieveQuery.rerank into the service', async () => {
+    const stack = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
+    const corpus = [
+      { id: 'redis-mix', text: 'redis migration auth ttl' },
+      { id: 'invoice-db', text: 'invoice database token' },
+      { id: 'token-postgres', text: 'token postgres' },
+      { id: 'bm25-mig', text: 'bm25 migration session' },
+      { id: 'stripe', text: 'session stripe stripe' },
+      { id: 'db-heavy', text: 'database database eviction docker' },
+      { id: 'schema-bill', text: 'schema billing' },
+      { id: 'evict-mix', text: 'eviction migration query redis docker' },
+    ]
+    for (const doc of corpus) stack.service.ingest({ text: doc.text, source: 'corpus', sourceId: doc.id, userId: 'local', sessionId: 's1' })
+    await stack.queue.drain()
+    const on = await stack.port.retrieve({ query: 'postgres database schema migration', sessionId: 's1', limit: 5, rerank: true })
+    const off = await stack.port.retrieve({ query: 'postgres database schema migration', sessionId: 's1', limit: 5, rerank: false })
+    expect(on.map(r => r.source)).not.toEqual(off.map(r => r.source))
+    expect(on[0]?.source).toBe('corpus:db-heavy')
+    expect(off[0]?.source).toBe('corpus:token-postgres')
+  })
+})
+
+describe('buildRag wires the repo + upload sources (issue #7 steps 4-6)', () => {
+  it('exposes uploadSource/repoSource/userIdFor on the RagStack', () => {
+    const stack = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
+    expect(stack.uploadSource).toBeDefined()
+    expect(stack.repoSource).toBeDefined()
+    // The route stamps tenancy with the SAME resolver retrieval uses, so an upload is
+    // retrievable through the port. Default single-user resolver → a constant.
+    expect(stack.userIdFor('s1')).toBe('local')
+  })
+
+  it('an uploaded file round-trips: ingest via uploadSource → retrievable via the port', async () => {
+    const stack = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow })
+    await stack.uploadSource.ingest({
+      sessionId: 's1', userId: stack.userIdFor('s1'),
+      filename: 'notes.md', bytes: Buffer.from('# Title\n\npostgres database migration design notes'),
+    })
+    await stack.queue.drain()
+    const hits = await stack.port.retrieve({ query: 'postgres database migration', sessionId: 's1', limit: 5 })
+    expect(hits.length).toBeGreaterThan(0)
+    expect(hits.some(h => h.source === 'upload:notes.md')).toBe(true)
+  })
+
+  it('repoSource reads the injected GitHub adapter and is incremental by head sha', async () => {
+    const github = new MockGitHubAdapter()
+    await github.createRepo('s1')
+    await github.pushFiles('s1', [{ filePath: 'README.md', content: '# Repo\n\nredis caching ttl eviction layer' }])
+    const stack = buildRag({ bus: new EventBus(), queue: noBackoff, now: fixedNow, github })
+
+    await stack.repoSource.ingest({ sessionId: 's1', userId: stack.userIdFor('s1') })
+    await stack.queue.drain()
+    const ingestedOnce = stack.service.getMetrics().ingested
+    expect(ingestedOnce).toBeGreaterThan(0)
+    const hits = await stack.port.retrieve({ query: 'redis caching eviction', sessionId: 's1', limit: 5 })
+    expect(hits.some(h => h.source === 'repo:README.md')).toBe(true)
+
+    // A second pass with an unchanged head sha is a whole-pass skip — no new enqueues.
+    await stack.repoSource.ingest({ sessionId: 's1', userId: stack.userIdFor('s1') })
+    await stack.queue.drain()
+    expect(stack.service.getMetrics().ingested).toBe(ingestedOnce)
+  })
+})
+
+describe('buildServices surfaces the RAG stack handles when rag is on (issue #7 step 6)', () => {
+  it('rag ON: service/queue/uploadSource/repoSource are surfaced and share the github adapter', async () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), rag: true })
+    expect(services.ragService).toBeDefined()
+    expect(services.ragQueue).toBeDefined()
+    expect(services.uploadSource).toBeDefined()
+    expect(services.repoSource).toBeDefined()
+
+    // The RepoSource reads the SAME MockGitHubAdapter the orchestrator pushes to, so a
+    // freshly pushed repo is immediately ingestable (no separate file set).
+    await services.github.pushFiles('sess-x', [{ filePath: 'doc.md', content: 'stripe billing invoices checkout flow' }])
+    await services.repoSource!.ingest({ sessionId: 'sess-x', userId: 'local' })
+    await services.ragQueue!.drain()
+    const hits = await services.knowledge.retrieve({ query: 'stripe billing checkout', sessionId: 'sess-x', limit: 5 })
+    expect(hits.some(h => h.source === 'repo:doc.md')).toBe(true)
+  })
+
+  it('rag OFF (default): no RAG handles are surfaced (behavior identical to no-RAG)', () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider() })
+    expect(services.ragService).toBeUndefined()
+    expect(services.ragQueue).toBeUndefined()
+    expect(services.uploadSource).toBeUndefined()
+    expect(services.repoSource).toBeUndefined()
+  })
+
+  it('rerank OFF deps toggle threads through buildServices → raw fused order', async () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), rag: true, rerank: false })
+    const corpus = [
+      { id: 'redis-mix', text: 'redis migration auth ttl' },
+      { id: 'invoice-db', text: 'invoice database token' },
+      { id: 'token-postgres', text: 'token postgres' },
+      { id: 'bm25-mig', text: 'bm25 migration session' },
+      { id: 'stripe', text: 'session stripe stripe' },
+      { id: 'db-heavy', text: 'database database eviction docker' },
+      { id: 'schema-bill', text: 'schema billing' },
+      { id: 'evict-mix', text: 'eviction migration query redis docker' },
+    ]
+    for (const doc of corpus) services.ragService!.ingest({ text: doc.text, source: 'corpus', sourceId: doc.id, userId: 'local', sessionId: 's1' })
+    await services.ragQueue!.drain()
+    // Default call uses the deps default (NoopReranker → raw fused order): top is the
+    // single 'postgres' match, NOT the lexical-rerank winner.
+    const def = await services.knowledge.retrieve({ query: 'postgres database schema migration', sessionId: 's1', limit: 5 })
+    expect(def[0]?.source).toBe('corpus:token-postgres')
+  })
+})
+
 describe('AC10: no knowledge module imports a gate minter', () => {
   it('no file under src/knowledge references a gate minter/gate module', () => {
     const dir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/knowledge')
     const offenders: string[] = []
+    const seen: string[] = []
     const walk = (d: string): void => {
       for (const name of readdirSync(d)) {
         const p = join(d, name)
         if (statSync(p).isDirectory()) { walk(p); continue }
         if (!p.endsWith('.ts')) continue
+        seen.push(p)
         const src = readFileSync(p, 'utf8')
         if (/gates\/|specGate|pushGate|mintApproved|createVerifier/.test(src)) offenders.push(p)
       }
     }
     walk(dir)
     expect(offenders).toEqual([])
+    // The guard must actually walk the NEW M2 source files (issue #7), not just the
+    // originals — assert their presence so a future move can't silently un-cover them.
+    const names = seen.map(p => p.replace(/^.*\/src\/knowledge\//, ''))
+    expect(names).toContain('ingest/structureChunk.ts')
+    expect(names).toContain('retrieve/Reranker.ts')
+    // The new RAG sources (issue #7 steps 4-5) are also covered: none may import a gate.
+    expect(names).toContain('ingest/RepoReader.ts')
+    expect(names).toContain('ingest/RepoSource.ts')
+    expect(names).toContain('ingest/UploadSource.ts')
+    expect(names).toContain('ingest/parse/parseUpload.ts')
   })
 })

@@ -31,6 +31,11 @@ export interface WorkflowConfig {
   gatePolicy?: GatePolicy
   iterateBudget?: number
   rag?: boolean
+  /** Second-stage rerank toggle (issue #7 AC3): a sibling of `rag`, a skippable
+   *  QUALITY knob — never a gate. When set it overrides the stack default for the
+   *  run; when omitted the stack default (AKIS_RERANK / on) applies. It can only
+   *  re-order already-retrieved chunks, so it can never loosen a structural gate. */
+  rerank?: boolean
 }
 
 /** Input to save/create a workflow (id/version are assigned by the store). */

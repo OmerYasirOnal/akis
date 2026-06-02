@@ -4,6 +4,9 @@ export interface RetrieveQuery {
   query: string
   sessionId: string
   limit?: number
+  /** Optional second-stage rerank toggle (issue #7 AC3). Omitted → the RAG
+   *  implementation's default (on). A skippable quality knob, never a gate. */
+  rerank?: boolean
 }
 
 /**

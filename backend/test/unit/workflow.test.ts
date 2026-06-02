@@ -53,6 +53,25 @@ describe('validateWorkflowConfig (F2-AC4/AC5)', () => {
     expect(validateWorkflowConfig(base({ name: '' })).ok).toBe(false)
     expect(validateWorkflowConfig(base({ agents: [] })).ok).toBe(false)
   })
+
+  it('accepts an optional rerank quality knob (issue #7 AC3) — a sibling of rag, not a gate', () => {
+    // rerank is a pass-through quality knob like rag: any boolean is valid, it can never
+    // loosen a gate, and a missing value is also valid (the stack default applies).
+    expect(validateWorkflowConfig(base({ rerank: true })).ok).toBe(true)
+    expect(validateWorkflowConfig(base({ rerank: false })).ok).toBe(true)
+    expect(validateWorkflowConfig(base()).ok).toBe(true)
+  })
+})
+
+describe('WorkflowConfig.rerank persists round-trip through the store (issue #7 AC3)', () => {
+  it('a saved workflow keeps its rerank toggle', () => {
+    const store = new WorkflowStore()
+    const wf: WorkflowConfig = store.save({ name: 'rr-off', agents: [{ role: 'scribe' }], rag: true, rerank: false })
+    expect(wf.rerank).toBe(false)
+    expect(store.get(wf.id)!.rerank).toBe(false)
+    const on = store.save({ name: 'rr-on', agents: [{ role: 'proto' }], rerank: true })
+    expect(store.get(on.id)!.rerank).toBe(true)
+  })
 })
 
 describe('WorkflowStore (F2-AC10 versioning)', () => {

@@ -13,6 +13,8 @@ build/
 backend/src/**/*.js
 backend/src/**/*.js.map
 backend/src/**/*.d.ts
+# Hand-authored ambient type shims are SOURCE, not emitted artifacts — keep them.
+!backend/src/types/*.d.ts
 backend/test/**/*.js
 backend/test/**/*.js.map
 backend/test/**/*.d.ts
