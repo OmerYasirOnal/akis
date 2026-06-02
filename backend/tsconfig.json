@@ -1,0 +1,6 @@
+{
+  "extends": "../tsconfig.base.json",
+  "comment": "Typecheck-only project: tests/scripts run via vitest/tsx, nothing consumes compiled output. noEmit prevents a bare `tsc` from emitting .js/.d.ts INTO src and shadowing the .ts sources under vitest's bundler resolution.",
+  "compilerOptions": { "noEmit": true, "declaration": false },
+  "include": ["src", "test", "scripts"]
+}
