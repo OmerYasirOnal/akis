@@ -1,6 +1,5 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import type { UserStore } from '../auth/UserStore.js'
-import { toPublic } from '../auth/UserStore.js'
+import { toPublic, type UserStorePort } from '../auth/UserStore.js'
 import type { CookieConfig } from '../auth/cookie.js'
 import { setSessionCookie } from '../auth/session.js'
 import {
@@ -9,7 +8,7 @@ import {
 } from '../auth/oauth.js'
 
 export interface OAuthDeps {
-  users: UserStore
+  users: UserStorePort
   secret: string
   cookie: CookieConfig
   env: NodeJS.ProcessEnv
