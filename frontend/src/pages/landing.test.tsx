@@ -21,9 +21,12 @@ describe('Landing', () => {
     await userEvent.click(screen.getAllByRole('button', { name: /Get started/i })[0]!)
     expect(window.location.pathname).toBe('/signup')
   })
-  it('has a sign-in link to /login', () => {
+  it('every sign-in link points to /login', () => {
     renderLanding()
-    const signin = screen.getByRole('link', { name: 'Sign in' })
-    expect(signin.getAttribute('href')).toBe('/login')
+    // The redesigned landing has more than one "Sign in" link (header + footer);
+    // assert there is at least one and they ALL route to /login.
+    const signins = screen.getAllByRole('link', { name: 'Sign in' })
+    expect(signins.length).toBeGreaterThan(0)
+    expect(signins.every(a => a.getAttribute('href') === '/login')).toBe(true)
   })
 })
