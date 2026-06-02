@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { createPgPool, runMigrations } from '../../src/store/pg.js'
+import { PgVectorStore } from '../../src/knowledge/store/PgVectorStore.js'
+import type { StoredChunk } from '../../src/knowledge/store/VectorStore.js'
 
 /**
  * REAL-Postgres migration integration test (the fake-client unit tests can only prove a
@@ -53,6 +55,55 @@ describe.skipIf(!url)('runMigrations against real Postgres', () => {
       await expect(
         pool.query("INSERT INTO users (id,name,email,password_hash,external_id) VALUES ('u2','B','b@x.dev','','gh:1')"),
       ).rejects.toMatchObject({ code: '23505' }) // enforced by the migration's index, not an inline constraint
+    } finally {
+      if (pool.end) await pool.end()
+    }
+  })
+})
+
+/** REAL-Postgres PgVectorStore round-trip: persist a chunk, then prove a brand-new store
+ *  HYDRATES the same corpus from the table (the durability guarantee — survives "restart"),
+ *  that the `double precision[]` vector + jsonb payloads round-trip, that cosine ranking holds,
+ *  and that a tenancy-scoped deleteBy persists. Gated on AKIS_TEST_DATABASE_URL like above. */
+describe.skipIf(!url)('PgVectorStore against real Postgres', () => {
+  const mkChunk = (o: { id: string; userId: string; sessionId?: string; source?: string; sourceId?: string; vector: number[]; text: string }): StoredChunk => {
+    const meta = {
+      source: o.source ?? 'upload', sourceId: o.sourceId ?? 'doc.md',
+      userId: o.userId, sessionId: o.sessionId ?? 's1', createdAt: '2026-06-01T00:00:00Z',
+    }
+    return { id: o.id, vector: o.vector, chunk: { id: o.id, text: o.text, source: `${meta.source}:${meta.sourceId}`, score: 0 }, meta }
+  }
+
+  it('persists, hydrates after a "restart", ranks by cosine, and deletes tenancy-scoped', async () => {
+    const pool = await createPgPool(url!)
+    try {
+      await pool.query('DROP TABLE IF EXISTS vector_chunks CASCADE')
+      await runMigrations(pool)
+      await runMigrations(pool) // idempotent: the vector_chunks DDL + index must not throw twice
+
+      const first = new PgVectorStore(pool)
+      first.upsert(mkChunk({ id: 'a', userId: 'u1', vector: [1, 0, 0], text: 'durable chunk' }))
+      first.upsert(mkChunk({ id: 'b', userId: 'u1', vector: [0, 1, 0], text: 'other chunk' }))
+      first.upsert(mkChunk({ id: 'c', userId: 'u2', vector: [1, 0, 0], text: 'tenant two' }))
+      await first.flush()
+
+      // Restart: a brand-new store hydrates the SAME corpus from the table.
+      const second = new PgVectorStore(pool)
+      await second.hydrate()
+      expect(second.size()).toBe(3)
+      // cosine ranking + tenancy: u1 querying [1,0,0] gets 'a' first, never u2's 'c'.
+      const res = second.search([1, 0, 0], { userId: 'u1' }, 5)
+      expect(res.map(s => s.stored.id)).toEqual(['a', 'b'])
+      expect(res[0]!.stored.chunk.text).toBe('durable chunk')
+
+      // Tenancy-scoped delete persists (and never touches u2).
+      const removed = second.deleteBy(m => m.userId === 'u1' && m.sessionId === 's1' && m.source === 'upload' && m.sourceId === 'doc.md')
+      expect(removed).toBe(2)
+      await second.flush()
+      const third = new PgVectorStore(pool)
+      await third.hydrate()
+      expect(third.size()).toBe(1)
+      expect(third.has('c')).toBe(true)
     } finally {
       if (pool.end) await pool.end()
     }

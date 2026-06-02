@@ -8,10 +8,12 @@ export interface ToolLine { tool: string; ok?: boolean }
 export interface AgentMsg { id: string; kind: 'agent'; agent: Role; tools: ToolLine[]; notes: string[]; done: boolean; ok?: boolean }
 export interface GateMsg { id: string; kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: GateState }
 export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passed: boolean }
+/** Read-only critic code-review verdict card (automatic, NOT a human gate). Structured only. */
+export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: boolean; findings: number; critical: boolean; iteration: number }
 export interface PreviewMsg { id: string; kind: 'preview'; url?: string; ready: boolean }
 export interface ErrorMsg { id: string; kind: 'error'; text: string }
 export interface DoneMsg { id: string; kind: 'done'; verified: boolean; provider?: string }
-export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMsg | PreviewMsg | ErrorMsg | DoneMsg
+export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMsg | CodeReviewMsg | PreviewMsg | ErrorMsg | DoneMsg
 
 /**
  * Project the ordered AkisEvent stream into a chat thread. Chronological: agent
@@ -26,6 +28,7 @@ export function foldChat(idea: string, events: readonly AkisEvent[]): ChatMessag
   const openTurn = new Map<string, AgentMsg>()           // by laneId
   const gates = new Map<string, GateMsg>()
   let verifyMsg: VerifyMsg | undefined
+  let codeReviewMsg: CodeReviewMsg | undefined
   let previewMsg: PreviewMsg | undefined
   let n = 0
 
@@ -63,6 +66,12 @@ export function foldChat(idea: string, events: readonly AkisEvent[]): ChatMessag
       case 'verify': {
         if (verifyMsg) { verifyMsg.testsRun = e.testsRun; verifyMsg.passed = e.passed }
         else { verifyMsg = { id, kind: 'verify', testsRun: e.testsRun, passed: e.passed }; items.push(verifyMsg) }
+        break
+      }
+      case 'code_review': {
+        // Singleton read-only card updated in place across iterations (last verdict wins).
+        if (codeReviewMsg) { codeReviewMsg.approved = e.approved; codeReviewMsg.findings = e.findings; codeReviewMsg.critical = e.critical; codeReviewMsg.iteration = e.iteration }
+        else { codeReviewMsg = { id, kind: 'code_review', approved: e.approved, findings: e.findings, critical: e.critical, iteration: e.iteration }; items.push(codeReviewMsg) }
         break
       }
       case 'preview':

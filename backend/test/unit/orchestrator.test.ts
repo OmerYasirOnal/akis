@@ -4,6 +4,7 @@ import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { NotVerifiedError } from '../../src/gates/pushGate.js'
+import type { RepoSource, RepoIngestInput } from '../../src/knowledge/ingest/RepoSource.js'
 import { isVerified } from '@akis/shared'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -33,6 +34,24 @@ describe('Orchestrator — happy path', () => {
     const done = await orch.confirmPush(s.id)
     expect(done.status).toBe('done')
     expect(isVerified(done)).toBe(true)
+  })
+})
+
+describe('Orchestrator — code-review visibility', () => {
+  it('emits a structured code_review event (approved verdict) at the review step', async () => {
+    const { orch, services } = makeOrch()
+    const s = await orch.start({ idea: 'build a todo web app' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const events = services.bus.recent(s.id)
+    const cr = events.find(e => e.kind === 'code_review')
+    expect(cr).toBeDefined()
+    expect(cr).toMatchObject({ kind: 'code_review', approved: true, critical: false, agent: 'critic', laneId: 'main' })
+    // Structured-only: findings/iteration are bounded numbers, never free-form prose.
+    expect(typeof (cr as { findings: unknown }).findings).toBe('number')
+    expect(typeof (cr as { iteration: unknown }).iteration).toBe('number')
+    // It is NOT a text event, so the RAG ingestion sink never treats it as trusted grounding.
+    expect(cr).not.toHaveProperty('text')
   })
 })
 
@@ -97,6 +116,53 @@ describe('Orchestrator — verified survives a fresh instance (no in-memory toke
     const done = await orch2.confirmPush(s.id)
     expect(done.status).toBe('done')
     expect(isVerified(done)).toBe(true)
+  })
+})
+
+describe('Orchestrator — repo auto-ingest on push (issue #7 AC1)', () => {
+  // A repoSource + ragUserIdFor are present ONLY when RAG is on. Drive a verified
+  // session to done and assert the push triggers an automatic ingest of the pushed repo.
+  function makeRagOrch(repoSource: Pick<RepoSource, 'ingest'>) {
+    const store = new MockSessionStore()
+    const services = buildServices({
+      store, skillsDir,
+      mockCriticScore: 90,
+      testRunner: createMockTestRunner({ testsRun: 2, passed: true }),
+    })
+    // Simulate RAG-on wiring: surface a repoSource + tenancy resolver on the services.
+    const ragServices = {
+      ...services,
+      repoSource: repoSource as RepoSource,
+      ragUserIdFor: (_sessionId: string) => 'local',
+    }
+    return { orch: new Orchestrator(ragServices), services: ragServices }
+  }
+
+  it('confirmPush triggers repoSource.ingest with {sessionId,userId} after a successful push', async () => {
+    const calls: RepoIngestInput[] = []
+    const repoSource = { ingest: async (input: RepoIngestInput): Promise<void> => { calls.push(input) } }
+    const { orch } = makeRagOrch(repoSource)
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const done = await orch.confirmPush(s.id)
+    expect(done.status).toBe('done')
+    expect(calls).toEqual([{ sessionId: s.id, userId: 'local' }])
+  })
+
+  it('a THROWING repoSource.ingest does NOT fail confirmPush and the session still reaches done', async () => {
+    let attempted = false
+    const repoSource = { ingest: async (): Promise<void> => { attempted = true; throw new Error('ingest blew up') } }
+    const { orch, services } = makeRagOrch(repoSource)
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const done = await orch.confirmPush(s.id)
+    expect(attempted).toBe(true) // ingest WAS attempted (not vacuously skipped)
+    expect(done.status).toBe('done')
+    expect(isVerified(done)).toBe(true)
+    // The session status persisted is still 'done' — the failed ingest never mutated it.
+    expect((await services.store.get(s.id))!.status).toBe('done')
   })
 })
 

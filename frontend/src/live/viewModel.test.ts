@@ -82,6 +82,14 @@ describe('foldSessionView (pure live view-model)', () => {
     expect(v.tests.scenariosRunning).toBe(4)
   })
 
+  it('folds the structured code_review verdict (last wins) as a read-only card', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'code_review', approved: false, findings: 4, critical: true, iteration: 1, agent: 'critic' }),
+      ev({ kind: 'code_review', approved: true, findings: 0, critical: false, iteration: 2, agent: 'critic' }),
+    ])
+    expect(v.codeReview).toEqual({ approved: true, findings: 0, critical: false, iteration: 2 })
+  })
+
   it('a tool_result with no open agent step does not push an orphan error (M5)', () => {
     const v = foldSessionView('s1', [ev({ kind: 'tool_result', tool: 'dispatch_proto', ok: false, result: { error: 'x' }, agent: 'proto' })])
     expect(v.errors).toHaveLength(0) // no step to attach to → no inconsistent orphan error
