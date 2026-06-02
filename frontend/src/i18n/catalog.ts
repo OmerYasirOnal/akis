@@ -236,6 +236,7 @@ export const STRINGS = {
     'workflows.gate.real_test_verification': 'Real-test verification',
     'workflows.gate.push_confirm': 'Push confirmation',
     'workflows.gate.critic_resolution': 'Critic resolution',
+    'workflows.page.back': 'Back to workflows',
   },
   tr: {
     'app.title': 'AKIS · ajan tabanlı geliştirme stüdyosu',
@@ -471,6 +472,7 @@ export const STRINGS = {
     'workflows.gate.real_test_verification': 'Gerçek test doğrulaması',
     'workflows.gate.push_confirm': 'Push onayı',
     'workflows.gate.critic_resolution': 'Critic çözümü',
+    'workflows.page.back': 'İş akışlarına dön',
   },
 } as const
 
