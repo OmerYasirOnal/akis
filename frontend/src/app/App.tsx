@@ -3,6 +3,7 @@ import { ApiClient } from '../api/client.js'
 import { type WorkflowOption } from '../components/NewSessionForm.js'
 import { ChatStudio } from '../chat/ChatStudio.js'
 import { CosmicBackground } from '../components/CosmicBackground.js'
+import { AkisLogo } from '../components/AkisLogo.js'
 import { AnalyticsPage } from '../pages/AnalyticsPage.js'
 import { DocsPage } from '../pages/DocsPage.js'
 import { SettingsPage } from '../pages/SettingsPage.js'
@@ -19,7 +20,7 @@ function Brand() {
   const { t } = useI18n()
   return (
     <Link to="/" className="flex items-center gap-3">
-      <img src="/akis-logo.png" alt="AKIS" className="h-9 w-9 rounded-xl shadow-[0_0_24px_rgba(7,209,175,0.5)]" />
+      <AkisLogo size={34} className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
       <div className="hidden sm:block">
         <div className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-base font-extrabold leading-tight text-transparent">{t('app.title')}</div>
       </div>

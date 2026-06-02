@@ -36,7 +36,12 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
 
       <div className="relative flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(56,189,248,0.08)_inset]">
         {embeddable ? (
-          <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-same-origin allow-popups" />
+          // The framed app is UNTRUSTED agent-generated code served same-origin from
+          // /preview/:id/. Deliberately NO allow-same-origin: that would let it reach
+          // the AKIS origin (session cookie, parent DOM). allow-scripts in an opaque
+          // origin is enough to run a self-contained app. (Apps needing real same-origin
+          // storage are a deferred cross-origin-preview hardening.)
+          <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-popups" />
         ) : view.preview.starting ? (
           <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
             <span className="h-6 w-6 animate-spin rounded-full border-2 border-cyan-400/40 border-t-cyan-300" />
