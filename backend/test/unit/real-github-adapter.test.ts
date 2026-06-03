@@ -1,0 +1,168 @@
+import { describe, it, expect } from 'vitest'
+import { RealGitHubAdapter, type PushFetch } from '../../src/di/RealGitHubAdapter.js'
+import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
+
+const TOKEN = 'ghp_push_supersecrettoken_DO_NOT_LEAK'
+const FILES: RepoFile[] = [
+  { filePath: 'README.md', content: '# hi\n' },
+  { filePath: 'src/app.ts', content: 'export const x = 1\n' },
+]
+
+const ok = (body: unknown, status = 200): Awaited<ReturnType<PushFetch>> => ({
+  ok: status >= 200 && status < 300,
+  status,
+  headers: { get: () => null },
+  json: async () => body,
+  text: async () => JSON.stringify(body),
+})
+
+/**
+ * A canned GitHub REST API that records every request. Models the create-branch /
+ * commit-files / open-PR flow. `existingBranch` toggles whether the head ref already
+ * exists (→ update path) and `existingPr` whether an open PR for the branch exists.
+ */
+function fakeGitHub(opts: { existingBranch?: boolean; existingPr?: boolean } = {}) {
+  const calls: Array<{ method: string; url: string; headers: Record<string, string>; body?: unknown }> = []
+  const fetch: PushFetch = async (url, init) => {
+    const method = init?.method ?? 'GET'
+    const body = init?.body ? JSON.parse(init.body) : undefined
+    calls.push({ method, url, headers: init?.headers ?? {}, body })
+
+    // Default-branch lookup
+    if (method === 'GET' && /\/repos\/[^/]+\/[^/]+$/.test(url)) {
+      return ok({ default_branch: 'main' })
+    }
+    // Base ref → base commit sha
+    if (method === 'GET' && /\/git\/ref\/heads\/main$/.test(url)) {
+      return ok({ object: { sha: 'baseCommitSha' } })
+    }
+    // Head ref existence check (the branch we want to push to)
+    if (method === 'GET' && /\/git\/ref\/heads\/akis-/.test(url)) {
+      return opts.existingBranch
+        ? ok({ object: { sha: 'existingHeadSha' } })
+        : ok({ message: 'Not Found' }, 404)
+    }
+    // Base commit → its tree sha
+    if (method === 'GET' && /\/git\/commits\/baseCommitSha$/.test(url)) {
+      return ok({ tree: { sha: 'baseTreeSha' } })
+    }
+    // Create blobs
+    if (method === 'POST' && /\/git\/blobs$/.test(url)) {
+      return ok({ sha: `blob-${calls.filter(c => /\/git\/blobs$/.test(c.url)).length}` }, 201)
+    }
+    // Create tree
+    if (method === 'POST' && /\/git\/trees$/.test(url)) {
+      return ok({ sha: 'newTreeSha' }, 201)
+    }
+    // Create commit
+    if (method === 'POST' && /\/git\/commits$/.test(url)) {
+      return ok({ sha: 'newCommitSha' }, 201)
+    }
+    // Create the branch ref
+    if (method === 'POST' && /\/git\/refs$/.test(url)) {
+      return ok({ ref: body?.ref, object: { sha: body?.sha } }, 201)
+    }
+    // Update an existing branch ref
+    if (method === 'PATCH' && /\/git\/refs\/heads\/akis-/.test(url)) {
+      return ok({ object: { sha: body?.sha } })
+    }
+    // List PRs for the branch
+    if (method === 'GET' && /\/pulls\?/.test(url)) {
+      return opts.existingPr
+        ? ok([{ number: 7, html_url: 'https://github.com/me/proj/pull/7' }])
+        : ok([])
+    }
+    // Open a PR
+    if (method === 'POST' && /\/pulls$/.test(url)) {
+      return ok({ number: 42, html_url: 'https://github.com/me/proj/pull/42' }, 201)
+    }
+    // Update an existing PR
+    if (method === 'PATCH' && /\/pulls\/7$/.test(url)) {
+      return ok({ number: 7, html_url: 'https://github.com/me/proj/pull/7' })
+    }
+    return ok({ message: `unmatched ${method} ${url}` }, 500)
+  }
+  return { fetch, calls }
+}
+
+describe('RealGitHubAdapter (offline, injected fetch — GitHub REST API)', () => {
+  it('createRepo returns the configured repo HTML URL (no network needed for the URL)', async () => {
+    const { fetch } = fakeGitHub()
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    expect(await a.createRepo('sess-1')).toBe('https://github.com/me/proj')
+  })
+
+  it('pushFiles creates a branch, commits the files, and opens a PR (correct REST calls)', async () => {
+    const { fetch, calls } = fakeGitHub()
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    await a.pushFiles('sess-1', FILES)
+
+    const seq = calls.map(c => `${c.method} ${c.url.replace('https://api.github.com', '')}`)
+    // a blob per file
+    expect(seq.filter(s => /POST \/repos\/me\/proj\/git\/blobs$/.test(s)).length).toBe(FILES.length)
+    // exactly one tree, one commit, one branch-ref create, one PR open
+    expect(seq.filter(s => /POST \/repos\/me\/proj\/git\/trees$/.test(s)).length).toBe(1)
+    expect(seq.filter(s => /POST \/repos\/me\/proj\/git\/commits$/.test(s)).length).toBe(1)
+    expect(seq.filter(s => /POST \/repos\/me\/proj\/git\/refs$/.test(s)).length).toBe(1)
+    expect(seq.filter(s => /POST \/repos\/me\/proj\/pulls$/.test(s)).length).toBe(1)
+  })
+
+  it('updates the branch (PATCH ref) instead of creating it when it already exists', async () => {
+    const { fetch, calls } = fakeGitHub({ existingBranch: true })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    await a.pushFiles('sess-1', FILES)
+    const methods = calls.map(c => `${c.method} ${c.url}`)
+    expect(methods.some(m => /PATCH .*\/git\/refs\/heads\/akis-/.test(m))).toBe(true)
+    expect(methods.some(m => /POST .*\/git\/refs$/.test(m))).toBe(false)
+  })
+
+  it('updates the existing open PR instead of opening a second one', async () => {
+    const { fetch, calls } = fakeGitHub({ existingBranch: true, existingPr: true })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    await a.pushFiles('sess-1', FILES)
+    const methods = calls.map(c => `${c.method} ${c.url}`)
+    expect(methods.some(m => /PATCH .*\/pulls\/7$/.test(m))).toBe(true)
+    expect(methods.some(m => /POST .*\/pulls$/.test(m))).toBe(false)
+  })
+
+  it('sends Authorization: Bearer <token> on every request', async () => {
+    const { fetch, calls } = fakeGitHub()
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    await a.createRepo('sess-1')
+    await a.pushFiles('sess-1', FILES)
+    expect(calls.length).toBeGreaterThan(0)
+    for (const c of calls) {
+      expect(c.headers['Authorization']).toBe(`Bearer ${TOKEN}`)
+    }
+  })
+
+  it('NEVER leaks the token in any return value (no-leak discipline)', async () => {
+    const { fetch } = fakeGitHub()
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    const url = await a.createRepo('sess-1')
+    expect(url).not.toContain(TOKEN)
+    // pushFiles resolves void — nothing to leak there either.
+    await expect(a.pushFiles('sess-1', FILES)).resolves.toBeUndefined()
+  })
+
+  it('NEVER leaks the token in a thrown error message (HTTP failure)', async () => {
+    const failing: PushFetch = async () => ({
+      ok: false, status: 401, headers: { get: () => null }, json: async () => ({ message: 'Bad credentials' }), text: async () => 'Bad credentials',
+    })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch: failing })
+    let thrown: unknown
+    try { await a.pushFiles('sess-1', FILES) } catch (e) { thrown = e }
+    expect(thrown).toBeInstanceOf(Error)
+    const msg = `${(thrown as Error).message}\n${(thrown as Error).stack ?? ''}`
+    expect(msg).not.toContain(TOKEN)
+  })
+
+  it('NEVER leaks the token when fetch itself rejects (wraps lower-level errors)', async () => {
+    const boom: PushFetch = async () => { throw new Error(`network down talking to api with ${TOKEN}`) }
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch: boom })
+    let thrown: unknown
+    try { await a.pushFiles('sess-1', FILES) } catch (e) { thrown = e }
+    expect(thrown).toBeInstanceOf(Error)
+    expect((thrown as Error).message).not.toContain(TOKEN)
+  })
+})
