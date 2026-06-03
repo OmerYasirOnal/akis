@@ -8,7 +8,10 @@ export default defineConfig({
     // Dev: proxy API + SSE to the backend so the FE is same-origin in prod and dev.
     proxy: {
       '/sessions': 'http://127.0.0.1:3000', '/api': 'http://127.0.0.1:3000',
-      '/preview': 'http://127.0.0.1:3000', '/auth': 'http://127.0.0.1:3000',
+      // ws:true so the backend's /preview WebSocket upgrade tunnel (vite HMR for a
+      // RUNNING preview app) survives the dev proxy and reaches the backend.
+      '/preview': { target: 'http://127.0.0.1:3000', ws: true },
+      '/auth': 'http://127.0.0.1:3000',
       '/oauth': 'http://127.0.0.1:3000', '/health': 'http://127.0.0.1:3000',
     },
   },
