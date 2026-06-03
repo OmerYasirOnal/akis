@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { SessionView } from '../live/types.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
+import { agentName } from '../agents/names.js'
 import { derivePipeline, summarizePipeline, type PipelineStep, type PipelineStatus, type PipelineStepKey } from './pipeline.js'
 
 const STEP_LABEL: Record<PipelineStepKey, StringKey> = {
@@ -11,7 +12,6 @@ const STEP_LABEL: Record<PipelineStepKey, StringKey> = {
   verify: 'pipeline.step.verify',
   ship: 'pipeline.step.ship',
 }
-const AGENT_NAME: Record<string, string> = { orchestrator: 'AKIS', scribe: 'Scribe', proto: 'Proto', trace: 'Trace', critic: 'Critic' }
 const STEP_NO: Record<PipelineStepKey, string> = { spec: '①', build: '②', review: '③', verify: '④', ship: '⑤' }
 
 /** Translate a derivePipeline `stat` token into a localized fragment. Falls back to the raw
@@ -59,7 +59,7 @@ function StepNode({ step, t, onApprove, onConfirm, busy }: {
         <span className={`ml-auto h-1.5 w-1.5 shrink-0 rounded-full ${v.dot}`} title={t(`pipeline.status.${step.status}`)} />
       </div>
       <div className="flex items-baseline gap-1.5">
-        <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{AGENT_NAME[step.role] ?? step.role}</span>
+        <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{agentName(step.role)}</span>
       </div>
       <div className="min-h-[1rem] truncate text-[11px] text-slate-300" title={stat}>{stat ?? t(`pipeline.status.${step.status}`)}</div>
       {step.action && (
