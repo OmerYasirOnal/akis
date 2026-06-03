@@ -11,6 +11,29 @@
 
 ---
 
+## Recently landed (2026-06-03) + handoff to the COMPLETION MASTER PLAN
+
+Eight PRs were fresh-context reviewed and merged to `main` this round (main green: backend **595** / 3-skip, frontend **169**, tsc clean, build ok):
+
+- **#59** trust-hardening — prod **fail-closed demo mode** (`AKIS_ALLOW_MOCK`/`AKIS_DEMO_VERIFY` refuse to boot under `NODE_ENV=production` without `AKIS_ALLOW_DEMO_IN_PROD=1`), `/health` now returns `mode:'live'|'demo'`, an amber "DEMO · mock-verified" header badge, the `createVerifier` capability leak closed (only `resolveVerifier(spec)` is public), and dead `orchestrator/parallel.ts` removed.
+- **#58** custom advisory-agent UI in the Workflow Builder (**closes item 5 below**) + a tighten-only per-edge `phase` dispatch; advisory agents can never hold a gate capability (enforced in the UI palette *and* server validation).
+- **#57** docs-sync (this planning layer) · **#56** in-app `/docs` manual · **#53** crypto tamper-detection test · **#51** provider error detail · **#52** dotenv loader quote/comment fix.
+
+**Maps onto the COMPLETION MASTER PLAN (executed in a fresh session):** `P0-DOCS-1`, `P1-CORE-1`, `P3-CLEAN-1`, `P4-FE-1` are **already DONE** on `main` — the fresh session should skip them and start at the **deep gaps** below.
+
+**P1-CORE-1 design variance:** the shipped demo-honesty (#59) uses `AKIS_ALLOW_DEMO_IN_PROD=1` + a `/health` `mode` field + a **header** badge. The plan spec instead wanted `AKIS_DEMO_MODE=1` + a `demo:true` stamp on the verify/preview **event** + the badge on the **gate card & preview panel** (stronger placement). Optional small follow-up rather than a redo.
+
+**Owner-greenlit deep-gap order: 1 → 3 → 2 → 4** (1∥3 ok; do 1 before 2 so the embedding model fixes the `vector(N)` dim and avoids a double migration):
+
+| # | Gap (this doc) | Master-plan task | Credential / prereq |
+|---|---|---|---|
+| 1 | Real semantic embeddings (§2) | `P2-RAG-1` | OpenAI key (`text-embedding-3-small`) via the existing KeyStore |
+| 3 | Real GitHub push | `P1-CORE-2` | fine-grained GitHub PAT (repo scope) → `AKIS_GITHUB_PUSH_TOKEN` + target repo |
+| 2 | pgvector + persisted BM25 (§3) | `P2-RAG-2` | `pgvector/pgvector:pg16` in compose + CI — **BM25-on-restart is the must-have; pgvector ANN is the nice-to-have** |
+| 4 | Core-pipeline tool-loop (§4) | `P3-AGENT-2` | none (existing Claude key) — **deferrable if demo time is tight** |
+
+---
+
 ## 1. Production-grade trust isolation — *deferred-by-design (named in THREAT-MODEL.md)*
 
 - **Today:** one trust domain, one OS process. The 4 gates give **integrity** (no forged/typed-around tokens; verifier/approval capabilities are module-private), but **not confidentiality** against a hostile first-party module in the same realm. `LocalDirectSandbox` (`backend/src/exec/Sandbox.ts`) scrubs secret env vars and kills runaway process groups — **hygiene + blast-radius reduction, NOT an isolation boundary.**
@@ -35,11 +58,9 @@
 - **What's left:** let the core agents call tools (e.g. `retrieve_knowledge`) mid-turn through the same bounded loop — still behind the gates and with no gate-capability tools — so they can pull grounding on demand rather than only pre-assembled context.
 - **Why TODO:** it changes the core agents' control flow (today deliberately a single dispatch); the loop is proven on the advisory path first.
 
-## 5. Custom-agent authoring UI — *genuinely TODO (backend done; UI missing)*
+## 5. Custom-agent authoring UI — *DONE 2026-06-03 (PR #58)*
 
-- **Today:** custom (non-core) agents can be **registered and validated** server-side (`agent/dynamic/AgentRegistry.ts`, `workflow/validate.ts`) — they can never hold a gate capability (rejected at both save-time validation and runtime registration). The Workflow Builder UI (`frontend/src/workflows/WorkflowBuilder.tsx`) edits the **core roster** (per-agent model/tools/skills/gate-policy/iterate budget), not a way to author a brand-new custom agent.
-- **What's left:** a UI to define a `CustomAgentSpec` (prompt + curated skills + non-gate tools) and add it to a workflow's roster.
-- **Why TODO:** the data-driven seam is ready; only the authoring surface is missing.
+- **Shipped:** the Workflow Builder (`frontend/src/workflows/WorkflowBuilder.tsx`) can now add/edit/remove **custom advisory agents** (name, dispatch edge, optional provider/model, instructions, advisory tools), persisted via the existing workflow save path. The advisory tool palette never offers a gate capability and server validation (`workflow/validate.ts`) rejects one — advisory narration stays ephemeral, never ingested as trusted grounding. The 4 gates + tighten-only validation are untouched.
 
 ## 6. Quality + observability gates — *genuinely TODO*
 
@@ -62,7 +83,7 @@
 | Real semantic embeddings | lexical feature-hash today | **deferred-by-design** |
 | pgvector ANN + persisted BM25 | corpus persists; ranking is JS brute-force | **TODO** |
 | Core-pipeline tool-loop | advisory path only | **TODO** |
-| Custom-agent authoring UI | backend register/validate done; no UI | **TODO** |
+| Custom-agent authoring UI | shipped (PR #58) | **done** |
 | Golden-eval retrieval quality gate | not built | **TODO** |
 | OpenTelemetry observability | metrics surfaced; no OTel export | **TODO** |
 | Deploy pipeline / browser E2E | CI boot-smoke + compose only | **TODO** |
