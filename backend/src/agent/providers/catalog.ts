@@ -70,3 +70,52 @@ export const CATALOG: Record<Exclude<ProviderId, 'mock'>, ProviderInfo> = {
 }
 
 export const REAL_PROVIDERS = Object.keys(CATALOG) as Exclude<ProviderId, 'mock'>[]
+
+/** A semantic-embedding model: id + its fixed output dimension (the embedded
+ *  EmbeddingProvider's `dim`). Lives in the SAME catalog as the chat models so a
+ *  real API-backed embedder reuses the existing key/provider identity (no second
+ *  catalog, no second key system). */
+export interface EmbeddingModelInfo {
+  id: string
+  label: string
+  /** Output vector dimension — the active `EmbeddingProvider.dim` (never hardcoded downstream). */
+  dim: number
+}
+
+export interface EmbeddingProviderInfo {
+  /** Reuses the chat provider id, so the SAME catalog key resolves the SAME stored key. */
+  provider: Exclude<ProviderId, 'mock'>
+  baseUrl: string
+  defaultModel: string
+  models: EmbeddingModelInfo[]
+}
+
+/**
+ * Embedding-model catalog (single source of truth for embedding identity + dim).
+ * Default is OpenAI `text-embedding-3-small` (dim 1536) — the API-backed semantic
+ * embedder used when its key resolves; otherwise the offline LocalEmbeddingProvider
+ * (signed feature hashing) stays the default so the suite + golden eval stay
+ * deterministic and offline. The provider id matches the chat catalog (`openai`),
+ * so the key is resolved from the SAME env vars / KeyStore as the chat provider.
+ */
+export const EMBEDDING_CATALOG: Record<'openai', EmbeddingProviderInfo> = {
+  openai: {
+    provider: 'openai',
+    baseUrl: 'https://api.openai.com/v1',
+    defaultModel: 'text-embedding-3-small',
+    models: [
+      { id: 'text-embedding-3-small', label: 'OpenAI text-embedding-3-small', dim: 1536 },
+      { id: 'text-embedding-3-large', label: 'OpenAI text-embedding-3-large', dim: 3072 },
+    ],
+  },
+}
+
+/** The default embedding model id (OpenAI text-embedding-3-small, dim 1536). */
+export const DEFAULT_EMBEDDING_MODEL = EMBEDDING_CATALOG.openai.defaultModel
+
+/** Look up an embedding model's dimension; falls back to the default model's dim for an
+ *  unknown id (a misconfigured AKIS_EMBEDDING_MODEL must never crash boot). */
+export function embeddingDimFor(modelId: string): number {
+  const found = EMBEDDING_CATALOG.openai.models.find(m => m.id === modelId)
+  return found?.dim ?? EMBEDDING_CATALOG.openai.models.find(m => m.id === DEFAULT_EMBEDDING_MODEL)!.dim
+}

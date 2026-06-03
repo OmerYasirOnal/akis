@@ -1,5 +1,6 @@
 import type { EventBus } from '../events/bus.js'
-import { LocalEmbeddingProvider, type EmbeddingProvider } from './embedding/EmbeddingProvider.js'
+import { type EmbeddingProvider } from './embedding/EmbeddingProvider.js'
+import { selectEmbeddingProvider, type KeyLookup } from './embedding/ApiEmbeddingProvider.js'
 import { MemoryVectorStore } from './store/MemoryVectorStore.js'
 import type { VectorStore } from './store/VectorStore.js'
 import { Bm25Index } from './store/Bm25Index.js'
@@ -16,8 +17,14 @@ import { MockGitHubAdapter } from '../di/MockGitHubAdapter.js'
 
 export interface BuildRagOpts {
   bus: EventBus
-  /** Defaults to the offline LocalEmbeddingProvider (deterministic, no key). */
+  /** Embedding seam. An explicit provider wins; otherwise it is SELECTED from `env`/`keyStore`:
+   *  a real ApiEmbeddingProvider (OpenAI text-embedding-3-small) when its key resolves, else the
+   *  offline LocalEmbeddingProvider (deterministic, no key). Under NODE_ENV=test it ALWAYS stays
+   *  on Local (offline + deterministic suite/golden eval). The active `dim` follows the selection. */
   embedding?: EmbeddingProvider
+  /** The encrypted KeyStore consulted (after env) to resolve the embedding key — the SAME store
+   *  the chat providers use. Only used when no explicit `embedding` is given. */
+  keyStore?: KeyLookup
   /** The vector corpus store. Defaults to the in-memory MemoryVectorStore (the keyless
    *  default, lost on restart). When DATABASE_URL is set the server injects a hydrated
    *  PgVectorStore (durable across restart) behind the SAME VectorStore interface — no
@@ -70,7 +77,16 @@ export interface RagStack {
  * NO gate capability; the upload route owns owner-scoping, never gate authority.
  */
 export function buildRag(opts: BuildRagOpts): RagStack {
-  const embedding = opts.embedding ?? new LocalEmbeddingProvider()
+  // Embedding selection: an explicit provider wins; else select from env/keyStore — the real
+  // ApiEmbeddingProvider when an OpenAI key resolves, else the offline LocalEmbeddingProvider
+  // (and ALWAYS Local under NODE_ENV=test). The vector stores are dim-agnostic, so the active
+  // `embedding.dim` flows through unchanged — nothing downstream hardcodes a dimension.
+  const embedding =
+    opts.embedding ??
+    selectEmbeddingProvider({
+      ...(opts.env ? { env: opts.env } : {}),
+      ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
+    })
   const userIdFor = opts.userIdFor ?? (() => 'local')
   const queue = new IngestQueue(opts.queue ?? {})
   const rerankOn = opts.rerank ?? true
