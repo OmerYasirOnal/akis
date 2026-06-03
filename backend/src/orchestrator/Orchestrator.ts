@@ -27,6 +27,9 @@ export class WrongStatusError extends Error {
  *  resolution. A workflow may TIGHTEN this (lower it) via services.iterateBudget. */
 const DEFAULT_MAX_ITERATE = 3
 
+/** The TERMINAL run states — a run here is over and cannot be cancelled/driven further. */
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled'])
+
 /**
  * Conversational orchestrator. It decides the flow (no rigid FSM) and narrates,
  * but the 4 gates are STRUCTURAL — branded capability tokens + a verifier-only
@@ -54,7 +57,7 @@ export class Orchestrator {
   /** Surface a RECOVERABLE run state so the FE can show an ACTION card (not a silent
    *  amber dot). This is NOT a structural gate — it un-parks an AUTOMATIC critic verdict
    *  or a failed verify and never skips verify/push (see the `recovery` event doc). */
-  private emitRecovery(sessionId: string, recovery: 'critic_resolution' | 'verify_failed', state: 'awaiting' | 'resolved'): void {
+  private emitRecovery(sessionId: string, recovery: 'critic_resolution' | 'verify_failed' | 'push_failed', state: 'awaiting' | 'resolved'): void {
     this.s.bus.emit({ kind: 'recovery', recovery, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
   }
 
@@ -147,6 +150,31 @@ export class Orchestrator {
       this.emitRecovery(id, 'critic_resolution', 'awaiting')
     }
     return session
+  }
+
+  /**
+   * Run control: STOP/CANCEL an in-flight run — a clean, user-requested TERMINAL abandon.
+   * It moves the run to `cancelled` (an already-terminal status) from any NON-terminal state;
+   * a terminal run (done/failed/cancelled) refuses (WrongStatusError → 409 at the route), so
+   * cancel can never disturb a finished run. Best-effort: the orchestrator drives no agents on
+   * a fire-and-forget basis, so flipping the status is enough to stop the pipeline from being
+   * driven further (every drive method gates on its expected status).
+   *
+   * CANCEL IS NOT A GATE BYPASS: it only sets a terminal abandon — it NEVER records a
+   * VerifyToken, never mints an ApprovedPush, and never pushes. A run cancelled at the push
+   * gate is abandoned (the verified-but-unpushed artifact is simply not shipped). The
+   * version-safe store update means a concurrent transition just no-ops/conflicts, not ships.
+   */
+  async cancel(id: string): Promise<SessionState> {
+    const cur = await this.s.store.get(id)
+    if (!cur) throw new Error(`session ${id} not found`)
+    if (TERMINAL_STATUSES.has(cur.status)) throw new WrongStatusError('cancel', cur.status)
+    const out = await this.s.store.update(id, { status: 'cancelled' }, cur.version)
+    this.narrate(id, 'Run cancelled.')
+    // Terminal `session/cancelled`: the live view stops driving the run and the ingestion
+    // sink closes out (it unsubscribes on a `done`/non-started session signal).
+    this.s.bus.emit({ kind: 'session', status: 'cancelled', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+    return out
   }
 
   async approve(id: string): Promise<SessionState> {
@@ -362,6 +390,9 @@ export class Orchestrator {
       await this.s.store.update(id, { status: 'push_failed' }, cur.version)
       this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      // RECOVERABLE, not a dead-end: park retryable. The FE surfaces a "Push failed — retry"
+      // action that re-runs the GATED confirmPush (Gate 4 still mints from the VerifyToken).
+      this.emitRecovery(id, 'push_failed', 'awaiting')
       throw err
     }
     this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: true, result: { url: repoUrl }, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
@@ -369,6 +400,8 @@ export class Orchestrator {
     // (mock adapter today; a real preview env lands in the preview sub-project).
     this.s.bus.emit({ kind: 'preview', url: repoUrl, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     const session = await this.s.store.update(id, { status: 'done' }, cur.version)
+    // If this was a retry of a failed push, clear the recovery card (idempotent on replay).
+    if (cur.status === 'push_failed') this.emitRecovery(id, 'push_failed', 'resolved')
     this.emitGate(id, 'push_confirm', 'satisfied')
     this.s.bus.emit({ kind: 'done', verified: isVerified(session), provider: this.s.providerName, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
 

@@ -144,6 +144,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   app.post<{ Params: { id: string } }>('/sessions/:id/run', action(id => orchestratorFor(id).runToVerification(id)))
   app.post<{ Params: { id: string } }>('/sessions/:id/confirm', action(id => orchestratorFor(id).confirmPush(id)))
 
+  // Run control: STOP/CANCEL an in-flight run — a clean TERMINAL abandon (owner-scoped,
+  // version-safe via the orchestrator's store update). It refuses from a terminal status
+  // (WrongStatusError → 409). NOT a gate bypass: cancel never verifies/ships (see
+  // Orchestrator.cancel). The `action` wrapper releases the bound orchestrator on the
+  // resulting terminal `cancelled` status.
+  app.post<{ Params: { id: string } }>('/sessions/:id/cancel', action(id => orchestratorFor(id).cancel(id)))
+
   // ── Run-state recovery (owner-scoped, like the gate routes) ──
   // These un-park a NON-structural automatic state; they NEVER bypass a structural gate.
   // Resolve an awaiting_critic_resolution: 'proceed' continues the pipeline (to the spec

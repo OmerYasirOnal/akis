@@ -19,15 +19,15 @@ export class IngestionSink {
   constructor(private deps: IngestionSinkDeps) {}
 
   /** Subscribe a session; returns an unsubscribe handle. Call at session start.
-   *  Self-unsubscribes on a terminal event (done / session failed) so a long-running
-   *  server never accumulates dead listeners (bounds the subscription to the session). */
+   *  Self-unsubscribes on a terminal event (done / session failed-or-cancelled) so a
+   *  long-running server never accumulates dead listeners (bounds it to the session). */
   subscribeSession(sessionId: string): () => void {
     const userId = this.deps.userIdFor(sessionId)
     let unsub: () => void = () => {}
     unsub = this.deps.bus.subscribe(sessionId, event => {
       const input = this.toIngest(event, sessionId, userId)
       if (input) this.deps.rag.ingest(input)
-      if (event.kind === 'done' || (event.kind === 'session' && event.status === 'failed')) unsub()
+      if (event.kind === 'done' || (event.kind === 'session' && (event.status === 'failed' || event.status === 'cancelled'))) unsub()
     })
     return unsub
   }

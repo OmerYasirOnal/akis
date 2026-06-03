@@ -98,4 +98,53 @@ describe('RunPipeline', () => {
     expect(screen.queryByRole('button', { name: 'Retry tests' })).not.toBeInTheDocument()
     expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
+
+  // ── #79 LOW: a CRITICAL critic park surfaces Proceed/Abandon (not a silent dead failed dot). ──
+  it('surfaces Proceed/Abandon when the run parks on a CRITICAL critic finding', async () => {
+    const api = new ApiClient()
+    const resolveCritic = vi.spyOn(api, 'resolveCritic').mockResolvedValue({} as never)
+    const view = viewWith({
+      status: 'running',
+      codeReview: { approved: false, findings: 1, critical: true, iteration: 2 },
+      recovery: { critic: 'awaiting' },
+    }, [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} api={api} />))
+    await userEvent.click(screen.getByRole('button', { name: 'Proceed' }))
+    expect(resolveCritic).toHaveBeenCalledWith('s1', 'proceed')
+  })
+
+  // ── push_failed retry: a verified run whose push failed surfaces a retry wired to onConfirm. ──
+  it('surfaces a "Push failed — retry" action wired to onConfirm when the push failed', async () => {
+    const onConfirm = vi.fn()
+    const view = viewWith({
+      status: 'running', verified: true,
+      gates: { specApproval: { gate: 'spec_approval', state: 'satisfied' }, pushConfirm: { gate: 'push_confirm', state: 'awaiting' } },
+      tests: { testsRun: 2, passed: true, ran: true },
+      pushFailed: { retry: 'awaiting' },
+    }, [{ agent: 'trace', done: true, ok: true, tools: [], notes: [] }])
+    render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={onConfirm} api={new ApiClient()} />))
+    await userEvent.click(screen.getByRole('button', { name: 'Push failed — retry' }))
+    expect(onConfirm).toHaveBeenCalled()
+    // No duplicate generic Confirm button while push_failed is showing the labeled retry.
+    expect(screen.queryByRole('button', { name: 'Confirm push' })).not.toBeInTheDocument()
+  })
+
+  // ── Stop/Cancel: while a run is in-flight, a Stop control cancels it (clean abandon). ──
+  it('shows a Stop button while a run is in-flight and calls cancelRun', async () => {
+    const api = new ApiClient()
+    const cancelRun = vi.spyOn(api, 'cancelRun').mockResolvedValue({} as never)
+    const view = viewWith({ status: 'running', gates: { specApproval: { gate: 'spec_approval', state: 'awaiting' } } })
+    render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} api={api} />))
+    await userEvent.click(screen.getByRole('button', { name: 'Stop run' }))
+    expect(cancelRun).toHaveBeenCalledWith('s1')
+  })
+
+  it('hides the Stop button once the run is terminal (done / cancelled)', () => {
+    const done = viewWith({ status: 'done', verified: true, gates: { pushConfirm: { gate: 'push_confirm', state: 'satisfied' } } })
+    const { rerender } = render(wrap(<RunPipeline view={done} onApprove={() => {}} onConfirm={() => {}} api={new ApiClient()} />))
+    expect(screen.queryByRole('button', { name: 'Stop run' })).not.toBeInTheDocument()
+    const cancelled = viewWith({ status: 'cancelled' })
+    rerender(wrap(<RunPipeline view={cancelled} onApprove={() => {}} onConfirm={() => {}} api={new ApiClient()} />))
+    expect(screen.queryByRole('button', { name: 'Stop run' })).not.toBeInTheDocument()
+  })
 })
