@@ -26,7 +26,7 @@ import type { UploadSource } from '../knowledge/ingest/UploadSource.js'
 import type { RepoSource } from '../knowledge/ingest/RepoSource.js'
 import { AgentRegistry } from '../agent/dynamic/AgentRegistry.js'
 import { LlmAdvisoryAgent } from '../agent/dynamic/AdvisoryAgent.js'
-import { isCoreRole, type AgentConfig } from '@akis/shared'
+import { isCoreRole, type AgentConfig, type Role } from '@akis/shared'
 import type { ProviderId } from '../agent/providers/catalog.js'
 
 export interface OrchestratorServices {
@@ -266,31 +266,38 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     )
   }
 
-  // P3-AGENT-1: inject the workflow-selected skills into each core producer's system
-  // prompt. The registry is loaded once here; `composeFor` resolves a role's selected
-  // skill NAMES against it and folds their text onto the agent's base prompt via the
-  // (previously defined-but-uncalled) buildSystemPrompt helper. A role with NO selected
-  // skills (the default) resolves to undefined ⇒ the agent uses its byte-identical base
-  // prompt. Per-agent selection is honored: Scribe's names never reach Proto's prompt.
+  // P3-AGENT-1 / -1B: inject the workflow-selected skills into each core agent's system
+  // prompt(s). The registry is loaded once here; `selectSkillsFor` resolves a role's
+  // selected skill NAMES against it (order preserved, unknown names dropped, never a
+  // throw) into the matching Skill[]. The producers (Scribe/Proto) fold them onto a
+  // single base prompt via buildSystemPrompt (composeFor → an injectable systemPrompt
+  // string); the Critic — which builds its TWO prompts internally per call — instead
+  // receives the resolved Skill[] and folds them onto BOTH via the same helper. A role
+  // with NO selected skills (the default) resolves to [] ⇒ byte-identical base prompt(s).
+  // Per-agent selection is honored: a role's names never reach another role's prompt.
   const skills = loadSkills(opts.skillsDir)
-  const composeFor = (role: 'scribe' | 'proto', base: string): string | undefined => {
+  const selectSkillsFor = (role: Role): Skill[] => {
     const names = opts.agentSkills?.[role]
-    if (!names || names.length === 0) return undefined
-    // Resolve names against the registry, preserving the workflow's order and dropping
-    // unknown names (never a throw). No matches ⇒ undefined ⇒ unchanged base prompt.
-    const selected = names.map(n => skills.find(s => s.name === n)).filter((s): s is Skill => s !== undefined)
+    if (!names || names.length === 0) return []
+    return names.map(n => skills.find(s => s.name === n)).filter((s): s is Skill => s !== undefined)
+  }
+  const composeFor = (role: 'scribe' | 'proto', base: string): string | undefined => {
+    const selected = selectSkillsFor(role)
     if (selected.length === 0) return undefined
     return buildSystemPrompt(base, selected)
   }
   const scribePrompt = composeFor('scribe', SCRIBE_SYSTEM)
   const protoPrompt = composeFor('proto', PROTO_SYSTEM)
+  const criticSkills = selectSkillsFor('critic')
 
   return {
     store: opts.store,
     bus,
     github,
     validator: new DeterministicValidator(),
-    critic: new CriticAgent({ generateText }, 75),
+    // P3-AGENT-1B: the critic's selected skills are folded onto BOTH its prompts
+    // internally. No critic skills (the default) ⇒ [] ⇒ both prompts byte-identical.
+    critic: new CriticAgent({ generateText }, 75, criticSkills),
     // RAG ON ⇒ Scribe composes via the bounded retrieve_knowledge tool loop; OFF ⇒
     // single-shot. The same knowledge port the SharedContext reads is reused (P3-AGENT-2).
     scribe: new ScribeAgent({
