@@ -4,9 +4,20 @@ import userEvent from '@testing-library/user-event'
 import { PreviewPanel } from './PreviewPanel.js'
 import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
+import type { TestEvidence } from '@akis/shared'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { STRINGS } from '../i18n/catalog.js'
 import type { ReactElement } from 'react'
+
+const evidence: TestEvidence = {
+  testsRun: 2, passed: true, durationMs: 500,
+  bdd: { built: 1, run: 1, passed: 1, failed: 0, skipped: 0, durationMs: 300 },
+  e2e: { testsRun: 1, passed: true, expected: 1, unexpected: 0, flaky: 0, skipped: 0, durationMs: 200 },
+  scenarios: [
+    { name: 'User can sign up', suite: 'bdd', passed: true },
+    { name: 'Homepage renders', suite: 'e2e', passed: true },
+  ],
+}
 
 /** PreviewPanel reads i18n strings, so render it inside the provider (default: EN). */
 const renderI18n = (ui: ReactElement) => render(<I18nProvider>{ui}</I18nProvider>)
@@ -125,6 +136,44 @@ describe('PreviewPanel', () => {
     rerender(<I18nProvider><PreviewPanel view={view} files={undefined} /></I18nProvider>)
     // Must NOT be stranded on an empty Code view: the Code tab is gone AND the live preview is back.
     expect(screen.queryByRole('tab', { name: STRINGS.en['preview.tab.code'] })).toBeNull()
+    expect(container.querySelector('iframe')).not.toBeNull()
+  })
+
+  // ── Trust tab: the auditable structured evidence behind the verified result ──
+  it('shows NO Trust tab when there is no test evidence', () => {
+    renderI18n(<PreviewPanel view={emptyView('s1')} />)
+    expect(screen.queryByRole('tab', { name: STRINGS.en['trust.tab'] })).toBeNull()
+  })
+  it('shows the Trust tab once test evidence exists, and switches to the report', async () => {
+    const user = userEvent.setup()
+    const view: SessionView = {
+      ...emptyView('s1'),
+      preview: { url: '/preview/s1/', ready: true },
+      codeReview: { approved: true, findings: 0, critical: false, iteration: 1 },
+    }
+    const { container } = renderI18n(<PreviewPanel view={view} testEvidence={evidence} />)
+    await user.click(screen.getByRole('tab', { name: STRINGS.en['trust.tab'] }))
+    // The named scenarios + critic verdict surface; the live iframe is gone on the Trust tab.
+    expect(screen.getByText('User can sign up')).toBeInTheDocument()
+    expect(screen.getByText('Homepage renders')).toBeInTheDocument()
+    expect(screen.getByText(STRINGS.en['trust.critic.approved'])).toBeInTheDocument()
+    expect(container.querySelector('iframe')).toBeNull()
+  })
+  it('flags a DEMO verification on the Trust report when tests.demo', async () => {
+    const user = userEvent.setup()
+    const view: SessionView = { ...emptyView('s1'), tests: { testsRun: 2, passed: true, ran: true, demo: true } }
+    renderI18n(<PreviewPanel view={view} testEvidence={evidence} />)
+    await user.click(screen.getByRole('tab', { name: STRINGS.en['trust.tab'] }))
+    expect(screen.getByRole('status')).toHaveTextContent(STRINGS.en['result.demo.badge'])
+  })
+  it('recovers to Preview when evidence vanishes while on the Trust tab (no dead-end trap)', async () => {
+    const user = userEvent.setup()
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
+    const { container, rerender } = renderI18n(<PreviewPanel view={view} testEvidence={evidence} />)
+    await user.click(screen.getByRole('tab', { name: STRINGS.en['trust.tab'] }))
+    expect(container.querySelector('iframe')).toBeNull() // now on the Trust tab
+    rerender(<I18nProvider><PreviewPanel view={view} testEvidence={undefined} /></I18nProvider>)
+    expect(screen.queryByRole('tab', { name: STRINGS.en['trust.tab'] })).toBeNull()
     expect(container.querySelector('iframe')).not.toBeNull()
   })
 })
