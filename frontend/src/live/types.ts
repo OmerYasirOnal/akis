@@ -73,6 +73,22 @@ export interface CodeReviewState {
   iteration: number
 }
 
+/**
+ * A RECOVERABLE run state the human can act on (from the `recovery` event) so a parked
+ * run is an ACTION card, not a silent amber dot. NOT a structural gate — acting on it
+ * never bypasses verify/push (see the backend `recovery` event doc).
+ *   - critic_resolution: the automatic critic did not approve + iterate budget exhausted →
+ *     the human chooses proceed (continue the pipeline) or abandon (cancel).
+ *   - verify_failed: real verification produced no token → the human retries (re-runs tests).
+ * `resolved` ⇔ the human already chose, so a replayed stream shows the card is done.
+ */
+export interface RecoveryState {
+  critic: 'awaiting' | 'resolved'
+}
+export interface VerifyFailedState {
+  retry: 'awaiting' | 'resolved'
+}
+
 export type SessionStatus = 'started' | 'running' | 'done' | 'failed' | 'unknown'
 
 /** A selectable saved workflow preset (id + display name) for the build composer. */
@@ -89,6 +105,18 @@ export interface SessionView {
   errors: string[]
   /** Latest critic code-review verdict (read-only status card); undefined until reviewed. */
   codeReview?: CodeReviewState
+  /** A recoverable critic-resolution state (proceed/abandon); undefined until the run parks. */
+  recovery?: RecoveryState
+  /** A recoverable verify-failed state (retry); undefined until a real verify fails. */
+  verifyFailed?: VerifyFailedState
   provider?: string
   verified?: boolean
+  /**
+   * TRANSPORT state (NOT event-derived): the live SSE stream dropped and the resumable
+   * EventSource is reconnecting (via Last-Event-ID / seq, so no events double-count). The
+   * hook OVERLAYS this after folding — `foldSessionView` stays a pure projection of events.
+   * Drives a subtle "connection lost — reconnecting" banner (distinct from a terminal
+   * failure) so a dropped stream stops pulsing forever and the run reads as recoverable.
+   */
+  connectionLost?: boolean
 }

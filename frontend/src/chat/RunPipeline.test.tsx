@@ -1,10 +1,11 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { RunPipeline } from './RunPipeline.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { emptyView } from '../live/viewModel.js'
+import { ApiClient } from '../api/client.js'
 import type { SessionView, AgentLane } from '../live/types.js'
 
 const wrap = (ui: ReactNode) => <I18nProvider>{ui}</I18nProvider>
@@ -57,5 +58,44 @@ describe('RunPipeline', () => {
     // details is present (default collapsed) and the slot content is in the DOM.
     expect(screen.getByText('Details (raw log)')).toBeInTheDocument()
     expect(screen.getByText('RAW LOG HERE')).toBeInTheDocument()
+  })
+
+  // ── Run-state recovery: a parked run shows ACTION buttons (not a silent amber dot). ──
+  it('surfaces Proceed/Abandon when the run parks at critic-resolution, and resolveCritic is called', async () => {
+    const api = new ApiClient()
+    const resolveCritic = vi.spyOn(api, 'resolveCritic').mockResolvedValue({} as never)
+    const view = viewWith({
+      status: 'running',
+      codeReview: { approved: false, findings: 2, critical: false, iteration: 1 },
+      recovery: { critic: 'awaiting' },
+    }, [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} api={api} />))
+    await userEvent.click(screen.getByRole('button', { name: 'Proceed' }))
+    expect(resolveCritic).toHaveBeenCalledWith('s1', 'proceed')
+    await userEvent.click(screen.getByRole('button', { name: 'Abandon' }))
+    await waitFor(() => expect(resolveCritic).toHaveBeenCalledWith('s1', 'abandon'))
+    // The recovery hint banner is shown (not a silent dot).
+    expect(screen.getByRole('status')).toHaveTextContent(/critic/i)
+  })
+
+  it('surfaces a Retry action when verification failed, and retryRun is called', async () => {
+    const api = new ApiClient()
+    const retryRun = vi.spyOn(api, 'retryRun').mockResolvedValue({} as never)
+    const view = viewWith({
+      status: 'running',
+      tests: { testsRun: 3, passed: false, ran: true },
+      verifyFailed: { retry: 'awaiting' },
+    }, [{ agent: 'trace', done: true, ok: true, tools: [], notes: [] }])
+    render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} api={api} />))
+    await userEvent.click(screen.getByRole('button', { name: 'Retry tests' }))
+    expect(retryRun).toHaveBeenCalledWith('s1')
+  })
+
+  it('shows NO recovery action when the run is in a normal (non-parked) state', () => {
+    const view = viewWith({ status: 'running', gates: { specApproval: { gate: 'spec_approval', state: 'awaiting' } } })
+    render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} api={new ApiClient()} />))
+    expect(screen.queryByRole('button', { name: 'Proceed' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Retry tests' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })

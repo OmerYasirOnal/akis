@@ -15,6 +15,19 @@ export type AkisEvent =
   | (BaseEvent & { kind: 'tool_call'; tool: ToolName; args: unknown })
   | (BaseEvent & { kind: 'tool_result'; tool: ToolName; ok: boolean; result?: unknown })
   | (BaseEvent & { kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: 'awaiting' | 'satisfied' | 'rejected' })
+  // A RECOVERABLE run state the human can act on so the run is never a silent dead-end.
+  // This is DELIBERATELY NOT a `gate` event: the 4 STRUCTURAL gates are spec_approval +
+  // push_confirm (+ producer≠verifier, verified=real-test-pass) and stay untouched. A
+  // recovery `kind` un-parks an AUTOMATIC verdict or a failed verify; it NEVER bypasses a
+  // structural gate — resolving `critic_resolution` continues to the REAL verify + push
+  // gates (which still apply), and retrying `verify_failed` re-runs REAL verification.
+  //   - critic_resolution: the AUTOMATIC critic did not approve and the iterate budget was
+  //     exhausted → the human may `proceed` (continue to verify+push) or `abandon` (cancel).
+  //   - verify_failed: real verification produced no token (tests failed / 0-test run) →
+  //     the human may retry (re-enter the iterate loop + RE-RUN real verification).
+  // `state` is the lifecycle: `awaiting` (action needed) → `resolved` (the human chose) so a
+  // resumed/replayed stream shows whether the card is still actionable. STRUCTURED ONLY.
+  | (BaseEvent & { kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed'; state: 'awaiting' | 'resolved' })
   // verifier-only — FROZEN (gate source of truth). `demo` is an ADDITIVE, optional, PURELY
   // INFORMATIONAL annotation: true ⇔ the result was produced by the mock/injected test runner
   // (simulated verification), so the UI can mark it as not-a-real-pass AT THE RESULT. It never
