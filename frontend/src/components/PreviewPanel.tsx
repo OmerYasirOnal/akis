@@ -1,5 +1,8 @@
+import { useState } from 'react'
+import type { CodeArtifact } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
 import { TestStats } from './TestStats.js'
+import { CodeBrowser } from './CodeBrowser.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -7,9 +10,15 @@ import { useI18n } from '../i18n/I18nContext.js'
  * in the iframe once it's up, shows the shipped artifact as a link, and offers a
  * "Run app" control to (re)start the local preview. TestStats fills with the verify
  * numbers. Honors the scheme allowlist so an agent-influenced URL can never be a sink.
+ *
+ * A Preview ⇄ Code toggle flips the surface to a read-only browser of the code the agents
+ * wrote (SessionState.code.files), so the verified artifact sits right next to the pass
+ * badge. The toggle only appears once files exist.
  */
-export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean }) {
+export function PreviewPanel({ view, onRun, busy, canRun, files }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined }) {
   const { t } = useI18n()
+  const [tab, setTab] = useState<'preview' | 'code'>('preview')
+  const fileCount = files?.length ?? 0
   const url = view.preview.url
   const artifact = view.preview.artifactUrl
   const embeddable = !!url && url.startsWith('/preview/')
@@ -20,8 +29,22 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
 
   return (
     <div className="flex h-full flex-col gap-3">
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-semibold text-slate-200">{t('preview.title')}</h3>
+      <div className="flex items-center justify-between gap-2">
+        {fileCount > 0 ? (
+          // Preview ⇄ Code toggle — surfaces once the agents have written files.
+          <div role="tablist" aria-label={t('preview.title')} className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+            <button role="tab" aria-selected={tab === 'preview'} onClick={() => setTab('preview')}
+              className={`rounded-md px-2.5 py-1 ${tab === 'preview' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+              {t('preview.tab.preview')}
+            </button>
+            <button role="tab" aria-selected={tab === 'code'} onClick={() => setTab('code')}
+              className={`rounded-md px-2.5 py-1 ${tab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+              {t('preview.tab.code')} <span className="text-slate-500">{fileCount}</span>
+            </button>
+          </div>
+        ) : (
+          <h3 className="text-sm font-semibold text-slate-200">{t('preview.title')}</h3>
+        )}
         <div className="flex items-center gap-2">
           {/* P1-CORE-1: when the boot is in demo mode (mock provider/verification), the embedded
               "running app" is a demo, not a real-verified build — flag it on the preview itself. */}
@@ -45,6 +68,10 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
         </div>
       </div>
 
+      {tab === 'code' ? (
+        <CodeBrowser files={files} />
+      ) : (
+      <>
       <div className="relative flex flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
         {/* Intentional browser-chrome header so the framed area never reads as dead space —
             traffic-light dots, an agent attribution, and (when live) the preview path. */}
@@ -101,6 +128,8 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
       )}
 
       <TestStats stats={view.tests} />
+      </>
+      )}
     </div>
   )
 }
