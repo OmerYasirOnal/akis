@@ -43,7 +43,10 @@ function isRealProvider(p: string | undefined): p is RealProvider {
 
 function firstPresentKey(env: Record<string, string | undefined>, provider: RealProvider): string | undefined {
   for (const v of CATALOG[provider].keyEnvVars) {
-    const val = env[v]
+    // Trim, and treat a whitespace-only value as ABSENT — parity with the Settings route
+    // (which trims). A blank-but-present env key would otherwise disable the keyless mock
+    // AND be forwarded as an auth header (401 on every build) instead of running the demo.
+    const val = env[v]?.trim()
     if (val) return val
   }
   return undefined

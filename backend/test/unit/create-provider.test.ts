@@ -52,6 +52,16 @@ describe('createProvider — fail-closed (X-AC6 / CF6)', () => {
     const p = createProvider({ env: { ANTHROPIC_API_KEY: 'sk-ant-x', AI_MODEL: '', NODE_ENV: 'production' } })
     expect(p.model).toBe('claude-haiku-4-5-20251001')
   })
+  it('falls back to the catalog default when AI_MODEL is WHITESPACE (quoted blank survives the loader)', () => {
+    const p = createProvider({ env: { ANTHROPIC_API_KEY: 'sk-ant-x', AI_MODEL: '   ', NODE_ENV: 'production' } })
+    expect(p.model).toBe('claude-haiku-4-5-20251001')
+  })
+  it('treats a WHITESPACE-only env key as absent (keyless mock stays on, no blank auth header)', () => {
+    // A blank-but-present env key must NOT disable the mock nor be forwarded as an auth header.
+    expect(hasRealProviderKey({ ANTHROPIC_API_KEY: '   ' })).toBe(false)
+    expect(createProvider({ env: { ANTHROPIC_API_KEY: '   ', NODE_ENV: 'development' }, allowMock: true }).name).toBe('mock')
+    expect(() => createProvider({ env: { ANTHROPIC_API_KEY: '   ', NODE_ENV: 'production' } })).toThrow(ProviderConfigError)
+  })
   it('honors AI_MODEL override', () => {
     const p = createProvider({ provider: 'anthropic', model: 'claude-opus-4-8', env: { ANTHROPIC_API_KEY: 'sk-ant-x', NODE_ENV: 'production' } })
     expect(p.model).toBe('claude-opus-4-8')
