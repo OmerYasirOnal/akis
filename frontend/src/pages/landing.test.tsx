@@ -16,6 +16,14 @@ describe('Landing', () => {
     expect(screen.getByText('How it works')).toBeInTheDocument()
     expect(screen.getByText('Why AKIS')).toBeInTheDocument()
   })
+  it('renders the verified-build-run visual chain from i18n (no hardcoded copy)', () => {
+    renderLanding()
+    // The decorative chain copy now resolves through the catalogue.
+    expect(screen.getByText('verified build run')).toBeInTheDocument()
+    expect(screen.getByText('Idea → spec')).toBeInTheDocument()
+    expect(screen.getByText('312 passed')).toBeInTheDocument()
+    expect(screen.getByText('Push gate')).toBeInTheDocument()
+  })
   it('Get started navigates to /signup', async () => {
     renderLanding()
     await userEvent.click(screen.getAllByRole('button', { name: /Get started/i })[0]!)

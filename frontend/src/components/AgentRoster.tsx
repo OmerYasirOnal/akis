@@ -1,16 +1,18 @@
 import type { Role } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
 import { useI18n } from '../i18n/I18nContext.js'
+import { AGENT_NAMES } from '../agents/names.js'
 
 export type AgentPresence = 'idle' | 'working' | 'done' | 'failed'
 
-/** The AKIS core roster, in pipeline order. orchestrator = AKIS itself. */
+/** The AKIS core roster, in pipeline order. orchestrator = AKIS itself. Display names
+ *  come from the shared AGENT_NAMES source of truth. */
 export const ROSTER: { role: Role; name: string; tint: string }[] = [
-  { role: 'orchestrator', name: 'AKIS', tint: 'from-teal-400 to-teal-300' },
-  { role: 'scribe', name: 'Scribe', tint: 'from-sky-400 to-sky-300' },
-  { role: 'proto', name: 'Proto', tint: 'from-violet-400 to-violet-300' },
-  { role: 'trace', name: 'Trace', tint: 'from-emerald-400 to-emerald-300' },
-  { role: 'critic', name: 'Critic', tint: 'from-amber-400 to-amber-300' },
+  { role: 'orchestrator', name: AGENT_NAMES.orchestrator, tint: 'from-teal-400 to-teal-300' },
+  { role: 'scribe', name: AGENT_NAMES.scribe, tint: 'from-sky-400 to-sky-300' },
+  { role: 'proto', name: AGENT_NAMES.proto, tint: 'from-violet-400 to-violet-300' },
+  { role: 'trace', name: AGENT_NAMES.trace, tint: 'from-emerald-400 to-emerald-300' },
+  { role: 'critic', name: AGENT_NAMES.critic, tint: 'from-amber-400 to-amber-300' },
 ]
 
 /** Derive an agent's live presence from the session view: the most recent step for
