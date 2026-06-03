@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { validateWorkflowConfig } from '../../src/workflow/validate.js'
 import { WorkflowStore } from '../../src/workflow/WorkflowStore.js'
-import { workflowToAgentModels } from '../../src/workflow/resolve.js'
+import { workflowToAgentModels, workflowToAgentSkills } from '../../src/workflow/resolve.js'
 import type { WorkflowConfig, WorkflowConfigInput } from '@akis/shared'
 
 const base = (over: Partial<WorkflowConfigInput> = {}): WorkflowConfigInput => ({
@@ -124,5 +124,21 @@ describe('workflowToAgentModels (F2-AC9 resolution)', () => {
     expect(m.proto).toEqual({ provider: 'openai' })
     expect(m.trace).toBeUndefined()
     expect('custom' in m).toBe(false)
+  })
+})
+
+describe('workflowToAgentSkills (P3-AGENT-1 resolution)', () => {
+  it('maps core roles with a non-empty skills list; ignores custom roles, empty + skill-less agents', () => {
+    const wf: WorkflowConfig = { id: 'w', version: 1, name: 'x', agents: [
+      { role: 'scribe', skills: ['web-app-spec', 'rest-api-spec'] },
+      { role: 'proto', skills: [] },                          // empty → skipped
+      { role: 'trace' },                                       // no skills → skipped
+      { role: 'custom', skills: ['x'] },                       // non-core → skipped
+    ] }
+    const s = workflowToAgentSkills(wf)
+    expect(s.scribe).toEqual(['web-app-spec', 'rest-api-spec'])
+    expect('proto' in s).toBe(false)
+    expect(s.trace).toBeUndefined()
+    expect('custom' in s).toBe(false)
   })
 })
