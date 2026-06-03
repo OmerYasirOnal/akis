@@ -12,6 +12,16 @@ export type PipelineStatus = 'pending' | 'active' | 'done' | 'awaiting' | 'faile
 export type PipelineAction = 'approve' | 'confirm'
 
 /**
+ * A RECOVERY action a step surfaces when the run parked in a recoverable (non-gate) state,
+ * so a stalled run is an actionable card — not a silent amber dot the user can't leave.
+ * NOT a structural gate: acting on it never bypasses verify/push (the backend re-runs real
+ * verification and the spec/push gates still apply).
+ *   - 'critic_resolution': proceed (continue) | abandon (cancel) past the automatic critic.
+ *   - 'verify_failed': retry — re-run REAL verification.
+ */
+export type PipelineRecovery = 'critic_resolution' | 'verify_failed'
+
+/**
  * One stage card in the compact run pipeline. `stat` is a single human key-fact
  * (e.g. "2 tests", "review clean", a provider name) — undefined while pending.
  * `action` is set only when a human gate is open on that step.
@@ -24,6 +34,8 @@ export interface PipelineStep {
   stat?: string
   /** When awaiting a human gate, the action to surface (approve | confirm). */
   action?: PipelineAction
+  /** When the run parked in a recoverable (non-gate) state, the recovery to surface. */
+  recovery?: PipelineRecovery
 }
 
 const ORDER: { key: PipelineStepKey; role: Role }[] = [
@@ -56,15 +68,22 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
   const push = view.gates.pushConfirm?.state
   const cr = view.codeReview
   const tests = view.tests
+  // Recoverable (non-gate) parks, surfaced as ACTION cards (not silent amber dots).
+  const criticAwaiting = view.recovery?.critic === 'awaiting'
+  const retryAwaiting = view.verifyFailed?.retry === 'awaiting'
 
   return ORDER.map(({ key, role }): PipelineStep => {
     let status = fromPresence(view, role)
     let stat: string | undefined
     let action: PipelineAction | undefined
+    let recovery: PipelineRecovery | undefined
 
     switch (key) {
       case 'spec':
-        if (spec === 'awaiting') { status = 'awaiting'; action = 'approve'; stat = 'spec ready' }
+        // A critic-resolution park with NO code review yet = parked at the SPEC step: surface
+        // the proceed/abandon recovery HERE (the run never reached code), as an action card.
+        if (criticAwaiting && !cr) { status = 'awaiting'; recovery = 'critic_resolution'; stat = 'critic rejected' }
+        else if (spec === 'awaiting') { status = 'awaiting'; action = 'approve'; stat = 'spec ready' }
         else if (spec === 'rejected') { status = 'failed'; stat = 'spec rejected' }
         else if (spec === 'satisfied') { status = 'done'; stat = 'spec approved' }
         else if (status !== 'pending') stat = status === 'failed' ? 'spec failed' : 'spec ready'
@@ -79,15 +98,21 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
           if (cr.critical) { status = 'failed'; stat = 'critical finding' }
           // Approved (the normal flow ships with advisory findings) → done.
           else if (cr.approved) { status = 'done'; stat = cr.findings === 0 ? 'review clean' : `${cr.findings} findings` }
-          // NOT approved (the critic parked the run at awaiting_critic_resolution) must NOT
-          // look like a clean pass — surface it as 'awaiting' (amber), not a green 'done', so
-          // a stalled build is visible. (No auto-resolution action yet — a gate-semantics
-          // decision.) The findings stat stays localizable; the amber status carries the signal.
+          // NOT approved AND the run parked at critic-resolution (code-step park): surface a
+          // proceed/abandon recovery ACTION card (no longer a silent amber dot). The user can
+          // proceed (continue to the REAL verify + push gates) or abandon (cancel).
+          else if (criticAwaiting) { status = 'awaiting'; recovery = 'critic_resolution'; stat = cr.findings > 0 ? `${cr.findings} findings` : 'critic rejected' }
+          // NOT approved with no live recovery signal (e.g. mid-iterate) → amber, no action.
           else if (status !== 'failed') { status = 'awaiting'; stat = cr.findings > 0 ? `${cr.findings} findings` : undefined }
         } else if (status === 'active') stat = 'reviewing'
         break
       case 'verify':
-        if (tests.ran) {
+        // A retryable verify failure is an ACTION card (retry re-runs REAL verification) —
+        // not a silent dead-end. It takes precedence over the raw presence-derived status.
+        if (retryAwaiting) {
+          status = 'failed'; recovery = 'verify_failed'
+          stat = tests.ran ? `${tests.testsRun} tests` : 'verify failed'
+        } else if (tests.ran) {
           status = tests.passed ? 'done' : 'failed'
           stat = `${tests.testsRun} tests`
         } else if (status === 'active') stat = 'running tests'
@@ -106,7 +131,7 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
         break
     }
 
-    return { key, role, status, ...(stat !== undefined ? { stat } : {}), ...(action !== undefined ? { action } : {}) }
+    return { key, role, status, ...(stat !== undefined ? { stat } : {}), ...(action !== undefined ? { action } : {}), ...(recovery !== undefined ? { recovery } : {}) }
   })
 }
 

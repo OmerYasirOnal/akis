@@ -118,4 +118,45 @@ describe('derivePipeline', () => {
       [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
     expect(step(critical, 'review').status).toBe('failed')
   })
+
+  // ── Run-state recovery: a parked run surfaces an ACTION (recovery), not a silent dot. ──
+  it('critic-resolution at the CODE step → review step carries a critic_resolution recovery action', () => {
+    const view = viewWith({
+      status: 'running',
+      codeReview: { approved: false, findings: 2, critical: false, iteration: 1 },
+      recovery: { critic: 'awaiting' },
+    }, [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(view, 'review').status).toBe('awaiting')
+    expect(step(view, 'review').recovery).toBe('critic_resolution')
+  })
+
+  it('critic-resolution at the SPEC step (no code review yet) → spec step carries the recovery action', () => {
+    const view = viewWith({ status: 'running', recovery: { critic: 'awaiting' } })
+    expect(step(view, 'spec').status).toBe('awaiting')
+    expect(step(view, 'spec').recovery).toBe('critic_resolution')
+    expect(step(view, 'review').recovery).toBeUndefined()
+  })
+
+  it('a RESOLVED critic-resolution no longer surfaces an action', () => {
+    const view = viewWith({ status: 'running', recovery: { critic: 'resolved' }, codeReview: { approved: false, findings: 1, critical: false, iteration: 1 } },
+      [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(view, 'review').recovery).toBeUndefined()
+  })
+
+  it('verify_failed → verify step is failed and carries a verify_failed retry action', () => {
+    const view = viewWith({
+      status: 'running',
+      tests: { testsRun: 3, passed: false, ran: true },
+      verifyFailed: { retry: 'awaiting' },
+    }, [{ agent: 'trace', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(view, 'verify').status).toBe('failed')
+    expect(step(view, 'verify').recovery).toBe('verify_failed')
+    expect(step(view, 'verify').stat).toBe('3 tests')
+  })
+
+  it('a RESOLVED verify_failed no longer surfaces a retry action', () => {
+    const view = viewWith({ status: 'running', tests: { testsRun: 3, passed: false, ran: true }, verifyFailed: { retry: 'resolved' } },
+      [{ agent: 'trace', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(view, 'verify').recovery).toBeUndefined()
+  })
 })

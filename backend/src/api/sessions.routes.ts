@@ -144,6 +144,27 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   app.post<{ Params: { id: string } }>('/sessions/:id/run', action(id => orchestratorFor(id).runToVerification(id)))
   app.post<{ Params: { id: string } }>('/sessions/:id/confirm', action(id => orchestratorFor(id).confirmPush(id)))
 
+  // ── Run-state recovery (owner-scoped, like the gate routes) ──
+  // These un-park a NON-structural automatic state; they NEVER bypass a structural gate.
+  // Resolve an awaiting_critic_resolution: 'proceed' continues the pipeline (to the spec
+  // gate if unapproved, else to the REAL verify + push gates), 'abandon' cancels the run.
+  app.post<{ Params: { id: string }; Body: { decision?: string } }>('/sessions/:id/resolve', async (req, reply) => {
+    const id = req.params.id
+    if (!(await accessibleSession(req, id))) return notFound(reply, id)
+    const decision = req.body?.decision
+    if (decision !== 'proceed' && decision !== 'abandon') {
+      return reply.code(400).send({ error: "decision must be 'proceed' or 'abandon'", code: 'BadRequest' })
+    }
+    try {
+      const r = await orchestratorFor(id).resolveCritic(id, decision)
+      if (TERMINAL.has(r.status)) bound.delete(id)
+      return reply.send(r)
+    } catch (err) { return sendError(reply, err) }
+  })
+  // Retry a verify_failed run: re-enters the verify step and RE-RUNS REAL verification
+  // (mint still needs a genuine ≥1-test pass — no bypass).
+  app.post<{ Params: { id: string } }>('/sessions/:id/retry', action(id => orchestratorFor(id).retryVerification(id)))
+
   // Batch event log: the retained {seq,event}[] for a session. The FE fetches this on
   // an SSE `reset` to rebuild its live view from the authoritative history (the SSE
   // stream alone can't, after a buffer drop), then resumes live from head (F2-AC12).

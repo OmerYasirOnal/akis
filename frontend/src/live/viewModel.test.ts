@@ -121,4 +121,26 @@ describe('foldSessionView (pure live view-model)', () => {
     const v = foldSessionView('s1', events)
     expect(v.lanes[0]!.steps[0]!.notes).toContain('thinking about the spec')
   })
+
+  it('folds a critic_resolution recovery (awaiting → resolved, last wins)', () => {
+    const awaiting = foldSessionView('s1', [ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' })])
+    expect(awaiting.recovery).toEqual({ critic: 'awaiting' })
+    const resolved = foldSessionView('s1', [
+      ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'resolved' }),
+    ])
+    expect(resolved.recovery).toEqual({ critic: 'resolved' })
+  })
+
+  it('folds a verify_failed recovery (retry awaiting → resolved, last wins)', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'recovery', recovery: 'verify_failed', state: 'awaiting' }),
+    ])
+    expect(v.verifyFailed).toEqual({ retry: 'awaiting' })
+    const resolved = foldSessionView('s1', [
+      ev({ kind: 'recovery', recovery: 'verify_failed', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'verify_failed', state: 'resolved' }),
+    ])
+    expect(resolved.verifyFailed).toEqual({ retry: 'resolved' })
+  })
 })
