@@ -3,9 +3,12 @@
  * Independent verification — fresh context, no shared state with the producer.
  *
  * Ported from AKIS v1. ADAPTATION: v1 injected a SkillRegistry to enhance the
- * system prompt inside the agent. In the MVP, skills are selected + injected at
- * the orchestrator layer (three-layer prompt/skill model), so the skills
- * coupling is removed here and the constructor takes just (ai, approvalThreshold).
+ * system prompt inside the agent. In the MVP, skills are SELECTED at the
+ * orchestrator layer (buildServices resolves a workflow's per-agent skill NAMES
+ * against the loaded registry) and the resolved Skill[] is passed in here, so this
+ * agent owns only the FOLDING — appending the selected skill text onto BOTH of its
+ * internally-built prompts via the shared `buildSystemPrompt` helper (P3-AGENT-1B).
+ * No skills (the default) ⇒ both prompts are byte-identical to today.
  */
 
 import type {
@@ -22,6 +25,7 @@ import {
   buildCodeReviewUserPrompt,
 } from './prompts/code-review.js';
 import { parseAIJson } from './json-extract.js';
+import { buildSystemPrompt, type Skill } from '../../../skills/registry.js';
 
 // ─── Dependency Interface ────────────────────────
 
@@ -44,16 +48,30 @@ export const DEFAULT_APPROVAL_THRESHOLD = 75;
 export class CriticAgent {
   private ai: CriticAIDeps;
   private approvalThreshold: number;
+  /** Workflow-selected skills (already resolved against the registry by the DI layer).
+   *  Inert guidance text folded onto BOTH prompts; empty ⇒ byte-identical base prompts. */
+  private skills: Skill[];
 
-  constructor(ai: CriticAIDeps, approvalThreshold: number = DEFAULT_APPROVAL_THRESHOLD) {
+  constructor(
+    ai: CriticAIDeps,
+    approvalThreshold: number = DEFAULT_APPROVAL_THRESHOLD,
+    skills: Skill[] = [],
+  ) {
     this.ai = ai;
     // Clamp to the valid score range so a misconfigured value can never crash parsing.
     this.approvalThreshold = Math.max(0, Math.min(100, Math.floor(approvalThreshold)));
+    this.skills = skills;
   }
 
   /** Exposed so the same threshold can be surfaced alongside the score. */
   getApprovalThreshold(): number {
     return this.approvalThreshold;
+  }
+
+  /** Fold the selected skills onto a freshly-built base prompt. No skills (the
+   *  default) ⇒ buildSystemPrompt returns the base unchanged (byte-identical). */
+  private withSkills(base: string): string {
+    return buildSystemPrompt(base, this.skills);
   }
 
   /**
@@ -73,7 +91,7 @@ export class CriticAgent {
     let responseText: string;
     try {
       responseText = await this.ai.generateText(
-        buildSpecReviewSystemPrompt(this.approvalThreshold),
+        this.withSkills(buildSpecReviewSystemPrompt(this.approvalThreshold)),
         userPrompt,
       );
     } catch {
@@ -112,7 +130,7 @@ export class CriticAgent {
     let responseText: string;
     try {
       responseText = await this.ai.generateText(
-        buildCodeReviewSystemPrompt(this.approvalThreshold),
+        this.withSkills(buildCodeReviewSystemPrompt(this.approvalThreshold)),
         userPrompt,
       );
     } catch {
