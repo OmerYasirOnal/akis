@@ -84,7 +84,8 @@ optional and flows through from your shell / `.env`. Full descriptions live in
 | `HOST`            | `0.0.0.0`                 | Bind address. **Containers MUST use `0.0.0.0`** or the published port is unreachable; local non-Docker dev defaults to `127.0.0.1`. |
 | `SERVE_STATIC`    | `1`                       | Serve the built `frontend/dist` SPA alongside the API on the same port. |
 | `DATABASE_URL`    | `postgres://akis:akis@db:5432/akis` | Postgres DSN → activates persistence (see below). Unset → in-memory. |
-| `AKIS_ALLOW_MOCK` | `1` (override in `.env`)  | Keyless demo: run the deterministic mock provider + passing demo verification. **Fallback** — auto-disabled when a provider key is set. Set `0` to require a real key (fail-closed). |
+| `AKIS_ALLOW_MOCK` | `1` (override in `.env`)  | Keyless demo: run the deterministic mock provider + passing demo verification. **Fallback** — the mock *provider* is auto-disabled when a provider key is set, but mock *verification* stays on until you also clear this. Set `0` to require a real key + real verification (fail-closed). |
+| `AKIS_ALLOW_DEMO_IN_PROD` | `1` (compose default) | **B1 — demo fail-closed.** A demo flag (`AKIS_ALLOW_MOCK` / `AKIS_DEMO_VERIFY`) *fakes* verification (a build reaches done+preview WITHOUT real tests). In `NODE_ENV=production` the backend **refuses to boot** on a demo flag unless this is set to acknowledge it. The bundled demo stack sets `1`; for your own production deployment set `0` and configure a real key + verification. |
 | `AUTH_JWT_SECRET` | **insecure default** (`akis-insecure-demo-secret-change-me`); override via `.env`/shell | HS256 session-signing secret. The default only keeps the prod-mode demo booting. **Override it** for any real use (`openssl rand -hex 32`) — also makes sessions survive restarts. |
 | `PUBLIC_BASE_URL` | pass-through              | Browser-facing origin for OAuth + cross-site cookies, e.g. `http://localhost:3000`. |
 | `ANTHROPIC_API_KEY` (or another provider key) | pass-through | Enables real builds and auto-disables the mock. Absent → keyless mock demo. |
@@ -111,8 +112,10 @@ state that resets on restart — handy for an ephemeral demo.
 backend **refuses to start** rather than silently running in-memory and losing your
 data on the next restart. The bundled stack's `db` healthcheck + `depends_on`
 ordering make this a non-issue; if you point AKIS at an external database, make sure
-it is reachable. `GET /health` reports the active mode:
-`{ "ok": true, "persistence": "postgres" | "memory" }`.
+it is reachable. `GET /health` reports the active persistence + serving mode:
+`{ "ok": true, "persistence": "postgres" | "memory", "mode": "live" | "demo" }`.
+`mode: "demo"` means a demo flag is active so "verified" output is **not** from real
+tests — the studio UI also shows an amber **"DEMO · mock-verified"** badge in that case.
 
 What persists with `DATABASE_URL` set:
 

@@ -1,11 +1,12 @@
-import type { SharedContext } from '@akis/shared'
+import type { SharedContext, AdvisoryPhase } from '@akis/shared'
 import type { LlmProvider } from '../LlmProvider.js'
 import { callWithTools, type ToolLoopOptions } from '../tools/toolLoop.js'
 import type { ToolRegistry } from '../tools/ToolRegistry.js'
 
 /** Where in the pipeline AKIS consults an advisory agent. Both edges are advisory
- *  only — never on the spine between the gates. */
-export type AdvisoryPhase = 'pre_scribe' | 'post_code_review'
+ *  only — never on the spine between the gates. Canonical list lives in @akis/shared
+ *  (ADVISORY_PHASES) so the workflow validator and the builder UI agree. */
+export type { AdvisoryPhase }
 
 export interface AdvisoryInput {
   sessionId: string

@@ -46,6 +46,17 @@ describe('postJson', () => {
     const fetchFn = (async () => new Response(body, { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
     await expect(postJson('http://x', {}, {}, { fetchFn, maxRetries: 0 })).rejects.toThrow(/at least 1 character/)
   })
+  it('surfaces a message-less provider error status (Gemini) without dumping raw JSON', async () => {
+    // Gemini 400 body has no `message` → surface the compact status, not the whole JSON blob.
+    const body = '{"error":{"code":400,"status":"INVALID_ARGUMENT"}}'
+    const fetchFn = (async () => new Response(body, { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
+    await postJson('http://x', {}, {}, { fetchFn, maxRetries: 0 }).catch((e: unknown) => {
+      expect(e).toBeInstanceOf(ProviderHttpError)
+      expect((e as ProviderHttpError).message).toBe('provider HTTP 400: INVALID_ARGUMENT')
+      // and definitely not a raw-JSON dump
+      expect((e as ProviderHttpError).message).not.toContain('{')
+    })
+  })
 })
 
 describe('providerErrorDetail', () => {
@@ -55,5 +66,13 @@ describe('providerErrorDetail', () => {
     expect(providerErrorDetail('{"message":"top level"}')).toBe('top level')
     expect(providerErrorDetail('not json at all')).toBe('not json at all')
     expect(providerErrorDetail('')).toBe('')
+  })
+  it('falls back to error.status / error.code when there is no message (Gemini)', () => {
+    // Gemini: {"error":{"code":400,"status":"INVALID_ARGUMENT"}} — prefer the symbolic status…
+    expect(providerErrorDetail('{"error":{"code":400,"status":"INVALID_ARGUMENT"}}')).toBe('INVALID_ARGUMENT')
+    // …but use the code when status is absent, rather than dumping the raw blob.
+    expect(providerErrorDetail('{"error":{"code":429}}')).toBe('429')
+    // a message still wins over status/code
+    expect(providerErrorDetail('{"error":{"code":400,"status":"INVALID_ARGUMENT","message":"field x"}}')).toBe('field x')
   })
 })

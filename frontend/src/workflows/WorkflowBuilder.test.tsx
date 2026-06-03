@@ -203,6 +203,97 @@ describe('WorkflowBuilder', () => {
     expect(save).not.toHaveBeenCalled()
   })
 
+  it('CUSTOM AGENT: adding one (name + edge + model + instructions + tool) lands it in the saved WorkflowConfig as a non-core agent', async () => {
+    const save = vi.fn()
+    await renderBuilder(apiWith({ save }))
+    // Empty state until the user adds one.
+    expect(screen.getByTestId('custom-agents-empty')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'add-custom-agent' }))
+
+    await userEvent.type(screen.getByLabelText('custom-agent-0-name'), 'researcher')
+    await userEvent.selectOptions(screen.getByLabelText('custom-agent-0-edge'), 'pre_scribe')
+    await userEvent.selectOptions(screen.getByLabelText('custom-agent-0-provider'), 'anthropic')
+    await userEvent.selectOptions(screen.getByLabelText('custom-agent-0-model'), 'claude-opus-4-8')
+    await userEvent.type(screen.getByLabelText('custom-agent-0-instructions'), 'Research similar apps first.')
+    await userEvent.click(screen.getByLabelText('custom-agent-0-tool-retrieve_knowledge'))
+
+    await fillNameAndSave()
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    const body = save.mock.calls[0]![0] as WorkflowConfigInput
+    const custom = body.agents.find(a => a.role === 'researcher')
+    expect(custom).toBeDefined()
+    expect(custom!.phase).toBe('pre_scribe')
+    expect(custom!.model).toEqual({ providerId: 'anthropic', modelId: 'claude-opus-4-8' })
+    expect(custom!.basePromptVariant).toBe('Research similar apps first.')
+    expect(custom!.tools).toContain('retrieve_knowledge')
+    // The 5 core roles are still present alongside the custom agent.
+    for (const role of ['orchestrator', 'scribe', 'proto', 'trace', 'critic']) {
+      expect(body.agents.some(a => a.role === role)).toBe(true)
+    }
+  })
+
+  it('CUSTOM AGENT: no gate capability is selectable — the advisory tool palette never offers a gate tool', async () => {
+    await renderBuilder(apiWith())
+    await userEvent.click(screen.getByRole('button', { name: 'add-custom-agent' }))
+    // The advisory palette offers only read/compose tools.
+    expect(screen.getByLabelText('custom-agent-0-tool-retrieve_knowledge')).toBeInTheDocument()
+    expect(screen.getByLabelText('custom-agent-0-tool-chat')).toBeInTheDocument()
+    expect(screen.getByLabelText('custom-agent-0-tool-ask')).toBeInTheDocument()
+    // None of the gate capabilities can even be checked (they aren't rendered at all).
+    for (const gate of ['run_tests', 'push_to_github', 'dispatch_trace', 'request_spec_approval', 'request_push_confirm']) {
+      expect(screen.queryByLabelText(`custom-agent-0-tool-${gate}`)).not.toBeInTheDocument()
+    }
+  })
+
+  it('CUSTOM AGENT: an unnamed row is dropped and removing a row takes it out of the payload', async () => {
+    const save = vi.fn()
+    await renderBuilder(apiWith({ save }))
+    // Two rows: one named, one left blank (incomplete).
+    await userEvent.click(screen.getByRole('button', { name: 'add-custom-agent' }))
+    await userEvent.click(screen.getByRole('button', { name: 'add-custom-agent' }))
+    await userEvent.type(screen.getByLabelText('custom-agent-0-name'), 'stylist')
+    // Row 1 stays blank → must be dropped from the payload.
+    await fillNameAndSave()
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    let body = save.mock.calls[0]![0] as WorkflowConfigInput
+    const nonCore = body.agents.filter(a => !['orchestrator', 'scribe', 'proto', 'trace', 'critic'].includes(a.role))
+    expect(nonCore.map(a => a.role)).toEqual(['stylist']) // only the named, complete row
+
+    // Now remove the named row → no custom agents remain in the next payload.
+    await userEvent.click(screen.getByLabelText('custom-agent-0-remove'))
+    await userEvent.click(screen.getByRole('button', { name: 'Save workflow' }))
+    await waitFor(() => expect(save).toHaveBeenCalledTimes(2))
+    body = save.mock.calls[1]![0] as WorkflowConfigInput
+    expect(body.agents.some(a => a.role === 'stylist')).toBe(false)
+  })
+
+  it('CUSTOM AGENT: a row with no edge selected omits phase (dispatched at every edge by the backend)', async () => {
+    const save = vi.fn()
+    await renderBuilder(apiWith({ save }))
+    await userEvent.click(screen.getByRole('button', { name: 'add-custom-agent' }))
+    await userEvent.type(screen.getByLabelText('custom-agent-0-name'), 'omniscient')
+    await fillNameAndSave()
+    await waitFor(() => expect(save).toHaveBeenCalled())
+    const body = save.mock.calls[0]![0] as WorkflowConfigInput
+    const custom = body.agents.find(a => a.role === 'omniscient')
+    expect(custom).toBeDefined()
+    expect(custom!.phase).toBeUndefined() // omitted ⇒ every edge
+  })
+
+  it('CUSTOM AGENT: hydrates existing custom agents from an edited workflow', async () => {
+    const initial: WorkflowConfigInput = {
+      id: 'wf-2', name: 'Has advisor', agents: [
+        { role: 'scribe' },
+        { role: 'researcher', phase: 'pre_scribe', basePromptVariant: 'dig deep', tools: ['retrieve_knowledge'], model: { providerId: 'anthropic', modelId: 'claude-opus-4-8' } },
+      ],
+    }
+    render(wrap(<WorkflowBuilder api={apiWith()} initial={initial} />))
+    await waitFor(() => expect((screen.getByLabelText('custom-agent-0-name') as HTMLInputElement).value).toBe('researcher'))
+    expect((screen.getByLabelText('custom-agent-0-edge') as HTMLSelectElement).value).toBe('pre_scribe')
+    expect((screen.getByLabelText('custom-agent-0-instructions') as HTMLTextAreaElement).value).toBe('dig deep')
+    expect((screen.getByLabelText('custom-agent-0-tool-retrieve_knowledge') as HTMLInputElement).checked).toBe(true)
+  })
+
   it('hydrates from an existing workflow for editing and saves a new version under the same id', async () => {
     const save = vi.fn()
     const initial: WorkflowConfigInput = {

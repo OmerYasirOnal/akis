@@ -38,6 +38,15 @@ services:
       # provider takes over; the mock never masks a configured key. Set
       # AKIS_ALLOW_MOCK=0 in your .env to opt out and require a real key (fail-closed).
       AKIS_ALLOW_MOCK: ${AKIS_ALLOW_MOCK:-1}
+      # B1 — demo fail-closed: a demo flag (AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) FAKES
+      # verification (a build reaches done+preview WITHOUT real tests). In production the
+      # backend refuses to boot on a demo flag UNLESS this acknowledgment is set. This
+      # bundled stack IS the acknowledged keyless demo, so it defaults to 1 — and /health
+      # then reports `mode:"demo"` (the FE shows a "DEMO · mock-verified" badge). When you
+      # add a real provider key (AKIS_ALLOW_MOCK falls away) the demo flag is inert, mode
+      # returns to "live", and this ack is irrelevant. Set it to 0 to enforce the
+      # fail-closed boot in your own production deployment.
+      AKIS_ALLOW_DEMO_IN_PROD: ${AKIS_ALLOW_DEMO_IN_PROD:-1}
       # ── Pass-throughs from your shell / .env (see backend/.env.example) ──
       # AUTH_JWT_SECRET signs session JWTs. Production fails closed on an EMPTY secret,
       # so this ships a working INSECURE default to keep the zero-config demo booting.
@@ -60,7 +69,7 @@ services:
     healthcheck:
       # Liveness via the cheap /health route (reserved from the SPA fallback). The
       # container always listens on 3000 (see ports note). /health is a static handler
-      # (returns `{ ok, persistence }` without touching the DB), so this is a LIVENESS
+      # (returns `{ ok, persistence, mode }` without touching the DB), so this is a LIVENESS
       # probe — it proves Fastify is up and accepting connections (catching a crashed/
       # unresponsive process that `restart: unless-stopped`, which only reacts to process
       # EXIT, would miss) and gives `docker compose ps` a real readiness signal. It does
