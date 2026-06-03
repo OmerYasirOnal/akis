@@ -1,9 +1,12 @@
 import type { SpecArtifact, SharedContext } from '@akis/shared'
 import type { EventBus } from '../../events/bus.js'
-import type { LlmProvider } from '../../agent/LlmProvider.js'
+import type { ChatResult, LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
 import { parseAIJson } from './critic/json-extract.js'
 import { renderKnowledge } from './context-prompt.js'
+import type { KnowledgePort } from '../../knowledge/KnowledgePort.js'
+import { buildAdvisoryTools } from '../../agent/tools/advisoryTools.js'
+import { callWithTools } from '../../agent/tools/toolLoop.js'
 
 export interface ScribeInput {
   sessionId: string
@@ -34,17 +37,44 @@ const SCRIBE_SYSTEM = [
   'or {"kind":"clarify","questions":["..."]}  — only when the idea is truly unintelligible.',
 ].join('\n')
 
+/** Scribe gains a `retrieve_knowledge` line ONLY when RAG is on, so the RAG-off
+ *  system prompt stays byte-identical to today. */
+const SCRIBE_RAG_HINT =
+  'If it helps ground the spec, call retrieve_knowledge to pull relevant prior project context before drafting.'
+
 /**
  * Scribe — idea → spec. LIVE: it calls the injected LLM provider and parses the
  * result into a typed SpecArtifact (CORE-AC1). Emits agent_start, tool_call
  * (dispatch_scribe) and tool_result (CF2) so the run is observable. The mock
  * provider returns deterministic JSON, so tests/keyless runs stay green.
  *
+ * RAG ON (P3-AGENT-2): when `ragEnabled` + a `knowledge` port are wired, Scribe
+ * composes the spec through the EXISTING bounded tool loop (callWithTools) with
+ * ONLY the read-only `retrieve_knowledge` tool in scope — the same loop + same
+ * single allow-list choke point (buildAdvisoryTools) the advisory agents use. So
+ * Scribe pulls grounding ON DEMAND, and each retrieve_knowledge use surfaces as a
+ * real tool_call/tool_result on the live stream. RAG OFF (default) → the loop is
+ * never built and control flow is the byte-identical single-shot dispatch.
+ *
+ * Scribe is a PRODUCER: the tool scope can NEVER include a gate capability —
+ * buildAdvisoryTools only ever wires read-only tools and the loop's registry holds
+ * no gate authority, so this path cannot reach the verifier/run_tests/push/token mint.
+ *
  * `needsClarification` forces the clarify branch without an LLM call (used by the
  * orchestrator's deterministic clarify scenarios/tests).
  */
 export class ScribeAgent {
-  constructor(private deps: { bus: EventBus; provider: LlmProvider; needsClarification?: boolean }) {}
+  constructor(
+    private deps: {
+      bus: EventBus
+      provider: LlmProvider
+      needsClarification?: boolean
+      /** Read-only RAG port. Only consulted when `ragEnabled` is true. */
+      knowledge?: KnowledgePort
+      /** When true (RAG on), compose via the bounded retrieve_knowledge tool loop. */
+      ragEnabled?: boolean
+    },
+  ) {}
 
   async run(input: ScribeInput): Promise<ScribeOutcome> {
     const { sessionId, laneId } = input
@@ -58,12 +88,9 @@ export class ScribeAgent {
 
     this.deps.bus.emit({ kind: 'tool_call', tool: 'dispatch_scribe', args: { idea: input.idea }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
 
-    let res
+    let res: ChatResult
     try {
-      res = await this.deps.provider.chat({
-        system: SCRIBE_SYSTEM,
-        messages: [{ role: 'user', content: input.idea + renderKnowledge(input.ctx) }],
-      })
+      res = await this.compose(input)
     } catch (err) {
       // A throwing provider (auth/network/model error) must still CLOSE the event
       // frame: emit a failed tool_result + agent_end so the live stream never has
@@ -84,6 +111,45 @@ export class ScribeAgent {
     })
     this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, agent: 'scribe', laneId, sessionId, ts: nextTs() })
     return outcome
+  }
+
+  /**
+   * Produce Scribe's raw model output. RAG OFF (default): a single provider.chat
+   * dispatch — byte-identical to the original control flow (same system prompt,
+   * same single user message, no tools). RAG ON: the SAME prompt is driven through
+   * the existing bounded tool loop with ONLY retrieve_knowledge in scope, so the
+   * model can pull grounding on demand. Each tool use is narrated as a real
+   * tool_call/tool_result on the bus.
+   */
+  private async compose(input: ScribeInput): Promise<ChatResult> {
+    const { sessionId, laneId } = input
+    const userMsg = input.idea + renderKnowledge(input.ctx)
+
+    if (!this.deps.ragEnabled || !this.deps.knowledge) {
+      // RAG OFF — unchanged single-shot dispatch (no tools advertised).
+      return this.deps.provider.chat({ system: SCRIBE_SYSTEM, messages: [{ role: 'user', content: userMsg }] })
+    }
+
+    // RAG ON — reuse the advisory choke point + bounded loop. The registry holds
+    // ONLY retrieve_knowledge (read-only, zero gate authority); the loop's turn cap
+    // bounds it. The system prompt gains the retrieve_knowledge hint ONLY here, so
+    // the RAG-off prompt above is untouched.
+    const tools = buildAdvisoryTools(new Set(['retrieve_knowledge']), { knowledge: this.deps.knowledge, sessionId })
+    const system = `${SCRIBE_SYSTEM}\n${SCRIBE_RAG_HINT}`
+    return callWithTools(
+      this.deps.provider,
+      { system, messages: [{ role: 'user', content: userMsg }] },
+      tools,
+      {
+        onTool: (call, result) => {
+          // Surface each retrieve_knowledge use as a real tool_call/tool_result so
+          // the live UI shows the grounding steps. ok=true: a tool result string is
+          // always returned (errors degrade to an error string, never a throw).
+          this.deps.bus.emit({ kind: 'tool_call', tool: 'retrieve_knowledge', args: call.args, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+          this.deps.bus.emit({ kind: 'tool_result', tool: 'retrieve_knowledge', ok: true, result: { chars: result.length }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+        },
+      },
+    )
   }
 
   private parse(text: string, idea: string): { outcome: ScribeOutcome; parsed: boolean } {

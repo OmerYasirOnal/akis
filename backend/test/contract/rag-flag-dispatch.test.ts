@@ -27,6 +27,36 @@ describe('RAG feature flag (F1-AC11) + zero-touch ingestion (F1-AC1/AC17)', () =
     expect(services.ingestionSink).toBeDefined()
   })
 
+  it('flag ON (P3-AGENT-2): Scribe composes via the bounded retrieve_knowledge tool loop — real tool_call/tool_result on the stream', async () => {
+    // A provider that, for Scribe, asks to ground itself (turn 1) then answers (turn 2);
+    // it returns valid critic JSON otherwise so the rest of the pipeline is unaffected.
+    let turn = 0
+    const provider = {
+      name: 'fake', model: 'm',
+      async chat(req: { system: string }): Promise<{ text?: string; toolCalls?: { name: string; args: unknown; id: string }[] }> {
+        // Match ONLY Scribe's own system prompt ("You are Scribe, the spec author …"),
+        // not the critic's spec-review prompt (which mentions Scribe in passing).
+        if (req.system.toLowerCase().includes('you are scribe')) {
+          turn++
+          if (turn === 1) return { toolCalls: [{ name: 'retrieve_knowledge', args: { query: 'prior context' }, id: 'c1' }] }
+          return { text: '{"kind":"spec","title":"Todo","body":"# Todo\\n\\nGrounded."}' }
+        }
+        return { text: JSON.stringify({ approved: true, overallScore: 90, summary: 'ok', findings: [], reviewType: 'spec_review', iteration: 1, hasCriticalFinding: false, maxSeverity: 'info' }) }
+      },
+    }
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider, rag: true })
+    const orch = new Orchestrator(services)
+    const s = await orch.start({ idea: 'todo app' })
+    const events = services.bus.recent(s.id)
+    // The bounded loop ran (two Scribe turns) and surfaced real grounding events.
+    expect(turn).toBe(2)
+    expect(events.some(e => e.kind === 'tool_call' && e.tool === 'retrieve_knowledge' && e.agent === 'scribe')).toBe(true)
+    expect(events.some(e => e.kind === 'tool_result' && e.tool === 'retrieve_knowledge' && e.agent === 'scribe')).toBe(true)
+    // The synthetic dispatch_scribe frame still closes around it (unchanged contract).
+    expect(events.some(e => e.kind === 'tool_call' && e.tool === 'dispatch_scribe')).toBe(true)
+    expect(events.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_scribe')).toBe(true)
+  })
+
   it('end-to-end: starting a session ingests its narration zero-touch and it becomes retrievable', async () => {
     const bus = new EventBus()
     const rag = buildRag({ bus, queue: { backoffMs: () => 0 }, now: () => '2026-06-01T00:00:00Z' })
