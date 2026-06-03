@@ -228,6 +228,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     advisoryAgents.register(
       new LlmAdvisoryAgent({ role: a.role, provider: agentProvider, ...(a.basePromptVariant !== undefined ? { persona: a.basePromptVariant } : {}) }),
       a.tools ?? [],
+      a.phase, // undefined ⇒ dispatched at every edge; a value pins it to that one edge
     )
   }
 
