@@ -55,6 +55,19 @@ export const STRINGS = {
     'pipeline.summary.shipped': 'shipped',
     'pipeline.summary.runFailed': 'Run failed',
     'pipeline.details': 'Details (raw log)',
+    // Run-state recovery: a parked run is an ACTION card, not a silent amber dot. These are
+    // NOT structural gates — proceeding/retrying never bypasses verify/push (the backend
+    // re-runs real verification and the spec/push gates still apply).
+    'pipeline.stat.criticRejected': 'critic rejected',
+    'recovery.critic.title': 'Critic did not approve',
+    'recovery.critic.hint': 'The automatic critic review is unresolved. Proceed to continue the build (real verification + push confirmation still apply) or abandon to cancel.',
+    'recovery.critic.proceed': 'Proceed',
+    'recovery.critic.abandon': 'Abandon',
+    'recovery.verify.title': 'Tests did not pass',
+    'recovery.verify.hint': 'No real passing test was produced, so the run is not verified. Retry to re-run the real tests — push stays blocked until a genuine pass.',
+    'recovery.verify.retry': 'Retry tests',
+    // SSE drop: a non-terminal "reconnecting" banner so a dropped stream stops pulsing forever.
+    'live.reconnecting': 'Connection lost — reconnecting…',
     // P1-CORE-1: per-run "this result is simulated" badge — shown ON the verify gate card and
     // the live preview when the run's verify/preview event carries `demo:true`, so a mock
     // "verified"/running app can never be mistaken for a real one AT THE RESULT.
@@ -578,6 +591,19 @@ export const STRINGS = {
     'pipeline.summary.shipped': 'yayınlandı',
     'pipeline.summary.runFailed': 'Çalışma başarısız',
     'pipeline.details': 'Ayrıntılar (ham günlük)',
+    // Çalışma durumu kurtarma: durmuş bir çalışma sessiz bir amber nokta değil, bir EYLEM
+    // kartıdır. Bunlar yapısal kapı DEĞİLDİR — devam etmek/yeniden denemek doğrulama/push'u
+    // asla atlamaz (backend gerçek doğrulamayı yeniden çalıştırır, spec/push kapıları geçerli kalır).
+    'pipeline.stat.criticRejected': 'eleştirmen reddetti',
+    'recovery.critic.title': 'Eleştirmen onaylamadı',
+    'recovery.critic.hint': 'Otomatik eleştirmen incelemesi çözülmedi. İnşaya devam etmek için ilerle (gerçek doğrulama + push onayı yine de geçerlidir) ya da iptal etmek için vazgeç.',
+    'recovery.critic.proceed': 'İlerle',
+    'recovery.critic.abandon': 'Vazgeç',
+    'recovery.verify.title': 'Testler geçmedi',
+    'recovery.verify.hint': 'Gerçek geçen bir test üretilmedi, bu yüzden çalışma doğrulanmadı. Gerçek testleri yeniden çalıştırmak için yeniden dene — gerçek bir geçiş olana dek push engelli kalır.',
+    'recovery.verify.retry': 'Testleri yeniden dene',
+    // SSE kopması: kalıcı olmayan bir "yeniden bağlanılıyor" bandı, böylece kopan akış sonsuza dek atmaz.
+    'live.reconnecting': 'Bağlantı koptu — yeniden bağlanılıyor…',
     'chat.empty.title': 'İnşa etmek istediğin uygulamayı tarif et.',
     'chat.empty.hint': 'Ajanlar planlar, inşa eder, gerçek testlerle doğrular ve yayınlar — canlı.',
     'chat.placeholder': 'örn. bir QR kod üretici uygulaması…',

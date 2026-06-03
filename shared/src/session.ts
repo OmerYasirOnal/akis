@@ -5,6 +5,11 @@ import type { BuildPassport } from './passport.js'
 export type SessionStatus =
   | 'composing' | 'awaiting_spec_approval' | 'building'
   | 'awaiting_critic_resolution' | 'awaiting_push_confirm'
+  // `verify_failed` is a RETRYABLE state: real verification returned no token (tests
+  // failed / zero-test run), so the run is NOT verified and NOT a silent reset to
+  // 'building' (a dead-end). The human can retry — which re-enters the iterate loop and
+  // RE-RUNS REAL verification (mint still needs a genuine ≥1-test pass; no bypass).
+  | 'verify_failed'
   | 'done' | 'push_failed' | 'failed' | 'cancelled'
 
 export interface SpecArtifact { title: string; body: string }

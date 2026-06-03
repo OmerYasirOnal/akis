@@ -86,6 +86,12 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         // Critic's read-only verdict (last wins across iterations). Automatic, not a gate.
         v.codeReview = { approved: e.approved, findings: e.findings, critical: e.critical, iteration: e.iteration }
         break
+      case 'recovery':
+        // A recoverable run state → an ACTION card (not a silent amber dot). Last wins, so a
+        // `resolved` frame clears the awaiting card after the human acted (idempotent on replay).
+        if (e.recovery === 'critic_resolution') v.recovery = { critic: e.state }
+        else v.verifyFailed = { retry: e.state }
+        break
       case 'preview':
         // The shipped artifact (e.g. pushed repo URL): a link, not the embedded app.
         v.preview = { ...v.preview, ...(e.url !== undefined ? { artifactUrl: e.url } : {}) }
