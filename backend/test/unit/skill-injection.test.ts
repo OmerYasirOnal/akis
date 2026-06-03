@@ -15,6 +15,8 @@ import { buildServices } from '../../src/di/services.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { SCRIBE_SYSTEM } from '../../src/orchestrator/subagents/ScribeAgent.js'
 import { PROTO_SYSTEM } from '../../src/orchestrator/subagents/ProtoAgent.js'
+import { buildSpecReviewSystemPrompt } from '../../src/orchestrator/subagents/critic/prompts/spec-review.js'
+import { buildCodeReviewSystemPrompt } from '../../src/orchestrator/subagents/critic/prompts/code-review.js'
 import { mintApprovedSpec } from '../../src/gates/specGate.js'
 import { initialSession } from '@akis/shared'
 import { approveSpec } from '../helpers/tokens.js'
@@ -103,5 +105,70 @@ describe('P3-AGENT-1: skill injection wiring (buildServices)', () => {
     // Proto got NO skills selected ⇒ its prompt is the unchanged base, with no leak.
     expect(protoSys).toBe(PROTO_SYSTEM)
     expect(protoSys).not.toContain('web-app-spec')
+  })
+})
+
+describe('P3-AGENT-1B: critic skill injection wiring (buildServices)', () => {
+  // The Critic is built at threshold 75 in buildServices, so parity compares against
+  // the threshold-rendered base prompts.
+  const SPEC_BASE = buildSpecReviewSystemPrompt(75)
+  const CODE_BASE = buildCodeReviewSystemPrompt(75)
+
+  it('a selected critic skill is present in BOTH the spec-review and code-review prompts', async () => {
+    const { provider, services } = build({ critic: ['security-review'] })
+    await services.critic.reviewSpec({ reviewType: 'spec_review', artifact: 'x', originalIdea: 'y' })
+    await services.critic.reviewCode({ reviewType: 'code_review', artifact: 'x', originalIdea: 'y', referenceSpec: {} })
+    const specSys = provider.systems[0]!
+    const codeSys = provider.systems[1]!
+    expect(specSys.startsWith(SPEC_BASE)).toBe(true)
+    expect(specSys).toContain('# Injected skills')
+    expect(specSys).toContain('## Skill: security-review')
+    expect(codeSys.startsWith(CODE_BASE)).toBe(true)
+    expect(codeSys).toContain('# Injected skills')
+    expect(codeSys).toContain('## Skill: security-review')
+  })
+
+  it('NO critic skills ⇒ BOTH prompts are BYTE-IDENTICAL to the base (parity)', async () => {
+    const { provider, services } = build() // no agentSkills at all
+    await services.critic.reviewSpec({ reviewType: 'spec_review', artifact: 'x', originalIdea: 'y' })
+    await services.critic.reviewCode({ reviewType: 'code_review', artifact: 'x', originalIdea: 'y', referenceSpec: {} })
+    expect(provider.systems[0]).toBe(SPEC_BASE)
+    expect(provider.systems[1]).toBe(CODE_BASE)
+  })
+
+  it('an EMPTY critic skill list ⇒ byte-identical base for BOTH prompts (no "# Injected skills" header)', async () => {
+    const { provider, services } = build({ critic: [] })
+    await services.critic.reviewSpec({ reviewType: 'spec_review', artifact: 'x', originalIdea: 'y' })
+    await services.critic.reviewCode({ reviewType: 'code_review', artifact: 'x', originalIdea: 'y', referenceSpec: {} })
+    expect(provider.systems[0]).toBe(SPEC_BASE)
+    expect(provider.systems[1]).toBe(CODE_BASE)
+  })
+
+  it('an UNKNOWN critic skill name is dropped (never a throw) ⇒ byte-identical base for BOTH prompts', async () => {
+    const { provider, services } = build({ critic: ['does-not-exist'] })
+    await services.critic.reviewSpec({ reviewType: 'spec_review', artifact: 'x', originalIdea: 'y' })
+    await services.critic.reviewCode({ reviewType: 'code_review', artifact: 'x', originalIdea: 'y', referenceSpec: {} })
+    expect(provider.systems[0]).toBe(SPEC_BASE)
+    expect(provider.systems[1]).toBe(CODE_BASE)
+  })
+
+  it('per-agent isolation: the critic\'s skill does NOT leak into Scribe/Proto, and theirs do not reach the Critic', async () => {
+    const { provider, services } = build({ scribe: ['web-app-spec'], critic: ['security-review'] })
+    await services.scribe.run({ sessionId: 's1', laneId: 'main', idea: 'todo' })
+    await services.proto.run({ sessionId: 's1', laneId: 'main', approved: APPROVED })
+    await services.critic.reviewSpec({ reviewType: 'spec_review', artifact: 'x', originalIdea: 'y' })
+    const scribeSys = provider.systems[0]!
+    const protoSys = provider.systems[1]!
+    const criticSys = provider.systems[2]!
+    // Scribe got its own skill; the critic's skill never appears in it.
+    expect(scribeSys).toContain('## Skill: web-app-spec')
+    expect(scribeSys).not.toContain('security-review')
+    // Proto got NO skills ⇒ unchanged base, no leak from either side.
+    expect(protoSys).toBe(PROTO_SYSTEM)
+    expect(protoSys).not.toContain('security-review')
+    expect(protoSys).not.toContain('web-app-spec')
+    // The Critic got its own skill; Scribe's skill never appears in it.
+    expect(criticSys).toContain('## Skill: security-review')
+    expect(criticSys).not.toContain('web-app-spec')
   })
 })
