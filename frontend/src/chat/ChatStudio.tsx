@@ -105,7 +105,15 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   }
   const approve = (): Promise<void> => act(async () => { if (sessionId) { await api.approve(sessionId); await api.run(sessionId) } })
   const confirm = (): Promise<void> => act(async () => { if (sessionId) await api.confirm(sessionId) })
-  const runApp = (): Promise<void> => act(async () => { if (sessionId) await api.startPreview(sessionId) })
+  // Localized note for a failed/unsupported preview boot (carries the backend's short reason).
+  const previewFailNote = (e: { status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; reason?: string }): string =>
+    t(e.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed') + (e.reason ? `: ${e.reason}` : '')
+  const runApp = (): Promise<void> => act(async () => {
+    if (!sessionId) return
+    // Inspect the resolved entry: a failed/unsupported boot is surfaced (never silently dropped).
+    const e = await api.startPreview(sessionId)
+    if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e))
+  })
   const newChat = (): void => {
     setSessionId(undefined); setSent(''); setActionError(undefined)
     // Start a fresh conversation: drop the persisted thread so AkisChat re-seeds the greeting.
@@ -120,8 +128,13 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   useEffect(() => {
     if (sessionId && status === 'done' && autoRan.current !== sessionId) {
       autoRan.current = sessionId
-      void api.startPreview(sessionId).catch(() => { /* surfaced via preview_status / manual run */ })
+      // Inspect the resolved entry: surface a failed/unsupported boot as a non-blocking note
+      // instead of fully swallowing it (still don't crash on a rejected request).
+      void api.startPreview(sessionId)
+        .then(e => { if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e)) })
+        .catch(() => { /* network reject — surfaced via preview_status / manual run */ })
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId, status, api])
 
   // Autopilot: when on, satisfy the gates automatically as they open — fully hands-off,
@@ -210,7 +223,7 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
 
       {/* Live preview rail */}
       <aside className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 backdrop-blur-sm">
-        <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} />
+        <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
       </aside>
     </div>
   )

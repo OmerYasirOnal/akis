@@ -10,7 +10,7 @@ export interface GateMsg { id: string; kind: 'gate'; gate: 'spec_approval' | 'pu
 export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passed: boolean }
 /** Read-only critic code-review verdict card (automatic, NOT a human gate). Structured only. */
 export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: boolean; findings: number; critical: boolean; iteration: number }
-export interface PreviewMsg { id: string; kind: 'preview'; url?: string; ready: boolean }
+export interface PreviewMsg { id: string; kind: 'preview'; url?: string; ready: boolean; error?: { status: 'failed' | 'unsupported'; reason?: string } }
 export interface ErrorMsg { id: string; kind: 'error'; text: string }
 export interface DoneMsg { id: string; kind: 'done'; verified: boolean; provider?: string }
 export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMsg | CodeReviewMsg | PreviewMsg | ErrorMsg | DoneMsg
@@ -78,8 +78,14 @@ export function foldChat(idea: string, events: readonly AkisEvent[]): ChatMessag
       case 'preview_status': {
         const ready = e.kind === 'preview' ? true : e.status === 'ready'
         const url = e.url
-        if (!previewMsg) { previewMsg = { id, kind: 'preview', ready, ...(url !== undefined ? { url } : {}) }; items.push(previewMsg) }
-        else { previewMsg.ready = ready; if (url !== undefined) previewMsg.url = url }
+        // A 'failed'/'unsupported' preview_status is a recoverable failure → carry its reason so
+        // the thread never silently drops it; a later 'starting'/'ready' frame supersedes it.
+        const failed = e.kind === 'preview_status' && (e.status === 'failed' || e.status === 'unsupported')
+        const error = failed
+          ? { status: e.status as 'failed' | 'unsupported', ...(e.reason ? { reason: e.reason } : {}) }
+          : undefined
+        if (!previewMsg) { previewMsg = { id, kind: 'preview', ready, ...(url !== undefined ? { url } : {}), ...(error ? { error } : {}) }; items.push(previewMsg) }
+        else { previewMsg.ready = ready; if (url !== undefined) previewMsg.url = url; if (error) previewMsg.error = error; else delete previewMsg.error }
         break
       }
       case 'error': items.push({ id, kind: 'error', text: e.message }); break
