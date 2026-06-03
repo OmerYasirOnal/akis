@@ -333,8 +333,8 @@ export const STRINGS = {
     'docs.v2.studio.f1.d': 'AKIS narrates every step live over a resumable event stream — reconnects never lose or duplicate events.',
     'docs.v2.studio.f2.t': 'Inline gate cards',
     'docs.v2.studio.f2.d': 'Spec-approval and push-confirm appear as interactive cards right on their pipeline step.',
-    'docs.v2.studio.f3.t': 'Autopilot',
-    'docs.v2.studio.f3.d': 'Toggle ⚡ Autopilot to auto-approve the spec and confirm the push — fully hands-off. Verification stays real.',
+    'docs.v2.studio.f3.t': 'Chat to build',
+    'docs.v2.studio.f3.d': 'Talk to AKIS in plain language — it shapes your idea and hands you a build-ready spec card; approve it to run the agent pipeline behind the gates.',
     'docs.v2.studio.f4.t': 'Recent builds',
     'docs.v2.studio.f4.d': 'Re-open any past build from the history menu; AKIS replays the run to rebuild the thread.',
     // Section: pipeline & stages
@@ -883,8 +883,8 @@ export const STRINGS = {
     'docs.v2.studio.f1.d': 'AKIS her adımı sürdürülebilir bir olay akışı üzerinden canlı anlatır — yeniden bağlanmalar olay kaybetmez veya tekrarlamaz.',
     'docs.v2.studio.f2.t': 'Satır içi kapı kartları',
     'docs.v2.studio.f2.d': 'Spec onayı ve push onayı, ait oldukları hat aşamasında etkileşimli kartlar olarak görünür.',
-    'docs.v2.studio.f3.t': 'Otopilot',
-    'docs.v2.studio.f3.d': 'Spec’i otomatik onaylamak ve push’u doğrulamak için ⚡ Otopilot’u aç — tamamen otomatik. Doğrulama yine gerçek kalır.',
+    'docs.v2.studio.f3.t': 'Konuşarak geliştir',
+    'docs.v2.studio.f3.d': 'AKIS ile sade bir dille konuş — fikrini şekillendirip sana inşaya hazır bir spec kartı verir; onayla, ajan pipeline’ı gate’lerin arkasında çalışsın.',
     'docs.v2.studio.f4.t': 'Son geliştirmeler',
     'docs.v2.studio.f4.d': 'Geçmiş menüsünden herhangi bir eski geliştirmeyi yeniden aç; AKIS akışı yeniden oluşturmak için çalışmayı tekrar oynatır.',
     // Bölüm: hat & aşamalar

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { RecentBuild } from './recentBuilds.js'
+import { ideaTitle, type RecentBuild } from './recentBuilds.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -45,7 +45,7 @@ export function HistoryMenu({ builds, onOpen }: { builds: RecentBuild[]; onOpen:
                 className="block w-full truncate rounded-lg px-3 py-2 text-left text-xs text-slate-300 transition hover:bg-white/5 hover:text-slate-100"
                 title={b.idea}
               >
-                {b.idea || t('history.untitled')}
+                {ideaTitle(b.idea) || t('history.untitled')}
               </button>
             ))}
         </div>

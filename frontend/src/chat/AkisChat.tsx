@@ -163,7 +163,7 @@ export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: st
   }
 
   return (
-    <div className="flex h-full min-h-[24rem] flex-col gap-3">
+    <div className="flex h-full min-h-0 flex-col gap-3">
       <div ref={scrollRef} onScroll={onScroll} aria-live="polite" className="flex-1 space-y-3 overflow-y-auto">
         {msgs.map((m, i) => {
           if (m.role === 'user') {
