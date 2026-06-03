@@ -1,18 +1,23 @@
 import { useI18n } from '../i18n/I18nContext.js'
+import type { StringKey } from '../i18n/catalog.js'
 import { Link, useRouter } from '../router/router.js'
 import { AkisLogo } from '../components/AkisLogo.js'
 import { Card, Button } from '../ui/kit.js'
+import { AGENT_NAMES } from '../agents/names.js'
 
 const STEPS = ['1', '2', '3', '4'] as const
 const FEATURE_KEYS = ['providers', 'gates', 'preview', 'selfhost', 'agents', 'analytics'] as const
 
-const CHAIN = [
-  { agent: 'Scribe', action: 'Idea → spec', state: 'approved' },
-  { agent: 'Proto', action: 'Spec → code', state: 'built' },
-  { agent: 'Trace', action: 'Real tests', state: '312 passed' },
-  { agent: 'Critic', action: 'Quality review', state: 'clear' },
-  { agent: 'Push gate', action: 'Human confirm', state: 'ready' },
-] as const
+/** The decorative "verified build run" chain in the hero visual. `name` is either a literal
+ *  proper noun (from the shared AGENT_NAMES source of truth) or, for the non-agent push gate,
+ *  a translatable i18n key (`nameKey`); the action/state captions are always i18n keys. */
+const CHAIN: { name?: string; nameKey?: StringKey; action: StringKey; state: StringKey }[] = [
+  { name: AGENT_NAMES.scribe, action: 'landing.chain.scribe.action', state: 'landing.chain.scribe.state' },
+  { name: AGENT_NAMES.proto, action: 'landing.chain.proto.action', state: 'landing.chain.proto.state' },
+  { name: AGENT_NAMES.trace, action: 'landing.chain.trace.action', state: 'landing.chain.trace.state' },
+  { name: AGENT_NAMES.critic, action: 'landing.chain.critic.action', state: 'landing.chain.critic.state' },
+  { nameKey: 'landing.chain.pushGate.name', action: 'landing.chain.pushGate.action', state: 'landing.chain.pushGate.state' },
+]
 
 const TRUST_SIGNALS = ['providers', 'gates', 'selfhost'] as const
 
@@ -38,7 +43,7 @@ export function Landing() {
       <header className="relative z-20 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-3">
           <AkisLogo size={34} alt="" className="drop-shadow-[0_0_18px_rgba(46,230,166,0.42)]" />
-          <span className="text-sm font-extrabold tracking-[0.32em] text-slate-100">AKIS</span>
+          <span className="text-sm font-extrabold tracking-[0.32em] text-slate-100">{AGENT_NAMES.orchestrator}</span>
         </div>
         <div className="flex items-center gap-2">
           <button
@@ -99,11 +104,11 @@ export function Landing() {
               <div className="flex items-center gap-3">
                 <AkisLogo size={30} alt="" />
                 <div>
-                  <div className="text-sm font-bold tracking-[0.24em] text-slate-100">AKIS</div>
-                  <div className="text-xs text-slate-500">verified build run</div>
+                  <div className="text-sm font-bold tracking-[0.24em] text-slate-100">{AGENT_NAMES.orchestrator}</div>
+                  <div className="text-xs text-slate-500">{t('landing.visual.run')}</div>
                 </div>
               </div>
-              <div className="rounded-full border border-[#2EE6A6]/25 bg-[#2EE6A6]/10 px-3 py-1 text-xs font-semibold text-[#2EE6A6]">98.7%</div>
+              <div className="rounded-full border border-[#2EE6A6]/25 bg-[#2EE6A6]/10 px-3 py-1 text-xs font-semibold text-[#2EE6A6]">{t('landing.visual.passRate')}</div>
             </div>
 
             <div className="grid gap-5 lg:grid-cols-[1fr_1.2fr]">
@@ -118,17 +123,17 @@ export function Landing() {
 
               <div className="space-y-2.5">
                 {CHAIN.map((step, i) => (
-                  <div key={step.agent} className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
+                  <div key={step.action} className="group relative overflow-hidden rounded-2xl border border-white/10 bg-white/[0.035] px-4 py-3">
                     <div className="absolute inset-y-0 left-0 w-1 bg-gradient-to-b from-[#2EE6A6] to-[#22D3EE] opacity-80" />
                     <div className="flex items-center justify-between gap-4">
                       <div className="flex items-center gap-3">
                         <span className="grid h-8 w-8 place-items-center rounded-full border border-[#2EE6A6]/25 bg-[#2EE6A6]/10 text-[11px] font-black text-[#2EE6A6]">0{i + 1}</span>
                         <div>
-                          <div className="text-sm font-bold text-slate-100">{step.agent}</div>
-                          <div className="text-xs text-slate-500">{step.action}</div>
+                          <div className="text-sm font-bold text-slate-100">{step.nameKey ? t(step.nameKey) : step.name}</div>
+                          <div className="text-xs text-slate-500">{t(step.action)}</div>
                         </div>
                       </div>
-                      <span className="rounded-full bg-[#2EE6A6]/10 px-2.5 py-1 text-[11px] font-semibold text-[#2EE6A6]">{step.state}</span>
+                      <span className="rounded-full bg-[#2EE6A6]/10 px-2.5 py-1 text-[11px] font-semibold text-[#2EE6A6]">{t(step.state)}</span>
                     </div>
                   </div>
                 ))}
