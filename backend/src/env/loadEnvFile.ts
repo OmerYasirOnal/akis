@@ -24,11 +24,17 @@ export function loadEnvFile(path?: string, env: NodeJS.ProcessEnv = process.env)
     if (!m) continue
     const key = m[1]!
     let val = m[2]!.trim()
-    const quoted = /^"([^"]*)"|^'([^']*)'/.exec(val)
-    if (quoted) {
-      // Quoted: keep everything between the matching quotes (`#` is legitimate
-      // here); anything trailing after the close-quote (e.g. ` # comment`) is dropped.
-      val = quoted[1] ?? quoted[2] ?? ''
+    // Quoted: capture everything between the OUTER matching quotes — a greedy
+    // capture to the LAST quote keeps inner quotes and `#` (e.g. JSON) intact —
+    // allowing only an optional trailing ` # comment` after the close quote. Without
+    // a clean enclosing pair (unbalanced quote, or trailing junk like `"abc"def`),
+    // fall through to the unquoted branch so trailing content is never silently dropped.
+    const dq = /^"(.*)"\s*(?:#.*)?$/.exec(val)
+    const sq = /^'(.*)'\s*(?:#.*)?$/.exec(val)
+    if (dq) {
+      val = dq[1]!
+    } else if (sq) {
+      val = sq[1]!
     } else {
       // Unquoted: strip an inline comment — a `#` at the value's start or
       // preceded by whitespace — then re-trim. A `#` with no leading space
