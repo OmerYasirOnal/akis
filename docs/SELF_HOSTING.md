@@ -158,6 +158,33 @@ What does **NOT** persist yet (documented deferral):
   Expect a one-time re-index after each restart; retrieval quality is unaffected
   once it completes. Persisting the vector index is deferred to a later milestone.
 
+### Real semantic embeddings (optional)
+
+RAG retrieval works **out of the box with no key**: AKIS ships an offline,
+deterministic embedder (signed feature hashing) so the knowledge index builds
+with zero network calls and the golden eval stays reproducible.
+
+To upgrade to **real semantic embeddings**, just configure an **OpenAI key** — the
+*same* `OPENAI_API_KEY` the chat provider uses (env var **or** a key saved in the
+Settings UI; one key system, never a second). The moment that key resolves, AKIS
+embeds via OpenAI's `text-embedding-3-small` (1536-dim) instead of the offline
+embedder. The selection rule:
+
+| Condition | Embedder | Dimension |
+| --------- | -------- | --------- |
+| `NODE_ENV=test` | offline `LocalEmbeddingProvider` (always) | 256 |
+| no OpenAI key resolves | offline `LocalEmbeddingProvider` | 256 |
+| OpenAI key resolves (env or KeyStore) | `ApiEmbeddingProvider` (OpenAI) | 1536 |
+
+The active dimension follows the selected embedder automatically — nothing
+downstream hardcodes a size, and the vector store is dimension-agnostic. Set
+`AKIS_EMBEDDING_MODEL=text-embedding-3-large` to use the 3072-dim model instead.
+The key is used only as a request header and is **never logged or returned**.
+
+> Switching embedders changes the vector space, so **re-index** your knowledge
+> sources after enabling/disabling a real key (the in-memory index re-builds on
+> restart anyway).
+
 Three named Docker volumes hold state:
 
 | Volume         | Mount                        | Contents |

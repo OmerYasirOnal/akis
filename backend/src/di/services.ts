@@ -292,8 +292,13 @@ function resolveKnowledge(opts: BuildServicesOptions, bus: EventBus, github: Moc
       bus, github,
       ...(opts.rerank !== undefined ? { rerank: opts.rerank } : {}),
       // Thread env so a configured AKIS_GITHUB_TOKEN selects the RealGitHubRepoReader
-      // (opt-in); absent it the default MockRepoReader is used (zero behavior change).
+      // (opt-in), AND so the embedding provider is selected from env: a real
+      // ApiEmbeddingProvider when an OpenAI key resolves, else the offline default.
       ...(opts.env ? { env: opts.env } : {}),
+      // The SAME encrypted KeyStore the chat providers use — consulted (after env) to
+      // resolve the embedding key. No env key + a Settings-saved key still turns on
+      // real embeddings. Absent it, the offline LocalEmbeddingProvider is used.
+      ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
       // Durable corpus: a PgVectorStore when DATABASE_URL is set; else the in-memory default.
       ...(opts.vectorStore ? { vectorStore: opts.vectorStore } : {}),
     })
