@@ -110,13 +110,18 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): 
   app.server.on('upgrade', (req, socket, head) => {
     const url = req.url ?? ''
     const m = /^\/preview\/([^/]+)(\/.*)?$/.exec(url.split('?')[0] ?? '')
-    if (!m) return // not a preview upgrade — leave it for any other handler
+    // Registering ANY 'upgrade' listener disables Node's default of destroying unhandled upgrade
+    // sockets — and this is the only such listener. So a non-preview upgrade (or one with no ready
+    // port) MUST be destroyed, not left dangling: a bare `return` would leak the socket, an
+    // unauthenticated FD-exhaustion surface (the listener sits below Fastify's auth hooks). (PR #83 review)
+    if (!m) { socket.destroy(); return }
     const id = decodeURIComponent(m[1] ?? '')
     const port = portFor(id)
     if (port === undefined) { socket.destroy(); return }
     const subPath = (m[2] ?? '/') + (url.includes('?') ? '?' + url.slice(url.indexOf('?') + 1) : '')
 
     const upstream = net.connect(port, '127.0.0.1', () => {
+      upstream.setTimeout(0) // connected — cancel the connect deadline (do NOT idle-kill a long-lived HMR ws)
       // Replay the request line + headers (host rewritten to the loopback upstream), then
       // any bytes already buffered by Node, then pipe both ways for the lifetime of the ws.
       const headerLines = [`${req.method} ${subPath} HTTP/1.1`]
@@ -130,9 +135,14 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): 
       upstream.pipe(socket)
       socket.pipe(upstream)
     })
+    upstream.setTimeout(10_000) // bound the CONNECT phase only (cleared once connected)
     const destroy = (): void => { upstream.destroy(); socket.destroy() }
-    upstream.on('error', destroy)
-    socket.on('error', destroy)
+    // Reap BOTH sockets when EITHER errors OR closes (not just on error). On shutdown,
+    // forceCloseConnections destroys the client `socket` (a tracked server connection) — its
+    // 'close' then tears down the upstream net.connect socket (which Fastify does NOT track),
+    // so no half-open tunnel survives to wedge close(). 'timeout' fires only for a stalled connect.
+    upstream.on('error', destroy); upstream.on('close', destroy); upstream.on('timeout', destroy)
+    socket.on('error', destroy); socket.on('close', destroy)
   })
   // Note: routes don't emit events directly — the registry's onStatus emits preview_status.
 }

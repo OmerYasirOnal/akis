@@ -72,7 +72,7 @@ describe('PreviewRegistry lifecycle', () => {
     const proc = fakeProc()
     const launch: Launch = () => proc
     const probe: Probe = async () => true
-    const reg = new PreviewRegistry({ sandbox: okSandbox, launch, probe })
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch, probe })
     const e = await reg.start('s1', '/ws/s1', 'vite')
     expect(e.status).toBe('ready')
     expect(e.url).toBe('/preview/s1/')
@@ -84,7 +84,7 @@ describe('PreviewRegistry lifecycle', () => {
 
   it('fails (and does not launch) when install fails', async () => {
     const launch = vi.fn<Launch>(() => fakeProc())
-    const reg = new PreviewRegistry({ sandbox: failSandbox, launch, probe: async () => true })
+    const reg = new PreviewRegistry({ sandbox: failSandbox, commandOnPath: async () => true, launch, probe: async () => true })
     const e = await reg.start('s1', '/ws/s1', 'vite')
     expect(e.status).toBe('failed')
     expect(e.reason).toMatch(/install failed/)
@@ -93,7 +93,7 @@ describe('PreviewRegistry lifecycle', () => {
 
   it('fails and kills the proc when readiness never comes', async () => {
     const proc = fakeProc()
-    const reg = new PreviewRegistry({ sandbox: okSandbox, launch: () => proc, probe: async () => false, probeAttempts: 2, probeIntervalMs: 1 })
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch: () => proc, probe: async () => false, probeAttempts: 2, probeIntervalMs: 1 })
     const e = await reg.start('s1', '/ws/s1', 'vite')
     expect(e.status).toBe('failed')
     expect(e.reason).toMatch(/readiness probe/)
@@ -125,7 +125,7 @@ describe('PreviewRegistry lifecycle', () => {
 
   it('emits status transitions via onStatus', async () => {
     const seen: string[] = []
-    const reg = new PreviewRegistry({ sandbox: okSandbox, launch: () => fakeProc(), probe: async () => true, onStatus: e => seen.push(e.status) })
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch: () => fakeProc(), probe: async () => true, onStatus: e => seen.push(e.status) })
     await reg.start('s1', '/ws/s1', 'vite')
     expect(seen).toContain('starting')
     expect(seen).toContain('ready')
@@ -136,7 +136,7 @@ describe('PreviewRegistry.stopAll (graceful shutdown)', () => {
   it('kills every tracked proc, releases ports, and marks each stopped (tolerating errors)', async () => {
     const procs = [fakeProc(), fakeProc()]
     let i = 0
-    const reg = new PreviewRegistry({ sandbox: okSandbox, launch: () => procs[i++]!, probe: async () => true })
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch: () => procs[i++]!, probe: async () => true })
     const a = await reg.start('a', '/ws/a', 'vite')
     const b = await reg.start('b', '/ws/b', 'vite')
     expect(a.status).toBe('ready'); expect(b.status).toBe('ready')
@@ -155,7 +155,7 @@ describe('PreviewRegistry.stopAll (graceful shutdown)', () => {
     const bad = { pid: 1, killed: false, kill() { throw new Error('kill boom') } } as PreviewProc & { killed: boolean }
     const good = fakeProc()
     let i = 0
-    const reg = new PreviewRegistry({ sandbox: okSandbox, launch: () => [bad, good][i++]!, probe: async () => true })
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch: () => [bad, good][i++]!, probe: async () => true })
     await reg.start('bad', '/ws/bad', 'vite')
     await reg.start('good', '/ws/good', 'vite')
     await expect(reg.stopAll()).resolves.toBeUndefined()
@@ -167,6 +167,7 @@ describe('PreviewRegistry diagnostics (D)', () => {
   it('fails FAST with the exit code + stderr tail when the child exits early (not the whole probe budget)', async () => {
     const reg = new PreviewRegistry({
       sandbox: okSandbox,
+      commandOnPath: async () => true,
       launch: () => exitingProc(137, 'Error: Cannot find module react\n    at ...'),
       probe: async () => false, // never ready — must surface the early exit, not "timed out"
       probeAttempts: 50, probeIntervalMs: 5,
@@ -179,10 +180,32 @@ describe('PreviewRegistry diagnostics (D)', () => {
 
   it('attaches the install stderr tail to an install-failed reason', async () => {
     const sb: Sandbox = { async run(): Promise<RunResult> { return { code: 1, stdout: '', stderr: 'ERR_PNPM_NO_MATCHING_VERSION foo@99', timedOut: false } } }
-    const reg = new PreviewRegistry({ sandbox: sb, launch: () => fakeProc(), probe: async () => true })
+    const reg = new PreviewRegistry({ sandbox: sb, commandOnPath: async () => true, launch: () => fakeProc(), probe: async () => true })
     const e = await reg.start('s1', '/ws/s1', 'vite')
     expect(e.status).toBe('failed')
     expect(e.reason).toMatch(/install failed \(code 1\)/)
     expect(e.reason).toMatch(/ERR_PNPM_NO_MATCHING_VERSION/)
+  })
+})
+
+// PR #83 review: the install preflight is an INJECTABLE seam (commandOnPath), so the lifecycle
+// stays unit-testable without a real pnpm on the host PATH — and both branches are covered.
+describe('PreviewRegistry install preflight (injectable commandOnPath)', () => {
+  it('fails with an actionable "enable corepack" hint and does NOT install when the command is missing', async () => {
+    const run = vi.fn(okSandbox.run)
+    const launch = vi.fn<Launch>(() => fakeProc())
+    const reg = new PreviewRegistry({ sandbox: { run }, commandOnPath: async () => false, launch, probe: async () => true })
+    const e = await reg.start('s1', '/ws/s1', 'vite')
+    expect(e.status).toBe('failed')
+    expect(e.reason).toMatch(/not found — enable corepack/)
+    expect(run).not.toHaveBeenCalled()    // preflight short-circuits BEFORE the install
+    expect(launch).not.toHaveBeenCalled()
+  })
+  it('proceeds to install + ready when the command IS present', async () => {
+    const run = vi.fn(okSandbox.run)
+    const reg = new PreviewRegistry({ sandbox: { run }, commandOnPath: async () => true, launch: () => fakeProc(), probe: async () => true })
+    const e = await reg.start('s1', '/ws/s1', 'vite')
+    expect(e.status).toBe('ready')
+    expect(run).toHaveBeenCalledTimes(1)
   })
 })

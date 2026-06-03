@@ -90,7 +90,13 @@ const flag = (v: string | undefined): boolean => v === '1' || v === 'true'
 
 /** Build the Fastify app with injected deps (testable via app.inject / listen). */
 export function buildServer(deps: ServerDeps): FastifyInstance {
-  const app = Fastify({ logger: false }) // logger off: never risk logging key bodies
+  // logger off: never risk logging key bodies. forceCloseConnections: a hijacked/upgraded
+  // socket (the preview reverse-proxy + the HMR WebSocket tunnel) is NOT an idle keep-alive
+  // connection, so the default close() would hang on it until the 10s backstop force-exits —
+  // and then stopAll()/drain/pool-close never run, orphaning preview process groups + leaking
+  // loopback ports (the exact failure the teardown work fixes). Force-close so close() resolves
+  // promptly and the rest of graceful shutdown actually runs. (PR #83 review)
+  const app = Fastify({ logger: false, forceCloseConnections: true })
   const env = deps.env ?? (process.env as Record<string, string | undefined>)
 
   // FAIL-CLOSED in production: a demo flag (AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) fakes
