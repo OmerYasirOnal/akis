@@ -127,6 +127,22 @@ describe('validateWorkflowDraft', () => {
       CATALOG,
     )).toEqual({ ok: true })
   })
+
+  it('accepts a valid advisory phase on a custom agent; rejects an unknown phase and a phase on a core role', () => {
+    expect(validateWorkflowDraft({ name: 'wf', agents: [{ role: 'researcher', phase: 'pre_scribe' }] }, CATALOG).ok).toBe(true)
+    const unknown = validateWorkflowDraft({ name: 'wf', agents: [{ role: 'researcher', phase: 'mid_run' as never }] }, CATALOG)
+    expect(unknown.ok).toBe(false)
+    if (!unknown.ok) expect(unknown.errors.some(e => /unknown advisory phase/.test(e))).toBe(true)
+    const onCore = validateWorkflowDraft({ name: 'wf', agents: [{ role: 'scribe', phase: 'pre_scribe' }] }, CATALOG)
+    expect(onCore.ok).toBe(false)
+    if (!onCore.ok) expect(onCore.errors.some(e => /only valid for a custom/.test(e))).toBe(true)
+  })
+
+  it('rejects a duplicate agent role (mirrors the registry already-registered throw)', () => {
+    const res = validateWorkflowDraft({ name: 'wf', agents: [{ role: 'researcher' }, { role: 'researcher' }] }, CATALOG)
+    expect(res.ok).toBe(false)
+    if (!res.ok) expect(res.errors).toContain(`duplicate agent role 'researcher'`)
+  })
 })
 
 describe('STRUCTURAL_GATES + applyGatePolicy (tighten-only)', () => {
