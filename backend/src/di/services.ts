@@ -1,6 +1,7 @@
 import type { SessionStore } from '../store/SessionStore.js'
 import { EventBus } from '../events/bus.js'
-import { MockGitHubAdapter } from './MockGitHubAdapter.js'
+import { MockGitHubAdapter, type GitHubAdapter } from './MockGitHubAdapter.js'
+import { selectGitHubAdapter } from './selectGitHubAdapter.js'
 import { DeterministicValidator } from '../validator/DeterministicValidator.js'
 import { CriticAgent } from '../orchestrator/subagents/critic/CriticAgent.js'
 import { ScribeAgent } from '../orchestrator/subagents/ScribeAgent.js'
@@ -29,7 +30,10 @@ import type { ProviderId } from '../agent/providers/catalog.js'
 export interface OrchestratorServices {
   store: SessionStore
   bus: EventBus
-  github: MockGitHubAdapter
+  /** The push seam (GitHubAdapter). MockGitHubAdapter by default (and ALWAYS under
+   *  NODE_ENV=test); the opt-in RealGitHubAdapter when AKIS_GITHUB_PUSH_TOKEN +
+   *  AKIS_GITHUB_PUSH_REPO are both set. Reached only through the ApprovedPush gate. */
+  github: GitHubAdapter
   validator: DeterministicValidator
   critic: CriticAgent
   scribe: ScribeAgent
@@ -150,7 +154,17 @@ export interface BuildServicesOptions {
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
   const bus = opts.bus ?? new EventBus()
-  const github = new MockGitHubAdapter()
+  // The in-memory adapter the RAG read path reads from (its MockRepoReader calls
+  // `.read()`, mock-only). ALWAYS a mock — the RAG real-reader switch is a separate
+  // AKIS_GITHUB_TOKEN concern (buildRag), independent of the push-adapter selection.
+  const mockGithub = new MockGitHubAdapter()
+  // ── P1-CORE-2: push-seam selection (opt-in) ────────────────────────────────────
+  // The push seam the orchestrator pushes to THROUGH the unchanged ApprovedPush gate.
+  // RealGitHubAdapter ONLY when AKIS_GITHUB_PUSH_TOKEN + AKIS_GITHUB_PUSH_REPO are both
+  // set AND NODE_ENV!=='test'; otherwise the MockGitHubAdapter (default boot, byte-for-
+  // byte identical to today). Token read here, NEVER logged/returned. selectGitHubAdapter
+  // falls back to the mock on any misconfig so a bad opt-in can never break boot.
+  const github: GitHubAdapter = selectGitHubAdapter(opts.env, mockGithub)
   // Verifier selection: explicit injected runner > real (opt-in) > mock (fail-closed
   // default). The runner→Verifier construction has ONE home (verifier.ts/resolveVerifier);
   // there is no importable `createVerifier`, so no other module can wrap a fake runner
@@ -253,7 +267,9 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
     ...(opts.gatePolicy !== undefined ? { gatePolicy: opts.gatePolicy } : {}),
     ...(advisoryAgents.size > 0 ? { advisoryAgents } : {}),
-    ...resolveKnowledge(opts, bus, github),
+    // RAG read path reads the in-memory `mockGithub` (mock-only `.read()`); the push
+    // seam (`github`, above) is the selected adapter (mock or RealGitHubAdapter).
+    ...resolveKnowledge(opts, bus, mockGithub),
   }
 }
 
