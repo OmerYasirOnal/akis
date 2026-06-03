@@ -159,4 +159,51 @@ describe('derivePipeline', () => {
       [{ agent: 'trace', done: true, ok: true, tools: [], notes: [] }])
     expect(step(view, 'verify').recovery).toBeUndefined()
   })
+
+  // ── push_failed: a verified run whose push failed surfaces a retry on the SHIP step. ──
+  it('push_failed → ship step is failed and carries a push_failed retry action (routes through confirm)', () => {
+    const view = viewWith({
+      status: 'running', verified: true,
+      gates: { specApproval: { gate: 'spec_approval', state: 'satisfied' }, pushConfirm: { gate: 'push_confirm', state: 'awaiting' } },
+      tests: { testsRun: 2, passed: true, ran: true },
+      pushFailed: { retry: 'awaiting' },
+    }, [{ agent: 'trace', done: true, ok: true, tools: [], notes: [] }])
+    const ship = step(view, 'ship')
+    expect(ship.status).toBe('failed')
+    expect(ship.recovery).toBe('push_failed')
+    expect(ship.stat).toBe('push failed')
+    // The retry reuses the existing confirm action — still gated by Gate 4 on the backend.
+    expect(ship.action).toBe('confirm')
+  })
+
+  it('a RESOLVED push_failed no longer surfaces a retry action (push later succeeded)', () => {
+    const view = viewWith({ status: 'done', verified: true, pushFailed: { retry: 'resolved' } })
+    expect(step(view, 'ship').recovery).toBeUndefined()
+  })
+
+  // ── #79 LOW: a CRITICAL critic park must ALSO be an actionable recovery, not a dead failed dot. ──
+  it('critical-finding critic park → review carries a critic_resolution recovery action (proceed/abandon)', () => {
+    const view = viewWith({
+      status: 'running',
+      codeReview: { approved: false, findings: 1, critical: true, iteration: 2 },
+      recovery: { critic: 'awaiting' },
+    }, [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    const review = step(view, 'review')
+    expect(review.status).toBe('awaiting')                 // not a silent dead-end 'failed'
+    expect(review.recovery).toBe('critic_resolution')      // proceed/abandon now surfaces
+    expect(review.stat).toBe('critical finding')
+  })
+
+  it('a critical finding with NO live recovery signal stays a plain failed (no stray action)', () => {
+    const view = viewWith({ status: 'running', codeReview: { approved: false, findings: 1, critical: true, iteration: 2 } },
+      [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(view, 'review').status).toBe('failed')
+    expect(step(view, 'review').recovery).toBeUndefined()
+  })
+
+  it('a RESOLVED critical critic park no longer surfaces an action', () => {
+    const view = viewWith({ status: 'running', recovery: { critic: 'resolved' }, codeReview: { approved: false, findings: 1, critical: true, iteration: 2 } },
+      [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(view, 'review').recovery).toBeUndefined()
+  })
 })

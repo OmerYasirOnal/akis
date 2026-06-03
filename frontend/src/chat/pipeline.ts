@@ -18,8 +18,9 @@ export type PipelineAction = 'approve' | 'confirm'
  * verification and the spec/push gates still apply).
  *   - 'critic_resolution': proceed (continue) | abandon (cancel) past the automatic critic.
  *   - 'verify_failed': retry — re-run REAL verification.
+ *   - 'push_failed': retry the push — re-runs the GATED confirmPush (Gate 4 still applies).
  */
-export type PipelineRecovery = 'critic_resolution' | 'verify_failed'
+export type PipelineRecovery = 'critic_resolution' | 'verify_failed' | 'push_failed'
 
 /**
  * One stage card in the compact run pipeline. `stat` is a single human key-fact
@@ -71,6 +72,7 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
   // Recoverable (non-gate) parks, surfaced as ACTION cards (not silent amber dots).
   const criticAwaiting = view.recovery?.critic === 'awaiting'
   const retryAwaiting = view.verifyFailed?.retry === 'awaiting'
+  const pushRetryAwaiting = view.pushFailed?.retry === 'awaiting'
 
   return ORDER.map(({ key, role }): PipelineStep => {
     let status = fromPresence(view, role)
@@ -95,7 +97,14 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
         break
       case 'review':
         if (cr) {
-          if (cr.critical) { status = 'failed'; stat = 'critical finding' }
+          // A CRITICAL finding parked the run at critic-resolution (#79 LOW): it must ALSO be an
+          // actionable recovery (proceed/abandon), NOT a dead 'failed' dot the user can't leave.
+          // The backend /resolve accepts either decision here, and PROCEED routes to the REAL
+          // verify + push gates (no bypass) — so a critical park is recoverable like any other.
+          if (cr.critical && criticAwaiting) { status = 'awaiting'; recovery = 'critic_resolution'; stat = 'critical finding' }
+          // A critical finding with NO live recovery signal stays a plain failure (e.g. an
+          // unrecoverable critic verdict on an unrecoverable run) — no stray action.
+          else if (cr.critical) { status = 'failed'; stat = 'critical finding' }
           // Approved (the normal flow ships with advisory findings) → done.
           else if (cr.approved) { status = 'done'; stat = cr.findings === 0 ? 'review clean' : `${cr.findings} findings` }
           // NOT approved AND the run parked at critic-resolution (code-step park): surface a
@@ -122,9 +131,14 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
         // Ship is the terminal stage: the orchestrator is "working" for the whole run,
         // so don't treat that as ship being active — it only goes active/awaiting once
         // the work is actually done (verified / push gate open / terminal state).
-        if (push === 'awaiting') { status = 'awaiting'; action = 'confirm'; stat = 'ready to ship' }
+        // A verified run whose push FAILED is retryable (#) — surface a "Push failed — retry"
+        // action. It reuses the existing confirm action (onConfirm → confirmPush), which STILL
+        // mints the ApprovedPush from the VerifyToken on the backend — Gate 4 is never bypassed.
+        if (pushRetryAwaiting) { status = 'failed'; recovery = 'push_failed'; action = 'confirm'; stat = 'push failed' }
+        else if (push === 'awaiting') { status = 'awaiting'; action = 'confirm'; stat = 'ready to ship' }
         else if (view.status === 'done') { status = 'done'; stat = view.provider ?? 'shipped' }
         else if (view.status === 'failed') { status = 'failed'; stat = 'run failed' }
+        else if (view.status === 'cancelled') { status = 'failed'; stat = 'run cancelled' }
         else if (push === 'satisfied') { status = 'done'; stat = view.provider ?? 'shipped' }
         else if (view.verified) { status = 'active'; stat = 'finishing' }
         else status = 'pending'

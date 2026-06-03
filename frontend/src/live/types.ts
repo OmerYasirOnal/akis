@@ -88,8 +88,17 @@ export interface RecoveryState {
 export interface VerifyFailedState {
   retry: 'awaiting' | 'resolved'
 }
+/**
+ * A VERIFIED run whose push to GitHub failed (retryable). NOT a structural gate: the retry
+ * re-runs the GATED confirmPush (Gate 4 still mints an ApprovedPush from the VerifyToken), so
+ * this surfaces a retry affordance WITHOUT bypassing the push gate. `resolved` once the push
+ * later succeeds (idempotent on replay).
+ */
+export interface PushFailedState {
+  retry: 'awaiting' | 'resolved'
+}
 
-export type SessionStatus = 'started' | 'running' | 'done' | 'failed' | 'unknown'
+export type SessionStatus = 'started' | 'running' | 'done' | 'failed' | 'cancelled' | 'unknown'
 
 /** A selectable saved workflow preset (id + display name) for the build composer. */
 export interface WorkflowOption { id: string; name: string }
@@ -109,6 +118,8 @@ export interface SessionView {
   recovery?: RecoveryState
   /** A recoverable verify-failed state (retry); undefined until a real verify fails. */
   verifyFailed?: VerifyFailedState
+  /** A recoverable push-failed state (retry); undefined until a verified run's push fails. */
+  pushFailed?: PushFailedState
   provider?: string
   verified?: boolean
   /**

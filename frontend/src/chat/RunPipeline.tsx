@@ -33,6 +33,7 @@ function statText(t: (k: StringKey) => string, stat: string | undefined): string
     'running tests': 'pipeline.stat.runningTests', 'verify failed': 'pipeline.stat.verifyFailed',
     'ready to ship': 'pipeline.stat.readyToShip', 'finishing': 'pipeline.stat.finishing',
     'shipped': 'pipeline.stat.shipped', 'run failed': 'pipeline.stat.runFailed',
+    'push failed': 'pipeline.stat.pushFailed', 'run cancelled': 'pipeline.stat.runCancelled',
   }
   const key = KEYS[stat]
   return key ? t(key) : stat
@@ -66,7 +67,10 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
         <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{agentName(step.role)}</span>
       </div>
       <div className="min-h-[1rem] truncate text-[11px] text-slate-300" title={stat}>{stat ?? t(`pipeline.status.${step.status}`)}</div>
-      {step.action && (
+      {/* The generic gate action (approve / confirm). Suppressed when a push_failed recovery is
+          showing, which renders its OWN labeled "retry" button below (also wired to onConfirm) —
+          so there's never a duplicate Confirm. */}
+      {step.action && step.recovery !== 'push_failed' && (
         <button
           onClick={step.action === 'approve' ? onApprove : onConfirm}
           disabled={busy}
@@ -93,6 +97,13 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
         <button onClick={onRetry} disabled={busy}
           className="mt-1 rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-2 py-1 text-[11px] font-semibold text-slate-900 shadow-[0_0_14px_rgba(251,191,36,0.3)] disabled:opacity-40">
           {t('recovery.verify.retry')}
+        </button>
+      )}
+      {/* push_failed: a labeled retry wired to onConfirm → the GATED confirmPush (Gate 4 intact). */}
+      {step.recovery === 'push_failed' && (
+        <button onClick={onConfirm} disabled={busy}
+          className="mt-1 rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-2 py-1 text-[11px] font-semibold text-slate-900 shadow-[0_0_14px_rgba(251,191,36,0.3)] disabled:opacity-40">
+          {t('recovery.push.retry')}
         </button>
       )}
     </div>
@@ -135,17 +146,35 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
   const onProceed = drive(id => client.resolveCritic(id, 'proceed'))
   const onAbandon = drive(id => client.resolveCritic(id, 'abandon'))
   const onRetry = drive(id => client.retryRun(id))
+  // Run control: STOP/CANCEL an in-flight run — a clean TERMINAL abandon. NOT a gate bypass:
+  // the server only sets `cancelled` (it never verifies/ships); a 409 from a terminal run is
+  // swallowed (the next event reflects the real state).
+  const onCancel = drive(id => client.cancelRun(id))
   const acting = busy || recovering
+  // The Stop control is shown only while the run is NON-terminal (in-flight or parked) — once
+  // done/failed/cancelled there is nothing to stop.
+  const inFlight = !!view.sessionId && (view.status === 'running' || view.status === 'started')
   // The relevant recovery hint (one at a time — a run is in at most one parked state).
   const recoveryHint: StringKey | undefined = steps.some(s => s.recovery === 'critic_resolution')
     ? 'recovery.critic.hint'
     : steps.some(s => s.recovery === 'verify_failed')
       ? 'recovery.verify.hint'
-      : undefined
+      : steps.some(s => s.recovery === 'push_failed')
+        ? 'recovery.push.hint'
+        : undefined
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{t('pipeline.title')}</div>
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{t('pipeline.title')}</div>
+        {/* Stop/Cancel: a clean terminal ABANDON of an in-flight run — never a gate bypass. */}
+        {inFlight && (
+          <button onClick={onCancel} disabled={acting} aria-label={t('run.stop')}
+            className="shrink-0 rounded-md border border-rose-400/40 px-2 py-0.5 text-[11px] font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-40">
+            {t('run.stop')}
+          </button>
+        )}
+      </div>
 
       {/* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run)
           so the live view stops pulsing forever; the resumable stream re-syncs via Last-Event-ID. */}

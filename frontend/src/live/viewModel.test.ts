@@ -143,4 +143,22 @@ describe('foldSessionView (pure live view-model)', () => {
     ])
     expect(resolved.verifyFailed).toEqual({ retry: 'resolved' })
   })
+
+  it('folds a push_failed recovery (retry awaiting → resolved, last wins)', () => {
+    const v = foldSessionView('s1', [ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' })])
+    expect(v.pushFailed).toEqual({ retry: 'awaiting' })
+    const resolved = foldSessionView('s1', [
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'resolved' }),
+    ])
+    expect(resolved.pushFailed).toEqual({ retry: 'resolved' })
+  })
+
+  it('folds a cancelled session into a distinct terminal status (not done, not failed)', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'session', status: 'started' }),
+      ev({ kind: 'session', status: 'cancelled' }),
+    ])
+    expect(v.status).toBe('cancelled')
+  })
 })
