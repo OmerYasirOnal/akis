@@ -69,6 +69,23 @@ describe('loadEnvFile — BYO dotenv loader', () => {
     loadEnvFile(undefined, env)
     expect(env.AI_PROVIDER).toBe('google')
   })
+
+  it('preserves a quoted value that itself contains quotes (no first-quote truncation)', () => {
+    const env: NodeJS.ProcessEnv = {}
+    const file = write(['DJSON="{"a":1}"', "SJSON='{\"a\":1}'", 'NESTED="say "hi""'].join('\n'))
+    loadEnvFile(file, env)
+    expect(env.DJSON).toBe('{"a":1}')   // double-quoted JSON: inner quotes kept (was truncated to `{`)
+    expect(env.SJSON).toBe('{"a":1}')   // single-quoted JSON
+    expect(env.NESTED).toBe('say "hi"') // inner double-quotes preserved (was `say `)
+  })
+
+  it('does not silently drop trailing content after a close-quote (malformed → raw)', () => {
+    const env: NodeJS.ProcessEnv = {}
+    const file = write(['TRAIL="abc"def', 'OPEN="oops # x'].join('\n'))
+    loadEnvFile(file, env)
+    expect(env.TRAIL).toBe('"abc"def')  // not a clean enclosing pair → kept raw (was silently `abc`)
+    expect(env.OPEN).toBe('"oops')      // unbalanced open quote → unquoted fallback strips the inline comment
+  })
 })
 
 process.on('exit', () => { try { rmSync(tmp, { recursive: true, force: true }) } catch { /* noop */ } })
