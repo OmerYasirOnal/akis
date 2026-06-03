@@ -28,10 +28,12 @@ jobs:
     # A throwaway Postgres so the gated migration integration test
     # (test/integration/pg-migrations.integration.test.ts) runs real DDL in CI and proves
     # the schema/constraints actually hold. Unit tests use a fake SqlClient and ignore it;
-    # the test is skipped locally (AKIS_TEST_DATABASE_URL unset).
+    # the test is skipped locally (AKIS_TEST_DATABASE_URL unset). pgvector/pgvector:pg16
+    # ships the `vector` extension so the guarded real-pgvector path (Part B) is exercised
+    # here too; the test still detects + skips cleanly on a Postgres without the extension.
     services:
       postgres:
-        image: postgres:16-alpine
+        image: pgvector/pgvector:pg16
         env:
           POSTGRES_USER: akis
           POSTGRES_PASSWORD: akis

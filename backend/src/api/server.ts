@@ -11,10 +11,12 @@ import { registerWorkflowRoutes } from './workflows.routes.js'
 import { registerAuthRoutes, userIdFromRequest } from './auth.routes.js'
 import { UserStore, type UserStorePort } from '../auth/UserStore.js'
 import { createPgUserStoreWithClient } from '../auth/PgUserStore.js'
-import { createPgPool, runMigrations } from '../store/pg.js'
+import { createPgPool, runMigrations, ensurePgVectorColumn } from '../store/pg.js'
 import { PgSessionStore } from '../store/PgSessionStore.js'
 import { PgWorkflowStore } from '../workflow/PgWorkflowStore.js'
 import { PgVectorStore } from '../knowledge/store/PgVectorStore.js'
+import { Bm25Index } from '../knowledge/store/Bm25Index.js'
+import { activeEmbeddingDim } from '../knowledge/embedding/ApiEmbeddingProvider.js'
 import type { VectorStore } from '../knowledge/store/VectorStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
@@ -60,6 +62,11 @@ export interface ServerDeps {
    *  buildServices uses the in-memory default). Only consulted when RAG is on (AKIS_RAG);
    *  the keyless/in-memory default path is byte-for-byte unchanged. */
   vectorStore?: VectorStore
+  /** The BM25 lexical index, hydrated from the persisted corpus when DATABASE_URL is set, so the
+   *  lexical half of hybrid retrieval (RRF) survives a restart instead of rebuilding empty. Built
+   *  in buildPgStores alongside the PgVectorStore from the SAME rows. Only consulted when RAG is
+   *  on; the keyless/in-memory default path is byte-for-byte unchanged. */
+  bm25?: Bm25Index
   /** Built-frontend dist dir for single-container static serving (defaults to
    *  frontend/dist resolved next to the sources; overridable for tests/hosts). */
   staticRoot?: string
@@ -141,6 +148,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Durable corpus: a hydrated PgVectorStore when DATABASE_URL is set (only effective with
       // RAG on); absent it, buildServices uses the in-memory default unchanged.
       ...(flag(env.AKIS_RAG) && deps.vectorStore ? { vectorStore: deps.vectorStore } : {}),
+      // Durable lexical half: a Bm25Index hydrated from that same corpus so RRF's BM25 side
+      // survives restart (otherwise rebuilt empty); absent it, the in-memory default unchanged.
+      ...(flag(env.AKIS_RAG) && deps.bm25 ? { bm25: deps.bm25 } : {}),
       ...(rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
       // Keyless DEMO: run the loop on the deterministic mock provider (no API key).
       // Gated by `useMock` so a configured real key wins over the demo flag.
@@ -188,8 +198,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // When this run enables RAG, thread env so AKIS_GITHUB_TOKEN selects the real reader.
     ...(wf.rag !== undefined ? { rag: wf.rag, ...(wf.rag ? { env } : {}) } : {}),
     // Durable corpus for a per-workflow run too: when that run turns RAG on AND a durable
-    // store is wired (DATABASE_URL set), use it so the corpus stays shared + persistent.
+    // store is wired (DATABASE_URL set), use it so the corpus stays shared + persistent. The
+    // SAME hydrated BM25 index is shared too, so vector + lexical halves stay in lockstep (they
+    // mirror the single shared PgVectorStore — never two divergent lexical views).
     ...(wf.rag && deps.vectorStore ? { vectorStore: deps.vectorStore } : {}),
+    ...(wf.rag && deps.bm25 ? { bm25: deps.bm25 } : {}),
     // rerank: the workflow's per-run knob wins (issue #7 AC3); else the env default.
     ...(wf.rerank !== undefined ? { rerank: wf.rerank } : rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
     ...(realTests ? { realTests: true } : {}),
@@ -329,6 +342,10 @@ interface PgStores {
   /** The durable RAG corpus, hydrated from the table so a restart re-loads the existing
    *  corpus instead of re-indexing from scratch. */
   vectorStore: PgVectorStore
+  /** The BM25 lexical index, hydrated from the SAME persisted corpus so the lexical half of
+   *  hybrid retrieval survives a restart too (it was previously rebuilt empty on boot — a
+   *  silent correctness bug that degraded RRF to vector-only). */
+  bm25: Bm25Index
   pool: SqlClient
 }
 
@@ -337,23 +354,41 @@ interface PgStores {
  * Postgres-backed user/session/workflow stores TOGETHER over that single pool. Returns
  * undefined (and logs) on any failure so the caller falls back to the in-memory default
  * — DEFAULT behavior is never blocked by an unreachable DB.
+ *
+ * `embeddingDim` sizes the GUARDED real `vector(N)` column (Part B) to the active embedder; the
+ * upgrade is best-effort and silently keeps the portable `double precision[]` column where the
+ * pgvector extension is unavailable, so this never blocks boot.
  */
-async function buildPgStores(connectionString: string): Promise<PgStores | undefined> {
+async function buildPgStores(connectionString: string, embeddingDim: number): Promise<PgStores | undefined> {
   try {
     const pool = await createPgPool(connectionString)
     await runMigrations(pool)
+    // Best-effort upgrade the corpus vector column to a real, indexable pgvector(N) typed to the
+    // active embedding dim. GUARDED: if the extension is unavailable it leaves double precision[]
+    // in place (today's behavior). Run AFTER migrations (table exists) and BEFORE hydrate.
+    const pgvector = await ensurePgVectorColumn(pool, embeddingDim)
     // Durable RAG corpus: hydrate the in-memory index from the persisted rows so a restart
     // re-loads the existing corpus (vs. re-indexing). Reads stay synchronous + parity-identical
-    // to MemoryVectorStore; writes go through to Postgres.
-    const vectorStore = new PgVectorStore(pool)
+    // to MemoryVectorStore; writes go through to Postgres. The write-through serializes the
+    // embedding to match the actual column type (real vector(N) when the upgrade took, else the
+    // portable double precision[]).
+    const vectorStore = new PgVectorStore(pool, pgvector.enabled ? 'vector' : 'array')
     await vectorStore.hydrate()
+    // Rehydrate the BM25 lexical index from the SAME persisted corpus (one scan, no second
+    // query) so RRF's lexical half survives the restart alongside the vector half — previously
+    // it was rebuilt EMPTY on boot, silently degrading hybrid retrieval to vector-only.
+    const bm25 = new Bm25Index()
+    bm25.hydrate(vectorStore.hydratedChunks())
     // eslint-disable-next-line no-console
-    console.log('persistence: using Postgres (users + sessions + workflows + RAG corpus)')
+    console.log(
+      `persistence: using Postgres (users + sessions + workflows + RAG corpus); vector column: ${pgvector.enabled ? `pgvector(${embeddingDim})` : 'double precision[] (pgvector extension unavailable)'}`,
+    )
     return {
       userStore: createPgUserStoreWithClient(pool),
       sessionStore: new PgSessionStore(pool),
       workflowStore: new PgWorkflowStore(pool),
       vectorStore,
+      bm25,
       pool,
     }
   } catch (e) {
@@ -369,9 +404,13 @@ export async function start(): Promise<void> {
   // Default OUTSIDE the repo so an encrypted key blob can never be committed.
   const file = process.env.AI_KEY_STORE_PATH ?? join(homedir(), '.config', 'akis', 'keys.json')
   const keyStore = new JsonFileKeyStore(file, master)
+  // The active embedding dimension (mirrors selectEmbeddingProvider: keyless/test → 256 local;
+  // an OpenAI key → the catalog model's dim) sizes the guarded real pgvector(N) column so it
+  // matches what is actually stored. Reads env + the SAME KeyStore the embedder consults.
+  const embeddingDim = activeEmbeddingDim({ env: process.env as Record<string, string | undefined>, keyStore })
   // Durable stores when DATABASE_URL is configured; else in-memory (dev/self-host). One
   // shared pool migrated once backs all three; on failure buildPgStores returns undefined.
-  const pg = process.env.DATABASE_URL ? await buildPgStores(process.env.DATABASE_URL) : undefined
+  const pg = process.env.DATABASE_URL ? await buildPgStores(process.env.DATABASE_URL, embeddingDim) : undefined
   // Fail CLOSED in production: if persistence was explicitly requested (DATABASE_URL set)
   // but the DB is unreachable, refuse to boot rather than silently run on in-memory stores
   // and lose data on the next restart. The dev/self-host fallback (no NODE_ENV=production)
@@ -386,7 +425,7 @@ export async function start(): Promise<void> {
   const app = buildServer({
     keyStore,
     persistence: pg ? 'postgres' : 'memory',
-    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, vectorStore: pg.vectorStore } : {}),
+    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, vectorStore: pg.vectorStore, bm25: pg.bm25 } : {}),
   })
   const port = Number(process.env.PORT ?? 3000)
   const host = resolveListenHost(process.env)

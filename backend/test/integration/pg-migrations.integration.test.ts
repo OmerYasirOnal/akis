@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { createPgPool, runMigrations } from '../../src/store/pg.js'
+import { createPgPool, runMigrations, ensurePgVectorColumn } from '../../src/store/pg.js'
 import { PgVectorStore } from '../../src/knowledge/store/PgVectorStore.js'
+import { Bm25Index } from '../../src/knowledge/store/Bm25Index.js'
 import type { StoredChunk } from '../../src/knowledge/store/VectorStore.js'
 
 /**
@@ -104,6 +105,101 @@ describe.skipIf(!url)('PgVectorStore against real Postgres', () => {
       await third.hydrate()
       expect(third.size()).toBe(1)
       expect(third.has('c')).toBe(true)
+    } finally {
+      if (pool.end) await pool.end()
+    }
+  })
+
+  /** BM25 (the lexical half of hybrid retrieval) survives a restart against REAL Postgres: persist
+   *  a corpus, then rehydrate a BRAND-NEW Bm25Index from the SAME `vector_chunks` rows and prove an
+   *  exact-term lexical query still hits. This is the must-have, proven end-to-end on real DDL. */
+  it('rehydrates the BM25 lexical index from the persisted corpus after a "restart"', async () => {
+    const pool = await createPgPool(url!)
+    try {
+      await pool.query('DROP TABLE IF EXISTS vector_chunks CASCADE')
+      await runMigrations(pool)
+
+      const first = new PgVectorStore(pool)
+      first.upsert(mkChunk({ id: 'p1', userId: 'u1', vector: [1, 0, 0], text: 'the pgvector extension stores embeddings' }))
+      first.upsert(mkChunk({ id: 'p2', userId: 'u1', vector: [0, 1, 0], text: 'reciprocal rank fusion blends lexical bm25' }))
+      await first.flush()
+
+      // Restart: a fresh vector store AND a fresh BM25 index hydrate from the SAME durable rows.
+      const second = new PgVectorStore(pool)
+      await second.hydrate()
+      const bm25 = new Bm25Index()
+      bm25.hydrate(second.hydratedChunks())
+      expect(bm25.size()).toBe(2)
+
+      // An exact lexical term the rehydrated BM25 must still match (not silently empty).
+      const lex = bm25.search('pgvector', { userId: 'u1' }, 5)
+      expect(lex.length).toBeGreaterThan(0)
+      expect(lex[0]!.stored.chunk.text).toContain('pgvector')
+      // Tenancy still applies post-rehydrate: another user sees nothing.
+      expect(bm25.search('pgvector', { userId: 'u2' }, 5)).toHaveLength(0)
+    } finally {
+      if (pool.end) await pool.end()
+    }
+  })
+})
+
+/**
+ * REAL pgvector integration (Part B): when the `vector` extension is reachable, the guarded
+ * upgrade turns the `vector_chunks.vector` column into a real `vector(N)`, an ANN index exists,
+ * and a vector query runs. This DETECTS the extension and SKIPS cleanly when it is unavailable
+ * (a plain `postgres:16` / managed DB without pgvector) — so CI stays green either way. The unit
+ * tests already prove the fallback path with a fake client; this proves the real-DDL happy path.
+ */
+describe.skipIf(!url)('pgvector real column upgrade (guarded, skips without the extension)', () => {
+  it('upgrades the vector column to vector(N), indexes it, and answers a vector query — or skips if pgvector is absent', async () => {
+    const pool = await createPgPool(url!)
+    try {
+      await pool.query('DROP TABLE IF EXISTS vector_chunks CASCADE')
+      await runMigrations(pool)
+
+      const dim = 3 // small test dim; the boot path derives this from the active embedder
+      const res = await ensurePgVectorColumn(pool, dim)
+      if (!res.enabled) {
+        // pgvector is not installed on this Postgres — the column stays double precision[] and the
+        // whole feature degrades gracefully. Assert the fallback held and SKIP the pgvector-only part.
+        const { rows } = await pool.query(
+          "SELECT udt_name FROM information_schema.columns WHERE table_name='vector_chunks' AND column_name='vector'",
+        )
+        expect(rows[0]!.udt_name).toBe('_float8') // double precision[] — the portable fallback
+        return
+      }
+
+      // Extension present: the column is now a real `vector`, idempotently re-runnable.
+      await ensurePgVectorColumn(pool, dim) // second run: column already vector, index IF NOT EXISTS → no-op
+      const { rows: colRows } = await pool.query(
+        "SELECT udt_name FROM information_schema.columns WHERE table_name='vector_chunks' AND column_name='vector'",
+      )
+      expect(colRows[0]!.udt_name).toBe('vector')
+
+      // The ANN index exists.
+      const { rows: idxRows } = await pool.query(
+        "SELECT indexname FROM pg_indexes WHERE tablename='vector_chunks' AND indexname='vector_chunks_vector_ann_idx'",
+      )
+      expect(idxRows.length).toBe(1)
+
+      // A real vector round-trips through the store (write-through to the vector(N) column) and a
+      // native pgvector distance query runs against it. The 'vector' mode serializes the embedding
+      // as the pgvector literal + casts it (the default 'array' mode would error on a vector column).
+      const store = new PgVectorStore(pool, 'vector')
+      store.upsert({
+        id: 'v1', vector: [1, 0, 0],
+        chunk: { id: 'v1', text: 'native vector row', source: 'upload:d', score: 0 },
+        meta: { source: 'upload', sourceId: 'd', userId: 'u1', sessionId: 's1', createdAt: 't' },
+      })
+      await store.flush()
+      // pgvector cosine-distance operator (<=>) against the typed column — proves it is a real vector.
+      const { rows: q } = await pool.query("SELECT id FROM vector_chunks ORDER BY vector <=> '[1,0,0]' LIMIT 1")
+      expect(q[0]!.id).toBe('v1')
+
+      // And the synchronous store path still hydrates + ranks identically (column type is transparent).
+      const reloaded = new PgVectorStore(pool)
+      await reloaded.hydrate()
+      expect(reloaded.search([1, 0, 0], { userId: 'u1' }, 5)[0]!.stored.id).toBe('v1')
     } finally {
       if (pool.end) await pool.end()
     }
