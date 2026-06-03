@@ -23,6 +23,14 @@ export function PreviewPanel({ view, onRun, busy, canRun }: { view: SessionView;
       <div className="flex items-center justify-between">
         <h3 className="text-sm font-semibold text-slate-200">{t('preview.title')}</h3>
         <div className="flex items-center gap-2">
+          {/* P1-CORE-1: when the boot is in demo mode (mock provider/verification), the embedded
+              "running app" is a demo, not a real-verified build — flag it on the preview itself. */}
+          {view.preview.demo && (
+            <span role="status" title={t('result.demo.title')}
+              className="rounded border border-amber-400/30 bg-amber-400/15 px-2 py-0.5 text-xs text-amber-200">
+              {t('result.demo.badge')}
+            </span>
+          )}
           {view.verified !== undefined && (
             <span className={`rounded px-2 py-0.5 text-xs ${view.verified ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-500/20 text-slate-300'}`}>
               {view.verified ? t('preview.verified') : t('preview.unverified')}
