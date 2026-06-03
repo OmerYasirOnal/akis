@@ -97,6 +97,10 @@ export class ApiClient {
   /** Recovery: retry a verify_failed run. Re-enters the iterate loop and RE-RUNS REAL
    *  verification (mint still needs a genuine ≥1-test pass — no bypass). */
   retryRun(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/retry`) }
+  /** Run control: STOP/CANCEL an in-flight run — a clean TERMINAL abandon. NOT a gate
+   *  bypass: the server only sets `cancelled` (terminal); it never verifies/ships. 409 from
+   *  an already-terminal run. */
+  cancelRun(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/cancel`) }
   /** Start (or restart) the local in-browser preview of the produced app. Emits
    *  preview_status on the SSE stream; the iframe embeds /preview/:id/ when ready. */
   startPreview(id: string): Promise<PreviewEntry> {

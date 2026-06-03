@@ -35,7 +35,9 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
   for (const e of events) {
     switch (e.kind) {
       case 'session':
-        v.status = e.status === 'started' ? 'started' : e.status === 'failed' ? 'failed' : 'done'
+        // `cancelled` is a clean TERMINAL abandon (Stop/Cancel) — distinct from a failure or a
+        // ship — so the run reads as stopped (not "shipped") and the Stop control hides.
+        v.status = e.status === 'started' ? 'started' : e.status === 'failed' ? 'failed' : e.status === 'cancelled' ? 'cancelled' : 'done'
         break
       case 'agent_start': {
         const step: StepNode = { agent: e.agent, done: false, tools: [], notes: [] }
@@ -90,6 +92,7 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         // A recoverable run state → an ACTION card (not a silent amber dot). Last wins, so a
         // `resolved` frame clears the awaiting card after the human acted (idempotent on replay).
         if (e.recovery === 'critic_resolution') v.recovery = { critic: e.state }
+        else if (e.recovery === 'push_failed') v.pushFailed = { retry: e.state }
         else v.verifyFailed = { retry: e.state }
         break
       case 'preview':

@@ -49,6 +49,8 @@ export const STRINGS = {
     'pipeline.stat.finishing': 'finishing',
     'pipeline.stat.shipped': 'shipped',
     'pipeline.stat.runFailed': 'run failed',
+    'pipeline.stat.pushFailed': 'push failed',
+    'pipeline.stat.runCancelled': 'run cancelled',
     'pipeline.summary.verified': 'Verified',
     'pipeline.summary.notVerified': 'Not verified',
     'pipeline.summary.reviewClean': 'review clean',
@@ -66,6 +68,14 @@ export const STRINGS = {
     'recovery.verify.title': 'Tests did not pass',
     'recovery.verify.hint': 'No real passing test was produced, so the run is not verified. Retry to re-run the real tests — push stays blocked until a genuine pass.',
     'recovery.verify.retry': 'Retry tests',
+    // push_failed: a VERIFIED run whose push failed (network/adapter). The retry re-runs the
+    // GATED push (Gate 4 still mints from the VerifyToken) — a retry affordance, not a bypass.
+    'recovery.push.title': 'Push failed',
+    'recovery.push.hint': 'The build is verified, but pushing it failed. Retry the push — it still requires the verified push approval (the push gate is never bypassed).',
+    'recovery.push.retry': 'Push failed — retry',
+    // Run control: STOP/CANCEL an in-flight run — a clean terminal abandon (never a gate bypass:
+    // cancel only stops the run; it never marks it verified or ships it).
+    'run.stop': 'Stop run',
     // SSE drop: a non-terminal "reconnecting" banner so a dropped stream stops pulsing forever.
     'live.reconnecting': 'Connection lost — reconnecting…',
     // P1-CORE-1: per-run "this result is simulated" badge — shown ON the verify gate card and
@@ -585,6 +595,8 @@ export const STRINGS = {
     'pipeline.stat.finishing': 'tamamlanıyor',
     'pipeline.stat.shipped': 'yayınlandı',
     'pipeline.stat.runFailed': 'çalışma başarısız',
+    'pipeline.stat.pushFailed': 'push başarısız',
+    'pipeline.stat.runCancelled': 'çalışma iptal edildi',
     'pipeline.summary.verified': 'Doğrulandı',
     'pipeline.summary.notVerified': 'Doğrulanmadı',
     'pipeline.summary.reviewClean': 'inceleme temiz',
@@ -602,6 +614,14 @@ export const STRINGS = {
     'recovery.verify.title': 'Testler geçmedi',
     'recovery.verify.hint': 'Gerçek geçen bir test üretilmedi, bu yüzden çalışma doğrulanmadı. Gerçek testleri yeniden çalıştırmak için yeniden dene — gerçek bir geçiş olana dek push engelli kalır.',
     'recovery.verify.retry': 'Testleri yeniden dene',
+    // push_failed: DOĞRULANMIŞ bir çalışmanın push'u başarısız oldu (ağ/adaptör). Yeniden deneme
+    // KAPILI push'u yeniden çalıştırır (Gate 4 yine VerifyToken'dan üretir) — atlatma değil.
+    'recovery.push.title': 'Push başarısız',
+    'recovery.push.hint': 'İnşa doğrulandı, ancak push başarısız oldu. Push\'u yeniden dene — yine doğrulanmış push onayını gerektirir (push kapısı asla atlanmaz).',
+    'recovery.push.retry': 'Push başarısız — yeniden dene',
+    // Çalışma denetimi: yürüyen bir çalışmayı DURDUR/İPTAL ET — temiz, kalıcı bir vazgeçiş (asla
+    // kapı atlatma değil: iptal yalnızca çalışmayı durdurur; asla doğrulamaz veya yayınlamaz).
+    'run.stop': 'Çalışmayı durdur',
     // SSE kopması: kalıcı olmayan bir "yeniden bağlanılıyor" bandı, böylece kopan akış sonsuza dek atmaz.
     'live.reconnecting': 'Bağlantı koptu — yeniden bağlanılıyor…',
     'chat.empty.title': 'İnşa etmek istediğin uygulamayı tarif et.',

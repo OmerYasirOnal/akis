@@ -8,7 +8,10 @@ export interface BaseEvent {
 }
 
 export type AkisEvent =
-  | (BaseEvent & { kind: 'session'; status: 'started' | 'failed' | 'done' })
+  // `cancelled` is a clean, user-requested TERMINAL abandon (Orchestrator.cancel) — NOT a
+  // failure and NOT a ship. It lets the live view stop driving an in-flight run without
+  // ever touching a gate (cancel never verifies/pushes; see Orchestrator.cancel).
+  | (BaseEvent & { kind: 'session'; status: 'started' | 'failed' | 'done' | 'cancelled' })
   | (BaseEvent & { kind: 'text'; text: string; ephemeral?: boolean })   // ephemeral=true → shown live but NOT ingested into RAG (free-form/untrusted narration)
   | (BaseEvent & { kind: 'agent_start'; role: Role })
   | (BaseEvent & { kind: 'agent_end'; role: Role; ok: boolean })
@@ -25,9 +28,13 @@ export type AkisEvent =
   //     exhausted → the human may `proceed` (continue to verify+push) or `abandon` (cancel).
   //   - verify_failed: real verification produced no token (tests failed / 0-test run) →
   //     the human may retry (re-enter the iterate loop + RE-RUN real verification).
+  //   - push_failed: a VERIFIED run's push to GitHub failed (network/adapter) → the run is
+  //     parked retryable; the human may retry the push. The retry re-runs the GATED confirmPush
+  //     (which STILL requires a valid ApprovedPush minted from the persisted VerifyToken), so
+  //     this surfaces a retry affordance WITHOUT ever bypassing Gate 4.
   // `state` is the lifecycle: `awaiting` (action needed) → `resolved` (the human chose) so a
   // resumed/replayed stream shows whether the card is still actionable. STRUCTURED ONLY.
-  | (BaseEvent & { kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed'; state: 'awaiting' | 'resolved' })
+  | (BaseEvent & { kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed' | 'push_failed'; state: 'awaiting' | 'resolved' })
   // verifier-only — FROZEN (gate source of truth). `demo` is an ADDITIVE, optional, PURELY
   // INFORMATIONAL annotation: true ⇔ the result was produced by the mock/injected test runner
   // (simulated verification), so the UI can mark it as not-a-real-pass AT THE RESULT. It never
