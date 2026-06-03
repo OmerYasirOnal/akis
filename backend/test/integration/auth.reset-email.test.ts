@@ -127,4 +127,22 @@ describe('password-reset email delivery (mailer seam)', () => {
     expect(res.statusCode).toBe(200)
     expect(res.json().message).toBe(GENERIC)
   })
+
+  it('the send is FIRE-AND-FORGET: a mailer whose promise never resolves still returns at once (no latency oracle)', async () => {
+    // The whole point of the fix: response latency must NOT depend on the mailer. A hung relay
+    // (a promise that never settles) would, if awaited, hold the connection open ONLY when the
+    // account exists — leaking existence via timing. Here the request must complete regardless.
+    let invoked = false
+    class HangingMailer implements Mailer {
+      sendResetLink(): Promise<void> { invoked = true; return new Promise<void>(() => { /* never resolves */ }) }
+    }
+    const store = new UserStore()
+    const server = build({ mailer: new HangingMailer(), userStore: store })
+    await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'ada@akis.dev', password: 'oldpassword1' } })
+    // If the handler awaited the send, this inject would hang forever and the test would time out.
+    const res = await server.inject({ method: 'POST', url: '/auth/forgot-password', payload: { email: 'ada@akis.dev' } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toEqual({ message: GENERIC }) // body stays byte-identical + enumeration-safe
+    expect(invoked).toBe(true) // the call is still made synchronously — only the await is dropped
+  })
 })

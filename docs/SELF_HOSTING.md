@@ -181,9 +181,20 @@ downstream hardcodes a size, and the vector store is dimension-agnostic. Set
 `AKIS_EMBEDDING_MODEL=text-embedding-3-large` to use the 3072-dim model instead.
 The key is used only as a request header and is **never logged or returned**.
 
+> **`OPENAI_BASE_URL` override:** if you point `OPENAI_BASE_URL` at an
+> OpenAI-compatible proxy **and** enable real embeddings, that base URL must also
+> expose `/v1/embeddings` — embeddings are fetched from `${OPENAI_BASE_URL}/embeddings`
+> (so the base should end in `/v1`), or embedding requests will 404 at runtime.
+
 > Switching embedders changes the vector space, so **re-index** your knowledge
 > sources after enabling/disabling a real key (the in-memory index re-builds on
 > restart anyway).
+
+> **Changing the embedding dimension on a populated Postgres corpus needs a
+> re-ingest.** Once `vector_chunks.vector` is upgraded to `vector(N)`, switching to
+> a model with a different dim does **not** auto re-`ALTER` the column, and new-dim
+> writes are rejected/contained — so re-ingest your sources after the change. The
+> same is true semantically for the portable `double precision[]` array fallback.
 
 Three named Docker volumes hold state:
 
