@@ -159,6 +159,7 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
                   onApprove={approve}
                   onConfirm={confirm}
                   busy={busy}
+                  api={api}
                   details={<ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />}
                 />
               </>

@@ -173,3 +173,34 @@ describe('Recovery — verify-fail is retryable, never a silent dead-end', () =>
     await expect(orch.retryVerification(s.id)).rejects.toBeInstanceOf(WrongStatusError)
   })
 })
+
+describe('Recovery — push-fail is retryable via the GATED confirmPush (no Gate 4 bypass)', () => {
+  it('a failed push lands in push_failed + emits a recovery(push_failed, awaiting) signal', async () => {
+    const { orch, services } = makeOrch()
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id) // → awaiting_push_confirm (verified)
+    // Inject a transient push failure (network/adapter) on the shared github seam.
+    services.github.createRepo = async () => { throw new Error('network down') }
+    await expect(orch.confirmPush(s.id)).rejects.toThrow(/network down/)
+    expect((await services.store.get(s.id))!.status).toBe('push_failed')
+    expect(services.bus.recent(s.id).some(e => e.kind === 'recovery' && e.recovery === 'push_failed' && e.state === 'awaiting')).toBe(true)
+  })
+
+  it('a retry after a transient push failure ships — confirmPush still mints the ApprovedPush (Gate 4 intact)', async () => {
+    const { orch, services } = makeOrch()
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const original = services.github.createRepo.bind(services.github)
+    let fail = true
+    services.github.createRepo = async (id: string) => { if (fail) throw new Error('transient'); return original(id) }
+    await expect(orch.confirmPush(s.id)).rejects.toThrow() // push_failed
+    fail = false
+    const done = await orch.confirmPush(s.id) // retry from push_failed (confirmPush accepts it)
+    expect(done.status).toBe('done')
+    expect(isVerified(done)).toBe(true)
+    expect(services.github.read(s.id).length).toBeGreaterThan(0)
+    expect(services.bus.recent(s.id).some(e => e.kind === 'recovery' && e.recovery === 'push_failed' && e.state === 'resolved')).toBe(true)
+  })
+})

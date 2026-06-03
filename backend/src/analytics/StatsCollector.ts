@@ -23,6 +23,7 @@ export class StatsCollector {
   private sessions = 0
   private done = 0
   private failed = 0
+  private cancelled = 0
   private verifiedRuns = 0
   private testsRun = 0
   private verifyTotal = 0
@@ -38,6 +39,7 @@ export class StatsCollector {
       case 'session':
         if (e.status === 'started') this.sessions++
         else if (e.status === 'failed') this.failed++
+        else if (e.status === 'cancelled') this.cancelled++ // terminal — must leave `running` (Stop/Cancel makes this reachable)
         break
       case 'agent_start': {
         const a = this.agents.get(e.agent) ?? { agent: e.agent, runs: 0, ok: 0 }
@@ -66,7 +68,7 @@ export class StatsCollector {
       sessions: this.sessions,
       done: this.done,
       failed: this.failed,
-      running: Math.max(0, this.sessions - this.done - this.failed),
+      running: Math.max(0, this.sessions - this.done - this.failed - this.cancelled),
       verifiedRuns: this.verifiedRuns,
       testsRun: this.testsRun,
       passRate: this.verifyTotal ? this.verifyPassed / this.verifyTotal : 0,

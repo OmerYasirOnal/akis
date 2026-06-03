@@ -83,4 +83,29 @@ describe('CONTRACT: recovery routes', () => {
     expect((await app.inject({ method: 'POST', url: '/sessions/nope/resolve', payload: { decision: 'proceed' } })).statusCode).toBe(404)
     expect((await app.inject({ method: 'POST', url: '/sessions/nope/retry' })).statusCode).toBe(404)
   })
+
+  // ── Run control: POST /sessions/:id/cancel — owner-scoped, version-safe, terminal abandon. ──
+  it('POST /sessions/:id/cancel from an in-flight run → 200 cancelled (not a gate bypass)', async () => {
+    const { app } = makeApp() // good spec → awaiting_spec_approval (in-flight)
+    const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
+    const res = await app.inject({ method: 'POST', url: `/sessions/${s.id}/cancel` })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().status).toBe('cancelled')
+    expect(res.json().verifyToken).toBeUndefined() // never verified/shipped
+  })
+
+  it('POST /sessions/:id/cancel from a terminal run → 409', async () => {
+    const { app } = makeApp()
+    const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/approve` })
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/run` })
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/confirm` }) // → done (terminal)
+    const res = await app.inject({ method: 'POST', url: `/sessions/${s.id}/cancel` })
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('POST /sessions/:id/cancel on an unknown session → 404', async () => {
+    const { app } = makeApp()
+    expect((await app.inject({ method: 'POST', url: '/sessions/nope/cancel' })).statusCode).toBe(404)
+  })
 })
