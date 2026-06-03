@@ -51,6 +51,46 @@ in named volumes across `down`/`up` — see [Persistence](#persistence) below.
 > secret in production fails closed by design; the default keeps that guard happy
 > while still nudging you to replace it.
 
+### Run the published image (no local build)
+
+Don't want to build from source? Each release publishes a ready-to-run image to
+GitHub Container Registry, so you can `docker run` it directly — Ollama-style:
+
+```bash
+# keyless mock demo (no provider key, in-memory state) → http://localhost:3000
+docker run --rm -p 3000:3000 \
+  -e AKIS_ALLOW_MOCK=1 -e AKIS_ALLOW_DEMO_IN_PROD=1 \
+  ghcr.io/OmerYasirOnal/akis-platform-mvp:latest
+```
+
+Pin a specific version instead of `latest` for a reproducible deploy, e.g.
+`ghcr.io/OmerYasirOnal/akis-platform-mvp:v0.1.0`. Every published image has already
+passed a keyless `/health` boot-smoke in the release pipeline — a tag that exists is
+a tag that boots.
+
+> The package is created on the **first** release. New GHCR packages default to
+> **private**; flip it to public once (GitHub → the repo's Packages →
+> akis-platform-mvp → Package settings → Change visibility) so anyone can
+> `docker pull` without authenticating. Until then, `docker login ghcr.io` with a
+> PAT that has `read:packages` is required to pull.
+
+Prefer the full stack (with persistent Postgres) but **without** building locally?
+Point the compose `app` service at the GHCR image instead of the `build:` block by
+adding an override file next to `docker-compose.yml`:
+
+```yaml
+# docker-compose.override.yml  (compose auto-merges it)
+services:
+  app:
+    build: !reset null            # drop the local build…
+    image: ghcr.io/OmerYasirOnal/akis-platform-mvp:latest   # …and pull instead
+```
+
+Then `docker compose up -d` pulls the published image and starts the same
+Postgres-backed stack documented below. (Omit `!reset` and just set `image:` if your
+Compose version predates the `!reset` tag — Compose then prefers the local build only
+when sources change.) The env table, persistence, and security notes all still apply.
+
 ### Run a real build (optional)
 
 With **no** provider key, AKIS runs the keyless **mock** demo. To do real builds,
@@ -298,6 +338,35 @@ constraint on `external_id`. If an earlier (buggy) build had recorded **duplicat
 OAuth identities, that migration — and therefore boot — fails until you de-duplicate.
 This is intentional fail-closed behavior: merge/remove `users` rows that share an
 `external_id`, then restart.
+
+---
+
+## Cutting a release (maintainers)
+
+Publishing a new versioned image to GHCR + a GitHub Release is handled by the
+[`release.yml`](../.github/workflows/release.yml) workflow. It runs **only** on a
+deliberate trigger — never on an ordinary push to `main`, so nothing publishes by
+accident:
+
+```bash
+# tag the commit you want to release and push the tag
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+…or fire it manually: **Actions → Release → Run workflow**, and enter the version
+(e.g. `v0.1.0`) in the prompt.
+
+Either trigger runs the same pipeline: build the `Dockerfile` → **keyless `/health`
+boot-smoke the freshly built image** → and only if that smoke passes, push the image
+to `ghcr.io/OmerYasirOnal/akis-platform-mvp` under both the version tag and `latest`,
+then create the GitHub Release with auto-generated notes. The publish is **gated on
+the smoke** — an image that doesn't boot is never shipped. Auth to GHCR uses the
+built-in `GITHUB_TOKEN` (no user secret, no host); the workflow only needs
+`contents: write` (the Release) + `packages: write` (the GHCR push).
+
+> Release **branches are intentionally kept** — cleanup is left manual. The
+> pipeline only creates tags, images, and Releases; it never deletes branches.
 
 ---
 
