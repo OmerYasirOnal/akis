@@ -11,7 +11,9 @@ import type { TestRunner } from '../verify/TestRunner.js'
 import { resolveVerifier, type VerifierSpec } from '../verify/verifier.js'
 import { LocalDirectSandbox, type Sandbox } from '../exec/Sandbox.js'
 import { createApprovalAuthority, type ApprovalAuthority } from '../gates/specGate.js'
-import { loadSkills, type Skill } from '../skills/registry.js'
+import { loadSkills, buildSystemPrompt, type Skill } from '../skills/registry.js'
+import { SCRIBE_SYSTEM } from '../orchestrator/subagents/ScribeAgent.js'
+import { PROTO_SYSTEM } from '../orchestrator/subagents/ProtoAgent.js'
 import type { LlmProvider } from '../agent/LlmProvider.js'
 import { createProvider } from '../agent/providers/createProvider.js'
 import { makeGenerateText } from '../agent/criticBackend.js'
@@ -139,6 +141,11 @@ export interface BuildServicesOptions {
   /** Per-agent {provider, model} from a resolved WorkflowConfig (F2-AC9). When set
    *  for a producer role, that agent gets its own provider; otherwise the default. */
   agentModels?: Partial<Record<import('@akis/shared').Role, { provider: import('./../agent/providers/catalog.js').ProviderId; model?: string }>>
+  /** Per-agent selected skill NAMES from a resolved WorkflowConfig (P3-AGENT-1). For a
+   *  core producer (scribe/proto) the named skills are resolved against the loaded
+   *  registry and composed onto that agent's base system prompt via buildSystemPrompt.
+   *  Omitted / empty / unknown names ⇒ the byte-identical base prompt of today. */
+  agentSkills?: Partial<Record<import('@akis/shared').Role, string[]>>
   /** Custom (non-core) workflow agents to wire as advisory edge agents (CF4). A
    *  declared gate capability is REJECTED here (runtime re-check) — buildServices throws. */
   customAgents?: AgentConfig[]
@@ -259,6 +266,25 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     )
   }
 
+  // P3-AGENT-1: inject the workflow-selected skills into each core producer's system
+  // prompt. The registry is loaded once here; `composeFor` resolves a role's selected
+  // skill NAMES against it and folds their text onto the agent's base prompt via the
+  // (previously defined-but-uncalled) buildSystemPrompt helper. A role with NO selected
+  // skills (the default) resolves to undefined ⇒ the agent uses its byte-identical base
+  // prompt. Per-agent selection is honored: Scribe's names never reach Proto's prompt.
+  const skills = loadSkills(opts.skillsDir)
+  const composeFor = (role: 'scribe' | 'proto', base: string): string | undefined => {
+    const names = opts.agentSkills?.[role]
+    if (!names || names.length === 0) return undefined
+    // Resolve names against the registry, preserving the workflow's order and dropping
+    // unknown names (never a throw). No matches ⇒ undefined ⇒ unchanged base prompt.
+    const selected = names.map(n => skills.find(s => s.name === n)).filter((s): s is Skill => s !== undefined)
+    if (selected.length === 0) return undefined
+    return buildSystemPrompt(base, selected)
+  }
+  const scribePrompt = composeFor('scribe', SCRIBE_SYSTEM)
+  const protoPrompt = composeFor('proto', PROTO_SYSTEM)
+
   return {
     store: opts.store,
     bus,
@@ -271,11 +297,12 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
       bus, provider: providerFor('scribe'),
       ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}),
       ...(ragEnabled ? { knowledge: knowledgeWiring.knowledge, ragEnabled: true } : {}),
+      ...(scribePrompt !== undefined ? { systemPrompt: scribePrompt } : {}),
     }),
-    proto: new ProtoAgent({ bus, provider: providerFor('proto') }),
+    proto: new ProtoAgent({ bus, provider: providerFor('proto'), ...(protoPrompt !== undefined ? { systemPrompt: protoPrompt } : {}) }),
     trace: new TraceAgent({ bus, verifier: resolveVerifier(verifierSpec) }),
     approvalAuthority: createApprovalAuthority(),
-    skills: loadSkills(opts.skillsDir),
+    skills,
     provider,
     providerName,
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
