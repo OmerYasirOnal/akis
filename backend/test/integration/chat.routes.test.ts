@@ -33,8 +33,9 @@ describe('POST /api/chat (converse with AKIS)', () => {
 
 describe('AKIS_PERSONA — Chat-to-Build contract', () => {
   it('instructs AKIS to emit the build-ready spec in a fenced `akis-spec` block', () => {
-    // The FE keys on this exact fence tag; the contract must not silently drift.
-    expect(AKIS_PERSONA).toContain('```akis-spec')
+    // The FE keys on this exact fence tag; the contract must not silently drift. Four
+    // backticks so a spec body's own ```code blocks don't close the akis-spec fence early.
+    expect(AKIS_PERSONA).toContain('````akis-spec')
     expect(AKIS_PERSONA).toMatch(/akis-spec/)
   })
   it('tells AKIS NOT to ask the user to copy-paste the spec', () => {
