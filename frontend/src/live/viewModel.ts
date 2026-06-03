@@ -106,15 +106,20 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         // silent collapse to the empty state); a 'starting'/'ready' frame supersedes it (a retry's
         // spinner/iframe clears the prior failure).
         const failed = e.status === 'failed' || e.status === 'unsupported'
-        // Drop any prior `error` from the spread so a 'starting'/'ready' frame CLEARS it (a retry's
-        // spinner/iframe supersedes the failure); re-add it only on a failure frame.
-        const { error: _prevError, ...prevPreview } = v.preview
-        void _prevError
+        // Drop any prior `url` AND `error` from the spread. Only a 'ready' frame yields a live,
+        // embeddable /preview/:id/ url, so a non-ready frame (starting/failed/unsupported/stopped)
+        // must NOT keep a torn-down preview embeddable — else the stale iframe shadows the spinner
+        // (on a re-run's 'starting') or the error card + Retry (on a re-run that 'failed'), silently
+        // re-introducing the very dead-end this surfacing exists to kill. 'ready' re-adds the fresh
+        // url; a 'starting'/'ready' frame clears `error` (the retry supersedes the failure); a
+        // failure frame re-adds `error`.
+        const { error: _prevError, url: _prevUrl, ...prevPreview } = v.preview
+        void _prevError; void _prevUrl
         v.preview = {
           ...prevPreview,
           ready: e.status === 'ready',
           starting: e.status === 'starting',
-          ...(e.url !== undefined ? { url: e.url } : {}),
+          ...(e.status === 'ready' && e.url !== undefined ? { url: e.url } : {}),
           ...(e.demo ? { demo: true } : {}),
           ...(failed ? { error: { status: e.status as 'failed' | 'unsupported', ...(e.reason ? { reason: e.reason } : {}) } } : {}),
         }
