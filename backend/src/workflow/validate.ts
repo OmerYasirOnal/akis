@@ -1,4 +1,4 @@
-import { isGateTool, GATE_TOOL_OWNER, type GateTool, type WorkflowConfigInput, MAX_ITERATE_BUDGET } from '@akis/shared'
+import { isGateTool, GATE_TOOL_OWNER, isCoreRole, isAdvisoryPhase, ADVISORY_PHASES, type GateTool, type WorkflowConfigInput, MAX_ITERATE_BUDGET } from '@akis/shared'
 import { CATALOG, REAL_PROVIDERS } from '../agent/providers/catalog.js'
 
 export type ValidationResult = { ok: true } | { ok: false; errors: string[] }
@@ -30,6 +30,14 @@ export function validateWorkflowConfig(cfg: WorkflowConfigInput): ValidationResu
       }
     }
 
+    // The advisory dispatch edge (`phase`) is meaningful ONLY for a custom (non-core)
+    // agent and must be one of the known edges. It carries no gate authority — it only
+    // narrows when an advisory note runs — so it can never loosen a gate.
+    if (a.phase !== undefined) {
+      if (isCoreRole(a.role)) errors.push(`${where}: 'phase' is only valid for a custom (advisory) agent, not a core role`)
+      else if (!isAdvisoryPhase(a.phase)) errors.push(`${where}: unknown advisory phase '${a.phase}' (allowed: ${ADVISORY_PHASES.join(', ')})`)
+    }
+
     // Per-agent model must exist in the catalog.
     if (a.model?.providerId !== undefined) {
       const pid = a.model.providerId
@@ -40,6 +48,14 @@ export function validateWorkflowConfig(cfg: WorkflowConfigInput): ValidationResu
         if (!models.includes(a.model.modelId)) errors.push(`${where}: model '${a.model.modelId}' not in provider '${pid}' catalog`)
       }
     }
+  }
+
+  // Roles must be unique. A duplicate custom (non-core) role would otherwise throw at
+  // AgentRegistry.register ('already registered') at session start — surface it at SAVE.
+  const seen = new Set<string>()
+  for (const a of cfg.agents ?? []) {
+    if (seen.has(a.role)) errors.push(`duplicate agent role '${a.role}'`)
+    seen.add(a.role)
   }
 
   if (cfg.iterateBudget !== undefined) {
