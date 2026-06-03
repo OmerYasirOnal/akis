@@ -101,7 +101,9 @@ jobs:
       # the freshly built image KEYLESS (AKIS_ALLOW_MOCK=1 → mock provider, no key, no
       # DB → memory persistence) and probes /health, so that whole crash class fails the
       # PR loudly here. The image already defaults HOST=0.0.0.0/PORT=3000/SERVE_STATIC=1/
-      # NODE_ENV=production. The container is always cleaned up (even on failure).
+      # NODE_ENV=production. A demo flag in production is fail-closed (B1), so the keyless
+      # smoke MUST also pass AKIS_ALLOW_DEMO_IN_PROD=1 to acknowledge the demo boot — the
+      # same ack the bundled docker-compose stack sets. The container is always cleaned up.
       - name: Boot smoke — run the image keyless and probe /health
         run: |
           set -euo pipefail
@@ -112,6 +114,7 @@ jobs:
 
           docker run -d --name akis-smoke \
             -e AKIS_ALLOW_MOCK=1 \
+            -e AKIS_ALLOW_DEMO_IN_PROD=1 \
             -e AUTH_JWT_SECRET=ci-smoke \
             -p 3000:3000 \
             akis:ci

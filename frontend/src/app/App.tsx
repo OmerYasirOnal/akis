@@ -41,6 +41,26 @@ function NavLink({ to, label }: { to: string; label: string }) {
   )
 }
 
+/**
+ * B1 — unmissable DEMO badge. Reads GET /health once on load; when the server reports
+ * `mode:'demo'` (the mock provider and/or mock verification is active, so "verified" output
+ * is NOT from real tests) it renders a small amber/warning badge in the studio header.
+ * Renders nothing for a `live` boot (or if /health can't be reached).
+ */
+export function DemoBadge({ api }: { api: ApiClient }) {
+  const { t } = useI18n()
+  const [demo, setDemo] = useState(false)
+  useEffect(() => { void api.health().then(h => setDemo(h.mode === 'demo')).catch(() => {}) }, [api])
+  if (!demo) return null
+  return (
+    <span role="status" title={t('mode.demo.title')}
+      className="inline-flex items-center gap-1.5 rounded-md border border-amber-400/40 bg-amber-400/10 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-300 shadow-[0_0_12px_rgba(251,191,36,0.25)]">
+      <span aria-hidden className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-pulse" />
+      {t('mode.demo.badge')}
+    </span>
+  )
+}
+
 /** The authenticated app frame: cosmic backdrop, top nav, and the routed page. */
 function AppFrame({ api }: { api: ApiClient }) {
   const { t, locale, setLocale } = useI18n()
@@ -72,6 +92,7 @@ function AppFrame({ api }: { api: ApiClient }) {
             <NavLink to="/docs" label={t('nav.docs')} />
           </nav>
           <div className="flex items-center gap-2">
+            <DemoBadge api={api} />
             <button onClick={() => setLocale(locale === 'en' ? 'tr' : 'en')} aria-label={t('nav.toggleLanguage')}
               className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-slate-300 hover:border-white/20">{locale.toUpperCase()}</button>
             <div className="hidden text-right sm:block">
