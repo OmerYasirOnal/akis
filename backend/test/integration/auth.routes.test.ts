@@ -159,14 +159,27 @@ describe('auth routes', () => {
     expect(() => buildServer({ keyStore, env: { NODE_ENV: 'production' } })).toThrow(/AUTH_JWT_SECRET/)
   })
 
-  it('keyless self-host (the docker-compose default) BOOTS instead of crash-looping', () => {
-    // The bundled compose stack runs NODE_ENV=production with a default AUTH_JWT_SECRET
-    // and AKIS_ALLOW_MOCK=1 (no provider key). That must build a working server on the
-    // mock provider — NOT throw at boot (the prod no-key / no-secret crash-loop bug).
+  it('keyless self-host (the docker-compose default) BOOTS instead of crash-looping', async () => {
+    // The bundled compose stack runs NODE_ENV=production with a default AUTH_JWT_SECRET,
+    // AKIS_ALLOW_MOCK=1 (no provider key) AND the B1 demo acknowledgment
+    // AKIS_ALLOW_DEMO_IN_PROD=1. That must build a working server on the mock provider —
+    // NOT throw at boot (the prod no-key / no-secret crash-loop bug) — and /health reports
+    // mode:'demo' (B1: the keyless demo still works, just flagged).
     const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
-    const env = { NODE_ENV: 'production', AUTH_JWT_SECRET: 'x', AKIS_ALLOW_MOCK: '1', SERVE_STATIC: '1' }
+    const env = { NODE_ENV: 'production', AUTH_JWT_SECRET: 'x', AKIS_ALLOW_MOCK: '1', AKIS_ALLOW_DEMO_IN_PROD: '1', SERVE_STATIC: '1' }
     const server = buildServer({ keyStore, env, userStore: new UserStore() })
     expect(server).toBeTruthy()
+    const res = await server.inject({ method: 'GET', url: '/health' })
+    expect(res.json()).toMatchObject({ ok: true, mode: 'demo' })
+  })
+
+  it('keyless self-host in production WITHOUT the demo acknowledgment FAIL-CLOSES (B1)', () => {
+    // The same compose default minus AKIS_ALLOW_DEMO_IN_PROD must refuse to boot: a demo
+    // flag fakes verification, and production must not silently ship unverified output.
+    const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
+    const env = { NODE_ENV: 'production', AUTH_JWT_SECRET: 'x', AKIS_ALLOW_MOCK: '1', SERVE_STATIC: '1' }
+    expect(() => buildServer({ keyStore, env, userStore: new UserStore() }))
+      .toThrow(/Refusing to boot|AKIS_ALLOW_DEMO_IN_PROD/)
   })
 
   // NOTE: the prod no-key crash-loop (createProvider throwing) only manifests OUTSIDE
@@ -177,12 +190,15 @@ describe('auth routes', () => {
 
   it('AKIS_ALLOW_MOCK + a real provider key boots WITHOUT forcing the mock', () => {
     // Compose defaults AKIS_ALLOW_MOCK=1; when the user later supplies a real key the
-    // mock must step aside so real builds run (the documented "add a key" path). The
-    // server must build the live provider here (no thrown ProviderConfigError, no
+    // mock PROVIDER must step aside so real builds run (the documented "add a key" path).
+    // The server must build the live provider here (no thrown ProviderConfigError, no
     // injected MockProvider) — the not-masked decision is unit-tested via
     // hasRealProviderKey; this asserts the wired server boots on the real key.
+    // NOTE (B1): AKIS_ALLOW_MOCK still forces mock VERIFICATION even with a real key, so in
+    // production it remains a demo boot that needs the explicit ack (kept here, matching the
+    // compose default). With AKIS_ALLOW_MOCK=0 + a real key the boot is fully `live`.
     const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
-    const env = { NODE_ENV: 'production', AUTH_JWT_SECRET: 'x', AKIS_ALLOW_MOCK: '1', ANTHROPIC_API_KEY: 'sk-ant-x' }
+    const env = { NODE_ENV: 'production', AUTH_JWT_SECRET: 'x', AKIS_ALLOW_MOCK: '1', AKIS_ALLOW_DEMO_IN_PROD: '1', ANTHROPIC_API_KEY: 'sk-ant-x' }
     const server = buildServer({ keyStore, env, userStore: new UserStore() })
     expect(server).toBeTruthy()
   })
