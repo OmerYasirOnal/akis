@@ -21,6 +21,24 @@ export class Bm25Index {
     this.docs.set(stored.id, { stored, tokens, len: tokens.length, tf })
   }
 
+  /**
+   * Rebuild the lexical index from a persisted corpus on boot — the durable other half of
+   * hybrid retrieval. Without this the index is reconstructed EMPTY on every restart (a Pg
+   * deployment silently loses BM25, so RRF degrades to vector-only and exact-term recall
+   * disappears). The chunks come from the SAME `vector_chunks` rows {@link PgVectorStore}
+   * hydrates, in the SAME seq order, so the rehydrated index is identical to the live one.
+   * Re-tokenizes via {@link add} (no separate postings table to drift) — idempotent: a
+   * repeat hydrate re-adds the same ids.
+   */
+  hydrate(chunks: Iterable<StoredChunk>): void {
+    for (const c of chunks) this.add(c)
+  }
+
+  /** Corpus size — used to assert the rehydrated index matches the vector store after boot. */
+  size(): number {
+    return this.docs.size
+  }
+
   deleteBy(pred: (m: ChunkMeta) => boolean): number {
     let n = 0
     for (const [id, d] of this.docs) {

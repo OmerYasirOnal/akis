@@ -4,8 +4,11 @@
 #   • app — the single bundled image (backend serves the built frontend AND the
 #     API on ONE port, default 3000). HOST=0.0.0.0 so the container is reachable;
 #     SERVE_STATIC=1 turns on static serving of frontend/dist.
-#   • db  — postgres:16-alpine. Setting DATABASE_URL activates persistence, so
-#     users + sessions + workflows survive `docker compose down && up`.
+#   • db  — pgvector/pgvector:pg16 (Postgres 16 + the pgvector extension). Setting
+#     DATABASE_URL activates persistence, so users + sessions + workflows AND the RAG
+#     corpus (a real indexable vector(N) column) survive `docker compose down && up`.
+#     The extension is OPTIONAL: on a Postgres without it the corpus column degrades to
+#     a portable double precision[] (the app detects and falls back, never failing boot).
 #
 # SECURITY: AKIS runs AI-generated code as host child processes with NO sandbox
 # (see THREAT-MODEL.md + docs/SELF_HOSTING.md). This stack is SINGLE-USER. Do NOT
@@ -82,7 +85,9 @@ services:
       start_period: 20s
 
   db:
-    image: postgres:16-alpine
+    # Postgres 16 + the pgvector extension (so the RAG corpus uses a real vector(N) column).
+    # Drop-in compatible with postgres:16; the app falls back to double precision[] if absent.
+    image: pgvector/pgvector:pg16
     restart: unless-stopped
     environment:
       POSTGRES_USER: akis

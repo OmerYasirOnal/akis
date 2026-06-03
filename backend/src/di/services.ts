@@ -121,6 +121,11 @@ export interface BuildServicesOptions {
    *  hydrated PgVectorStore so the corpus survives restart; absent it, buildRag's default
    *  MemoryVectorStore is used (the keyless default, byte-for-byte unchanged). */
   vectorStore?: import('../knowledge/store/VectorStore.js').VectorStore
+  /** The BM25 lexical index (the OTHER half of hybrid retrieval). When DATABASE_URL is set the
+   *  server injects one ALREADY HYDRATED from the persisted corpus so the lexical half survives a
+   *  restart (it is otherwise rebuilt empty on boot). Absent it, buildRag's fresh empty index is
+   *  used (the in-memory default, byte-for-byte unchanged). Only meaningful when `rag` is on. */
+  bm25?: import('../knowledge/store/Bm25Index.js').Bm25Index
   /** Feature flag (F1-AC11): when true, build the embedded RAG stack + ingestion sink.
    *  Default OFF → NullKnowledgePort, behavior identical to no-RAG. */
   rag?: boolean
@@ -301,6 +306,9 @@ function resolveKnowledge(opts: BuildServicesOptions, bus: EventBus, github: Moc
       ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
       // Durable corpus: a PgVectorStore when DATABASE_URL is set; else the in-memory default.
       ...(opts.vectorStore ? { vectorStore: opts.vectorStore } : {}),
+      // Durable lexical half: a Bm25Index hydrated from that same corpus so RRF's BM25 side
+      // survives a restart; else buildRag's fresh empty index (in-memory default, unchanged).
+      ...(opts.bm25 ? { bm25: opts.bm25 } : {}),
     })
     return {
       knowledge: stack.port,
