@@ -147,4 +147,25 @@ describe('buildTestEvidence', () => {
     expect(ev.passed).toBe(true)
     expect(ev.failure).toBeUndefined()
   })
+  it('a non-pass with NO per-scenario failure (all-skipped / zero tests) still carries a top-level reason — never an empty failure signal', () => {
+    // All-skipped: a real failure (passed:false) with no captured failing scenario — the
+    // self-repair loop / Trust Report must still get a non-empty signal.
+    const allSkipped = buildTestEvidence({
+      passed: false,
+      bdd: { built: 1, run: 1, passed: 0, failed: 0, skipped: 1, durationMs: 9 },
+      e2e: { testsRun: 0, passed: false, expected: 0, unexpected: 0, flaky: 0, skipped: 0, durationMs: 0 },
+      bddScenarios: [], e2eScenarios: [],
+    })
+    expect(allSkipped.failure).toBeDefined()
+    expect(allSkipped.failure!.failedCount).toBe(0)
+    expect(allSkipped.failure!.reason).toBeTruthy()
+    // Zero tests executed → an explicit reason.
+    const noTests = buildTestEvidence({
+      passed: false,
+      bdd: { built: 0, run: 0, passed: 0, failed: 0, skipped: 0, durationMs: 0 },
+      e2e: { testsRun: 0, passed: false, expected: 0, unexpected: 0, flaky: 0, skipped: 0, durationMs: 0 },
+      bddScenarios: [], e2eScenarios: [],
+    })
+    expect(noTests.failure!.reason).toContain('no tests')
+  })
 })
