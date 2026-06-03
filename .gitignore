@@ -52,6 +52,12 @@ Thumbs.db
 coverage/
 .nyc_output/
 
+# Playwright E2E run artifacts (report + per-test traces/screenshots)
+playwright-report/
+test-results/
+blob-report/
+.playwright/
+
 # Misc
 tmp/
 .cache/
