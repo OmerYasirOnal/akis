@@ -16,7 +16,7 @@
 - **CF2 — make the sub-agents LIVE (top priority).** Today Scribe/Proto/Trace are **deterministic stubs**; only the Critic calls the LLM. So the product's actual output (spec + code) is still fake. Each sub-agent must run through `createProvider().chat(...)` and **emit `tool_call`/`tool_result`/`preview` events** (currently never emitted). This is the difference between "real providers" and "real critic only."
 - **CF6 — fail closed, not open.** `createProvider` currently falls back to the mock on a misconfigured/unknown provider **in production** → a misconfig silently produces fake "verified" output. Outside `NODE_ENV=test`, a misconfigured provider/key must **fail loudly**, never silently mock.
 - **CF1/CF5 — the live UI needs delivery:** orchestrator HTTP routes + an **SSE endpoint** with a **resumable** stream (per-session monotonic `seq` + server buffer + `Last-Event-ID`), or the UI loses/dupes steps on refresh. (Research-backed; see review §3.)
-- **confirmPush double-push window** and the **exported `createVerifier` + public `recordVerification`** capability gap — close when convenient (review §2).
+- **confirmPush double-push window** and the **exported `createVerifier` + public `recordVerification`** capability gap — close when convenient (review §2). _(B2, lane/trust-hardening: the exported `createVerifier` leak is CLOSED — the constructor is now module-private and the only Verifier surface is `resolveVerifier(spec)`, built from the trusted TestRunner factories. The full separate-process signed verifier remains deferred.)_
 
 ---
 

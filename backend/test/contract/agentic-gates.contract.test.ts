@@ -189,10 +189,10 @@ void _patchApproval
 import { ProtoAgent as _Proto } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { ScribeAgent as _Scribe } from '../../src/orchestrator/subagents/ScribeAgent.js'
 import { EventBus as _Bus } from '../../src/events/bus.js'
-import { createVerifier as _mkVerifier } from '../../src/verify/verifier.js'
+import { resolveVerifier as _mkVerifier } from '../../src/verify/verifier.js'
 import { createMockTestRunner as _mkRunner } from '../../src/verify/TestRunner.js'
 // @ts-expect-error — ProtoAgent (producer) does not accept a verifier in its deps
-void new _Proto({ bus: new _Bus(), verifier: _mkVerifier(_mkRunner({ testsRun: 1, passed: true })) })
+void new _Proto({ bus: new _Bus(), verifier: _mkVerifier({ kind: 'mock', cfg: { testsRun: 1, passed: true } }) })
 // @ts-expect-error — ScribeAgent (producer) does not accept a runner in its deps
 void new _Scribe({ bus: new _Bus(), runner: _mkRunner({ testsRun: 1, passed: true }) })
 
