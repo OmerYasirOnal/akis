@@ -1,0 +1,101 @@
+import { describe, it, expect } from 'vitest'
+import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } from './akisThread.js'
+
+function memStore(initial: Record<string, string> = {}): Storage & { _data: Record<string, string> } {
+  const data: Record<string, string> = { ...initial }
+  return {
+    _data: data,
+    getItem: (k: string) => (k in data ? data[k]! : null),
+    setItem: (k: string, v: string) => { data[k] = v },
+    removeItem: (k: string) => { delete data[k] },
+    clear: () => { for (const k of Object.keys(data)) delete data[k] },
+    key: (i: number) => Object.keys(data)[i] ?? null,
+    get length() { return Object.keys(data).length },
+  } as Storage & { _data: Record<string, string> }
+}
+
+describe('akisThread persistence', () => {
+  it('round-trips a thread through storage', () => {
+    const store = memStore()
+    const msgs: AkisMsg[] = [
+      { role: 'assistant', content: 'Hi' },
+      { role: 'user', content: 'build a todo app' },
+      { role: 'assistant', content: 'Sure!' },
+    ]
+    saveThread(msgs, store)
+    expect(loadThread(store)).toEqual(msgs)
+  })
+
+  it('returns [] for absent or malformed storage (never throws)', () => {
+    expect(loadThread(memStore())).toEqual([])
+    expect(loadThread(memStore({ akis_chat_thread: 'not json' }))).toEqual([])
+    expect(loadThread(memStore({ akis_chat_thread: '{"not":"an array"}' }))).toEqual([])
+  })
+
+  it('drops malformed entries (wrong shape / bad role)', () => {
+    const store = memStore({
+      akis_chat_thread: JSON.stringify([
+        { role: 'user', content: 'ok' },
+        { role: 'system', content: 'bad role' },
+        { role: 'assistant' },
+        'nope',
+        { role: 'error', content: 'rendered but never sent' },
+      ]),
+    })
+    expect(loadThread(store)).toEqual([
+      { role: 'user', content: 'ok' },
+      { role: 'error', content: 'rendered but never sent' },
+    ])
+  })
+})
+
+describe('historyForApi', () => {
+  const greeting = 'Hi, I’m AKIS.'
+
+  it('excludes the greeting (assistant) but keeps later turns', () => {
+    const msgs: AkisMsg[] = [
+      { role: 'assistant', content: greeting },
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+    ]
+    expect(historyForApi(msgs, greeting)).toEqual([
+      { role: 'user', content: 'q1' },
+      { role: 'assistant', content: 'a1' },
+    ])
+  })
+
+  it('EXCLUDES error rows so a failure never poisons AKIS context', () => {
+    const msgs: AkisMsg[] = [
+      { role: 'user', content: 'q1' },
+      { role: 'error', content: '(ProviderError) upstream 502' },
+      { role: 'user', content: 'q2' },
+      { role: 'assistant', content: 'a2' },
+    ]
+    expect(historyForApi(msgs, greeting)).toEqual([
+      { role: 'user', content: 'q1' },
+      { role: 'user', content: 'q2' },
+      { role: 'assistant', content: 'a2' },
+    ])
+    // history must only ever carry the two API roles, never 'error'
+    expect(historyForApi(msgs, greeting).every(m => m.role === 'user' || m.role === 'assistant')).toBe(true)
+  })
+
+  it('keeps a user message that happens to equal the greeting text', () => {
+    const msgs: AkisMsg[] = [{ role: 'user', content: greeting }]
+    expect(historyForApi(msgs, greeting)).toEqual([{ role: 'user', content: greeting }])
+  })
+})
+
+describe('isNearBottom (auto-scroll guard)', () => {
+  it('is true when scrolled to the very bottom', () => {
+    expect(isNearBottom({ scrollHeight: 1000, scrollTop: 800, clientHeight: 200 })).toBe(true)
+  })
+
+  it('is true within the slack window just above the bottom', () => {
+    expect(isNearBottom({ scrollHeight: 1000, scrollTop: 785, clientHeight: 200 })).toBe(true)
+  })
+
+  it('is FALSE once the user has scrolled up to read earlier history', () => {
+    expect(isNearBottom({ scrollHeight: 1000, scrollTop: 100, clientHeight: 200 })).toBe(false)
+  })
+})

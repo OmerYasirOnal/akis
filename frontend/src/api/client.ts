@@ -61,6 +61,14 @@ type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
 export class ApiClient {
   constructor(private baseUrl = '', private fetchFn: FetchFn = (i, n) => fetch(i, n)) {}
 
+  /**
+   * Fired once whenever an authenticated request comes back 401 (the cookie expired /
+   * was revoked). The app wires this to clear the cached user and route to /login, so a
+   * stale session never leaves the user stuck. The /auth/me probe is exempt (its 401 is
+   * the normal "anonymous on load" signal, not an expiry — see json()).
+   */
+  onUnauthorized: (() => void) | undefined = undefined
+
   /** Server health + serving mode (read once on load to surface the demo badge). */
   health(): Promise<HealthInfo> { return this.json<HealthInfo>('/health') }
 
@@ -155,6 +163,13 @@ export class ApiClient {
     const res = await this.fetchFn(this.baseUrl + path, { credentials: 'include', ...init })
     const body = await res.json().catch(() => ({}))
     if (!res.ok) {
+      // A 401 on an authenticated route means the session expired/was revoked: notify the
+      // app to clear the cached user + route to login. Exempt /auth/me — its 401 is the
+      // normal anonymous-on-load signal (AuthContext handles it), not an expiry, so firing
+      // here would bounce a guest to /login on every page load.
+      // Fire on any authenticated 401 EXCEPT the anon-load probe (GET /auth/me) — a PATCH
+      // /auth/me (profile update) on an expired session SHOULD still route to login.
+      if (res.status === 401 && !(path === '/auth/me' && (init?.method ?? 'GET') === 'GET')) this.onUnauthorized?.()
       const b = body as { error?: string; code?: string; errors?: unknown }
       const errors = Array.isArray(b.errors) ? b.errors.filter((e): e is string => typeof e === 'string') : undefined
       throw new ApiError(res.status, b.error ?? `HTTP ${res.status}`, b.code, errors)

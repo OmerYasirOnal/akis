@@ -45,3 +45,19 @@ export function extractBuildSpec(message: string): BuildSpec | null {
   const intro = message.slice(0, m.index).trim()
   return { intro, spec }
 }
+
+// An OPENING akis-spec fence with NO required closing fence after it — same opener shape as
+// SPEC_BLOCK but without the matching close. Anchored to a line so an inner ```code fence
+// (a different info string) is never mistaken for the opener.
+const SPEC_OPEN = /(^|\n)[ ]{0,3}`{3,}akis-spec(?:[ \t][^\n]*)?(\n|$)/
+
+/**
+ * True when AKIS clearly *started* emitting a build spec (an `akis-spec` fence opened) but
+ * `extractBuildSpec` can't recover it — i.e. the reply was cut off before the closing fence
+ * (e.g. maxTokens). The UI uses this to show an honest "spec was truncated — ask AKIS to
+ * resend it" notice instead of rendering a half spec as plain prose with no Build card.
+ */
+export function hasTruncatedSpec(message: string): boolean {
+  if (typeof message !== 'string') return false
+  return SPEC_OPEN.test(message) && extractBuildSpec(message) === null
+}
