@@ -1,3 +1,25 @@
+> # ⚠️ SUPERSEDED (2026-06-03)
+>
+> **This 2026-06-01 review is a historical snapshot of an EARLIER codebase and is now STALE.** It reviewed the `feat/real-providers` branch, where several seams were genuinely missing. Most of its "missing / aspirational" findings have since SHIPPED and are tested. Read it for the *original reasoning and the Core-Foundations framing*, not for the current state.
+>
+> **What changed since this was written (all now in the tree, see `git log` / `README.md`):**
+> - **"No SSE / core unreachable over the wire"** → **FALSE now.** Orchestrator HTTP routes + a **resumable** SSE endpoint shipped (`backend/src/api/sessions.routes.ts`, `api/sse.ts`, `events/bus.ts`; per-session `seq` + `Last-Event-ID`; FE `frontend/src/live/EventStreamClient.ts`).
+> - **"Scribe/Proto are deterministic stubs that never call an LLM"** → **FALSE now.** Scribe (idea→spec) and Proto (spec→code) call the injected LLM and parse typed artifacts (`backend/src/orchestrator/subagents/ScribeAgent.ts`, `ProtoAgent.ts`); Trace runs a real verifier (Playwright/Cucumber) when `AKIS_REAL_TESTS` is on.
+> - **"`tool_call`/`tool_result`/`preview` never emitted"** → **FALSE now.** The sub-agents emit these; a bounded, provider-agnostic tool-loop exists (`agent/tools/toolLoop.ts`) with a real `retrieve_knowledge` tool.
+> - **"Roles are a closed union, agents hardcoded, no permission matrix"** → **ADDRESSED.** A gate-tool ownership matrix (`backend/src/workflow/validate.ts`) + an `AgentRegistry` (`agent/dynamic/AgentRegistry.ts`) make producer≠verifier and custom-agent capability data-driven; workflows are versioned config.
+> - **"Provider runs the mock silently → fake verified"** → **CLOSED.** `createProvider` fails closed outside `NODE_ENV=test`.
+> - **The 4 gates** remain the inviolable spine (still true and still the moat).
+>
+> **What this review got RIGHT and still holds (do not let the corrections above hide these):**
+> - **No real semantic embeddings.** Retrieval is **lexical** — signed feature-hashing (`knowledge/embedding/EmbeddingProvider.ts`) + in-memory BM25, fused with RRF. Call it "lexical + feature-hash retrieval", not "semantic RAG".
+> - **No pgvector ANN.** `PgVectorStore` *persists* the corpus but ranks brute-force in JS via an in-memory index; BM25 is in-memory too (rebuilt on boot). ANN + persisted lexical index are still TODO.
+> - **No production trust boundary / no sandbox isolation.** `LocalDirectSandbox` is hygiene + blast-radius reduction, not an isolation boundary (see `THREAT-MODEL.md`).
+> - **The core build pipeline (Scribe/Proto/Trace) does NOT use the in-turn tool-loop** — that loop + `retrieve_knowledge` are wired into the **advisory/ASK** path only; the core agents get RAG via pre-assembled SharedContext. A core-pipeline tool-loop is a named next step.
+>
+> **For the current state see `README.md`; for the milestone status see `docs/roadmap.md`; for what's left see `docs/NEXT.md`.**
+>
+> ---
+
 # AKIS MVP — Architecture Review & Adjustments (2026-06-01)
 
 > Consolidated review of the agentic core (PR #1/#2) + the RAG/Agents plan (PR #3), against the product goals: **flawless operation, Claude-Code-style real-time visibility, dynamic management, high code quality, usable end-to-end.**
