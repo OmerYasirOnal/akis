@@ -17,7 +17,7 @@ export interface ProtoInput {
   ctx?: SharedContext
 }
 
-const PROTO_SYSTEM = [
+export const PROTO_SYSTEM = [
   'You are Proto, the code author for the AKIS agentic build pipeline.',
   'Given an approved spec, produce the minimal working code that satisfies it.',
   'Respond with ONLY a JSON object, no prose:',
@@ -37,7 +37,22 @@ const PROTO_SYSTEM = [
  * files only — the push happens once behind the push gate.
  */
 export class ProtoAgent {
-  constructor(private deps: { bus: EventBus; provider: LlmProvider }) {}
+  /** The base system prompt this Proto sends. Defaults to PROTO_SYSTEM, so an
+   *  agent built without a `systemPrompt` dep is byte-identical to today. The DI
+   *  layer injects the skill-composed prompt here (P3-AGENT-1). */
+  private readonly base: string
+
+  constructor(
+    private deps: {
+      bus: EventBus
+      provider: LlmProvider
+      /** Skill-composed base system prompt (P3-AGENT-1). Omitted ⇒ PROTO_SYSTEM,
+       *  so a no-skills build sends the byte-identical prompt of today. */
+      systemPrompt?: string
+    },
+  ) {
+    this.base = deps.systemPrompt ?? PROTO_SYSTEM
+  }
 
   async run(input: ProtoInput): Promise<{ files: RepoFile[] }> {
     const { sessionId, laneId } = input
@@ -53,7 +68,7 @@ export class ProtoAgent {
 
     let res
     try {
-      res = await this.deps.provider.chat({ system: PROTO_SYSTEM, messages: [{ role: 'user', content: user }] })
+      res = await this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: user }] })
     } catch (err) {
       // A throwing provider must still CLOSE the event frame (failed tool_result +
       // agent_end) so the live stream never has an orphaned tool_call, then re-throw.
