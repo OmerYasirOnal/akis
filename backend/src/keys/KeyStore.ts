@@ -65,7 +65,16 @@ export class JsonFileKeyStore implements KeyStore {
   get(provider: string): string | undefined {
     const row = this.rows[provider]
     if (!row) return undefined
-    return decryptSecret(row, provider, this.master)
+    // A row that can't be decrypted — rotated/unset AI_KEY_ENCRYPTION_KEY, or a corrupt/
+    // partially-restored keys.json — is, for resolution purposes, ABSENT. Return undefined
+    // rather than throwing: an unguarded throw here propagates through hasRealProviderKey /
+    // createProvider into an unrecoverable server BOOT crash-loop (an opaque crypto error,
+    // not a graceful "no provider" fallback).
+    try {
+      return decryptSecret(row, provider, this.master)
+    } catch {
+      return undefined
+    }
   }
 
   remove(provider: string): void {
@@ -76,6 +85,10 @@ export class JsonFileKeyStore implements KeyStore {
   status(provider: string): KeyStatus {
     const row = this.rows[provider]
     if (!row) return { provider, configured: false }
+    // `configured` reflects USABILITY, not mere presence: a row that no longer decrypts
+    // (master rotated/unset) must NOT be advertised as configured, or /api/providers
+    // reports a key that createProvider can't actually build (a split-brain).
+    if (this.get(provider) === undefined) return { provider, configured: false }
     return { provider, configured: true, last4: row.last4, updatedAt: row.updatedAt }
   }
 
