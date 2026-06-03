@@ -39,18 +39,20 @@ export interface PassportFacts {
 }
 
 /**
- * A passport signer — holds the Ed25519 PRIVATE key (to sign) and exposes only the PUBLIC
- * key. `private` is a non-enumerable KeyObject so it never appears in JSON.stringify, a log
- * line, or a response body. `dev` flags a generated/dev keypair (vs. an operator-supplied
- * one from env) so a boot can surface it honestly.
+ * A passport signer — holds the Ed25519 PRIVATE key (to sign) and exposes the PUBLIC key.
+ * The private key is a node:crypto `KeyObject`: even if the signer is accidentally
+ * JSON.stringify'd or logged, a KeyObject serializes to `{}` (no key material), so the raw
+ * key bytes never leak — and the route returns only `publicKey`. `dev` flags a generated/dev
+ * keypair (vs. an operator-supplied one from env) so a boot can surface it honestly.
  */
 export interface PassportSigner {
   /** SPKI public key (PEM). Safe to publish/return. */
   readonly publicKey: string
   /** True when this is a generated DEV keypair (no AKIS_PASSPORT_PRIVATE_KEY configured). */
   readonly dev: boolean
-  /** The Ed25519 private key. node:crypto KeyObject — never serialized/logged (the only
-   *  reachable surface is `signWith`, below, never the raw bytes). */
+  /** The Ed25519 private key as a node:crypto `KeyObject` (an in-realm holder can sign with it,
+   *  but it serializes to `{}` — no raw key bytes — and is never logged or returned). Used only
+   *  by `signPassport` in this module. */
   readonly privateKeyObject: KeyObject
 }
 
