@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { buildServer } from '../../src/api/server.js'
+import { AKIS_PERSONA } from '../../src/api/chat.routes.js'
 import { JsonFileKeyStore } from '../../src/keys/KeyStore.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -27,5 +28,21 @@ describe('POST /api/chat (converse with AKIS)', () => {
   it('ignores malformed history entries without crashing', async () => {
     const res = await app().inject({ method: 'POST', url: '/api/chat', payload: { message: 'hi', history: [{ role: 'system', content: 'x' }, { bogus: true }, 'nope'] } })
     expect(res.statusCode).toBe(200)
+  })
+})
+
+describe('AKIS_PERSONA — Chat-to-Build contract', () => {
+  it('instructs AKIS to emit the build-ready spec in a fenced `akis-spec` block', () => {
+    // The FE keys on this exact fence tag; the contract must not silently drift. Four
+    // backticks so a spec body's own ```code blocks don't close the akis-spec fence early.
+    expect(AKIS_PERSONA).toContain('````akis-spec')
+    expect(AKIS_PERSONA).toMatch(/akis-spec/)
+  })
+  it('tells AKIS NOT to ask the user to copy-paste the spec', () => {
+    expect(AKIS_PERSONA.toLowerCase()).toContain('copy-paste')
+  })
+  it('still tells AKIS to keep chatting and never claim to have built anything', () => {
+    expect(AKIS_PERSONA).toMatch(/keep chatting/i)
+    expect(AKIS_PERSONA).toMatch(/Never claim to have built/i)
   })
 })

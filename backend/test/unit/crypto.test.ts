@@ -3,6 +3,14 @@ import { encryptSecret, decryptSecret } from '../../src/keys/crypto.js'
 
 const MASTER = '0'.repeat(64) // 32 bytes hex
 
+// Flip the low bit of the first byte of a base64 blob, returning fresh base64.
+// Simulates an at-rest corruption/tamper of cipherText or authTag.
+function flipFirstByte(b64: string): string {
+  const buf = Buffer.from(b64, 'base64')
+  buf.writeUInt8(buf.readUInt8(0) ^ 0x01, 0)
+  return buf.toString('base64')
+}
+
 describe('crypto', () => {
   it('round-trips a secret bound to a provider AAD', () => {
     const enc = encryptSecret('sk-ant-secret', 'anthropic', MASTER)
@@ -13,6 +21,16 @@ describe('crypto', () => {
   it('rejects decryption under a different provider AAD', () => {
     const enc = encryptSecret('sk-ant-secret', 'anthropic', MASTER)
     expect(() => decryptSecret(enc, 'openai', MASTER)).toThrow()
+  })
+  it('rejects a tampered cipherText (GCM auth tag catches corruption, not just AAD)', () => {
+    const enc = encryptSecret('sk-ant-secret', 'anthropic', MASTER)
+    const tampered = { ...enc, cipherText: flipFirstByte(enc.cipherText) }
+    expect(() => decryptSecret(tampered, 'anthropic', MASTER)).toThrow()
+  })
+  it('rejects a tampered authTag (integrity tag must be verified on decrypt)', () => {
+    const enc = encryptSecret('sk-ant-secret', 'anthropic', MASTER)
+    const tampered = { ...enc, authTag: flipFirstByte(enc.authTag) }
+    expect(() => decryptSecret(tampered, 'anthropic', MASTER)).toThrow()
   })
   it('accepts a base64 master key', () => {
     const b64 = Buffer.alloc(32, 7).toString('base64')

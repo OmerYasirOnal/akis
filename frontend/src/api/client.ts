@@ -12,6 +12,10 @@ export interface AuthUser { id: string; name: string; email: string }
 /** A build-history row from GET /sessions/mine. */
 export interface SessionSummary { id: string; idea: string; status: string; verified: boolean }
 
+/** GET /health projection. `mode:'demo'` means the mock provider and/or mock verification
+ *  is active — "verified" output is NOT from real tests; the FE surfaces a warning badge. */
+export interface HealthInfo { ok: boolean; persistence: 'postgres' | 'memory'; mode: 'live' | 'demo' }
+
 /** Per-agent activity counts for the analytics dashboard. */
 export interface AgentStat { agent: string; runs: number; ok: number }
 /** Aggregate run analytics surfaced on the Agents tab. */
@@ -56,6 +60,9 @@ type FetchFn = (input: string, init?: RequestInit) => Promise<Response>
  *  the gates server-side. `fetchFn` is injectable for tests. */
 export class ApiClient {
   constructor(private baseUrl = '', private fetchFn: FetchFn = (i, n) => fetch(i, n)) {}
+
+  /** Server health + serving mode (read once on load to surface the demo badge). */
+  health(): Promise<HealthInfo> { return this.json<HealthInfo>('/health') }
 
   startSession(idea: string, workflowId?: string): Promise<SessionState> {
     return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea, ...(workflowId ? { workflowId } : {}) }) })
