@@ -33,6 +33,17 @@ have "pnpm -C frontend test"    "$ci"
 have "pnpm -C shared typecheck" "$ci"   # shared is types-only; gated directly
 grep -q "on:" "$ci" && grep -q "push:" "$ci" && grep -q "pull_request:" "$ci" \
   || fail "$ci must trigger on push + pull_request"
+# Boot smoke: the ops job must RUN the built image keyless and probe /health (the
+# `docker build` only compiles it; nothing else BOOTS the server, which is how
+# default-path boot crashes reached main green). Pin the load-bearing pieces so the
+# smoke can't be silently dropped: the keyless run, the /health probe, and the
+# "ok":true assertion + the loud-fail/cleanup that make a boot crash fail the PR.
+have "docker run -d --name akis-smoke" "$ci"   # boots the freshly built image
+have "AKIS_ALLOW_MOCK=1"                "$ci"   # keyless: mock provider, no key/DB
+have "/health"                         "$ci"   # probes the liveness route
+have '"ok":true'                       "$ci"   # asserts the real health handler body
+have "docker logs akis-smoke"          "$ci"   # captures logs on failure (loud)
+have "docker rm -f akis-smoke"         "$ci"   # always cleans up the container
 # Reject ACTUAL use (a `run:` step), not the explanatory comment about avoiding it.
 # `-r typecheck` would re-run the backend+frontend tsc their `test` steps already do;
 # shared is gated by its own `pnpm -C shared typecheck` step instead.

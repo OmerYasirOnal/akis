@@ -93,3 +93,48 @@ jobs:
 
       - name: Build the bundled self-host image
         run: docker build -t akis:ci .
+
+      # Boot smoke: the unit suites run on the mock provider + injected services and
+      # `docker build` only COMPILES the image — NEITHER actually BOOTS the server, so
+      # default-path boot crashes (a build-breaking Dockerfile COPY, a KeyStore decrypt
+      # crash-loop, an empty model to the API) repeatedly reached main green. This RUNS
+      # the freshly built image KEYLESS (AKIS_ALLOW_MOCK=1 → mock provider, no key, no
+      # DB → memory persistence) and probes /health, so that whole crash class fails the
+      # PR loudly here. The image already defaults HOST=0.0.0.0/PORT=3000/SERVE_STATIC=1/
+      # NODE_ENV=production. The container is always cleaned up (even on failure).
+      - name: Boot smoke — run the image keyless and probe /health
+        run: |
+          set -euo pipefail
+          # Always remove the container, even if a step below fails (so a re-run of the
+          # job on the same runner is never blocked by a stale container).
+          cleanup() { docker rm -f akis-smoke >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          docker run -d --name akis-smoke \
+            -e AKIS_ALLOW_MOCK=1 \
+            -e AUTH_JWT_SECRET=ci-smoke \
+            -p 3000:3000 \
+            akis:ci
+
+          # Poll /health for up to ~30s (15 tries × 2s). Assert HTTP 200 AND "ok":true
+          # in the body (a 200 alone could be the SPA fallback; the body proves it's the
+          # real health handler). Succeed on the first good response.
+          ok=0
+          for i in $(seq 1 15); do
+            body="$(curl -fsS --max-time 5 http://127.0.0.1:3000/health 2>/dev/null || true)"
+            if printf '%s' "$body" | grep -q '"ok":true'; then
+              echo "boot smoke OK (attempt $i): $body"
+              ok=1
+              break
+            fi
+            echo "waiting for /health (attempt $i/15)…"
+            sleep 2
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::boot smoke FAILED — /health never returned {\"ok\":true} within ~30s"
+            echo "----- docker logs akis-smoke -----"
+            docker logs akis-smoke || true
+            echo "----------------------------------"
+            exit 1
+          fi
