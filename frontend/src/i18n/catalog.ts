@@ -117,6 +117,13 @@ export const STRINGS = {
     'preview.shipped': 'Shipped to',
     'preview.mockNote': 'Demo preview (mock provider) — add a provider key in Settings for a real build.',
     'preview.attribution': 'Running app · built by AKIS agents',
+    // ── Code file browser (read-only view of the agent-written artifact) ──
+    'preview.tab.preview': 'Preview',
+    'preview.tab.code': 'Code',
+    'code.title': 'Generated code',
+    'code.files': 'files',
+    'code.empty': 'No code yet — files appear here once the agents finish writing the app.',
+    'code.lines': 'lines',
     // ── Build history (studio redesign) ──
     'history.title': 'Build history',
     'history.sub': 'Every app you’ve built with AKIS — open one to revisit its run and preview.',
@@ -596,6 +603,13 @@ export const STRINGS = {
     'preview.shipped': 'Yayınlandı:',
     'preview.mockNote': 'Demo önizleme (mock sağlayıcı) — gerçek bir geliştirme için Ayarlar’dan bir sağlayıcı anahtarı ekle.',
     'preview.attribution': 'Çalışan uygulama · AKIS ajanları tarafından üretildi',
+    // ── Kod dosya tarayıcısı (ajanın yazdığı çıktının salt-okunur görünümü) ──
+    'preview.tab.preview': 'Önizleme',
+    'preview.tab.code': 'Kod',
+    'code.title': 'Üretilen kod',
+    'code.files': 'dosya',
+    'code.empty': 'Henüz kod yok — ajanlar uygulamayı yazmayı bitirince dosyalar burada görünür.',
+    'code.lines': 'satır',
     // P1-CORE-1: çalıştırma başına "bu sonuç simüle edildi" rozeti — verify gate kartında ve
     // canlı önizlemede, çalıştırmanın verify/preview olayı `demo:true` taşıdığında gösterilir.
     'result.demo.badge': 'DEMO · doğrulama simüle edildi',
