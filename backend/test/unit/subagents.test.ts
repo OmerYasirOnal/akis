@@ -3,12 +3,12 @@ import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
 import { ScribeAgent } from '../../src/orchestrator/subagents/ScribeAgent.js'
 import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { TraceAgent } from '../../src/orchestrator/subagents/TraceAgent.js'
-import { createVerifier } from '../../src/verify/verifier.js'
+import { resolveVerifier } from '../../src/verify/verifier.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../../src/gates/specGate.js'
 import { EventBus } from '../../src/events/bus.js'
 import { initialSession } from '@akis/shared'
 import type { AkisEvent } from '@akis/shared'
-import { createMockTestRunner, approveSpec } from '../helpers/tokens.js'
+import { approveSpec } from '../helpers/tokens.js'
 import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 
 describe('MockGitHubAdapter', () => {
@@ -132,7 +132,7 @@ describe('TraceAgent (verifier)', () => {
     const bus = new EventBus()
     const seen: AkisEvent[] = []
     bus.subscribe('s1', e => seen.push(e))
-    const trace = new TraceAgent({ bus, verifier: createVerifier(createMockTestRunner({ testsRun: 2, passed: true })) })
+    const trace = new TraceAgent({ bus, verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 2, passed: true } }) })
     const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
     expect(token).not.toBeNull()
     expect(token?.testsRun).toBe(2)
@@ -143,12 +143,12 @@ describe('TraceAgent (verifier)', () => {
     expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'run_tests' && e.ok === true)).toBe(true)
   })
   it('returns null for a 0-test run (no false green)', async () => {
-    const trace = new TraceAgent({ bus: new EventBus(), verifier: createVerifier(createMockTestRunner({ testsRun: 0, passed: true })) })
+    const trace = new TraceAgent({ bus: new EventBus(), verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 0, passed: true } }) })
     const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
     expect(token).toBeNull()
   })
   it('returns null when tests ran but failed', async () => {
-    const trace = new TraceAgent({ bus: new EventBus(), verifier: createVerifier(createMockTestRunner({ testsRun: 3, passed: false })) })
+    const trace = new TraceAgent({ bus: new EventBus(), verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 3, passed: false } }) })
     const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
     expect(token).toBeNull()
   })

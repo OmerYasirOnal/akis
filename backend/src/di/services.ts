@@ -6,8 +6,8 @@ import { CriticAgent } from '../orchestrator/subagents/critic/CriticAgent.js'
 import { ScribeAgent } from '../orchestrator/subagents/ScribeAgent.js'
 import { ProtoAgent } from '../orchestrator/subagents/ProtoAgent.js'
 import { TraceAgent } from '../orchestrator/subagents/TraceAgent.js'
-import { createMockTestRunner, createRealTestRunner, type TestRunner } from '../verify/TestRunner.js'
-import { createVerifier } from '../verify/verifier.js'
+import type { TestRunner } from '../verify/TestRunner.js'
+import { resolveVerifier, type VerifierSpec } from '../verify/verifier.js'
 import { LocalDirectSandbox, type Sandbox } from '../exec/Sandbox.js'
 import { createApprovalAuthority, type ApprovalAuthority } from '../gates/specGate.js'
 import { loadSkills, type Skill } from '../skills/registry.js'
@@ -146,10 +146,14 @@ export interface BuildServicesOptions {
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
   const bus = opts.bus ?? new EventBus()
   const github = new MockGitHubAdapter()
-  // Runner selection: explicit > real (opt-in) > mock (fail-closed default).
-  const runner: TestRunner =
-    opts.testRunner ??
-    (opts.realTests ? createRealTestRunner({ sandbox: opts.sandbox ?? new LocalDirectSandbox() }) : createMockTestRunner())
+  // Verifier selection: explicit injected runner > real (opt-in) > mock (fail-closed
+  // default). The runner→Verifier construction has ONE home (verifier.ts/resolveVerifier);
+  // there is no importable `createVerifier`, so no other module can wrap a fake runner
+  // into a Verifier (B2 — capability leak closed). Only Trace is handed the result.
+  const verifierSpec: VerifierSpec =
+    opts.testRunner ? { kind: 'runner', runner: opts.testRunner }
+      : opts.realTests ? { kind: 'real', sandbox: opts.sandbox ?? new LocalDirectSandbox() }
+      : { kind: 'mock' }
 
   // The provider feeds the LIVE sub-agents (Scribe/Proto) AND the critic. Under
   // NODE_ENV=test createProvider returns the mock; with mockCriticScore the critic
@@ -224,6 +228,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     advisoryAgents.register(
       new LlmAdvisoryAgent({ role: a.role, provider: agentProvider, ...(a.basePromptVariant !== undefined ? { persona: a.basePromptVariant } : {}) }),
       a.tools ?? [],
+      a.phase, // undefined ⇒ dispatched at every edge; a value pins it to that one edge
     )
   }
 
@@ -235,7 +240,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     critic: new CriticAgent({ generateText }, 75),
     scribe: new ScribeAgent({ bus, provider: providerFor('scribe'), ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}) }),
     proto: new ProtoAgent({ bus, provider: providerFor('proto') }),
-    trace: new TraceAgent({ bus, verifier: createVerifier(runner) }),
+    trace: new TraceAgent({ bus, verifier: resolveVerifier(verifierSpec) }),
     approvalAuthority: createApprovalAuthority(),
     skills: loadSkills(opts.skillsDir),
     provider,

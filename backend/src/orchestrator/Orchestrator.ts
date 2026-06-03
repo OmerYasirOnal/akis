@@ -79,8 +79,10 @@ export class Orchestrator {
   private async runAdvisory(sessionId: string, phase: AdvisoryPhase, objective: string): Promise<void> {
     const registry = this.s.advisoryAgents
     if (!registry || registry.size === 0) return
+    const forPhase = registry.listForPhase(phase)
+    if (forPhase.length === 0) return // no agent pinned to (or defaulting into) this edge
     const ctx = await this.ctx(sessionId, objective)
-    for (const { agent, capabilities } of registry.list()) {
+    for (const { agent, capabilities } of forPhase) {
       // Per-agent tool registry: only the non-gate tools it declared that we support
       // (a gate tool can never be here — registration already rejected gate caps).
       const tools = buildAdvisoryTools(capabilities, { knowledge: this.s.knowledge, sessionId })

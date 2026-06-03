@@ -30,4 +30,15 @@ describe('AgentRegistry', () => {
     r.register(stub('a'))
     expect(() => r.register(stub('a'))).toThrow(/already registered/i)
   })
+
+  it('listForPhase returns phase-pinned agents PLUS undefined-phase agents (every edge), in order', () => {
+    const r = new AgentRegistry()
+    r.register(stub('omni'), [])                       // no phase ⇒ every edge
+    r.register(stub('pre'), [], 'pre_scribe')          // pinned to pre_scribe only
+    r.register(stub('post'), [], 'post_code_review')   // pinned to post_code_review only
+    expect(r.listForPhase('pre_scribe').map(e => e.agent.role)).toEqual(['omni', 'pre'])
+    expect(r.listForPhase('post_code_review').map(e => e.agent.role)).toEqual(['omni', 'post'])
+    // list() still returns everyone (phase is only a dispatch filter, not a removal).
+    expect(r.list().map(e => e.agent.role)).toEqual(['omni', 'pre', 'post'])
+  })
 })

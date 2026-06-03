@@ -54,6 +54,20 @@ describe('validateWorkflowConfig (F2-AC4/AC5)', () => {
     expect(validateWorkflowConfig(base({ agents: [] })).ok).toBe(false)
   })
 
+  it('accepts a valid advisory phase on a custom agent and rejects an unknown one (advisory-only edge)', () => {
+    expect(validateWorkflowConfig(base({ agents: [{ role: 'researcher', phase: 'pre_scribe' }] })).ok).toBe(true)
+    expect(validateWorkflowConfig(base({ agents: [{ role: 'researcher', phase: 'post_code_review' }] })).ok).toBe(true)
+    const bad = validateWorkflowConfig(base({ agents: [{ role: 'researcher', phase: 'mid_run' as never }] }))
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) expect(bad.errors.join(' ')).toMatch(/unknown advisory phase/)
+  })
+
+  it('rejects a phase declared on a CORE role (phase is advisory-only)', () => {
+    const r = validateWorkflowConfig(base({ agents: [{ role: 'scribe', phase: 'pre_scribe' }] }))
+    expect(r.ok).toBe(false)
+    if (!r.ok) expect(r.errors.join(' ')).toMatch(/only valid for a custom/)
+  })
+
   it('accepts an optional rerank quality knob (issue #7 AC3) — a sibling of rag, not a gate', () => {
     // rerank is a pass-through quality knob like rag: any boolean is valid, it can never
     // loosen a gate, and a missing value is also valid (the stack default applies).
