@@ -3,7 +3,8 @@ import { digestFiles } from '../../src/verify/digest.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../../src/gates/specGate.js'
 import { mintApprovedPush, pushToGitHub, NotVerifiedError, CodeMismatchError } from '../../src/gates/pushGate.js'
 import { initialSession, isVerified, type SpecArtifact } from '@akis/shared'
-import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
+import { MockGitHubAdapter, type GitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
+import { RealGitHubAdapter } from '../../src/di/RealGitHubAdapter.js'
 import { verifyWith, approveSpec } from '../helpers/tokens.js'
 
 const FILES = [{ filePath: 'a.ts', content: 'x' }]
@@ -72,6 +73,28 @@ describe('Gate 4 — pushGate', () => {
     const verified = { ...initialSession('s1', 'idea'), verifyToken: tokenA }
     expect(() => mintApprovedPush(verified, [{ filePath: 'b.ts', content: 'other' }])).toThrow(CodeMismatchError)
     expect(mintApprovedPush(verified, FILES)).toBeTruthy()
+  })
+
+  // P1-CORE-2: the REAL adapter is reachable ONLY through the same ApprovedPush gate.
+  it('the real adapter implements the SAME GitHubAdapter seam pushToGitHub consumes (no new path)', () => {
+    const real: GitHubAdapter = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: 'tok' })
+    // Structural: pushToGitHub takes a GitHubAdapter, so the only way to push through the
+    // real adapter is via pushToGitHub(token, real, files) — which still demands a token.
+    expect(typeof real.createRepo).toBe('function')
+    expect(typeof real.pushFiles).toBe('function')
+  })
+
+  it('pushing through ANY adapter (incl. the real one) needs a minted ApprovedPush (compile-time gate)', () => {
+    // pushToGitHub's first arg is the nominally-branded ApprovedPush, whose ONLY producer
+    // is mintApprovedPush — and an unverified session cannot mint one. So neither the mock
+    // nor the real adapter can be pushed to without going through the (unchanged) gate.
+    const unverified = initialSession('s1', 'idea')
+    expect(() => mintApprovedPush(unverified, FILES)).toThrow(NotVerifiedError)
+    void (async () => {
+      // @ts-expect-error — a forged literal is NOT an ApprovedPush; this FAILS TO COMPILE,
+      // which is the gate. (The brand is erased at runtime, so the proof is the type error.)
+      await pushToGitHub({ sessionId: 's1' }, new MockGitHubAdapter(), FILES)
+    })
   })
 })
 

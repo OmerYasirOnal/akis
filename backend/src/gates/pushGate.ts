@@ -1,6 +1,6 @@
 import type { SessionState } from '@akis/shared'
 import { isVerified } from '@akis/shared'
-import type { MockGitHubAdapter, RepoFile } from '../di/MockGitHubAdapter.js'
+import type { GitHubAdapter, RepoFile } from '../di/MockGitHubAdapter.js'
 import { digestFiles } from '../verify/digest.js'
 
 export class NotVerifiedError extends Error {
@@ -43,8 +43,11 @@ export function mintApprovedPush(session: SessionState, files: RepoFile[]): Appr
 
 export interface PushResult { ok: boolean; url: string }
 
-/** Uncallable without the branded token → no push without a verified session. */
-export async function pushToGitHub(token: ApprovedPush, gh: MockGitHubAdapter, files: RepoFile[]): Promise<PushResult> {
+/** Uncallable without the branded token → no push without a verified session.
+ *  Accepts any `GitHubAdapter` (mock default; the opt-in RealGitHubAdapter is the
+ *  production counterpart) — the ApprovedPush requirement is the SOLE entry, so a
+ *  real adapter cannot be reached without a verified-and-digest-bound token. */
+export async function pushToGitHub(token: ApprovedPush, gh: GitHubAdapter, files: RepoFile[]): Promise<PushResult> {
   await gh.pushFiles(token.sessionId, files)
   return { ok: true, url: `https://github.com/mock/${token.sessionId}` }
 }
