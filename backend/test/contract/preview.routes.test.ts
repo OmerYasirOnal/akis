@@ -136,6 +136,24 @@ describe('preview WebSocket upgrade tunnel (vite HMR)', () => {
     })
     expect(closed).toBe(true)
   })
+  // PR #83 review (HIGH): registering an 'upgrade' listener disables Node's default destroy of
+  // UNHANDLED upgrade sockets — so a non-/preview upgrade MUST be destroyed, not left dangling
+  // (else an unauthenticated client leaks FDs/sockets on the new surface). Without the fix this
+  // promise never settles and the test times out.
+  it('destroys the client socket for an upgrade to a NON-/preview path (no FD leak)', async () => {
+    const { a } = build({ portFor: () => 1 })
+    app = a
+    await a.listen({ port: 0, host: '127.0.0.1' })
+    const proxyPort = (a.server.address() as AddressInfo).port
+    const closed = await new Promise<boolean>(resolve => {
+      const req = http.request({ host: '127.0.0.1', port: proxyPort, path: '/notpreview/socket', headers: { Connection: 'Upgrade', Upgrade: 'websocket' } })
+      req.on('error', () => resolve(true))
+      req.on('upgrade', () => resolve(false))
+      req.on('response', () => resolve(true))
+      req.end()
+    })
+    expect(closed).toBe(true)
+  })
 })
 
 describe('rewriteLocation (pure)', () => {

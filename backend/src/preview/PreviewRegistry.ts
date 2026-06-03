@@ -27,7 +27,8 @@ export interface PreviewEntry {
 export interface PreviewProc {
   readonly pid?: number
   kill(): void
-  /** Last ~8KB of the child's stderr (for diagnostics on a failed/early-exit launch). */
+  /** Last ~8KB of the child's COMBINED stdout+stderr (for diagnostics on a failed/early-exit
+   *  launch — many dev servers print the fatal error to stdout, so both are captured). */
   stderrTail?(): string
   /** Resolves with the exit code if/when the child exits BEFORE we kill it (early death). */
   onExit?(cb: (code: number | null) => void): void
@@ -43,6 +44,10 @@ export interface PreviewRegistryDeps {
   installTimeoutMs?: number
   probeAttempts?: number
   probeIntervalMs?: number
+  /** Install preflight (does `cmd` resolve on PATH?). Injectable so the lifecycle stays unit-
+   *  testable WITHOUT depending on a real pnpm on the test runner's global PATH — the default
+   *  spawns the real `<cmd> --version`. (PR #83 review: keep tests host-independent.) */
+  commandOnPath?: (cmd: string) => Promise<boolean>
 }
 
 /** A bounded string buffer keeping only the last `max` bytes (ring-trimmed) so capturing
@@ -56,9 +61,9 @@ function ringBuffer(max = 8 * 1024): { push: (s: string) => void; value: () => s
 }
 
 /** Real launcher: spawn the start command detached so we can kill its whole group.
- *  stdout/stderr are PIPED (not ignored) and ring-buffered to the last ~8KB so a failed
- *  or early-exiting child can surface a useful stderr tail + exit code (vs. a blank
- *  "readiness probe timed out"). */
+ *  stdout AND stderr are PIPED (not ignored) and ring-buffered together to the last ~8KB so a
+ *  failed or early-exiting child can surface a useful output tail + exit code (vs. a blank
+ *  "readiness probe timed out"). The launch env is scrubEnv'd, so no AI key can be in the tail. */
 const defaultLaunch: Launch = (spec, cwd) => {
   const child = spawn(spec.cmd, spec.args, { cwd, env: buildLaunchEnv(spec), detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
   const err = ringBuffer()
@@ -112,9 +117,11 @@ export class PreviewRegistry {
   private procs = new Map<string, PreviewProc>()
   private launch: Launch
   private probe: Probe
+  private commandOnPath: (cmd: string) => Promise<boolean>
   constructor(private deps: PreviewRegistryDeps) {
     this.launch = deps.launch ?? defaultLaunch
     this.probe = deps.probe ?? defaultProbe
+    this.commandOnPath = deps.commandOnPath ?? commandOnPath
   }
 
   get(sessionId: string): PreviewEntry | undefined { return this.entries.get(sessionId) }
@@ -134,7 +141,7 @@ export class PreviewRegistry {
     this.set({ sessionId, status: 'starting', dir })
     const install = installSpec()
     // Install preflight: a missing pnpm yields a bare "code null" — give an actionable hint.
-    if (!(await commandOnPath(install.cmd))) {
+    if (!(await this.commandOnPath(install.cmd))) {
       await teardown(dir).catch(() => {})
       return this.set({ sessionId, status: 'failed', dir, reason: `${install.cmd} not found — enable corepack (corepack enable)` })
     }

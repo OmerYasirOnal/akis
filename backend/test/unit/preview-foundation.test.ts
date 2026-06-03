@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readFile, mkdtemp, writeFile } from 'node:fs/promises'
+import { readFile, mkdtemp, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { LocalDirectSandbox, scrubEnv } from '../../src/exec/Sandbox.js'
 import { detectAppType } from '../../src/preview/AppDetector.js'
@@ -125,6 +125,23 @@ describe('reclaimWorkspaces (startup recovery)', () => {
   it('is a no-op when the root does not exist (fresh boot)', async () => {
     const root = join(tmpdir(), `akis-missing-${Math.random().toString(36).slice(2)}`)
     await expect(reclaimWorkspaces(root)).resolves.toBeUndefined()
+  })
+  // PR #83 review: ownership sentinel — only entries matching the materialize naming pattern
+  // (`<id>-<12hex>`) are reclaimed, so a mis-pointed AKIS_WORKSPACES_DIR (a populated dir / $HOME)
+  // can't wipe unrelated files at boot, even though they're inside the configured root.
+  it('only reclaims AKIS-created workspaces — unrelated files/dirs inside the root survive', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'akis-reclaim-own-'))
+    const ws = await materialize('sessX', [{ filePath: 'a.ts', content: 'a' }], root) // AKIS-owned → removed
+    await writeFile(join(root, 'important.txt'), 'do not delete', 'utf8')              // unrelated → kept
+    await mkdir(join(root, 'my-project'), { recursive: true })
+    await writeFile(join(root, 'my-project', 'README.md'), 'mine', 'utf8')             // unrelated dir → kept
+
+    await reclaimWorkspaces(root)
+
+    expect(existsSync(ws)).toBe(false)
+    expect(existsSync(join(root, 'important.txt'))).toBe(true)
+    expect(existsSync(join(root, 'my-project', 'README.md'))).toBe(true)
+    await teardown(root)
   })
 })
 

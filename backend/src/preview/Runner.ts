@@ -18,8 +18,11 @@ export function installSpec(): CmdSpec {
  *
  * `sessionId` threads the same-origin proxy prefix into the dev server so emitted
  * asset URLs carry `/preview/<id>/` and resolve against the AKIS origin instead of
- * being root-absolute (which 404'd and white-screened the SPA). Vite takes `--base`;
- * Next takes `basePath`/`assetPrefix` via NEXT_* env so we don't have to write a config.
+ * being root-absolute (which 404'd and white-screened the SPA). Vite honors `--base`
+ * NATIVELY. Next does NOT read a base path from env on its own — we only EXPOSE it as
+ * NEXT_PUBLIC_BASE_PATH for the generated app's own next.config to wire into
+ * basePath/assetPrefix; an app that doesn't do so still boots but serves root-absolute
+ * assets under the proxy (a documented Next-preview limitation — see SELF_HOSTING.md).
  */
 export function startSpec(type: AppType, port: number, sessionId = ''): StartSpec | null {
   const base = `/preview/${sessionId}/`
@@ -27,8 +30,9 @@ export function startSpec(type: AppType, port: number, sessionId = ''): StartSpe
     case 'vite':
       return { cmd: 'pnpm', args: ['exec', 'vite', '--port', String(port), '--strictPort', '--host', '127.0.0.1', '--base', base], env: {} }
     case 'next':
-      // `next dev` honors the start convention; the proxy prefix is threaded via env the
-      // generated app's next.config can read (we don't rewrite its config here).
+      // `next dev` on the port; the proxy prefix is EXPOSED as NEXT_PUBLIC_BASE_PATH for the
+      // generated app's own next.config to honor (we don't rewrite its config). Without that
+      // wiring the app serves root-absolute assets under the proxy — a documented limitation.
       return { cmd: 'pnpm', args: ['exec', 'next', 'dev', '--port', String(port), '--hostname', '127.0.0.1'], env: { PORT: String(port), HOST: '127.0.0.1', NEXT_PUBLIC_BASE_PATH: sessionId ? base.replace(/\/$/, '') : '' } }
     case 'node-service':
       // `node .` runs package.json "main" (or index.js); the app must honor PORT.

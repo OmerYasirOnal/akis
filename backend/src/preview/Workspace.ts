@@ -48,7 +48,13 @@ export async function teardown(dir: string): Promise<void> {
  * restarts. Idempotent and STRICTLY guarded to the workspaces root — it only `rm`s the
  * immediate children of `root` (never `root` itself, never anything outside it). A missing
  * root is a no-op. Per-entry errors are tolerated so one stuck dir can't block boot.
+ *
+ * Ownership sentinel: only entries whose name matches the materialize() pattern
+ * (`<id>-<12-hex-nonce>`) are removed. So a mis-pointed AKIS_WORKSPACES_DIR (a Docker
+ * volume-mount typo, or someone setting it to $HOME / a populated dir) can NEVER wipe
+ * unrelated files at boot — even though they're inside the configured root. (PR #83 review)
  */
+const OWNED = /-[0-9a-f]{12}$/ // the trailing nonce materialize() stamps on every workspace dir
 export async function reclaimWorkspaces(root = workspacesRoot()): Promise<void> {
   const base = resolve(root)
   let entries: string[]
@@ -57,6 +63,7 @@ export async function reclaimWorkspaces(root = workspacesRoot()): Promise<void> 
     const child = resolve(base, name)
     // Defense-in-depth: never escape the root (a symlink-named entry could resolve out).
     if (child === base || !child.startsWith(base + sep)) return Promise.resolve()
+    if (!OWNED.test(name)) return Promise.resolve() // not an AKIS-created workspace → leave it untouched
     return rm(child, { recursive: true, force: true })
   }))
 }
