@@ -43,6 +43,23 @@ describe('CONTRACT: dynamic advisory agents (CF4)', () => {
     expect(t.some(x => /Advisory \(researcher\/post_code_review\)/.test(x))).toBe(true)
   })
 
+  it('a phase-pinned custom agent fires ONLY at its declared edge (tighten-only narrowing)', async () => {
+    const { orch, services } = make([
+      { role: 'early', tools: [], phase: 'pre_scribe' },
+      { role: 'late', tools: [], phase: 'post_code_review' },
+    ])
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const t = texts(services, s.id)
+    // `early` only at pre_scribe; never at post_code_review.
+    expect(t.some(x => /Advisory \(early\/pre_scribe\)/.test(x))).toBe(true)
+    expect(t.some(x => /Advisory \(early\/post_code_review\)/.test(x))).toBe(false)
+    // `late` only at post_code_review; never at pre_scribe.
+    expect(t.some(x => /Advisory \(late\/post_code_review\)/.test(x))).toBe(true)
+    expect(t.some(x => /Advisory \(late\/pre_scribe\)/.test(x))).toBe(false)
+  })
+
   it('keeps the 4 gates intact with advisory agents present (still verifies + ships via trace)', async () => {
     const { orch, services } = make([{ role: 'researcher', tools: ['retrieve_knowledge'] }])
     const s = await orch.start({ idea: 'todo' })
