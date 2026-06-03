@@ -22,6 +22,24 @@ export function workflowToAgentModels(wf: WorkflowConfig): Partial<Record<Role, 
 }
 
 /**
+ * Resolve a saved WorkflowConfig into the per-agent skill-NAME map that buildServices
+ * injects into each core agent's system prompt (P3-AGENT-1). Only CORE roles with a
+ * non-empty `skills` list are mapped; custom roles and skill-less agents fall through
+ * (their prompt stays the byte-identical base). Pure — no new control flow, gates
+ * untouched. The names are resolved against the loaded skill registry inside
+ * buildServices; an unknown name is simply dropped there (never a throw).
+ */
+export function workflowToAgentSkills(wf: WorkflowConfig): Partial<Record<Role, string[]>> {
+  const out: Partial<Record<Role, string[]>> = {}
+  for (const a of wf.agents) {
+    if (isCoreRole(a.role) && a.skills && a.skills.length > 0) {
+      out[a.role] = [...a.skills]
+    }
+  }
+  return out
+}
+
+/**
  * The NON-core (custom) agents of a workflow — the advisory agents AKIS dispatches
  * at the pipeline EDGES (CF4). Core roles run on the deterministic spine instead, so
  * they are excluded here. Pure; gates untouched.

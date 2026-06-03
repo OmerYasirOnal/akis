@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
-import { ScribeAgent } from '../../src/orchestrator/subagents/ScribeAgent.js'
-import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
+import { ScribeAgent, SCRIBE_SYSTEM } from '../../src/orchestrator/subagents/ScribeAgent.js'
+import { ProtoAgent, PROTO_SYSTEM } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { TraceAgent } from '../../src/orchestrator/subagents/TraceAgent.js'
 import { resolveVerifier } from '../../src/verify/verifier.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../../src/gates/specGate.js'
@@ -281,5 +281,59 @@ describe('TraceAgent (verifier)', () => {
     const trace = new TraceAgent({ bus: new EventBus(), verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 3, passed: false } }) })
     const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
     expect(token).toBeNull()
+  })
+})
+
+describe('skill injection into the system prompt (P3-AGENT-1)', () => {
+  const APPROVED = (() => {
+    const spec = { title: 't', body: 'b' }
+    const session = { ...initialSession('s1', 'i'), spec, approval: approveSpec(spec) }
+    return mintApprovedSpec(session)
+  })()
+
+  it('Scribe: NO systemPrompt dep ⇒ the system sent is BYTE-IDENTICAL to SCRIBE_SYSTEM (parity)', async () => {
+    const provider = scriptedProvider([{ text: '{"kind":"spec","title":"T","body":"# T"}' }])
+    const scribe = new ScribeAgent({ bus: new EventBus(), provider })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'todo' })
+    expect(provider.calls).toHaveLength(1)
+    expect(provider.calls[0]!.system).toBe(SCRIBE_SYSTEM)
+  })
+
+  it('Scribe: an injected systemPrompt is the exact base sent (RAG OFF single-shot)', async () => {
+    const composed = `${SCRIBE_SYSTEM}\n\n# Injected skills\n\n## Skill: web-app-spec (draft)\nSKILL BODY`
+    const provider = scriptedProvider([{ text: '{"kind":"spec","title":"T","body":"# T"}' }])
+    const scribe = new ScribeAgent({ bus: new EventBus(), provider, systemPrompt: composed })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'todo' })
+    expect(provider.calls[0]!.system).toBe(composed)
+    expect(provider.calls[0]!.system).toContain('SKILL BODY')
+  })
+
+  it('Scribe: the injected systemPrompt also flows into the RAG-ON tool-loop branch (+ the RAG hint)', async () => {
+    const composed = `${SCRIBE_SYSTEM}\n\n# Injected skills\n\n## Skill: web-app-spec (draft)\nSKILL BODY`
+    const knowledge = stubKnowledge('grounding')
+    const provider = scriptedProvider([{ text: '{"kind":"spec","title":"T","body":"# T"}' }])
+    const scribe = new ScribeAgent({ bus: new EventBus(), provider, knowledge, ragEnabled: true, systemPrompt: composed })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'todo' })
+    // The RAG-on branch composes `${base}\n${RAG_HINT}` — the skill text MUST be present,
+    // proving injection flows into BOTH compose() branches.
+    expect(provider.calls[0]!.system).toContain('SKILL BODY')
+    expect(provider.calls[0]!.system!.startsWith(composed)).toBe(true)
+  })
+
+  it('Proto: NO systemPrompt dep ⇒ the system sent is BYTE-IDENTICAL to PROTO_SYSTEM (parity)', async () => {
+    const provider = scriptedProvider([{ text: '{"files":[{"filePath":"index.html","content":"<x>"}]}' }])
+    const proto = new ProtoAgent({ bus: new EventBus(), provider })
+    await proto.run({ sessionId: 's1', laneId: 'main', approved: APPROVED })
+    expect(provider.calls).toHaveLength(1)
+    expect(provider.calls[0]!.system).toBe(PROTO_SYSTEM)
+  })
+
+  it('Proto: an injected systemPrompt is the exact base sent', async () => {
+    const composed = `${PROTO_SYSTEM}\n\n# Injected skills\n\n## Skill: react-spa-scaffold (draft)\nPROTO SKILL BODY`
+    const provider = scriptedProvider([{ text: '{"files":[{"filePath":"index.html","content":"<x>"}]}' }])
+    const proto = new ProtoAgent({ bus: new EventBus(), provider, systemPrompt: composed })
+    await proto.run({ sessionId: 's1', laneId: 'main', approved: APPROVED })
+    expect(provider.calls[0]!.system).toBe(composed)
+    expect(provider.calls[0]!.system).toContain('PROTO SKILL BODY')
   })
 })
