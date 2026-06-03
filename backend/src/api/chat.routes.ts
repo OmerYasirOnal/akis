@@ -31,6 +31,14 @@ const isStr = (v: unknown): v is string => typeof v === 'string'
 const ROLES = new Set(['user', 'assistant'])
 const MAX_HISTORY = 12
 
+/**
+ * Token budget for an AKIS chat turn. Generous (8k) so a sizeable build-ready `akis-spec`
+ * block is emitted in full — a truncated reply would cut the spec mid-fence, leaving the UI
+ * unable to detect/promote it to a Build card. (The agents have their own budgets; this is
+ * only the conversational persona.)
+ */
+export const CHAT_MAX_TOKENS = 8192
+
 export interface ChatDeps { provider: LlmProvider }
 
 /**
@@ -49,8 +57,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       .slice(-MAX_HISTORY)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
     try {
-      const res = await deps.provider.chat({ system: AKIS_PERSONA, messages: [...history, { role: 'user', content: message }] })
-      return reply.send({ reply: (res.text ?? '').trim() || '…' })
+      const res = await deps.provider.chat({ system: AKIS_PERSONA, messages: [...history, { role: 'user', content: message }], maxTokens: CHAT_MAX_TOKENS })
+      // Return the reply verbatim (trimmed). An empty reply is surfaced HONESTLY as '' so the
+      // UI can show a real "empty reply" notice — never disguised as a friendly '…' answer.
+      return reply.send({ reply: (res.text ?? '').trim() })
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : 'chat failed', code: 'ProviderError' })
     }

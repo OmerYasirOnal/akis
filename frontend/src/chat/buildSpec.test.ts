@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { extractBuildSpec } from './buildSpec.js'
+import { extractBuildSpec, hasTruncatedSpec } from './buildSpec.js'
 
 describe('extractBuildSpec', () => {
   it('returns null when there is no akis-spec block', () => {
@@ -62,5 +62,31 @@ describe('extractBuildSpec', () => {
 
   it('does NOT treat `akis-spec-v2` (no separator) as the akis-spec tag', () => {
     expect(extractBuildSpec('```akis-spec-v2\nbody\n```')).toBeNull()
+  })
+})
+
+describe('hasTruncatedSpec', () => {
+  it('is true when an akis-spec fence opened but never closed (cut mid-stream)', () => {
+    const msg = "Here's the spec 👇\n````akis-spec\n# Big App\nlots of detail that got cut off"
+    expect(hasTruncatedSpec(msg)).toBe(true)
+  })
+
+  it('is false when the akis-spec block is properly closed (extractBuildSpec succeeds)', () => {
+    const msg = '````akis-spec\n# App\nbody\n````'
+    expect(hasTruncatedSpec(msg)).toBe(false)
+    expect(extractBuildSpec(msg)).not.toBeNull()
+  })
+
+  it('is false for prose with no akis-spec fence at all', () => {
+    expect(hasTruncatedSpec('Just a friendly reply with no spec.')).toBe(false)
+  })
+
+  it('does NOT consider an inner ```code fence as the akis-spec opener (3-space tolerant)', () => {
+    expect(hasTruncatedSpec('```ts\nconst x = 1\n```')).toBe(false)
+  })
+
+  it('is false once a truncated block is followed by a matching closing fence', () => {
+    // A 3-backtick opener closed by a 3-backtick fence is complete, not truncated.
+    expect(hasTruncatedSpec('```akis-spec\n# App\nbody\n```')).toBe(false)
   })
 })

@@ -92,6 +92,16 @@ export const STRINGS = {
     'akis.thinking': 'AKIS is thinking…',
     'akis.ask': 'Ask AKIS anything…',
     'akis.send': 'Ask',
+    // ── Chat resilience: distinct error rows, retry, honest empties, truncated spec ──
+    'akis.error.label': 'Message failed',
+    'akis.error.retry': 'Retry',
+    'akis.error.network': 'Couldn’t reach AKIS. Check your connection and try again.',
+    'akis.error.empty': 'AKIS returned an empty reply. Try rephrasing, or retry.',
+    'akis.error.unauthorized': 'Your session expired — taking you to sign in…',
+    'akis.spec.truncated': 'The build-ready spec was cut off before it finished. Ask AKIS to resend it (e.g. “please resend the spec”).',
+    'akis.transcript.title': 'Conversation with AKIS',
+    'akis.transcript.show': 'Show conversation',
+    'akis.transcript.hide': 'Hide conversation',
     // ── Chat-to-Build: AKIS-authored spec card ──
     'spec.card.title': 'Build-ready spec',
     'spec.card.hint': 'Review it, then approve to run the full agent pipeline.',
@@ -600,6 +610,16 @@ export const STRINGS = {
     'akis.thinking': 'AKIS düşünüyor…',
     'akis.ask': 'AKIS’e bir şey sor…',
     'akis.send': 'Sor',
+    // ── Sohbet dayanıklılığı: ayrı hata satırları, yeniden dene, dürüst boş yanıt, kesilmiş spec ──
+    'akis.error.label': 'Mesaj başarısız',
+    'akis.error.retry': 'Yeniden dene',
+    'akis.error.network': 'AKIS’e ulaşılamadı. Bağlantını kontrol et ve tekrar dene.',
+    'akis.error.empty': 'AKIS boş bir yanıt döndürdü. Farklı ifade etmeyi dene ya da yeniden dene.',
+    'akis.error.unauthorized': 'Oturumun sona erdi — seni girişe yönlendiriyoruz…',
+    'akis.spec.truncated': 'İnşaya hazır spec tamamlanmadan kesildi. AKIS’ten yeniden göndermesini iste (örn. “spec’i tekrar gönder”).',
+    'akis.transcript.title': 'AKIS ile konuşma',
+    'akis.transcript.show': 'Konuşmayı göster',
+    'akis.transcript.hide': 'Konuşmayı gizle',
     // ── Sohbetten-İnşaya: AKIS’in yazdığı spec kartı ──
     'spec.card.title': 'İnşaya hazır spec',
     'spec.card.hint': 'Gözden geçir, sonra onayla — tüm ajan hattını çalıştırır.',
