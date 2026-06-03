@@ -51,6 +51,13 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'gate', gate, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
   }
 
+  /** Surface a RECOVERABLE run state so the FE can show an ACTION card (not a silent
+   *  amber dot). This is NOT a structural gate — it un-parks an AUTOMATIC critic verdict
+   *  or a failed verify and never skips verify/push (see the `recovery` event doc). */
+  private emitRecovery(sessionId: string, recovery: 'critic_resolution' | 'verify_failed', state: 'awaiting' | 'resolved'): void {
+    this.s.bus.emit({ kind: 'recovery', recovery, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
+  }
+
   /** Surface the critic's READ-ONLY code-review verdict as a status card. It is
    *  AUTOMATIC (not a human gate) and STRUCTURED ONLY — booleans + bounded counts,
    *  no free-form prose — so it is never ingested as trusted RAG grounding. */
@@ -134,7 +141,11 @@ export class Orchestrator {
     const status = specReview.data.approved ? 'awaiting_spec_approval' : 'awaiting_critic_resolution'
     session = await this.s.store.update(id, { spec: scribeOut.spec, status }, session.version)
     if (status === 'awaiting_spec_approval') this.emitGate(id, 'spec_approval', 'awaiting')
-    else this.narrate(id, 'Critic rejected the spec — needs human resolution before approval.')
+    else {
+      this.narrate(id, 'Critic rejected the spec — needs human resolution before approval.')
+      // Recoverable, not a dead-end: the FE shows a proceed/abandon action card.
+      this.emitRecovery(id, 'critic_resolution', 'awaiting')
+    }
     return session
   }
 
@@ -204,6 +215,9 @@ export class Orchestrator {
       if (critical || requireResolution || attempt >= maxIterate) {
         session = await this.s.store.update(id, { status: 'awaiting_critic_resolution', code: { files: proto.files } }, session.version)
         this.narrate(id, critical ? 'Critic raised a critical finding — needs human resolution.' : requireResolution ? 'Workflow requires human resolution of the critic review.' : 'Iterate budget exhausted — needs human resolution.')
+        // Recoverable, not a dead-end: the FE shows a proceed/abandon action card. PROCEED
+        // continues to the REAL verify + push gates (which still apply); it never bypasses them.
+        this.emitRecovery(id, 'critic_resolution', 'awaiting')
         return session
       }
       attempt++
@@ -216,7 +230,18 @@ export class Orchestrator {
     await this.runAdvisory(id, 'post_code_review', `Advise on the reviewed build for: ${session.idea}`)
 
     // Gate 2 + 3: only Trace holds a TestRunner; verification is the persisted token.
-    const { token, evidence } = await this.s.trace.run({ sessionId: id, laneId: 'verify', files: lastFiles })
+    return await this.verifyAndTransition(id, session, lastFiles)
+  }
+
+  /**
+   * Gate 2 + 3 (the verify step, shared by the main run AND the recovery paths). Only Trace
+   * holds a TestRunner, so only this can produce the branded TestRunResult a VerifyToken needs;
+   * verification is the PRESENCE of the persisted token. On a real ≥1-test pass → push gate
+   * opens; on a non-pass (tests failed / 0-test run, NO token) → `verify_failed`, a RETRYABLE
+   * state (NOT a silent reset to 'building', the old dead-end). NEVER bypasses verify.
+   */
+  private async verifyAndTransition(id: string, session: SessionState, files: { filePath: string; content: string }[]): Promise<SessionState> {
+    const { token, evidence } = await this.s.trace.run({ sessionId: id, laneId: 'verify', files })
     // ADDITIVE, NON-GATE: the structured evidence (scenarios + counts + durationMs +
     // structured failure) is folded into the SAME normal update patch below. It is
     // OBSERVABILITY ONLY — written via the generic `update` (the gate-field allowlist
@@ -230,16 +255,75 @@ export class Orchestrator {
       // forge it. Folded into the SAME non-gate update patch (the gate-write allowlist is
       // unchanged); no-op when no signer is configured (default boot unchanged).
       const passportPatch = this.signPassportFor(token)
-      session = await this.s.store.update(id, { status: 'awaiting_push_confirm', ...evidencePatch, ...passportPatch }, verified.version)
+      const out = await this.s.store.update(id, { status: 'awaiting_push_confirm', ...evidencePatch, ...passportPatch }, verified.version)
       this.emitGate(id, 'push_confirm', 'awaiting')
-    } else {
-      // Persist the structured failure evidence alongside the status reset, so a FAILED
-      // run's named failing scenarios + reasons survive on GET /sessions/:id (this is
-      // what the self-repair loop / Trust Report will read).
-      session = await this.s.store.update(id, { status: 'building', ...evidencePatch }, session.version)
-      this.narrate(id, '⚠️ Not verified — no real passing test was produced.')
+      return out
     }
-    return session
+    // No token (real verify did not pass). Persist the structured failure evidence
+    // alongside a RETRYABLE `verify_failed` status (NOT a silent reset to 'building'),
+    // so a failed run's named failing scenarios survive on GET /sessions/:id and the
+    // human can retry (re-runs REAL verification). The recovery signal drives the FE card.
+    const out = await this.s.store.update(id, { status: 'verify_failed', ...evidencePatch }, session.version)
+    this.narrate(id, '⚠️ Not verified — no real passing test was produced. Retry to re-run the tests.')
+    this.emitRecovery(id, 'verify_failed', 'awaiting')
+    return out
+  }
+
+  /**
+   * Recovery for `awaiting_critic_resolution` (the AUTOMATIC critic did not approve and the
+   * iterate budget/policy parked the run). The Critic is NOT a structural gate; this un-parks
+   * its verdict WITHOUT skipping any structural gate:
+   *  - 'abandon' → `cancelled` (terminal).
+   *  - 'proceed' → accept the non-approval and continue. If the SPEC was never approved
+   *    (parked at the spec step, no ApprovalToken), this opens the STRUCTURAL spec-approval
+   *    gate (awaiting_spec_approval) — Gate 1 still applies, the human still approves. If the
+   *    spec WAS approved (parked at the code step, code present), it continues to the REAL
+   *    verify + push-confirm gates (Gate 3 still requires a genuine ≥1-test pass).
+   */
+  async resolveCritic(id: string, decision: 'proceed' | 'abandon'): Promise<SessionState> {
+    const cur = await this.s.store.get(id)
+    if (!cur) throw new Error(`session ${id} not found`)
+    if (cur.status !== 'awaiting_critic_resolution') throw new WrongStatusError('resolve critic', cur.status)
+
+    if (decision === 'abandon') {
+      const out = await this.s.store.update(id, { status: 'cancelled' }, cur.version)
+      this.narrate(id, 'Run abandoned at the critic review.')
+      this.emitRecovery(id, 'critic_resolution', 'resolved')
+      return out
+    }
+
+    // PROCEED. Spec not yet approved (spec-step park) → open the structural spec gate;
+    // the human must still satisfy Gate 1 before any code is produced.
+    if (!cur.approval) {
+      const out = await this.s.store.update(id, { status: 'awaiting_spec_approval' }, cur.version)
+      this.narrate(id, 'Proceeding past the critic — approve the spec to run the pipeline.')
+      this.emitRecovery(id, 'critic_resolution', 'resolved')
+      this.emitGate(id, 'spec_approval', 'awaiting')
+      return out
+    }
+    // Code-step park (spec approved, code present): continue to the REAL verify + push gates.
+    const files = cur.code?.files ?? []
+    this.narrate(id, 'Proceeding past the critic — running real verification.')
+    this.emitRecovery(id, 'critic_resolution', 'resolved')
+    return await this.verifyAndTransition(id, cur, files)
+  }
+
+  /**
+   * Recovery for `verify_failed` (real verification returned no token). Re-enters the verify
+   * step and RE-RUNS REAL verification on the already-produced code; mint still requires a
+   * genuine ≥1-test pass (NO bypass). Bounded — a single retry per call (the human re-clicks
+   * to retry again), and the produce-side iterate budget is unchanged.
+   */
+  async retryVerification(id: string): Promise<SessionState> {
+    const cur = await this.s.store.get(id)
+    if (!cur) throw new Error(`session ${id} not found`)
+    if (cur.status !== 'verify_failed') throw new WrongStatusError('retry verification', cur.status)
+    // Gate 1 (structural): mintApprovedSpec throws unless a valid approval token exists, so a
+    // retry can never run without the still-required spec approval.
+    mintApprovedSpec(cur)
+    const files = cur.code?.files ?? []
+    this.narrate(id, 'Retrying — re-running real verification.')
+    return await this.verifyAndTransition(id, cur, files)
   }
 
   /** Sign a durable Build Passport over an ALREADY-MINTED VerifyToken's facts. Returns a
