@@ -101,10 +101,19 @@ describe('derivePipeline', () => {
     expect(step(view, 'ship').action).toBeUndefined()
   })
 
-  it('review reflects findings count and critical state', () => {
-    const findings = viewWith({ status: 'running', codeReview: { approved: false, findings: 3, critical: false, iteration: 1 } },
+  it('review: approved-with-findings is done (advisory); NOT-approved is amber awaiting, not falsely done', () => {
+    // The normal flow ships with advisory findings → approved:true → done (green).
+    const advisory = viewWith({ status: 'running', codeReview: { approved: true, findings: 3, critical: false, iteration: 1 } },
       [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
-    expect(step(findings, 'review').stat).toBe('3 findings')
+    expect(step(advisory, 'review').status).toBe('done')
+    expect(step(advisory, 'review').stat).toBe('3 findings')
+    // A critic that did NOT approve (run parked at awaiting_critic_resolution) must surface as
+    // amber 'awaiting', NEVER a green 'done' that hides a stalled build.
+    const notApproved = viewWith({ status: 'running', codeReview: { approved: false, findings: 3, critical: false, iteration: 1 } },
+      [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(notApproved, 'review').status).toBe('awaiting')
+    expect(step(notApproved, 'review').stat).toBe('3 findings')
+    // A critical finding is a failure.
     const critical = viewWith({ status: 'running', codeReview: { approved: false, findings: 1, critical: true, iteration: 2 } },
       [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
     expect(step(critical, 'review').status).toBe('failed')
