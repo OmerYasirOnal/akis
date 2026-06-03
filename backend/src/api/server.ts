@@ -134,10 +134,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       store: deps.sessionStore ?? new MockSessionStore(),
       skillsDir: deps.skillsDir ?? defaultSkillsDir(),
       keyStore: deps.keyStore,
+      // Thread env unconditionally: the push-adapter selection (P1-CORE-2) reads
+      // AKIS_GITHUB_PUSH_TOKEN/REPO here regardless of RAG, and NODE_ENV gates the mock.
+      env,
       // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
       ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true } : {}),
       // RAG on → also thread env so a configured AKIS_GITHUB_TOKEN selects the real reader.
-      ...(flag(env.AKIS_RAG) ? { rag: true, env } : {}),
+      ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
       // Durable corpus: a hydrated PgVectorStore when DATABASE_URL is set (only effective with
       // RAG on); absent it, buildServices uses the in-memory default unchanged.
       ...(flag(env.AKIS_RAG) && deps.vectorStore ? { vectorStore: deps.vectorStore } : {}),
@@ -179,14 +182,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     store: services.store, bus: services.bus,
     skillsDir: deps.skillsDir ?? defaultSkillsDir(),
     ...(deps.keyStore ? { keyStore: deps.keyStore } : {}),
+    // Thread env unconditionally so the push-adapter selection (P1-CORE-2) sees
+    // AKIS_GITHUB_PUSH_TOKEN/REPO + NODE_ENV regardless of RAG.
+    env,
     ...(useMock ? { provider: new MockProvider() } : {}),
     ...(demoVerify ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     agentModels: workflowToAgentModels(wf),
     customAgents: workflowCustomAgents(wf),
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
-    // When this run enables RAG, thread env so AKIS_GITHUB_TOKEN selects the real reader.
-    ...(wf.rag !== undefined ? { rag: wf.rag, ...(wf.rag ? { env } : {}) } : {}),
+    // When this run enables RAG, also turn it on (env is already threaded above).
+    ...(wf.rag !== undefined ? { rag: wf.rag } : {}),
     // Durable corpus for a per-workflow run too: when that run turns RAG on AND a durable
     // store is wired (DATABASE_URL set), use it so the corpus stays shared + persistent.
     ...(wf.rag && deps.vectorStore ? { vectorStore: deps.vectorStore } : {}),

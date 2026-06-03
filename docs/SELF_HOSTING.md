@@ -70,6 +70,34 @@ configured key is never masked. (To require a real key and refuse the mock
 entirely, also set `AKIS_ALLOW_MOCK=0`.) See the full key list in
 [`backend/.env.example`](../backend/.env.example).
 
+### Open a real GitHub PR on a verified build (optional)
+
+By default a finished build is published to the **in-memory mock** adapter (no
+network). To make `confirmPush` open a **real pull request** instead, set BOTH:
+
+```bash
+# .env  (next to docker-compose.yml)
+AKIS_GITHUB_PUSH_TOKEN=github_pat_...   # fine-grained PAT: Contents + Pull requests (write)
+AKIS_GITHUB_PUSH_REPO=me/my-app         # owner/name of the target repo
+```
+
+When both are present (and `NODE_ENV` is not `test`), AKIS creates an
+`akis-<sessionId>` branch, commits the verified files, and opens (or updates) a
+PR against the repo's default branch via the GitHub REST API — **no Octokit, plain
+`fetch` with a Bearer token**. The token is a fine-grained Personal Access Token
+scoped to that one repo with **Contents** + **Pull requests** write (a GitHub App
+installation token works too); it is **never logged and never returned** in any
+response, event, or error.
+
+This is **opt-in and still fully gated** — the PR is opened only after all four
+structural gates pass (spec approval → no pre-approval code → real ≥1-test
+verification → digest-bound `ApprovedPush`). Leave either var blank and the mock
+adapter is used (the default boot is byte-for-byte unchanged). These vars are
+**separate** from the RAG reader's `AKIS_GITHUB_TOKEN`/`AKIS_GITHUB_REPO`, so push
+and knowledge-ingest can target different repos. Optional: `AKIS_GITHUB_PUSH_BASE`
+(base branch; default = repo default) and `AKIS_GITHUB_PUSH_API_BASE` (GH
+Enterprise). See [`backend/.env.example`](../backend/.env.example).
+
 ---
 
 ## Environment reference
@@ -89,6 +117,7 @@ optional and flows through from your shell / `.env`. Full descriptions live in
 | `AUTH_JWT_SECRET` | **insecure default** (`akis-insecure-demo-secret-change-me`); override via `.env`/shell | HS256 session-signing secret. The default only keeps the prod-mode demo booting. **Override it** for any real use (`openssl rand -hex 32`) — also makes sessions survive restarts. |
 | `PUBLIC_BASE_URL` | pass-through              | Browser-facing origin for OAuth + cross-site cookies, e.g. `http://localhost:3000`. |
 | `ANTHROPIC_API_KEY` (or another provider key) | pass-through | Enables real builds and auto-disables the mock. Absent → keyless mock demo. |
+| `AKIS_GITHUB_PUSH_TOKEN` + `AKIS_GITHUB_PUSH_REPO` | pass-through | **Opt-in real GitHub PR push.** Both set → a verified build's `confirmPush` opens/updates a real PR (branch + commit + PR via the REST API) on `owner/name`; either blank → the in-memory mock (default). The token (fine-grained PAT, Contents + Pull requests write, or a GitHub App token) is sent as a Bearer credential and is **never logged/returned**. Still gated by `ApprovedPush`; always mock under `NODE_ENV=test`. |
 
 To change the published port without touching the container's internal port:
 
