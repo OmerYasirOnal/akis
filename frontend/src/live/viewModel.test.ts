@@ -129,6 +129,31 @@ describe('foldSessionView (pure live view-model)', () => {
     expect(ready.preview.ready).toBe(true)
   })
 
+  // Regression (PR #82 review): a RE-RUN that fails must NOT keep the stale /preview/ url — else
+  // `embeddable` stays true in PreviewPanel and the dead iframe shadows the error card + Retry,
+  // silently re-introducing the very dead-end this surfacing exists to kill. The real backend
+  // lifecycle on a re-run is ready(url) → stopped(url, retained by stop()) → starting → failed.
+  it('clears the stale url when a previously-ready preview is re-run and fails (no shadow iframe)', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'stopped', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'starting' }),
+      ev({ kind: 'preview_status', status: 'failed', reason: 'readiness probe timed out' }),
+    ])
+    expect(v.preview.url).toBeUndefined() // torn-down url gone → not embeddable → error card wins
+    expect(v.preview.error).toEqual({ status: 'failed', reason: 'readiness probe timed out' })
+    expect(v.preview.ready).toBe(false)
+    expect(v.preview.starting).toBe(false)
+  })
+  it('drops the stale url on a re-run starting frame so the spinner shows (not the old iframe)', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'starting' }),
+    ])
+    expect(v.preview.url).toBeUndefined()
+    expect(v.preview.starting).toBe(true)
+  })
+
   it('folds the structured code_review verdict (last wins) as a read-only card', () => {
     const v = foldSessionView('s1', [
       ev({ kind: 'code_review', approved: false, findings: 4, critical: true, iteration: 1, agent: 'critic' }),

@@ -105,8 +105,10 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
       </div>
 
       {/* A failed Run-app action (rejected startPreview) surfaces here, next to the Run control —
-          text-only, never a silent no-op. (preview_status failures render in the surface below.) */}
-      {actionError && (
+          text-only, never a silent no-op. Suppressed when a preview_status failure is already
+          shown in the surface below (the rose error card), so the same failure isn't double-banner'd;
+          it stays as the fallback channel for a dropped/missed SSE frame (no preview_status arrives). */}
+      {actionError && !previewError && (
         <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>
       )}
 
@@ -132,7 +134,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
         </div>
 
         <div className="relative flex-1 overflow-hidden">
-          {embeddable ? (
+          {embeddable && !previewError ? (
             // The framed app is UNTRUSTED agent-generated code served same-origin from
             // /preview/:id/. Deliberately NO allow-same-origin: that would let it reach
             // the AKIS origin (session cookie, parent DOM). allow-scripts in an opaque
