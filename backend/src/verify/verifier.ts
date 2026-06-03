@@ -6,6 +6,7 @@ import {
   type TestRunner,
   type TestRunConfig,
   type RealTestRunnerDeps,
+  type RunOptions,
 } from './TestRunner.js'
 
 /**
@@ -42,8 +43,15 @@ function mint(sessionId: string, testsRun: number, passed: boolean, codeDigest: 
 }
 
 export interface Verifier {
-  /** Run the tests over the files and, only on a genuine pass, mint a bound VerifyToken. */
-  verify(sessionId: string, files: RepoFile[]): Promise<VerifyToken | null>
+  /**
+   * Run the tests over the files and, only on a genuine pass, mint a bound VerifyToken.
+   *
+   * `opts.onEvidence` is an ADDITIVE, NON-GATE observability sink: the underlying runner
+   * reports the structured TestEvidence it computed. It is a pure side-channel — it can
+   * NEVER influence whether a token is minted (mint reads only `r.testsRun`/`r.passed`),
+   * so the return value is byte-identical whether or not it is supplied.
+   */
+  verify(sessionId: string, files: RepoFile[], opts?: RunOptions): Promise<VerifyToken | null>
   /**
    * Whether this verifier runs the MOCK/injected runner (simulated verification) rather than
    * the REAL Playwright+Cucumber runner. PURELY INFORMATIONAL — Trace stamps the wire `verify`
@@ -66,8 +74,10 @@ export interface Verifier {
 function createVerifier(runner: TestRunner, demo: boolean): Verifier {
   return {
     demo,
-    async verify(sessionId, files) {
-      const r = await runner.run(files)
+    async verify(sessionId, files, opts) {
+      // The evidence sink (opts.onEvidence) is forwarded to the runner UNCHANGED; the
+      // mint below reads ONLY the branded result, so evidence can never affect minting.
+      const r = await runner.run(files, opts)
       return mint(sessionId, r.testsRun, r.passed, r.codeDigest)
     },
   }

@@ -52,6 +52,8 @@ export const CREATE_USERS_EXTERNAL_ID_UNIQUE =
  * Idempotent DDL for the `sessions` table. The gate-bearing fields (`approval`,
  * `verify_token`) and the artifacts (`spec`, `code`) are jsonb; `version` carries the
  * optimistic lock. `owner_id` powers per-user build history (indexed for listByOwner).
+ * `test_evidence` is the ADDITIVE, NON-GATE structured test evidence (jsonb), written on
+ * the normal patch path — NOT a gate column.
  */
 export const CREATE_SESSIONS_TABLE = `
 CREATE TABLE IF NOT EXISTS sessions (
@@ -63,9 +65,14 @@ CREATE TABLE IF NOT EXISTS sessions (
   approval      jsonb,
   code          jsonb,
   verify_token  jsonb,
+  test_evidence jsonb,
   version       integer NOT NULL DEFAULT 0,
   created_at    timestamptz NOT NULL DEFAULT now()
 )`
+
+/** Idempotent migration for pre-existing sessions tables: add the additive, NON-GATE
+ *  `test_evidence` jsonb column (no constraint, nullable) so an upgraded DB persists evidence. */
+export const ADD_TEST_EVIDENCE = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS test_evidence jsonb`
 
 /** Newest-first per-owner history listing (listByOwner) is the hot read path. */
 export const CREATE_SESSIONS_OWNER_INDEX = `CREATE INDEX IF NOT EXISTS sessions_owner_id_idx ON sessions (owner_id, created_at DESC)`
@@ -126,6 +133,7 @@ const MIGRATIONS: readonly string[] = [
   ADD_EXTERNAL_ID,
   CREATE_USERS_EXTERNAL_ID_UNIQUE,
   CREATE_SESSIONS_TABLE,
+  ADD_TEST_EVIDENCE,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,
   CREATE_VECTOR_CHUNKS_TABLE,
