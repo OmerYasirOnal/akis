@@ -56,7 +56,7 @@ export const STRINGS = {
     'pipeline.summary.reviewClean': 'review clean',
     'pipeline.summary.shipped': 'shipped',
     'pipeline.summary.runFailed': 'Run failed',
-    'pipeline.details': 'Details (raw log)',
+    'pipeline.details': 'Live agent activity',
     // Run-state recovery: a parked run is an ACTION card, not a silent amber dot. These are
     // NOT structural gates — proceeding/retrying never bypasses verify/push (the backend
     // re-runs real verification and the spec/push gates still apply).
@@ -607,7 +607,7 @@ export const STRINGS = {
     'pipeline.summary.reviewClean': 'inceleme temiz',
     'pipeline.summary.shipped': 'yayınlandı',
     'pipeline.summary.runFailed': 'Çalışma başarısız',
-    'pipeline.details': 'Ayrıntılar (ham günlük)',
+    'pipeline.details': 'Canlı ajan aktivitesi',
     // Çalışma durumu kurtarma: durmuş bir çalışma sessiz bir amber nokta değil, bir EYLEM
     // kartıdır. Bunlar yapısal kapı DEĞİLDİR — devam etmek/yeniden denemek doğrulama/push'u
     // asla atlamaz (backend gerçek doğrulamayı yeniden çalıştırır, spec/push kapıları geçerli kalır).
