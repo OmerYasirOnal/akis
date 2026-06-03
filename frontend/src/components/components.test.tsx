@@ -4,6 +4,7 @@ import { PreviewPanel } from './PreviewPanel.js'
 import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
+import { STRINGS } from '../i18n/catalog.js'
 import type { ReactElement } from 'react'
 
 /** PreviewPanel reads i18n strings, so render it inside the provider (default: EN). */
@@ -56,5 +57,26 @@ describe('PreviewPanel', () => {
     const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
     const { container } = renderI18n(<PreviewPanel view={view} />)
     expect(container.querySelector('iframe')?.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-popups')
+  })
+
+  // P1-CORE-1: a simulated (mock-runner / demo-boot) result must be flagged AT THE RESULT —
+  // on the verify card (TestStats) and the preview — so it can't be mistaken for a real pass.
+  it('flags a SIMULATED verification on the verify card when tests.demo', () => {
+    const view: SessionView = { ...emptyView('s1'), tests: { testsRun: 2, passed: true, ran: true, demo: true } }
+    renderI18n(<PreviewPanel view={view} />)
+    const badge = screen.getByRole('status')
+    expect(badge).toHaveTextContent(STRINGS.en['result.demo.badge'])
+    expect(badge).toHaveAttribute('title', STRINGS.en['result.demo.title'])
+  })
+  it('flags a DEMO boot on the preview header when preview.demo', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true, demo: true } }
+    renderI18n(<PreviewPanel view={view} />)
+    expect(screen.getByRole('status')).toHaveTextContent(STRINGS.en['result.demo.badge'])
+  })
+  it('shows NO demo badge on a live run (no demo flags)', () => {
+    const view: SessionView = { ...emptyView('s1'), tests: { testsRun: 5, passed: true, ran: true }, preview: { url: '/preview/s1/', ready: true }, verified: true }
+    renderI18n(<PreviewPanel view={view} />)
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.queryByText(STRINGS.en['result.demo.badge'], { exact: false })).toBeNull()
   })
 })
