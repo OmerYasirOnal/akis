@@ -5,6 +5,8 @@ import { useLiveChat } from './useLiveChat.js'
 import { ChatThread } from './ChatThread.js'
 import { RunPipeline } from './RunPipeline.js'
 import { AkisChat } from './AkisChat.js'
+import { AkisTranscript } from './AkisTranscript.js'
+import { loadThread, clearThread, type AkisMsg } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
@@ -50,6 +52,11 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
     })
   }, [api])
   const [actionError, setActionError] = useState<string | undefined>()
+  // The persisted "Ask AKIS" conversation that produced the build. AkisChat owns it while
+  // chatting (and persists it to localStorage); we snapshot it when a build starts so the
+  // transcript can show it above the pipeline even after the chat unmounts / a reload.
+  const [thread, setThread] = useState<AkisMsg[]>([])
+  useEffect(() => { if (sessionId) setThread(loadThread()) }, [sessionId])
 
   const live = useLiveChat(sessionId, sent, api, baseUrl, makeClient)
   const status = live.view.status
@@ -97,6 +104,8 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const runApp = (): Promise<void> => act(async () => { if (sessionId) await api.startPreview(sessionId) })
   const newChat = (): void => {
     setSessionId(undefined); setSent(''); setActionError(undefined)
+    // Start a fresh conversation: drop the persisted thread so AkisChat re-seeds the greeting.
+    clearThread(); setThread([])
     // Drop a stale /?s= deep-link from the address bar so a refresh starts clean.
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
   }
@@ -139,13 +148,16 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
         <div className="flex-1 overflow-y-auto px-4 py-4">
           {sessionId
             ? (
-              <RunPipeline
-                view={live.view}
-                onApprove={approve}
-                onConfirm={confirm}
-                busy={busy}
-                details={<ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />}
-              />
+              <>
+                <AkisTranscript messages={thread} />
+                <RunPipeline
+                  view={live.view}
+                  onApprove={approve}
+                  onConfirm={confirm}
+                  busy={busy}
+                  details={<ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />}
+                />
+              </>
             )
             : (
               // Give AkisChat real height: this column is `flex-1` of the studio card, so

@@ -152,8 +152,14 @@ function PublicDocs() {
 }
 
 function Shell({ api }: { api: ApiClient }) {
-  const { user, loading } = useAuth()
-  const { path } = useRouter()
+  const { user, loading, clear } = useAuth()
+  const { path, navigate } = useRouter()
+  // On a 401 from any authenticated request (expired/revoked cookie), drop the cached user
+  // and route to sign-in — so a stale session can never leave the user stuck mid-app.
+  useEffect(() => {
+    api.onUnauthorized = () => { clear(); navigate('/login') }
+    return () => { api.onUnauthorized = undefined }
+  }, [api, clear, navigate])
   if (loading) return <Loader />
   if (path === '/login') return user ? <Navigate to="/" /> : <PublicFrame><Login api={api} /></PublicFrame>
   if (path === '/signup') return user ? <Navigate to="/" /> : <PublicFrame><Signup api={api} /></PublicFrame>

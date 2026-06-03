@@ -63,4 +63,31 @@ describe('ApiClient', () => {
     await api.startSession('x')
     expect(f.mock.calls[0]![0]).toBe('http://host:3000/sessions')
   })
+
+  it('fires onUnauthorized once on a 401 and still rejects with a typed ApiError(401)', async () => {
+    const f = mockFetch(401, { error: 'Unauthorized', code: 'Unauthorized' })
+    const onUnauthorized = vi.fn()
+    const api = new ApiClient('', f)
+    api.onUnauthorized = onUnauthorized
+    await expect(api.chatWithAkis('hi')).rejects.toMatchObject({ name: 'ApiError', status: 401 })
+    expect(onUnauthorized).toHaveBeenCalledTimes(1)
+  })
+
+  it('does NOT fire onUnauthorized for the /auth/me probe (avoids a redirect loop on anon load)', async () => {
+    const f = mockFetch(401, { error: 'Unauthorized', code: 'Unauthorized' })
+    const onUnauthorized = vi.fn()
+    const api = new ApiClient('', f)
+    api.onUnauthorized = onUnauthorized
+    await expect(api.me()).rejects.toMatchObject({ name: 'ApiError', status: 401 })
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
+
+  it('does NOT fire onUnauthorized for a non-401 error', async () => {
+    const f = mockFetch(409, { error: 'gate', code: 'NotVerifiedError' })
+    const onUnauthorized = vi.fn()
+    const api = new ApiClient('', f)
+    api.onUnauthorized = onUnauthorized
+    await expect(api.confirm('s1')).rejects.toMatchObject({ status: 409 })
+    expect(onUnauthorized).not.toHaveBeenCalled()
+  })
 })

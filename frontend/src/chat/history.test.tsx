@@ -58,6 +58,40 @@ class FakeStream {
   emit(e: AkisEvent, seq: number): void { this.onEvent?.(e, seq) }
 }
 
+describe('ChatStudio AKIS transcript persistence', () => {
+  beforeEach(() => { window.history.replaceState({}, '', '/'); localStorage.clear() })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  it('surfaces the persisted conversation as a collapsible transcript once a build starts', async () => {
+    // Seed a prior "Ask AKIS" conversation (as AkisChat would have persisted it).
+    localStorage.setItem('akis_chat_thread', JSON.stringify([
+      { role: 'assistant', content: 'Hi, I’m AKIS.' },
+      { role: 'user', content: 'a habit tracker' },
+      { role: 'assistant', content: 'Great — here is the plan.' },
+    ]))
+    const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && (init as RequestInit | undefined)?.method === 'POST') {
+        return { ok: true, status: 201, json: async () => ({ id: 's9', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(<I18nProvider><RouterProvider><ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} /></RouterProvider></I18nProvider>)
+
+    // Start a build from the composer → the chat unmounts, the run pipeline mounts.
+    await userEvent.type(screen.getByLabelText('idea'), 'a habit tracker')
+    await userEvent.click(screen.getByRole('button', { name: 'Build' }))
+
+    // The transcript header appears above the pipeline; expanding it reveals the conversation.
+    const toggle = await screen.findByRole('button', { name: /Conversation with AKIS/i })
+    await userEvent.click(toggle)
+    await waitFor(() => expect(screen.getByText('Great — here is the plan.')).toBeInTheDocument())
+    expect(screen.getAllByText('a habit tracker').length).toBeGreaterThan(0)
+  })
+})
+
 describe('ChatStudio ?s= deep-link', () => {
   beforeEach(() => { window.history.replaceState({}, '', '/?s=s1') })
   afterEach(() => { window.history.replaceState({}, '', '/') })

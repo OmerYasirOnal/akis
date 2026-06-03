@@ -9,6 +9,9 @@ interface AuthValue {
   logout: () => Promise<void>
   /** Re-fetch the session (e.g. after a password reset that set a fresh cookie). */
   refresh: () => Promise<void>
+  /** Clear the cached user locally WITHOUT a server call — used when a 401 tells us the
+   *  cookie already expired/was revoked, so there is nothing to log out server-side. */
+  clear: () => void
 }
 const AuthCtx = createContext<AuthValue | null>(null)
 
@@ -32,8 +35,9 @@ export function AuthProvider({ api, children }: { api: ApiClient; children: Reac
   // looking signed-in after a logout attempt.
   const logout = async (): Promise<void> => { try { await api.logout() } finally { setUser(null) } }
   const refresh = async (): Promise<void> => { try { setUser((await api.me()).user) } catch { setUser(null) } }
+  const clear = (): void => setUser(null)
 
-  return <AuthCtx.Provider value={{ user, loading, login, signup, logout, refresh }}>{children}</AuthCtx.Provider>
+  return <AuthCtx.Provider value={{ user, loading, login, signup, logout, refresh, clear }}>{children}</AuthCtx.Provider>
 }
 
 export function useAuth(): AuthValue {
