@@ -188,9 +188,11 @@ export async function ensurePgVectorColumn(client: SqlClient, dim: number): Prom
   }
   try {
     // Is the column already a `vector`? (information_schema reports it as USER-DEFINED.)
+    // Schema-qualify to the active schema so a same-named column in another schema can't be read.
     const { rows } = await client.query(
       `SELECT udt_name FROM information_schema.columns
-       WHERE table_name = 'vector_chunks' AND column_name = 'vector'`,
+       WHERE table_name = 'vector_chunks' AND column_name = 'vector'
+         AND table_schema = current_schema()`,
     )
     const udt = rows[0]?.udt_name
     if (udt !== 'vector') {

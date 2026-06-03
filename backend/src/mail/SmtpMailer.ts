@@ -54,7 +54,11 @@ export class SmtpMailer implements Mailer {
       await this.cmd(sock, `MAIL FROM:<${this.cfg.from}>`, ['2'])
       await this.cmd(sock, `RCPT TO:<${mail.to}>`, ['2'])
       await this.cmd(sock, 'DATA', ['3'])
-      sock.write(this.message(mail))
+      const body = this.message(mail)
+      sock.write(body)
+      // The end-of-data terminator (".") MUST follow a CRLF, so guarantee the body ends with one
+      // before writing the dot (append if the template ever loses its trailing blank element).
+      if (!body.endsWith('\r\n')) sock.write('\r\n')
       await this.cmd(sock, '.', ['2'])
       // Best-effort QUIT — a server hiccup AFTER the message is queued must not "fail" the send.
       try { await this.cmd(sock, 'QUIT', ['2']) } catch { /* already queued */ }

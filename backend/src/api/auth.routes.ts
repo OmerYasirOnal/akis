@@ -133,12 +133,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
       const token = signResetToken(user.id, deps.secret) // 15-min, purpose-scoped
       const path = `/reset-password?token=${encodeURIComponent(token)}`
       // Deliver the link by email when a real mailer is configured (P5-OPS-1). The send is
-      // best-effort: a mail failure is SWALLOWED so the response stays byte-identical
-      // whether or not delivery succeeded (no enumeration via a 500 or a slow path).
-      // The token/link is NEVER logged on this path.
+      // FIRE-AND-FORGET — it is intentionally NOT awaited: a mail failure OR a slow/hung relay
+      // must not change the response latency, or that latency itself becomes an account-existence
+      // oracle. The HTTP response returns at the same time regardless of whether the email exists
+      // or whether delivery succeeds/slows. The token/link is NEVER logged on this path.
       if (mailEnabled) {
         const resetUrl = deps.publicBaseUrl ? `${deps.publicBaseUrl}${path}` : path
-        try { await deps.mailer!.sendResetLink({ to: user.email, resetUrl }) } catch { /* swallow: mail outage must not leak */ }
+        void deps.mailer!.sendResetLink({ to: user.email, resetUrl }).catch(() => { /* swallow: mail outage must not leak */ })
       } else if (deps.devEcho) {
         // No mailer configured: keep today's DEV-only echo so the flow is usable. NEVER in prod.
         generic.resetToken = token
