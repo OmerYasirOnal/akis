@@ -72,6 +72,12 @@ export interface OrchestratorServices {
   /** Custom (non-core) workflow agents AKIS dispatches as advisory at the edges (CF4).
    *  Empty when no workflow / no custom agents — the orchestrator then dispatches none. */
   advisoryAgents?: AgentRegistry
+  /** Ed25519 signer for the durable, third-party-verifiable Build Passport. ADDITIVE +
+   *  OFF the gate path: when present, a VERIFIED build signs a passport over the
+   *  ALREADY-MINTED VerifyToken facts (it can only attest, never mint/forge). Absent ⇒
+   *  no passport is produced (default boot unchanged); the PRIVATE key is never logged
+   *  or returned (only `signer.publicKey` is exposed). */
+  passportSigner?: import('../verify/passport.js').PassportSigner
 }
 
 /**
@@ -157,6 +163,10 @@ export interface BuildServicesOptions {
    *  + repo target). Only meaningful when `rag` is on. Absent ⇒ MockRepoReader (default
    *  OFF, zero behavior change). */
   env?: Record<string, string | undefined>
+  /** Ed25519 signer for the Build Passport. ADDITIVE — when present, a verified build signs
+   *  a durable passport over the already-minted VerifyToken facts. Absent ⇒ no passport
+   *  (default boot unchanged). The PRIVATE key is held only on the signer (never logged/returned). */
+  passportSigner?: import('../verify/passport.js').PassportSigner
 }
 
 export function buildServices(opts: BuildServicesOptions): OrchestratorServices {
@@ -315,6 +325,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
     ...(opts.gatePolicy !== undefined ? { gatePolicy: opts.gatePolicy } : {}),
     ...(advisoryAgents.size > 0 ? { advisoryAgents } : {}),
+    ...(opts.passportSigner ? { passportSigner: opts.passportSigner } : {}),
     ...knowledgeWiring,
   }
 }

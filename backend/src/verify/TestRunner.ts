@@ -1,6 +1,6 @@
 import type { TestEvidence } from '@akis/shared'
 import type { RepoFile } from '../di/MockGitHubAdapter.js'
-import { digestFiles } from './digest.js'
+import { digestFiles, digestEvidence } from './digest.js'
 import { buildTestEvidence } from './evidence.js'
 
 /**
@@ -14,7 +14,12 @@ import { buildTestEvidence } from './evidence.js'
  *
  * The result carries `codeDigest` computed BY THE RUNNER from the files it ran,
  * so the verification evidence is bound to the exact tested code — a caller
- * cannot substitute a different digest.
+ * cannot substitute a different digest. It ALSO carries `evidenceDigest`, the
+ * length-prefixed digest of the STRUCTURED test evidence the runner computed (the
+ * SAME value it reports via `onEvidence`). That is purely DERIVED + additive — it is
+ * computed alongside, and never feeds, the fail-closed pass decision below — so it
+ * makes "passed N tests" tamper-evident at the same structural rigor as `codeDigest`
+ * WITHOUT ever relaxing minting.
  *
  * Honest boundary (documented, deliberately deferred per spec §1): in a single
  * process, TypeScript cannot prevent a same-graph module from importing a runner
@@ -31,10 +36,13 @@ export type TestRunResult = {
   readonly testsRun: number
   readonly passed: boolean
   readonly codeDigest: string
+  /** Tamper-evidence digest of the STRUCTURED evidence (see digestEvidence). DERIVED +
+   *  additive: computed alongside, never feeding, the pass decision the verifier mints from. */
+  readonly evidenceDigest: string
 }
 
-function brandResult(testsRun: number, passed: boolean, codeDigest: string): TestRunResult {
-  return { testsRun, passed, codeDigest } as unknown as TestRunResult
+function brandResult(testsRun: number, passed: boolean, codeDigest: string, evidenceDigest: string): TestRunResult {
+  return { testsRun, passed, codeDigest, evidenceDigest } as unknown as TestRunResult
 }
 
 /**
@@ -69,9 +77,12 @@ class MockTestRunnerImpl implements TestRunner {
   async run(files: RepoFile[], opts?: RunOptions): Promise<TestRunResult> {
     // ADDITIVE: synthesize structured evidence from the deterministic config so the
     // mock/demo path ALSO surfaces persisted evidence (one synthetic BDD scenario per
-    // configured test). This never touches the branded result below.
-    opts?.onEvidence?.(synthMockEvidence(this.cfg))
-    return brandResult(this.cfg.testsRun, this.cfg.passed, digestFiles(files))
+    // configured test). This never touches the fail-closed pass decision below.
+    const evidence = synthMockEvidence(this.cfg)
+    opts?.onEvidence?.(evidence)
+    // evidenceDigest is DERIVED from the SAME evidence reported above — purely additive,
+    // bound onto the result so the recorded verification is tamper-evident.
+    return brandResult(this.cfg.testsRun, this.cfg.passed, digestFiles(files), digestEvidence(evidence))
   }
 }
 
@@ -129,15 +140,18 @@ export function createRealTestRunner(deps: RealTestRunnerDeps): TestRunner {
       // ADDITIVE: report the structured evidence from the rich stats. `passed` here is
       // the run's REAL outcome (r.passed) for display — NOT the zeroed mint value below.
       // This side-channel cannot influence the branded result.
-      opts?.onEvidence?.(buildTestEvidence({
+      const evidence = buildTestEvidence({
         passed: r.passed,
         bdd: r.bdd,
         e2e: r.e2e,
         bddScenarios: r.bddScenarios,
         e2eScenarios: r.e2eScenarios,
-      }))
+      })
+      opts?.onEvidence?.(evidence)
       const testsRun = r.passed ? r.testsRun : 0
-      return brandResult(testsRun, r.passed, digestFiles(files))
+      // evidenceDigest is DERIVED from the SAME evidence reported above — additive
+      // tamper-evidence; it never feeds the fail-closed pass decision (r.passed/testsRun).
+      return brandResult(testsRun, r.passed, digestFiles(files), digestEvidence(evidence))
     },
   }
 }

@@ -35,9 +35,13 @@ import {
  * trust boundary (separate verifier process + signed results) remains deferred to
  * the sandboxed-execution sub-project.
  */
-function mint(sessionId: string, testsRun: number, passed: boolean, codeDigest: string): VerifyToken | null {
+function mint(sessionId: string, testsRun: number, passed: boolean, codeDigest: string, evidenceDigest: string): VerifyToken | null {
+  // SACRED fail-closed rule — UNCHANGED: a token mints ONLY on a genuine ≥1-test pass.
+  // `evidenceDigest` is DERIVED from the run's structured evidence and is PURELY ADDITIVE:
+  // it is carried onto an ALREADY-EARNED token (after this condition), never consulted by
+  // it, so it can never relax the gate (0-test / failed run → still null, no token).
   if (testsRun >= 1 && passed === true) {
-    return { sessionId, testsRun, codeDigest } as unknown as VerifyToken
+    return { sessionId, testsRun, codeDigest, evidenceDigest } as unknown as VerifyToken
   }
   return null
 }
@@ -78,7 +82,7 @@ function createVerifier(runner: TestRunner, demo: boolean): Verifier {
       // The evidence sink (opts.onEvidence) is forwarded to the runner UNCHANGED; the
       // mint below reads ONLY the branded result, so evidence can never affect minting.
       const r = await runner.run(files, opts)
-      return mint(sessionId, r.testsRun, r.passed, r.codeDigest)
+      return mint(sessionId, r.testsRun, r.passed, r.codeDigest, r.evidenceDigest)
     },
   }
 }

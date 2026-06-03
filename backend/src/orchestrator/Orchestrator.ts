@@ -8,6 +8,8 @@ import type { SharedContext } from '@akis/shared'
 import type { OrchestratorServices } from '../di/services.js'
 import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
+import { signPassport } from '../verify/passport.js'
+import type { BuildPassport, VerifyToken } from '@akis/shared'
 
 export interface StartInput { idea: string; ownerId?: string }
 
@@ -222,7 +224,13 @@ export class Orchestrator {
     const evidencePatch = evidence ? { testEvidence: evidence } : {}
     if (token) {
       const verified = await this.s.store.recordVerification(id, token, session.version)
-      session = await this.s.store.update(id, { status: 'awaiting_push_confirm', ...evidencePatch }, verified.version)
+      // ADDITIVE, OFF the gate path: produce the durable, third-party-verifiable Build
+      // Passport. It is signed AFTER the token was already minted+persisted, over the
+      // token's ALREADY-MINTED facts — so it can only ATTEST verification, never mint or
+      // forge it. Folded into the SAME non-gate update patch (the gate-write allowlist is
+      // unchanged); no-op when no signer is configured (default boot unchanged).
+      const passportPatch = this.signPassportFor(token)
+      session = await this.s.store.update(id, { status: 'awaiting_push_confirm', ...evidencePatch, ...passportPatch }, verified.version)
       this.emitGate(id, 'push_confirm', 'awaiting')
     } else {
       // Persist the structured failure evidence alongside the status reset, so a FAILED
@@ -232,6 +240,21 @@ export class Orchestrator {
       this.narrate(id, '⚠️ Not verified — no real passing test was produced.')
     }
     return session
+  }
+
+  /** Sign a durable Build Passport over an ALREADY-MINTED VerifyToken's facts. Returns a
+   *  patch fragment ({ passport }) to fold into the normal (non-gate) update, or {} when no
+   *  signer is configured. PURE attestation: it reads only the token's already-earned facts;
+   *  it can never mint/forge verification. The orchestrator holds the private key but it is
+   *  reachable ONLY via the signer's sign path — never logged, never returned. */
+  private signPassportFor(token: VerifyToken): { passport?: BuildPassport } {
+    const signer = this.s.passportSigner
+    if (!signer) return {}
+    const passport = signPassport(
+      { sessionId: token.sessionId, testsRun: token.testsRun, codeDigest: token.codeDigest, evidenceDigest: token.evidenceDigest },
+      signer,
+    )
+    return { passport }
   }
 
   async confirmPush(id: string): Promise<SessionState> {
