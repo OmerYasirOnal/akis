@@ -29,6 +29,26 @@ describe('loadEnvFile — BYO dotenv loader', () => {
     expect(env.AI_PROVIDER).toBe('openai')
   })
 
+  it('strips an unquoted trailing inline comment (dotenv-standard)', () => {
+    const env: NodeJS.ProcessEnv = {}
+    const file = write(['AI_MODEL=claude-opus # default', 'BARE=value #c', 'NOSPACE=v', 'EMPTY= # only a comment'].join('\n'))
+    loadEnvFile(file, env)
+    expect(env.AI_MODEL).toBe('claude-opus') // trailing ` # default` stripped, value re-trimmed
+    expect(env.BARE).toBe('value')
+    expect(env.NOSPACE).toBe('v')
+    expect(env.EMPTY).toBe('')               // comment-only value collapses to empty
+  })
+
+  it('keeps `#` intact inside quoted values (it can be a legitimate secret/URL char)', () => {
+    const env: NodeJS.ProcessEnv = {}
+    const file = write(['SECRET="a#b"', "FRAG='http://h/p#frag'", 'QUOTED="v" # trailing', "HASHVAL=a#b"].join('\n'))
+    loadEnvFile(file, env)
+    expect(env.SECRET).toBe('a#b')                 // quoted: `#` preserved, quotes stripped
+    expect(env.FRAG).toBe('http://h/p#frag')       // quoted: fragment preserved
+    expect(env.QUOTED).toBe('v')                   // quoted value, trailing comment after close-quote stripped
+    expect(env.HASHVAL).toBe('a#b')                // unquoted `#` with no preceding space is part of the value
+  })
+
   it('tolerates values a shell source would choke on (commas, URLs, spaces)', () => {
     const env: NodeJS.ProcessEnv = {}
     const file = write('DATABASE_URL=postgres://u:p@h:5432/db?x=1\nCORS=http://a,http://b\nNOTE=hello world')
