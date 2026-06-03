@@ -41,7 +41,7 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     const messages: Record<string, unknown>[] = [{ role: 'system', content: req.system }]
     for (const m of req.messages) messages.push(this.mapMessage(m))
 
-    const body: Record<string, unknown> = { model: req.model || this.model, messages } // `||`: empty per-agent model falls back, never sends ""
+    const body: Record<string, unknown> = { model: req.model?.trim() || this.model, messages } // trim+`||`: empty/blank model falls back, never sends "" / "  "
     if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens
     if (req.temperature !== undefined) body.temperature = req.temperature
     if (req.tools?.length) {

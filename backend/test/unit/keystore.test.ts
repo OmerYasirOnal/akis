@@ -45,4 +45,21 @@ describe('JsonFileKeyStore', () => {
     const raw = require('node:fs').readFileSync(file, 'utf8')
     expect(raw).not.toContain('sk-ant-PLAINTEXT')
   })
+  it('get() returns undefined (NEVER throws) when the master key was rotated — so boot cannot crash', () => {
+    new JsonFileKeyStore(file, MASTER).set('anthropic', 'sk-ant-12345')
+    const rotated = new JsonFileKeyStore(file, '1'.repeat(64)) // different master → undecryptable row
+    expect(() => rotated.get('anthropic')).not.toThrow()
+    expect(rotated.get('anthropic')).toBeUndefined()
+  })
+  it('get() returns undefined (NEVER throws) when the master key is empty/unset', () => {
+    new JsonFileKeyStore(file, MASTER).set('openai', 'sk-x')
+    const noMaster = new JsonFileKeyStore(file, '') // AI_KEY_ENCRYPTION_KEY unset → defaults to ''
+    expect(() => noMaster.get('openai')).not.toThrow()
+    expect(noMaster.get('openai')).toBeUndefined()
+  })
+  it('status reports NOT configured for an undecryptable row (no split-brain with /api/providers)', () => {
+    new JsonFileKeyStore(file, MASTER).set('anthropic', 'sk-ant-12345')
+    const rotated = new JsonFileKeyStore(file, '1'.repeat(64))
+    expect(rotated.status('anthropic').configured).toBe(false)
+  })
 })
