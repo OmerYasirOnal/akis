@@ -1,4 +1,4 @@
-import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken, TestEvidence } from '@akis/shared'
+import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken, TestEvidence, BuildPassport } from '@akis/shared'
 import type { SessionStore, SessionPatch } from './SessionStore.js'
 import type { SqlClient } from './pg.js'
 
@@ -22,11 +22,11 @@ export class PgSessionStore implements SessionStore {
 
   async create(s: SessionState): Promise<void> {
     await this.db.query(
-      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
       [
         s.id, s.status, s.idea, s.ownerId ?? null,
-        toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken), toJson(s.testEvidence),
+        toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken), toJson(s.testEvidence), toJson(s.passport),
         s.version,
       ],
     )
@@ -54,10 +54,11 @@ export class PgSessionStore implements SessionStore {
     ['spec', 'spec'],
     ['code', 'code'],
     ['testEvidence', 'test_evidence'],
+    ['passport', 'passport'],
   ]
 
   /** Columns whose value is a nested object stored as jsonb (must be passed through toJson). */
-  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence'])
+  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport'])
 
   async update(id: string, patch: SessionPatch, expectedVersion: number): Promise<SessionState> {
     const sets: string[] = []
@@ -128,7 +129,7 @@ function toJson(v: unknown): unknown {
  *  already parsed by `pg` into JS objects). */
 interface SessionRow {
   id: unknown; status: unknown; idea: unknown; owner_id: unknown
-  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; version: unknown
+  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; version: unknown
 }
 
 /**
@@ -154,6 +155,9 @@ function toSession(raw: Record<string, unknown>): SessionState {
     ...(r.code != null ? { code: r.code as CodeArtifact } : {}),
     // ADDITIVE, NON-GATE: plain jsonb round-trip (no brand to re-attach), so no audited cast.
     ...(r.test_evidence != null ? { testEvidence: r.test_evidence as TestEvidence } : {}),
+    // ADDITIVE, NON-GATE: the signed Build Passport round-trips as plain jsonb (the Ed25519
+    // signature lives INSIDE it; nothing to re-attach), so it persists on Postgres too.
+    ...(r.passport != null ? { passport: r.passport as BuildPassport } : {}),
     ...(r.approval != null ? { approval: r.approval as unknown as ApprovalToken } : {}),
     ...(r.verify_token != null ? { verifyToken: r.verify_token as unknown as VerifyToken } : {}),
   }
