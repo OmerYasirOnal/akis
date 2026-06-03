@@ -123,6 +123,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
     })
     let aborted = false
     raw.on('close', () => { aborted = true }) // client navigated away — stop pushing
+    // An async socket error (EPIPE/ECONNRESET when the client drops mid-stream) with NO listener
+    // becomes an UNCAUGHT exception that crashes the process — mirror the agent live stream's guard.
+    raw.on('error', () => { aborted = true })
     const safeWrite = (chunk: string): void => { if (!aborted) { try { raw.write(chunk) } catch { aborted = true } } }
 
     try {
