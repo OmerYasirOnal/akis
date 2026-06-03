@@ -78,7 +78,9 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         else v.gates.pushConfirm = { gate: 'push_confirm', state: e.state }
         break
       case 'verify':
-        v.tests = { ...v.tests, testsRun: e.testsRun, passed: e.passed, ran: true }
+        // Carry the optional `demo` annotation (P1-CORE-1): true ⇔ the result came from the
+        // mock/injected runner (simulated verification), so the UI marks it at the result.
+        v.tests = { ...v.tests, testsRun: e.testsRun, passed: e.passed, ran: true, ...(e.demo ? { demo: true } : {}) }
         break
       case 'code_review':
         // Critic's read-only verdict (last wins across iterations). Automatic, not a gate.
@@ -90,11 +92,13 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         break
       case 'preview_status':
         // Live local-preview lifecycle: 'ready' → embed the same-origin /preview/:id app.
+        // `demo` (P1-CORE-1) sticks once seen so the badge persists across lifecycle frames.
         v.preview = {
           ...v.preview,
           ready: e.status === 'ready',
           starting: e.status === 'starting',
           ...(e.url !== undefined ? { url: e.url } : {}),
+          ...(e.demo ? { demo: true } : {}),
         }
         break
       case 'test_stats':
