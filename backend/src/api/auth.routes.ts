@@ -4,6 +4,7 @@ import { hashPassword, verifyPassword } from '../auth/password.js'
 import { verifyJwt, signResetToken, verifyResetToken } from '../auth/jwt.js'
 import { serializeCookie, parseCookies, type CookieConfig } from '../auth/cookie.js'
 import { setSessionCookie } from '../auth/session.js'
+import { NoopMailer, type Mailer } from '../mail/Mailer.js'
 
 export interface AuthDeps {
   users: UserStorePort
@@ -13,6 +14,13 @@ export interface AuthDeps {
   /** Dev convenience: echo the password-reset token/link in the response (no email
    *  service). MUST be false in production (would leak a reset capability). */
   devEcho?: boolean
+  /** Optional mailer seam (P5-OPS-1). When a real (SMTP) mailer is configured the reset
+   *  LINK is emailed and the dev-echo is suppressed. Absent / NoopMailer ⇒ today's
+   *  dev-echo behavior is preserved exactly. */
+  mailer?: Mailer
+  /** Absolute browser origin (PUBLIC_BASE_URL) used to build the emailed reset link.
+   *  When unset the link stays a relative path (today's dev-echo shape). */
+  publicBaseUrl?: string
 }
 
 export class UnauthorizedError extends Error { constructor() { super('unauthorized'); this.name = 'UnauthorizedError' } }
@@ -39,6 +47,9 @@ function setSession(reply: FastifyReply, user: PublicUser, deps: AuthDeps): void
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
+  // A "real" mailer (SMTP) is configured ⇒ email the reset link AND suppress the dev-echo.
+  // The NoopMailer default (and an absent mailer) keep today's dev-echo behavior exactly.
+  const mailEnabled = deps.mailer !== undefined && !(deps.mailer instanceof NoopMailer)
   app.post<{ Body: { name?: unknown; email?: unknown; password?: unknown } }>('/auth/signup', async (req, reply) => {
     const name = isStr(req.body?.name) ? req.body.name.trim() : ''
     const email = isStr(req.body?.email) ? req.body.email.trim() : ''
@@ -120,8 +131,19 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     const user = await deps.users.findByEmail(email)
     if (user) {
       const token = signResetToken(user.id, deps.secret) // 15-min, purpose-scoped
-      // No email service here: in DEV, echo the link so the flow is usable. NEVER in prod.
-      if (deps.devEcho) { generic.resetToken = token; generic.resetUrl = `/reset-password?token=${encodeURIComponent(token)}` }
+      const path = `/reset-password?token=${encodeURIComponent(token)}`
+      // Deliver the link by email when a real mailer is configured (P5-OPS-1). The send is
+      // best-effort: a mail failure is SWALLOWED so the response stays byte-identical
+      // whether or not delivery succeeded (no enumeration via a 500 or a slow path).
+      // The token/link is NEVER logged on this path.
+      if (mailEnabled) {
+        const resetUrl = deps.publicBaseUrl ? `${deps.publicBaseUrl}${path}` : path
+        try { await deps.mailer!.sendResetLink({ to: user.email, resetUrl }) } catch { /* swallow: mail outage must not leak */ }
+      } else if (deps.devEcho) {
+        // No mailer configured: keep today's DEV-only echo so the flow is usable. NEVER in prod.
+        generic.resetToken = token
+        generic.resetUrl = path
+      }
     }
     return reply.send(generic)
   })

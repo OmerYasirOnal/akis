@@ -19,6 +19,8 @@ import { Bm25Index } from '../knowledge/store/Bm25Index.js'
 import { activeEmbeddingDim } from '../knowledge/embedding/ApiEmbeddingProvider.js'
 import type { VectorStore } from '../knowledge/store/VectorStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
+import { selectMailer } from '../mail/selectMailer.js'
+import type { Mailer } from '../mail/Mailer.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
 import { registerChatRoutes } from './chat.routes.js'
@@ -55,6 +57,9 @@ export interface ServerDeps {
   workflowStore?: WorkflowStorePort
   /** User store for auth (in-memory by default; a PgUserStore when DATABASE_URL is set). */
   userStore?: UserStorePort
+  /** Mailer seam (P5-OPS-1). Defaults to env-driven `selectMailer` — a NoopMailer unless
+   *  SMTP is configured, so the default boot is unchanged. Injectable for tests. */
+  mailer?: Mailer
   /** Session store (MockSessionStore by default; a PgSessionStore when DATABASE_URL is
    *  set). Injected so the durable store flows through buildServices unchanged. */
   sessionStore?: SessionStore
@@ -259,7 +264,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator, userIdOf })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   registerWorkflowRoutes(app, { store: workflowStore })
-  registerAuthRoutes(app, { users: userStore, secret: authSecret, cookie, devEcho: env.NODE_ENV !== 'production' })
+  // Mailer seam (P5-OPS-1): a NoopMailer unless SMTP is configured (default boot unchanged).
+  // When a real mailer is configured the reset LINK is emailed (dev-echo suppressed); the
+  // emailed link uses PUBLIC_BASE_URL so it is clickable.
+  const mailer = deps.mailer ?? selectMailer(env)
+  registerAuthRoutes(app, {
+    users: userStore, secret: authSecret, cookie, devEcho: env.NODE_ENV !== 'production', mailer,
+    ...(trustedOrigin ? { publicBaseUrl: trustedOrigin } : {}),
+  })
   registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env })
   registerAnalyticsRoutes(app, { stats })
   registerChatRoutes(app, { provider: services.provider })

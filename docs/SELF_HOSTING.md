@@ -226,6 +226,51 @@ Back up `akis_config` the same way if you saved provider keys via the Settings U
 
 ---
 
+## Password-reset email (optional)
+
+By default AKIS does **not** send email. `POST /auth/forgot-password` mints a
+short-lived (15-minute) reset token and, in **dev only**, echoes the reset link in the
+response so the flow is usable without a mail server; in production no link is surfaced.
+
+To deliver the reset **link by email** instead, configure a mailer. Set `AKIS_MAIL_FROM`
+plus **either** a one-line `AKIS_SMTP_URL` **or** the discrete `AKIS_SMTP_HOST`/`PORT`/
+`USER`/`PASS` set:
+
+```bash
+AKIS_MAIL_FROM="AKIS <noreply@you.dev>"          # required to enable
+AKIS_SMTP_URL=smtps://user:pass@smtp.you.dev:465  # smtps ⇒ implicit TLS (recommended)
+# — or, equivalently —
+# AKIS_SMTP_HOST=smtp.you.dev
+# AKIS_SMTP_PORT=465
+# AKIS_SMTP_USER=user
+# AKIS_SMTP_PASS=pass
+PUBLIC_BASE_URL=https://app.you.dev               # makes the emailed link clickable
+```
+
+| Variable          | Purpose |
+| ----------------- | ------- |
+| `AKIS_MAIL_FROM`  | **Required to enable.** Envelope + header `From`. With it **unset** the mailer is the default no-op (dev-echo preserved). |
+| `AKIS_SMTP_URL`   | One-line relay `smtp://…:587` (plaintext) or `smtps://…:465` (implicit TLS). |
+| `AKIS_SMTP_HOST` / `AKIS_SMTP_PORT` / `AKIS_SMTP_USER` / `AKIS_SMTP_PASS` | Discrete relay config (used when `AKIS_SMTP_URL` is unset). `465` ⇒ TLS. |
+| `AKIS_SMTP_SECURE` | `1` forces implicit TLS regardless of port. |
+
+Behavior and safety guarantees:
+
+- **Configured ⇒ the link is emailed and the dev-echo is suppressed** (the token never
+  appears in the HTTP response). **Unconfigured ⇒ byte-for-byte today's behavior.**
+- The `forgot-password` response is **enumeration-safe**: the same
+  `"If that email has an account, a reset link has been sent."` body is returned whether
+  or not the email exists, and whether or not mail delivery succeeded (a mail outage is
+  swallowed — it never becomes a 500 or a slow path that reveals account existence).
+- The reset **token / link is never logged**, and the SMTP password is sent only inside
+  the `AUTH` exchange (never logged).
+- The mailer is **always a no-op under `NODE_ENV=test`** (tests/CI never send mail). A
+  malformed config (e.g. a garbage `AKIS_SMTP_URL`) falls back to the no-op rather than
+  breaking boot. **STARTTLS is not implemented** — use an implicit-TLS (`smtps` / 465)
+  submission endpoint for a remote relay.
+
+---
+
 ## Upgrading
 
 ```bash
