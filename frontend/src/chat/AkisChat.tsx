@@ -16,6 +16,13 @@ import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } fro
  * and the spec is promoted to a <SpecCard> with a one-click Approve → `onBuild(spec)`,
  * which reuses the existing build path (no copy-paste).
  *
+ * Streaming: the reply is streamed token-by-token (POST /api/chat/stream) into a live
+ * assistant PLACEHOLDER that updates as deltas arrive, so the chat feels alive instead
+ * of frozen behind one await. Spec detection (extractBuildSpec/hasTruncatedSpec) runs on
+ * the ACCUMULATED text every render, so the Build card appears the instant the akis-spec
+ * fence closes. If streaming fails (unsupported provider, a mid-stream drop, an SSE error
+ * frame), it FALLS BACK to the proven non-stream await path — degrading gracefully.
+ *
  * Resilience: a provider 502 / network failure / empty reply renders as a DISTINCT error
  * row (role="alert", rose styling) with a Retry button — never as a faked AK answer — and
  * error rows are EXCLUDED from the history replayed to /api/chat, so a failure can't poison
@@ -24,10 +31,19 @@ import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } fro
  * page reload. A truncated spec (opening fence, no close) shows an honest "ask AKIS to
  * resend it" notice instead of rendering a half spec as prose with no Build card.
  */
+/** The in-flight streaming placeholder carries a transient `streaming` flag — UI-only,
+ *  never persisted to localStorage nor replayed as history (stripped before both). */
+type ChatMsg = AkisMsg & { streaming?: boolean }
+
+/** Drop the live streaming placeholder (used on finalize + on a stream failure). */
+function dropPlaceholder(msgs: ChatMsg[]): ChatMsg[] {
+  return msgs.filter(m => !m.streaming)
+}
+
 export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: string) => void }) {
   const { t } = useI18n()
   const greeting = t('akis.greeting')
-  const [msgs, setMsgs] = useState<AkisMsg[]>(() => {
+  const [msgs, setMsgs] = useState<ChatMsg[]>(() => {
     const saved = loadThread()
     return saved.length ? saved : [{ role: 'assistant', content: greeting }]
   })
@@ -40,7 +56,9 @@ export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: st
   const stickToBottom = useRef(true) // false once the user scrolls up (auto-scroll guard)
 
   // Persist the whole thread on every change so it survives a build start + reload.
-  useEffect(() => { saveThread(msgs) }, [msgs])
+  // Strip the transient streaming placeholder/flag so a reload never restores a
+  // half-streamed "in-flight" bubble (the flag is UI-only state).
+  useEffect(() => { saveThread(dropPlaceholder(msgs).map(({ role, content }) => ({ role, content }))) }, [msgs])
 
   // Autofocus the composer on mount so the user can start typing immediately.
   useEffect(() => { inputRef.current?.focus() }, [])
@@ -56,26 +74,72 @@ export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: st
     if (el) stickToBottom.current = isNearBottom(el) // follow only while at the bottom
   }
 
-  // Send `text` to AKIS, appending an error ROW (not a fake AK reply) on any failure.
+  // Turn a thrown error into the row text we show (401 routes globally; ApiError vs network).
+  const errorText = (err: unknown): string =>
+    ApiError.is(err) && err.status === 401
+      ? t('akis.error.unauthorized')
+      : ApiError.is(err)
+        ? `(${err.code ?? 'error'}) ${err.message}`
+        : t('akis.error.network')
+
+  // Finalize a streamed turn: replace the live placeholder with the authoritative full
+  // reply (so spec detection runs on the trusted text), or an error row if it came back
+  // empty. Drops the placeholder entirely when `reply` is empty so no blank bubble lingers.
+  const finalize = (reply: string): void => {
+    const clean = (reply ?? '').trim()
+    setMsgs(m => {
+      const next = dropPlaceholder(m)
+      return clean
+        ? [...next, { role: 'assistant', content: clean }]
+        : [...next, { role: 'error', content: t('akis.error.empty') }]
+    })
+  }
+
+  // Send `text` to AKIS, STREAMING the reply into a live placeholder that updates as
+  // deltas arrive. On any stream failure, fall back to the non-stream await path; only
+  // if THAT also fails do we append an error ROW (never a faked AK reply). The history
+  // replayed to the provider is computed BEFORE the placeholder is added, and `busy`
+  // blocks a second send until this resolves — so an in-flight placeholder never leaks
+  // into history (and error rows stay excluded, per historyForApi).
   const ask = async (text: string): Promise<void> => {
     if (busy) return
     lastUser.current = text
     setBusy(true)
+    const history = historyForApi(msgs, greeting)
     try {
-      const history = historyForApi(msgs, greeting)
-      const { reply } = await api.chatWithAkis(text, history)
-      const clean = (reply ?? '').trim()
-      setMsgs(m => clean
-        ? [...m, { role: 'assistant', content: clean }]
-        : [...m, { role: 'error', content: t('akis.error.empty') }])
-    } catch (err) {
-      // A 401 is handled globally (clear user + route to login); surface a brief note.
-      const text = ApiError.is(err) && err.status === 401
-        ? t('akis.error.unauthorized')
-        : ApiError.is(err)
-          ? `(${err.code ?? 'error'}) ${err.message}`
-          : t('akis.error.network')
-      setMsgs(m => [...m, { role: 'error', content: text }])
+      // Open a placeholder; each delta appends to its content (live incremental render).
+      setMsgs(m => [...m, { role: 'assistant', content: '', streaming: true }])
+      const onDelta = (delta: string): void => {
+        if (!delta) return
+        setMsgs(m => {
+          const i = m.findIndex(x => x.streaming)
+          if (i === -1) return m
+          const next = [...m]
+          next[i] = { ...next[i]!, content: next[i]!.content + delta }
+          return next
+        })
+      }
+      const { reply } = await api.chatWithAkisStream(text, history, onDelta)
+      finalize(reply)
+    } catch (streamErr) {
+      // Streaming failed (provider lacks it, a mid-stream drop, or an SSE `error` frame):
+      // drop the partial placeholder and degrade to the proven non-stream await path.
+      setMsgs(m => dropPlaceholder(m))
+      // A 401 already routed to login (ApiClient fired onUnauthorized) — don't replay the
+      // non-stream call (it would just 401 again); show the brief notice row directly.
+      if (ApiError.is(streamErr) && streamErr.status === 401) {
+        setMsgs(m => [...m, { role: 'error', content: errorText(streamErr) }])
+      } else {
+        try {
+          const { reply } = await api.chatWithAkis(text, history)
+          const clean = (reply ?? '').trim()
+          setMsgs(m => clean
+            ? [...m, { role: 'assistant', content: clean }]
+            : [...m, { role: 'error', content: t('akis.error.empty') }])
+        } catch (err) {
+          setMsgs(m => [...m, { role: 'error', content: errorText(err) }])
+        }
+      }
     } finally { setBusy(false) }
   }
 
@@ -128,8 +192,12 @@ export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: st
             )
           }
           // A build-ready spec is detected only when onBuild is wired (the studio flow).
+          // Spec detection runs on the ACCUMULATED placeholder text, so the SpecCard appears
+          // the instant the akis-spec fence closes mid-stream.
           const detected = onBuild ? extractBuildSpec(m.content) : null
-          const truncated = onBuild ? hasTruncatedSpec(m.content) : false
+          // Suppress the "truncated" notice WHILE streaming — an open-but-not-yet-closed
+          // fence is normal mid-stream, not a real truncation (avoids a flicker).
+          const truncated = onBuild && !m.streaming ? hasTruncatedSpec(m.content) : false
           return (
             <div key={i} className="flex items-start gap-3">
               <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>

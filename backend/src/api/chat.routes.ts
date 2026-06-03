@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify'
 import type { LlmProvider } from '../agent/LlmProvider.js'
+import { sseControl } from './sse.js'
 
 /**
  * AKIS's conversational persona — the orchestrator talking to the user directly.
@@ -62,27 +63,91 @@ export const CHAT_MAX_TOKENS = 8192
 export interface ChatDeps { provider: LlmProvider }
 
 /**
+ * Sanitize + assemble the provider messages for an AKIS chat turn. SHARED by the
+ * stream + non-stream routes so both apply the SAME guards: drop malformed entries,
+ * keep only user/assistant roles (no injected `system`), cap to the last MAX_HISTORY
+ * turns, append the new user message, then `alternating()` to keep the payload
+ * STRICTLY alternating (Anthropic/Gemini 400 on two consecutive same-role turns).
+ */
+function assembleMessages(message: string, rawHistoryInput: unknown): ChatMsg[] {
+  const rawHistory = Array.isArray(rawHistoryInput) ? rawHistoryInput : []
+  const history = rawHistory
+    .filter((m): m is { role: string; content: string } => !!m && typeof m === 'object' && isStr((m as { role?: unknown }).role) && isStr((m as { content?: unknown }).content))
+    .filter(m => ROLES.has(m.role))
+    .slice(-MAX_HISTORY)
+    .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+  return alternating([...history, { role: 'user', content: message }])
+}
+
+/**
  * POST /api/chat — a free-form conversation WITH AKIS (distinct from the build flow).
  * Stateless: the client sends the recent history; AKIS replies in persona via the
  * same provider that powers the agents. Caps history to bound token use.
+ *
+ * POST /api/chat/stream is the SSE sibling — same persona/assembly/budget, but text
+ * deltas are pushed as they arrive so the UI feels alive. Both routes coexist; the FE
+ * uses the stream and falls back to /api/chat on any stream error / unsupported provider.
  */
 export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
   app.post<{ Body: { message?: unknown; history?: unknown } }>('/api/chat', async (req, reply) => {
     const message = isStr(req.body?.message) ? req.body.message.trim() : ''
     if (!message) return reply.code(400).send({ error: 'message required', code: 'BadRequest' })
-    const rawHistory = Array.isArray(req.body?.history) ? req.body!.history : []
-    const history = rawHistory
-      .filter((m): m is { role: string; content: string } => !!m && typeof m === 'object' && isStr((m as { role?: unknown }).role) && isStr((m as { content?: unknown }).content))
-      .filter(m => ROLES.has(m.role))
-      .slice(-MAX_HISTORY)
-      .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
+    const messages = assembleMessages(message, req.body?.history)
     try {
-      const res = await deps.provider.chat({ system: AKIS_PERSONA, messages: alternating([...history, { role: 'user', content: message }]), maxTokens: CHAT_MAX_TOKENS })
+      const res = await deps.provider.chat({ system: AKIS_PERSONA, messages, maxTokens: CHAT_MAX_TOKENS })
       // Return the reply verbatim (trimmed). An empty reply is surfaced HONESTLY as '' so the
       // UI can show a real "empty reply" notice — never disguised as a friendly '…' answer.
       return reply.send({ reply: (res.text ?? '').trim() })
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : 'chat failed', code: 'ProviderError' })
+    }
+  })
+
+  // POST /api/chat/stream — token-by-token SSE. Frames: `delta` ({text}) per chunk,
+  // a terminal `done` ({reply}) carrying the full assembled reply (so the FE re-runs
+  // spec detection on the authoritative text), or `error` ({message,code}) on failure.
+  app.post<{ Body: { message?: unknown; history?: unknown } }>('/api/chat/stream', async (req, reply) => {
+    const message = isStr(req.body?.message) ? req.body.message.trim() : ''
+    if (!message) return reply.code(400).send({ error: 'message required', code: 'BadRequest' })
+    const messages = assembleMessages(message, req.body?.history)
+    const chatReq = { system: AKIS_PERSONA, messages, maxTokens: CHAT_MAX_TOKENS }
+
+    // Take over the socket and stream on reply.raw (mirrors the agent live stream).
+    reply.hijack()
+    const raw = reply.raw
+    raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+      'X-Accel-Buffering': 'no', // disable proxy buffering so deltas flush immediately
+    })
+    let aborted = false
+    raw.on('close', () => { aborted = true }) // client navigated away — stop pushing
+    const safeWrite = (chunk: string): void => { if (!aborted) { try { raw.write(chunk) } catch { aborted = true } } }
+
+    try {
+      let full = ''
+      const onDelta = (delta: string): void => {
+        if (aborted || !delta) return
+        full += delta
+        safeWrite(sseControl('delta', { text: delta }))
+      }
+      // Use the streaming seam when the provider supports it; otherwise fall back to
+      // chat() and emit its whole reply as a single delta (graceful degradation).
+      let res
+      if (deps.provider.chatStream) {
+        res = await deps.provider.chatStream(chatReq, onDelta)
+      } else {
+        res = await deps.provider.chat(chatReq)
+        onDelta((res.text ?? ''))
+      }
+      // Prefer the assembled stream text; fall back to the result text (single-shot path).
+      const finalReply = (full || res.text || '').trim()
+      safeWrite(sseControl('done', { reply: finalReply }))
+    } catch (err) {
+      safeWrite(sseControl('error', { message: err instanceof Error ? err.message : 'chat failed', code: 'ProviderError' }))
+    } finally {
+      if (!aborted) { try { raw.end() } catch { /* socket already gone */ } }
     }
   })
 }

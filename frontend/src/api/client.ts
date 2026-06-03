@@ -135,6 +135,68 @@ export class ApiClient {
   chatWithAkis(message: string, history: { role: 'user' | 'assistant'; content: string }[] = []): Promise<{ reply: string }> {
     return this.json('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, history }) })
   }
+
+  /**
+   * Streaming variant of {@link chatWithAkis}: POST /api/chat/stream and consume the SSE
+   * frames, calling `onDelta(text)` per `delta` frame as it arrives (so the UI feels
+   * alive). Resolves with the FULL assembled reply from the terminal `done` frame (used
+   * to re-run spec detection on the authoritative text). Throws an ApiError on a non-ok
+   * status OR an `error` frame, AND on a 401 it routes to login like every other call —
+   * so the caller (AkisChat) can fall back to the non-stream await path on any failure.
+   */
+  async chatWithAkisStream(
+    message: string,
+    history: { role: 'user' | 'assistant'; content: string }[],
+    onDelta: (delta: string) => void,
+  ): Promise<{ reply: string }> {
+    const res = await this.fetchFn(this.baseUrl + '/api/chat/stream', {
+      method: 'POST', credentials: 'include',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({ message, history }),
+    })
+    if (!res.ok) {
+      if (res.status === 401) this.onUnauthorized?.()
+      const b = await res.json().catch(() => ({})) as { error?: string; code?: string }
+      throw new ApiError(res.status, b.error ?? `HTTP ${res.status}`, b.code)
+    }
+    if (!res.body) throw new ApiError(0, 'streaming response had no body', 'NoBody')
+
+    const reader = res.body.getReader()
+    const decoder = new TextDecoder()
+    let buf = ''
+    let reply: string | undefined
+    let streamErr: ApiError | undefined
+    // Parse one complete SSE frame: read its `event:` + JSON `data:` and dispatch.
+    const handleFrame = (frame: string): void => {
+      let event = 'message'
+      let dataLine = ''
+      for (const line of frame.split('\n')) {
+        const l = line.trimStart()
+        if (l.startsWith('event:')) event = l.slice(6).trim()
+        else if (l.startsWith('data:')) dataLine = l.slice(5).trim()
+      }
+      if (!dataLine) return
+      let data: { text?: string; reply?: string; message?: string; code?: string }
+      try { data = JSON.parse(dataLine) } catch { return } // ignore malformed frame
+      if (event === 'delta' && typeof data.text === 'string') onDelta(data.text)
+      else if (event === 'done') reply = typeof data.reply === 'string' ? data.reply : ''
+      else if (event === 'error') streamErr = new ApiError(502, data.message ?? 'chat failed', data.code ?? 'ProviderError')
+    }
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      let idx: number
+      while ((idx = buf.search(/\r?\n\r?\n/)) !== -1) {
+        const frame = buf.slice(0, idx)
+        buf = buf.slice(idx + (buf[idx] === '\r' ? 4 : 2))
+        if (frame.trim()) handleFrame(frame)
+      }
+    }
+    if (buf.trim()) handleFrame(buf) // a final frame with no trailing blank line
+    if (streamErr) throw streamErr
+    return { reply: reply ?? '' }
+  }
   listProviders(): Promise<ProviderInfo[]> { return this.json<ProviderInfo[]>('/api/providers') }
   /** Save a provider API key (stored encrypted server-side; response never echoes it). */
   setProviderKey(provider: string, apiKey: string): Promise<{ provider: string; last4: string }> {
