@@ -745,7 +745,7 @@ export const STRINGS = {
     'docs.v2.chat.title': 'AKIS’e sor & Sohbetten İnşa',
     'docs.v2.chat.lead': 'Bir geliştirme başlamadan önce boş Stüdyo, AKIS ile serbest bir sohbettir. Nasıl çalıştığını sor, kabaca bir fikir şekillendir veya istemini ifade etmekte yardım al.',
     'docs.v2.chat.p1': 'AKIS’e sor, ajanlarla aynı sağlayıcı tarafından desteklenen, orkestratör personasıyla durumsuz bir sohbettir. Hiçbir şeyi kendisinin inşa ettiğini iddia etmez — o, hattın işidir.',
-    'docs.v2.chat.p2': 'Sohbetten İnşa (geliyor), AKIS’in sohbette doğrudan inşaya hazır bir spec sunmasını sağlar: güzelce görünür, indirebilirsin ve tek onayla tüm hat o spec ile çalışır — kopyala-yapıştır yok. Spec güvenilmeyen girdi olarak ele alınır ve yine dört kapının tamamından geçer.',
+    'docs.v2.chat.p2': 'Sohbetten İnşa (açılış), AKIS’in sohbette doğrudan inşaya hazır bir spec sunmasını sağlar: güzelce görünür, indirebilirsin ve tek onayla tüm hat o spec ile çalışır — kopyala-yapıştır yok. Spec güvenilmeyen girdi olarak ele alınır ve yine dört kapının tamamından geçer.',
     // Bölüm: iş akışları
     'docs.v2.workflows.title': 'İş Akışları',
     'docs.v2.workflows.lead': 'İş akışları, bir geliştirmeyi başlatan tipli, sürümlü ön ayarlardır — hangi ajanların etkin olduğu, ajan başına model, kapı politikası, yineleme bütçesi ve bilgi getirme. Birini bestecide seç.',
