@@ -87,6 +87,11 @@ export const STRINGS = {
     'akis.thinking': 'AKIS is thinking…',
     'akis.ask': 'Ask AKIS anything…',
     'akis.send': 'Ask',
+    // ── Chat-to-Build: AKIS-authored spec card ──
+    'spec.card.title': 'Build-ready spec',
+    'spec.card.hint': 'Review it, then approve to run the full agent pipeline.',
+    'spec.download': 'Download .md',
+    'spec.build': 'Approve & Build',
     'roster.title': 'AKIS agents',
     'roster.status.idle': 'idle',
     'roster.status.working': 'working',
@@ -379,6 +384,11 @@ export const STRINGS = {
     'akis.thinking': 'AKIS düşünüyor…',
     'akis.ask': 'AKIS’e bir şey sor…',
     'akis.send': 'Sor',
+    // ── Sohbetten-İnşaya: AKIS’in yazdığı spec kartı ──
+    'spec.card.title': 'İnşaya hazır spec',
+    'spec.card.hint': 'Gözden geçir, sonra onayla — tüm ajan hattını çalıştırır.',
+    'spec.download': '.md indir',
+    'spec.build': 'Onayla & Build',
     'roster.title': 'AKIS ajanları',
     'roster.status.idle': 'beklemede',
     'roster.status.working': 'çalışıyor',
