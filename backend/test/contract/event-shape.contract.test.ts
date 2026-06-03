@@ -25,6 +25,20 @@ describe('CONTRACT: AkisEvent union shape (frozen)', () => {
     expectTypeOf<KindOf<'verify'>>().toMatchTypeOf<{ testsRun: number; passed: boolean }>()
   })
 
+  it('P1-CORE-1: verify + preview_status carry an ADDITIVE optional `demo` annotation', () => {
+    // The freeze stays intact: `demo` is OPTIONAL (informational only), so the structural
+    // gate-truth shape above is unchanged and a live event with no `demo` field still
+    // satisfies the type. These guards trip if `demo` is ever made required (a freeze break)
+    // or made a non-boolean (e.g. leaking the VerifyToken/secret onto the wire).
+    expectTypeOf<KindOf<'verify'>['demo']>().toEqualTypeOf<boolean | undefined>()
+    expectTypeOf<KindOf<'preview_status'>['demo']>().toEqualTypeOf<boolean | undefined>()
+    // A verify event WITHOUT demo is still valid (additive ⇒ backward compatible).
+    const live: KindOf<'verify'> = { kind: 'verify', testsRun: 1, passed: true, agent: 'trace', laneId: 'main', sessionId: 's1', ts: 1 }
+    expect(live.demo).toBeUndefined()
+    const demo: KindOf<'verify'> = { ...live, demo: true }
+    expect(demo.demo).toBe(true)
+  })
+
   it('the code_review event is structured-only (no free-form text field)', () => {
     const e: KindOf<'code_review'> = {
       kind: 'code_review', approved: false, findings: 2, critical: false, iteration: 1,

@@ -44,15 +44,28 @@ function mint(sessionId: string, testsRun: number, passed: boolean, codeDigest: 
 export interface Verifier {
   /** Run the tests over the files and, only on a genuine pass, mint a bound VerifyToken. */
   verify(sessionId: string, files: RepoFile[]): Promise<VerifyToken | null>
+  /**
+   * Whether this verifier runs the MOCK/injected runner (simulated verification) rather than
+   * the REAL Playwright+Cucumber runner. PURELY INFORMATIONAL — Trace stamps the wire `verify`
+   * event with `demo:true` so a simulated result can never be mistaken for a real pass AT THE
+   * RESULT. It does NOT gate verification or change minting: the only way to a VerifyToken is
+   * still a genuine ≥1-test pass (see `mint`). `false` for the real runner ⇒ a live verify
+   * event stays byte-identical (no `demo` field on the wire).
+   */
+  readonly demo: boolean
 }
 
 /**
  * Module-private Verifier constructor. NOT exported: the only way to a Verifier is
  * `resolveVerifier(spec)`, which builds the runner here from trusted factories — so a
  * caller can never hand in a fake `TestRunner` object (the closed B2 leak).
+ *
+ * `demo` is a property of WHICH runner backs the verifier (mock vs real), not of the run's
+ * outcome — it is informational metadata only and never touches the fail-closed `mint`.
  */
-function createVerifier(runner: TestRunner): Verifier {
+function createVerifier(runner: TestRunner, demo: boolean): Verifier {
   return {
+    demo,
     async verify(sessionId, files) {
       const r = await runner.run(files)
       return mint(sessionId, r.testsRun, r.passed, r.codeDigest)
@@ -83,13 +96,16 @@ export type VerifierSpec =
   | ({ kind: 'real' } & RealTestRunnerDeps)
   | { kind: 'runner'; runner: TestRunner }
 
-/** Build a Verifier from a runner selection (the only public seam to a Verifier). */
+/** Build a Verifier from a runner selection (the only public seam to a Verifier). The `demo`
+ *  flag is derived HERE from the same runner selection the DI makes from #59's demo signal:
+ *  ONLY `kind:'real'` is a live verifier; `mock` (fail-closed default) and `runner` (the
+ *  injected mock under AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) are simulated verification ⇒ demo. */
 export function resolveVerifier(spec: VerifierSpec): Verifier {
   if (spec.kind === 'real') {
     const { kind: _kind, ...deps } = spec
     void _kind
-    return createVerifier(createRealTestRunner(deps))
+    return createVerifier(createRealTestRunner(deps), false)
   }
-  if (spec.kind === 'runner') return createVerifier(spec.runner)
-  return createVerifier(createMockTestRunner(spec.cfg))
+  if (spec.kind === 'runner') return createVerifier(spec.runner, true)
+  return createVerifier(createMockTestRunner(spec.cfg), true)
 }

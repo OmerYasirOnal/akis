@@ -40,6 +40,10 @@ export interface TestStats {
   testsRun: number
   passed: boolean
   ran: boolean        // a verify event was seen
+  /** The verify result was produced by the mock/injected runner (simulated verification),
+   *  not a real ≥1-test pass. Carried by the `verify` event's optional `demo` flag (P1-CORE-1).
+   *  Drives the "verification simulated" badge ON the verify gate card. Absent on a live run. */
+  demo?: boolean
   scenariosBuilt?: number
   scenariosRunning?: number
   p95Ms?: number
@@ -54,6 +58,10 @@ export interface PreviewState {
   ready: boolean
   /** A local run is being started (install/boot) — show a spinner. */
   starting?: boolean
+  /** The boot is in demo mode (mock provider/verification) — the embedded "running app" is a
+   *  demo, not a real-verified build. Carried by the `preview_status` event's `demo` flag
+   *  (P1-CORE-1). Drives the badge on the PreviewPanel. Absent on a live boot. */
+  demo?: boolean
 }
 
 /** The critic's READ-ONLY code-review verdict (a status card, NOT a human gate).

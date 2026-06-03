@@ -177,12 +177,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   // Preview registry: the registry never spawns until POST /sessions/:id/preview is
   // called; its status changes ride the `preview_status` event so the live UI updates.
+  // In demo mode the embedded "running app" is a demo (mock provider/verification), so
+  // stamp the lifecycle events with the SAME `demo` signal #59 surfaces on /health
+  // (`demo.mode`) — informational only, absent on a live boot (byte-identical).
   const previewRegistry = new PreviewRegistry({
     sandbox: new LocalDirectSandbox(),
     onStatus: e => services.bus.emit({
       kind: 'preview_status', status: e.status,
       ...(e.url !== undefined ? { url: e.url } : {}),
       ...(e.reason !== undefined ? { reason: e.reason } : {}),
+      ...(demo.mode === 'demo' ? { demo: true } : {}),
       agent: 'orchestrator', laneId: 'main', sessionId: e.sessionId, ts: nextTs(),
     }),
   })
