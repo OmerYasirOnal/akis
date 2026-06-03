@@ -99,17 +99,27 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         // The shipped artifact (e.g. pushed repo URL): a link, not the embedded app.
         v.preview = { ...v.preview, ...(e.url !== undefined ? { artifactUrl: e.url } : {}) }
         break
-      case 'preview_status':
+      case 'preview_status': {
         // Live local-preview lifecycle: 'ready' → embed the same-origin /preview/:id app.
         // `demo` (P1-CORE-1) sticks once seen so the badge persists across lifecycle frames.
+        // A 'failed'/'unsupported' frame is a RECOVERABLE failure → surface its reason (never a
+        // silent collapse to the empty state); a 'starting'/'ready' frame supersedes it (a retry's
+        // spinner/iframe clears the prior failure).
+        const failed = e.status === 'failed' || e.status === 'unsupported'
+        // Drop any prior `error` from the spread so a 'starting'/'ready' frame CLEARS it (a retry's
+        // spinner/iframe supersedes the failure); re-add it only on a failure frame.
+        const { error: _prevError, ...prevPreview } = v.preview
+        void _prevError
         v.preview = {
-          ...v.preview,
+          ...prevPreview,
           ready: e.status === 'ready',
           starting: e.status === 'starting',
           ...(e.url !== undefined ? { url: e.url } : {}),
           ...(e.demo ? { demo: true } : {}),
+          ...(failed ? { error: { status: e.status as 'failed' | 'unsupported', ...(e.reason ? { reason: e.reason } : {}) } } : {}),
         }
         break
+      }
       case 'test_stats':
         // Rich BDD/E2E telemetry for the dashboard (verify stays the gate's truth).
         v.tests = { ...v.tests, ran: true, scenariosBuilt: e.built, scenariosRunning: e.running }
