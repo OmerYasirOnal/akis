@@ -142,6 +142,82 @@ export async function runMigrations(client: SqlClient): Promise<void> {
   }
 }
 
+/** Outcome of {@link ensurePgVectorColumn}: whether the real `vector` type is now active on the
+ *  column (extension present + ALTER applied) or the deployment stays on the `double precision[]`
+ *  fallback (extension unavailable). Surfaced so callers can log it and tests can assert/skip. */
+export interface PgVectorColumnResult {
+  enabled: boolean
+}
+
+/**
+ * GUARDED upgrade of `vector_chunks.vector` from the portable `double precision[]` to a real,
+ * indexable `vector(dim)` (pgvector) typed to the ACTIVE embedding dimension.
+ *
+ * pgvector is the NICE-TO-HAVE here (there is no scale yet), so this is strictly best-effort and
+ * MUST NEVER break a deployment whose Postgres lacks the extension (plain `postgres:16`, a managed
+ * DB without pgvector, CI without it): if `CREATE EXTENSION vector` is unavailable, we DETECT it
+ * and leave the column as `double precision[]` — today's behavior, fully functional — returning
+ * `{ enabled: false }`. The whole function is wrapped so ANY pgvector-side error degrades to the
+ * fallback rather than failing boot.
+ *
+ * When the extension IS present:
+ *   1. `CREATE EXTENSION IF NOT EXISTS vector`.
+ *   2. If the column is not already a `vector`, `ALTER … TYPE vector(dim) USING vector::vector(dim)`
+ *      (pgvector registers the array→vector cast; an empty/fresh table converts trivially).
+ *   3. Best-effort an ivfflat ANN index for cosine (`vector_cosine_ops`). Index creation is
+ *      separately guarded so a quirk there still leaves the column upgraded.
+ *
+ * `dim` is derived from the active embedder (activeEmbeddingDim) so the column matches what is
+ * actually stored (default keyless = 256; OpenAI text-embedding-3-small = 1536). Idempotent:
+ * re-running detects the column is already `vector` and the index already exists, both no-ops.
+ *
+ * The PgVectorStore read path is unchanged either way — it ranks via the in-memory delegate, and
+ * its `parseVector` already handles both the `{…}` array literal and the `[…]` pgvector literal.
+ */
+export async function ensurePgVectorColumn(client: SqlClient, dim: number): Promise<PgVectorColumnResult> {
+  // The dim is interpolated into DDL, so coerce to a safe positive integer (it always comes from
+  // the catalog/Local embedder, but never trust a number flowing into SQL text). An invalid dim
+  // degrades to the fallback rather than emitting malformed DDL.
+  const n = Math.trunc(dim)
+  if (!Number.isFinite(n) || n <= 0) return { enabled: false }
+  try {
+    await client.query('CREATE EXTENSION IF NOT EXISTS vector')
+  } catch {
+    // Extension unavailable (not installed / insufficient privilege) → keep double precision[].
+    return { enabled: false }
+  }
+  try {
+    // Is the column already a `vector`? (information_schema reports it as USER-DEFINED.)
+    const { rows } = await client.query(
+      `SELECT udt_name FROM information_schema.columns
+       WHERE table_name = 'vector_chunks' AND column_name = 'vector'`,
+    )
+    const udt = rows[0]?.udt_name
+    if (udt !== 'vector') {
+      // Convert in place. pgvector registers a cast from real[]/double precision[] to vector, so an
+      // existing double precision[] corpus converts row-by-row; a fresh/empty table is a no-op cast.
+      await client.query(
+        `ALTER TABLE vector_chunks ALTER COLUMN vector TYPE vector(${n}) USING vector::vector(${n})`,
+      )
+    }
+    // Best-effort cosine ANN index (separately guarded so an index quirk never un-does the column
+    // upgrade). ivfflat is the broadly-available option; lists is a small fixed default for the
+    // single-user corpus. Brute-force ranking still happens in JS, so this is a future-scale assist.
+    try {
+      await client.query(
+        'CREATE INDEX IF NOT EXISTS vector_chunks_vector_ann_idx ON vector_chunks USING ivfflat (vector vector_cosine_ops) WITH (lists = 100)',
+      )
+    } catch {
+      // Index creation failed (e.g. ivfflat unsupported on this build) — column upgrade stands.
+    }
+    return { enabled: true }
+  } catch {
+    // Any ALTER-side failure (e.g. a pre-existing mixed-dimension corpus that can't cast) →
+    // leave the portable double precision[] column in place rather than break boot.
+    return { enabled: false }
+  }
+}
+
 /** Fail fast (rather than block on the OS TCP default) when the DB is unreachable, so a
  *  bad/down DATABASE_URL feeds the boot fallback/fail-closed path promptly. */
 const PG_CONNECT_TIMEOUT_MS = 5000

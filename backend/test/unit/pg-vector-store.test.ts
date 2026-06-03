@@ -54,6 +54,26 @@ describe('PgVectorStore (write-through to an injected SqlClient)', () => {
     expect(ins.params[7]).toEqual([1, 2, 3]) // the embedding as a Postgres array param
   })
 
+  it("in 'vector' mode (real pgvector column) the embedding is cast ($8::vector) and passed as the `[…]` literal, not the JS array", async () => {
+    const { db, calls } = fakeDb()
+    const store = new PgVectorStore(db, 'vector')
+    store.upsert(stored({ id: 'pv', vector: [1, 0.5, -2] }))
+    await store.flush()
+    const ins = calls.find(c => c.text.trim().startsWith('INSERT INTO vector_chunks'))!
+    expect(ins.text).toMatch(/\$8::vector/) // the cast — node-postgres's {…} array form is not valid vector input
+    expect(ins.params[7]).toBe('[1,0.5,-2]') // the pgvector text literal
+  })
+
+  it("defaults to 'array' mode: the embedding is the raw JS number[] for the double precision[] column (byte-for-byte unchanged)", async () => {
+    const { db, calls } = fakeDb()
+    const store = new PgVectorStore(db) // no mode → 'array'
+    store.upsert(stored({ id: 'arr', vector: [1, 2, 3] }))
+    await store.flush()
+    const ins = calls.find(c => c.text.trim().startsWith('INSERT INTO vector_chunks'))!
+    expect(ins.text).not.toMatch(/::vector/)
+    expect(ins.params[7]).toEqual([1, 2, 3]) // the array param, exactly as before
+  })
+
   it('a rejecting write is observed (logged) — never an orphaned unhandled rejection — and does not break later writes or hang flush', async () => {
     const errs: string[] = []
     const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')) })

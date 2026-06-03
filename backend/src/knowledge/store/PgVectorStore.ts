@@ -34,7 +34,17 @@ export class PgVectorStore implements VectorStore {
    *  upsert can never race ahead of it). */
   private writes: Promise<void> = Promise.resolve()
 
-  constructor(private db: SqlClient) {}
+  /**
+   * `vectorColumn` selects how the embedding is serialized for the persisted column:
+   *   - `'array'` (DEFAULT): a `double precision[]` column — pass the JS `number[]` straight
+   *     through (node-postgres renders it as the `{…}` array literal). Today's behavior, byte-for-byte.
+   *   - `'vector'`: a real pgvector `vector(N)` column — render the embedding as the pgvector text
+   *     literal `[…]` and cast it (`$8::vector`), since node-postgres's `{…}` array form is NOT a
+   *     valid `vector` input. The server passes this ONLY after {@link ensurePgVectorColumn}
+   *     confirms the extension upgraded the column; absent that, the default keeps the array form.
+   * Reads are unaffected — `parseVector` already handles both the `{…}` and `[…]` row literals.
+   */
+  constructor(private db: SqlClient, private vectorColumn: 'array' | 'vector' = 'array') {}
 
   /** Load the persisted corpus into the in-memory index. Call ONCE on boot (idempotent —
    *  re-hydrating just re-upserts the same ids). After this the store ranks exactly as a
@@ -49,13 +59,31 @@ export class PgVectorStore implements VectorStore {
     }
   }
 
+  /**
+   * The hydrated corpus, in seq (insertion) order — the SAME chunks {@link hydrate} loaded.
+   * Lets a Pg boot rehydrate the lexical {@link Bm25Index} from the EXACT same rows (one scan,
+   * no second query, no separate postings table to drift) so the durable corpus carries BOTH
+   * halves of hybrid retrieval across a restart. Call right after {@link hydrate}, before any
+   * live write, so the order mirrors `ORDER BY seq`. The byId map preserves insertion order, so
+   * a chunk re-upserted live keeps its original position (Map semantics) — harmless for BM25,
+   * which is order-insensitive at query time.
+   */
+  hydratedChunks(): StoredChunk[] {
+    return [...this.byId.values()]
+  }
+
   upsert(c: StoredChunk): void {
     this.index.upsert(c) // synchronous: reads see it immediately, identical to MemoryVectorStore
     this.byId.set(c.id, c)
+    // On a real `vector(N)` column, cast the param ($8::vector) and pass the pgvector text literal
+    // `[…]`; on the default `double precision[]` column, pass the JS number[] straight through (no
+    // cast). Reads are identical either way.
+    const vectorPlaceholder = this.vectorColumn === 'vector' ? '$8::vector' : '$8'
+    const vectorParam: unknown = this.vectorColumn === 'vector' ? toPgVectorLiteral(c.vector) : c.vector
     this.enqueue(() =>
       this.db.query(
         `INSERT INTO vector_chunks (id, user_id, session_id, source, source_id, agent, created_at, vector, chunk, meta)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,${vectorPlaceholder},$9,$10)
          ON CONFLICT (id) DO UPDATE SET
            user_id = EXCLUDED.user_id, session_id = EXCLUDED.session_id,
            source = EXCLUDED.source, source_id = EXCLUDED.source_id, agent = EXCLUDED.agent,
@@ -63,7 +91,7 @@ export class PgVectorStore implements VectorStore {
            chunk = EXCLUDED.chunk, meta = EXCLUDED.meta`,
         [
           c.id, c.meta.userId, c.meta.sessionId, c.meta.source, c.meta.sourceId,
-          c.meta.agent ?? null, c.meta.createdAt, c.vector, toJson(c.chunk), toJson(c.meta),
+          c.meta.agent ?? null, c.meta.createdAt, vectorParam, toJson(c.chunk), toJson(c.meta),
         ],
       ).then(() => undefined),
     )
@@ -128,6 +156,13 @@ export class PgVectorStore implements VectorStore {
  *  pre-stringify), matching PgSessionStore.toJson. */
 function toJson(v: unknown): unknown {
   return v == null ? null : v
+}
+
+/** Render an embedding as the pgvector text input literal — `[1,2,3]` — for a real `vector(N)`
+ *  column (node-postgres's default `{1,2,3}` array form is NOT valid `vector` input). Non-finite
+ *  components are coerced to 0 (pgvector rejects NaN/Inf) — defensive; the embedders never emit them. */
+function toPgVectorLiteral(v: number[]): string {
+  return `[${v.map(n => (Number.isFinite(n) ? n : 0)).join(',')}]`
 }
 
 /** The raw `vector_chunks` row as Postgres returns it. `vector` is `double precision[]`
