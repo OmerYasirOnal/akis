@@ -2,8 +2,8 @@ import { useEffect, useState } from 'react'
 import type { ApiClient, Analytics } from '../api/client.js'
 import { Card, SectionTitle, Stat } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
+import { agentName } from '../agents/names.js'
 
-const AGENT_NAME: Record<string, string> = { orchestrator: 'AKIS', scribe: 'Scribe', proto: 'Proto', trace: 'Trace', critic: 'Critic' }
 const pct = (n: number): string => `${Math.round(n * 100)}%`
 
 /** Run analytics dashboard — live aggregate stats from GET /api/analytics, plus a
@@ -39,11 +39,11 @@ export function AnalyticsPage({ api }: { api: ApiClient }) {
               {(data?.agents ?? []).length === 0 && <div className="text-sm text-slate-500">{t('analytics.empty')}</div>}
               {(data?.agents ?? []).map(a => (
                 <div key={a.agent} className="flex items-center gap-3">
-                  <div className="w-20 shrink-0 text-sm font-medium text-slate-200">{AGENT_NAME[a.agent] ?? a.agent}</div>
+                  <div className="w-20 shrink-0 text-sm font-medium text-slate-200">{agentName(a.agent)}</div>
                   <div className="h-2 flex-1 overflow-hidden rounded-full bg-white/5">
                     <div className="h-full rounded-full bg-gradient-to-r from-[#07D1AF] to-violet-500" style={{ width: `${(a.runs / maxRuns) * 100}%` }} />
                   </div>
-                  <div className="w-24 shrink-0 text-right text-xs text-slate-400">{a.ok}/{a.runs} ok</div>
+                  <div className="w-24 shrink-0 text-right text-xs text-slate-400">{a.ok}/{a.runs} {t('analytics.ok')}</div>
                 </div>
               ))}
             </div>

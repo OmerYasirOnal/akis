@@ -20,7 +20,7 @@ export type ScribeOutcome =
   | { type: 'spec'; spec: SpecArtifact }
   | { type: 'clarify'; questions: string[] }
 
-const SCRIBE_SYSTEM = [
+export const SCRIBE_SYSTEM = [
   'You are Scribe, the spec author for the AKIS agentic build pipeline.',
   'Turn the user idea into a SMALL, concrete, buildable spec for a single self-contained',
   'web app that runs in the browser (so it can be previewed live) — an MVP, not a platform.',
@@ -64,6 +64,11 @@ const SCRIBE_RAG_HINT =
  * orchestrator's deterministic clarify scenarios/tests).
  */
 export class ScribeAgent {
+  /** The base system prompt this Scribe sends. Defaults to SCRIBE_SYSTEM, so an
+   *  agent built without a `systemPrompt` dep is byte-identical to today. The DI
+   *  layer injects the skill-composed prompt here (P3-AGENT-1). */
+  private readonly base: string
+
   constructor(
     private deps: {
       bus: EventBus
@@ -73,8 +78,13 @@ export class ScribeAgent {
       knowledge?: KnowledgePort
       /** When true (RAG on), compose via the bounded retrieve_knowledge tool loop. */
       ragEnabled?: boolean
+      /** Skill-composed base system prompt (P3-AGENT-1). Omitted ⇒ SCRIBE_SYSTEM,
+       *  so a no-skills build sends the byte-identical prompt of today. */
+      systemPrompt?: string
     },
-  ) {}
+  ) {
+    this.base = deps.systemPrompt ?? SCRIBE_SYSTEM
+  }
 
   async run(input: ScribeInput): Promise<ScribeOutcome> {
     const { sessionId, laneId } = input
@@ -126,16 +136,18 @@ export class ScribeAgent {
     const userMsg = input.idea + renderKnowledge(input.ctx)
 
     if (!this.deps.ragEnabled || !this.deps.knowledge) {
-      // RAG OFF — unchanged single-shot dispatch (no tools advertised).
-      return this.deps.provider.chat({ system: SCRIBE_SYSTEM, messages: [{ role: 'user', content: userMsg }] })
+      // RAG OFF — unchanged single-shot dispatch (no tools advertised). `this.base`
+      // is SCRIBE_SYSTEM unless the DI layer injected a skill-composed prompt.
+      return this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: userMsg }] })
     }
 
     // RAG ON — reuse the advisory choke point + bounded loop. The registry holds
     // ONLY retrieve_knowledge (read-only, zero gate authority); the loop's turn cap
     // bounds it. The system prompt gains the retrieve_knowledge hint ONLY here, so
-    // the RAG-off prompt above is untouched.
+    // the RAG-off prompt above is untouched. Skill injection (if any) is already
+    // folded into `this.base`, so it flows into BOTH branches.
     const tools = buildAdvisoryTools(new Set(['retrieve_knowledge']), { knowledge: this.deps.knowledge, sessionId })
-    const system = `${SCRIBE_SYSTEM}\n${SCRIBE_RAG_HINT}`
+    const system = `${this.base}\n${SCRIBE_RAG_HINT}`
     return callWithTools(
       this.deps.provider,
       { system, messages: [{ role: 'user', content: userMsg }] },

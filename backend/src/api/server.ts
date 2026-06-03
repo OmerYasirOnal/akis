@@ -28,7 +28,7 @@ import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.r
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore.js'
-import { workflowToAgentModels, workflowCustomAgents } from '../workflow/resolve.js'
+import { workflowToAgentModels, workflowToAgentSkills, workflowCustomAgents } from '../workflow/resolve.js'
 import type { WorkflowConfig } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
@@ -203,6 +203,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(useMock ? { provider: new MockProvider() } : {}),
     ...(demoVerify ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     agentModels: workflowToAgentModels(wf),
+    // P3-AGENT-1: per-agent selected skills → injected into each core producer's
+    // system prompt by buildServices. Empty (the default workflow) ⇒ unchanged prompts.
+    agentSkills: workflowToAgentSkills(wf),
     customAgents: workflowCustomAgents(wf),
     ...(wf.iterateBudget !== undefined ? { iterateBudget: wf.iterateBudget } : {}),
     ...(wf.gatePolicy !== undefined ? { gatePolicy: wf.gatePolicy } : {}),
