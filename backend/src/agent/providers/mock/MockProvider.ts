@@ -1,4 +1,4 @@
-import type { LlmProvider, ChatRequest, ChatResult } from '../../LlmProvider.js'
+import type { LlmProvider, ChatRequest, ChatResult, OnDelta } from '../../LlmProvider.js'
 
 export interface MockConfig {
   /** A fixed reply (e.g. a critic JSON blob) for deterministic tests. */
@@ -126,4 +126,27 @@ export class MockProvider implements LlmProvider {
     }
     return { text: `mock: ${last.slice(0, 40)}`, usage: { inTokens: 0, outTokens: 0 } }
   }
+
+  /**
+   * Stream the SAME deterministic reply as `chat`, chopped into a few word-grouped
+   * deltas so the keyless demo (and the FE incremental-render tests) exercise the
+   * real streaming path. The concatenation of all deltas equals `chat().text` exactly,
+   * so spec detection on the accumulated text behaves identically to the non-stream path.
+   */
+  async chatStream(req: ChatRequest, onDelta: OnDelta): Promise<ChatResult> {
+    const result = await this.chat(req)
+    const full = result.text ?? ''
+    for (const piece of chunkText(full)) onDelta(piece)
+    return result
+  }
+}
+
+/** Split text into a handful of contiguous, gap-preserving chunks (3-word groups). */
+function chunkText(text: string): string[] {
+  if (!text) return []
+  // Split keeping the whitespace with each token, so join('') reproduces the input.
+  const tokens = text.match(/\s*\S+/g) ?? [text]
+  const out: string[] = []
+  for (let i = 0; i < tokens.length; i += 3) out.push(tokens.slice(i, i + 3).join(''))
+  return out
 }
