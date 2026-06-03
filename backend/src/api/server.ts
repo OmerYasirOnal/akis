@@ -79,6 +79,21 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const app = Fastify({ logger: false }) // logger off: never risk logging key bodies
   const env = deps.env ?? (process.env as Record<string, string | undefined>)
 
+  // FAIL-CLOSED in production: a demo flag (AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) fakes
+  // verification — a build can reach done+preview WITHOUT real tests. In production that
+  // must be a DELIBERATE, acknowledged choice; otherwise refuse to boot (mirrors the
+  // persistenceRequired fail-closed). Dev/self-host keeps the convenient keyless demo.
+  const demo = resolveDemoMode(env)
+  if (demo.fatal) {
+    throw new Error(
+      'A demo flag (AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) fakes verification — a build can reach ' +
+      'done+preview WITHOUT real tests — and NODE_ENV=production. Refusing to boot a production ' +
+      'server that silently ships unverified output. Remove the demo flag (and configure a real ' +
+      'provider key + verification), or set AKIS_ALLOW_DEMO_IN_PROD=1 to explicitly acknowledge a ' +
+      'demo deployment (it is then flagged `demo` on /health).',
+    )
+  }
+
   // Keyless DEMO gate: AKIS_ALLOW_MOCK turns on the deterministic mock provider so a
   // bare `docker compose up` serves a working demo with NO provider key. It is a
   // FALLBACK, not a force — the moment a real key is configured (env or KeyStore) it
@@ -213,7 +228,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     try { return userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }) } catch { return undefined }
   }
 
-  app.get('/health', async () => ({ ok: true, persistence: deps.persistence ?? 'memory' }))
+  // /health surfaces the active serving mode so a demo (fake-verification) boot is never
+  // hidden: `mode: 'demo'` means the mock provider and/or mock verification is active and
+  // "verified" output is NOT from real tests; `mode: 'live'` is the fail-closed default.
+  // `ok` stays true (the server is healthy) — the FE reads `mode` to surface the badge.
+  app.get('/health', async () => ({ ok: true, persistence: deps.persistence ?? 'memory', mode: demo.mode }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env, requireAuth: hasSession })
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator, userIdOf })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
@@ -264,6 +283,40 @@ export function resolveListenHost(env: Record<string, string | undefined>): stri
  */
 export function persistenceRequired(env: Record<string, string | undefined>): boolean {
   return env.NODE_ENV === 'production' && !!env.DATABASE_URL
+}
+
+/**
+ * The serving mode surfaced on /health. `demo` means a fake-verification path is active:
+ * the deterministic mock provider and/or mock test verification can let a build reach
+ * done+preview WITHOUT real tests — so "verified" output is NOT from a real ≥1-test pass.
+ * `live` is the fail-closed default (real provider key + real verification).
+ */
+export type ServingMode = 'live' | 'demo'
+
+/**
+ * Resolve whether the boot is faking verification (demo) and whether that is FATAL.
+ *
+ * A demo flag is one that can fake verification or force the mock provider:
+ *   - AKIS_ALLOW_MOCK   — forces the keyless mock provider AND mock verification
+ *   - AKIS_DEMO_VERIFY  — forces a passing mock test runner (real keys, fake tests)
+ *
+ * FAIL-CLOSED in production (mirrors persistenceRequired): when NODE_ENV=production AND a
+ * demo flag is set, the boot is FATAL unless the operator explicitly acknowledges it with
+ * AKIS_ALLOW_DEMO_IN_PROD=1 (then it boots but is flagged `demo`). Dev/self-host
+ * (non-production) keeps the convenient keyless demo unchanged. With no demo flag the mode
+ * is `live` and never fatal.
+ */
+export function resolveDemoMode(env: Record<string, string | undefined>): { mode: ServingMode; fatal: boolean } {
+  const demo = flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY)
+  if (!demo) return { mode: 'live', fatal: false }
+  const fatal = env.NODE_ENV === 'production' && !flag(env.AKIS_ALLOW_DEMO_IN_PROD)
+  return { mode: 'demo', fatal }
+}
+
+/** Convenience predicate: a production boot that would fake verification without the
+ *  explicit AKIS_ALLOW_DEMO_IN_PROD acknowledgment must refuse to boot. */
+export function demoModeFatalInProd(env: Record<string, string | undefined>): boolean {
+  return resolveDemoMode(env).fatal
 }
 
 /** The durable stores selected together when DATABASE_URL is set — built over ONE shared
