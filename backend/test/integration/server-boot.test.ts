@@ -100,11 +100,13 @@ describe('INTEGRATION: real boot path (buildServices → createProvider + real K
       // AKIS_ALLOW_MOCK is honored at the buildServer gate: hasRealProviderKey(env, keyStore)
       // is false (the row won't decrypt → KeyStore.get returns undefined, not a throw), so the
       // keyless mock is injected. The old throwing KeyStore.get would have crashed here.
-      app = buildServer({ keyStore, env: { AKIS_ALLOW_MOCK: '1', AUTH_JWT_SECRET: 's', NODE_ENV: 'production' } })
+      // B1: a demo flag in production now requires the explicit AKIS_ALLOW_DEMO_IN_PROD ack
+      // (else the boot fail-closes); with it the boot proceeds and /health reports mode:'demo'.
+      app = buildServer({ keyStore, env: { AKIS_ALLOW_MOCK: '1', AKIS_ALLOW_DEMO_IN_PROD: '1', AUTH_JWT_SECRET: 's', NODE_ENV: 'production' } })
     }).not.toThrow()
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toMatchObject({ ok: true })
+    expect(res.json()).toMatchObject({ ok: true, mode: 'demo' })
     // It fell back to the demo mock, not a real provider.
     expect(akisServices(app).provider.name).toBe('mock')
   })
@@ -128,17 +130,26 @@ describe('INTEGRATION: real boot path (buildServices → createProvider + real K
     expect((thrown as Error).name).not.toBe('Error')
   })
 
-  // 3) Keyless boot (empty KeyStore) with AKIS_ALLOW_MOCK in production → boots on the mock,
-  //    /health is 200 { ok: true } — the bare `docker compose up` demo path.
-  it('keyless boot with AKIS_ALLOW_MOCK serves the demo mock (GET /health 200 { ok: true })', async () => {
+  // 3) Keyless boot (empty KeyStore) with AKIS_ALLOW_MOCK + the explicit demo-in-prod ack →
+  //    boots on the mock, /health is 200 { ok: true, mode: 'demo' } — the acknowledged
+  //    `docker compose up` demo path (B1: production demo is opt-in + surfaced, never silent).
+  it('keyless boot with AKIS_ALLOW_MOCK + AKIS_ALLOW_DEMO_IN_PROD serves the demo mock (GET /health 200 { ok: true, mode: demo })', async () => {
     process.env.NODE_ENV = 'production'
     const keyStore = new JsonFileKeyStore(keyFile(), MASTER_A) // empty file, never written to
     expect(keyStore.list()).toEqual([])
-    const app = buildServer({ keyStore, env: { AKIS_ALLOW_MOCK: '1', AUTH_JWT_SECRET: 's', NODE_ENV: 'production' } })
+    const app = buildServer({ keyStore, env: { AKIS_ALLOW_MOCK: '1', AKIS_ALLOW_DEMO_IN_PROD: '1', AUTH_JWT_SECRET: 's', NODE_ENV: 'production' } })
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.statusCode).toBe(200)
-    expect(res.json()).toMatchObject({ ok: true })
+    expect(res.json()).toMatchObject({ ok: true, mode: 'demo' })
     expect(akisServices(app).provider.name).toBe('mock')
+  })
+
+  // 3b) B1 fail-closed: the SAME keyless demo flag in production WITHOUT the ack refuses to boot.
+  it('keyless boot with AKIS_ALLOW_MOCK but NO ack fail-closes in production (B1)', () => {
+    process.env.NODE_ENV = 'production'
+    const keyStore = new JsonFileKeyStore(keyFile(), MASTER_A)
+    expect(() => buildServer({ keyStore, env: { AKIS_ALLOW_MOCK: '1', AUTH_JWT_SECRET: 's', NODE_ENV: 'production' } }))
+      .toThrow(/Refusing to boot|AKIS_ALLOW_DEMO_IN_PROD/)
   })
 
   // 4) A real, decryptable key in the KeyStore ONLY (no env key, no AKIS_ALLOW_MOCK) →
