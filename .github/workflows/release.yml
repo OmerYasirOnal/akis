@@ -1,0 +1,179 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# AKIS Release — publish a versioned, runnable image anyone can `docker run`.
+#
+# AKIS is meant to be self-hosted (Ollama-style), so the deploy story is NOT a
+# push to one live host: it is a versioned Docker image on GHCR plus a GitHub
+# Release. This workflow is ADDITIVE — it does NOT touch ci.yml's test/e2e/ops
+# jobs (which stay the per-PR build gate). It runs ONLY on a deliberate `vX.Y.Z`
+# tag push or a manual dispatch, so nothing publishes on an ordinary push to main.
+#
+# The publish is GATED on a boot-smoke: we build the existing multi-stage
+# Dockerfile, run the freshly-built image KEYLESS, and probe /health (the SAME
+# smoke ci.yml's `ops` job uses). Only if that passes do we tag + push to GHCR
+# (version + latest) and cut the GitHub Release — we never ship an image that
+# doesn't boot.
+#
+# Auth to GHCR uses the built-in GITHUB_TOKEN (no user-supplied secret, no host).
+# ─────────────────────────────────────────────────────────────────────────────
+name: Release
+
+on:
+  # Cut a release by pushing a semver tag, e.g. `git tag v0.1.0 && git push --tags`.
+  push:
+    tags:
+      - 'v*'
+  # …or fire it manually from the Actions tab with an explicit version.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to publish (e.g. v0.1.0). Used for the image tag and the GitHub Release.'
+        required: true
+        type: string
+
+# Least privilege for what this workflow actually does:
+#   contents: write → create the GitHub Release
+#   packages: write → push the image to GHCR
+permissions:
+  contents: write
+  packages: write
+
+# The GHCR repo is derived from the image name; keep it lowercase (GHCR requires
+# lowercase) and centralized so the smoke, push, and docs all agree.
+env:
+  IMAGE: ghcr.io/omeryasironal/akis-platform-mvp
+
+jobs:
+  release:
+    name: build → keyless boot-smoke → push GHCR + GitHub Release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Resolve the version ONCE from whichever trigger fired:
+      #   • tag push   → strip refs/tags/ (e.g. v0.1.0)
+      #   • dispatch   → the required `version` input
+      # Everything downstream (image tags, Release tag/name) reads steps.version.
+      - name: Resolve release version
+        id: version
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF#refs/tags/}"
+          fi
+          if [ -z "$version" ]; then
+            echo "::error::could not resolve a release version"
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing version: $version"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build the EXISTING multi-stage Dockerfile to a local image (`--load` so the
+      # smoke can `docker run` it). amd64 only — keep the release fast and match the
+      # ops-job build; arm64 is intentionally out of scope to keep this simple.
+      - name: Build the bundled self-host image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: akis:release-candidate
+          # Pull cache from / push cache to the GitHub Actions cache to speed re-runs.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Boot smoke — REUSED VERBATIM from ci.yml's `ops` job. `docker build` only
+      # COMPILES the image; it never BOOTS the server, so default-path boot crashes
+      # (a build-breaking COPY, a KeyStore decrypt crash-loop, an empty model to the
+      # API) can pass the build and still fail at runtime. This RUNS the freshly built
+      # image KEYLESS (AKIS_ALLOW_MOCK=1 → mock provider, no key, no DB → memory
+      # persistence) and probes /health. A demo flag in production is fail-closed, so
+      # the keyless smoke MUST also pass AKIS_ALLOW_DEMO_IN_PROD=1. The publish steps
+      # below are gated on this — we never push an image that doesn't boot. The
+      # container is always cleaned up.
+      - name: Boot smoke — run the image keyless and probe /health
+        run: |
+          set -euo pipefail
+          # Always remove the container, even if a step below fails (so a re-run of
+          # the job on the same runner is never blocked by a stale container).
+          cleanup() { docker rm -f akis-smoke >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+
+          docker run -d --name akis-smoke \
+            -e AKIS_ALLOW_MOCK=1 \
+            -e AKIS_ALLOW_DEMO_IN_PROD=1 \
+            -e AUTH_JWT_SECRET=ci-smoke \
+            -p 3000:3000 \
+            akis:release-candidate
+
+          # Poll /health for up to ~30s (15 tries × 2s). Assert HTTP 200 AND "ok":true
+          # in the body (a 200 alone could be the SPA fallback; the body proves it's the
+          # real health handler). Succeed on the first good response.
+          ok=0
+          for i in $(seq 1 15); do
+            body="$(curl -fsS --max-time 5 http://127.0.0.1:3000/health 2>/dev/null || true)"
+            if printf '%s' "$body" | grep -q '"ok":true'; then
+              echo "boot smoke OK (attempt $i): $body"
+              ok=1
+              break
+            fi
+            echo "waiting for /health (attempt $i/15)…"
+            sleep 2
+          done
+
+          if [ "$ok" -ne 1 ]; then
+            echo "::error::boot smoke FAILED — /health never returned {\"ok\":true} within ~30s"
+            echo "----- docker logs akis-smoke -----"
+            docker logs akis-smoke || true
+            echo "----------------------------------"
+            exit 1
+          fi
+
+      # ── Everything below only runs because the smoke above passed (steps run in
+      #    order and the job aborts on the first failing step). ──
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          # Built-in token — packages: write above lets it push to this repo's GHCR.
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Re-tag the SMOKE-PROVEN local image and push it under BOTH the version and
+      # `latest`. We `docker tag` the exact image the smoke ran (not a rebuild), so
+      # what's published is byte-for-byte what booted.
+      - name: Tag and push image to GHCR (version + latest)
+        run: |
+          set -euo pipefail
+          version="${{ steps.version.outputs.version }}"
+          docker tag akis:release-candidate "${IMAGE}:${version}"
+          docker tag akis:release-candidate "${IMAGE}:latest"
+          docker push "${IMAGE}:${version}"
+          docker push "${IMAGE}:latest"
+          echo "Pushed ${IMAGE}:${version} and ${IMAGE}:latest"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.version }}
+          name: ${{ steps.version.outputs.version }}
+          generate_release_notes: true
+          body: |
+            AKIS self-host image published to GHCR:
+
+            ```bash
+            docker run --rm -p 3000:3000 \
+              -e AKIS_ALLOW_MOCK=1 -e AKIS_ALLOW_DEMO_IN_PROD=1 \
+              ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
+            ```
+
+            Pull `latest` or pin the exact `${{ steps.version.outputs.version }}` tag.
+            See [docs/SELF_HOSTING.md](docs/SELF_HOSTING.md) for the full run + compose story.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
