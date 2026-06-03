@@ -35,14 +35,14 @@ afterAll(() => { delete process.env.AKIS_WORKSPACES_DIR })
 describe('activation wiring (sub-project 8)', () => {
   it('realTests opt-in wires the REAL runner → Trace verifies on a real passing run', async () => {
     const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), realTests: true, sandbox: passingSandbox })
-    const token = await services.trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
+    const { token } = await services.trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
     expect(token).not.toBeNull()
     expect(token!.testsRun).toBeGreaterThanOrEqual(1)
   })
 
   it('default (no realTests) keeps the fail-closed mock runner → no verification', async () => {
     const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider() })
-    const token = await services.trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
+    const { token } = await services.trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
     expect(token).toBeNull() // mock defaults to 0 tests, fail-closed
   })
 
