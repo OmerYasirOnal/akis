@@ -1,8 +1,9 @@
 import { useState } from 'react'
-import type { CodeArtifact } from '@akis/shared'
+import type { CodeArtifact, TestEvidence } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
 import { TestStats } from './TestStats.js'
 import { CodeBrowser } from './CodeBrowser.js'
+import { TrustReport } from './TrustReport.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -11,19 +12,24 @@ import { useI18n } from '../i18n/I18nContext.js'
  * "Run app" control to (re)start the local preview. TestStats fills with the verify
  * numbers. Honors the scheme allowlist so an agent-influenced URL can never be a sink.
  *
- * A Preview ⇄ Code toggle flips the surface to a read-only browser of the code the agents
- * wrote (SessionState.code.files), so the verified artifact sits right next to the pass
- * badge. The toggle only appears once files exist.
+ * A Preview ⇄ Code ⇄ Trust tablist flips the surface between the live app, a read-only
+ * browser of the code the agents wrote (SessionState.code.files), and the Trust report —
+ * the auditable structured evidence behind the verified result (SessionState.testEvidence
+ * + the critic verdict). The Code tab appears once files exist; the Trust tab once a
+ * verification has run (test evidence is present). Both sit right next to the pass badge.
  */
-export function PreviewPanel({ view, onRun, busy, canRun, files }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined }) {
+export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined }) {
   const { t } = useI18n()
-  const [tab, setTab] = useState<'preview' | 'code'>('preview')
+  const [tab, setTab] = useState<'preview' | 'code' | 'trust'>('preview')
   const fileCount = files?.length ?? 0
-  // `tab` is local state, but the tablist (the only control back to Preview) only renders when
-  // files exist. If the files vanish (New chat / switching to a session with no code yet) a stale
-  // tab==='code' would hide the live preview/Run/TestStats with no way back. Derive the active
-  // surface so it can never be 'code' without files — auto-recovers to Preview the moment files go.
-  const activeTab = fileCount > 0 ? tab : 'preview'
+  const hasTrust = testEvidence !== undefined
+  // `tab` is local state, but the only control back to Preview is the tablist, which only renders
+  // when files OR test evidence exist. If those vanish (New chat / switching to a session with no
+  // code/evidence yet) a stale tab would hide the live preview/Run/TestStats with no way back.
+  // Derive the active surface so it can never be 'code' without files nor 'trust' without evidence
+  // — auto-recovers to Preview the moment the backing data goes.
+  const activeTab = tab === 'code' && fileCount === 0 ? 'preview' : tab === 'trust' && !hasTrust ? 'preview' : tab
+  const showTablist = fileCount > 0 || hasTrust
   const url = view.preview.url
   const artifact = view.preview.artifactUrl
   const embeddable = !!url && url.startsWith('/preview/')
@@ -35,17 +41,26 @@ export function PreviewPanel({ view, onRun, busy, canRun, files }: { view: Sessi
   return (
     <div className="flex h-full flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        {fileCount > 0 ? (
-          // Preview ⇄ Code toggle — surfaces once the agents have written files.
+        {showTablist ? (
+          // Preview ⇄ Code ⇄ Trust toggle — Code surfaces once files exist, Trust once a
+          // verification has produced structured evidence.
           <div role="tablist" aria-label={t('preview.title')} className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
             <button role="tab" aria-selected={activeTab === 'preview'} onClick={() => setTab('preview')}
               className={`rounded-md px-2.5 py-1 ${activeTab === 'preview' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
               {t('preview.tab.preview')}
             </button>
-            <button role="tab" aria-selected={activeTab === 'code'} onClick={() => setTab('code')}
-              className={`rounded-md px-2.5 py-1 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
-              {t('preview.tab.code')} <span className="text-slate-500">{fileCount}</span>
-            </button>
+            {fileCount > 0 && (
+              <button role="tab" aria-selected={activeTab === 'code'} onClick={() => setTab('code')}
+                className={`rounded-md px-2.5 py-1 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+                {t('preview.tab.code')} <span className="text-slate-500">{fileCount}</span>
+              </button>
+            )}
+            {hasTrust && (
+              <button role="tab" aria-selected={activeTab === 'trust'} onClick={() => setTab('trust')}
+                className={`rounded-md px-2.5 py-1 ${activeTab === 'trust' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+                {t('trust.tab')}
+              </button>
+            )}
           </div>
         ) : (
           <h3 className="text-sm font-semibold text-slate-200">{t('preview.title')}</h3>
@@ -75,6 +90,11 @@ export function PreviewPanel({ view, onRun, busy, canRun, files }: { view: Sessi
 
       {activeTab === 'code' ? (
         <CodeBrowser files={files} />
+      ) : activeTab === 'trust' ? (
+        // The Trust report: the auditable structured evidence behind the verified result.
+        // `view.tests.demo` carries the per-run simulated-verification flag (P1-CORE-1), so a
+        // demo run's Trust report is flagged as such.
+        <TrustReport evidence={testEvidence} codeReview={view.codeReview} demo={view.tests.demo} />
       ) : (
       <>
       <div className="relative flex flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
