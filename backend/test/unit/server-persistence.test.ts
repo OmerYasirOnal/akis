@@ -1,6 +1,11 @@
 import { describe, it, expect } from 'vitest'
+import type { FastifyInstance } from 'fastify'
 import { buildServer, persistenceRequired, resolveDemoMode, demoModeFatalInProd } from '../../src/api/server.js'
 import type { KeyStore } from '../../src/keys/KeyStore.js'
+import { MockSessionStore } from '../../src/store/MockSessionStore.js'
+import { initialSession } from '@akis/shared'
+import type { AkisEvent } from '@akis/shared'
+import type { OrchestratorServices } from '../../src/di/services.js'
 
 /**
  * Self-host durability contract: setting DATABASE_URL means "persist my data." In
@@ -61,6 +66,35 @@ describe('buildServer demo fail-closed', () => {
     const app = buildServer({ keyStore: noKeyStore, env: baseEnv })
     const res = await app.inject({ method: 'GET', url: '/health' })
     expect(res.json()).toMatchObject({ ok: true, mode: 'live' })
+  })
+})
+
+describe('P1-CORE-1: preview_status carries the demo annotation', () => {
+  // A static app (just an index.html) goes ready INSTANTLY — no install, no spawn — so the
+  // registry's onStatus fires synchronously and we can assert the emitted preview_status.
+  const staticCode = { files: [{ filePath: 'index.html', content: '<!doctype html><title>x</title>' }] }
+
+  async function emitPreview(env: Record<string, string | undefined>): Promise<AkisEvent[]> {
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'idea'), status: 'awaiting_push_confirm', code: staticCode })
+    const app = buildServer({ keyStore: noKeyStore, env, sessionStore: store })
+    const seen: AkisEvent[] = []
+    ;(app as FastifyInstance & { akisServices: OrchestratorServices }).akisServices.bus.subscribe('s1', e => seen.push(e))
+    await app.inject({ method: 'POST', url: '/sessions/s1/preview' })
+    await app.close()
+    return seen.filter(e => e.kind === 'preview_status')
+  }
+
+  it('stamps preview_status with demo:true in demo mode', async () => {
+    const statuses = await emitPreview({ ...baseEnv, AKIS_ALLOW_MOCK: '1' })
+    expect(statuses.length).toBeGreaterThan(0)
+    expect(statuses.every(e => e.kind === 'preview_status' && e.demo === true)).toBe(true)
+  })
+
+  it('omits demo on preview_status in live mode (byte-identical)', async () => {
+    const statuses = await emitPreview(baseEnv)
+    expect(statuses.length).toBeGreaterThan(0)
+    expect(statuses.every(e => e.kind === 'preview_status' && e.demo === undefined)).toBe(true)
   })
 })
 

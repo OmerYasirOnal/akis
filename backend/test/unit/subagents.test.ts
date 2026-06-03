@@ -4,6 +4,7 @@ import { ScribeAgent, SCRIBE_SYSTEM } from '../../src/orchestrator/subagents/Scr
 import { ProtoAgent, PROTO_SYSTEM } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { TraceAgent } from '../../src/orchestrator/subagents/TraceAgent.js'
 import { resolveVerifier } from '../../src/verify/verifier.js'
+import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../../src/gates/specGate.js'
 import { EventBus } from '../../src/events/bus.js'
 import { initialSession } from '@akis/shared'
@@ -281,6 +282,43 @@ describe('TraceAgent (verifier)', () => {
     const trace = new TraceAgent({ bus: new EventBus(), verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 3, passed: false } }) })
     const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
     expect(token).toBeNull()
+  })
+
+  // P1-CORE-1: the verify event carries an INFORMATIONAL `demo:true` when the runner is
+  // the mock/injected runner (simulated verification), so the result it produced can never
+  // be mistaken for a real pass at the point of the result. Purely a wire annotation — it
+  // does NOT change minting, the token, or any gate semantics.
+  it('stamps the verify event with demo:true when the runner is the mock/injected runner', async () => {
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    // The DI-injected runner seam (kind:'runner') — exactly the demo-verify path the
+    // server wires under AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY.
+    const trace = new TraceAgent({
+      bus,
+      verifier: resolveVerifier({ kind: 'runner', runner: createMockTestRunner({ testsRun: 2, passed: true }) }),
+    })
+    await trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
+    const v = seen.find(e => e.kind === 'verify')
+    expect(v && v.kind === 'verify' && v.demo).toBe(true)
+  })
+
+  it('does NOT stamp demo on the verify event under a live (non-demo) verifier — byte-identical result', async () => {
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    // A live verifier reports demo:false; the emitted event must carry NO demo field
+    // (undefined on the wire — never `false` noise), so a real run is byte-identical.
+    const trace = new TraceAgent({ bus, verifier: { demo: false, verify: async () => null } })
+    await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
+    const v = seen.find(e => e.kind === 'verify')
+    expect(v && v.kind === 'verify' && v.demo).toBeUndefined()
+  })
+
+  it('resolveVerifier derives demo from the runner kind (mock/runner=demo, real=live)', () => {
+    expect(resolveVerifier({ kind: 'mock', cfg: { testsRun: 1, passed: true } }).demo).toBe(true)
+    expect(resolveVerifier({ kind: 'runner', runner: createMockTestRunner({ testsRun: 1, passed: true }) }).demo).toBe(true)
+    expect(resolveVerifier({ kind: 'real', sandbox: {} as never }).demo).toBe(false)
   })
 })
 
