@@ -26,6 +26,10 @@ describe('CONTRACT: boot-path RAG wiring (services NOT injected)', () => {
     const app = buildServer({ keyStore: noKeyStore, env: { AUTH_JWT_SECRET: 's', AKIS_ALLOW_MOCK: '1' } })
     const res = await app.inject({ method: 'POST', url: '/sessions/nope/knowledge/repo' })
     expect(res.statusCode).toBe(404)
-    expect(res.json().error).toBe('not found') // the generic catch-all — the handler never ran
+    // The route's OWN handler did NOT run — so we get some GENERIC 404, never the route's
+    // session-scoped "session <id> not found". (Which generic 404 — the SPA catch-all's
+    // "not found" vs Fastify's default "Not Found" — depends on whether a built frontend/dist
+    // is present, so assert by what's ABSENT, not the exact generic message.)
+    expect(res.json().error).not.toMatch(/^session .+ not found$/)
   })
 })
