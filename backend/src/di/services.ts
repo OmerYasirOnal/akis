@@ -233,6 +233,14 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     return m ? makeProvider(m.provider, m.model) : provider
   }
 
+  // RAG read path reads the in-memory `mockGithub` (mock-only `.read()`); the push
+  // seam (`github`, above) is the selected adapter (mock or RealGitHubAdapter).
+  const knowledgeWiring = resolveKnowledge(opts, bus, mockGithub)
+  // RAG is "on" for Scribe iff a real knowledge port is wired (the flag built the
+  // RAG stack, or a caller injected an explicit non-Null port). The NullKnowledgePort
+  // default ⇒ off ⇒ Scribe stays byte-identical single-shot (P3-AGENT-2).
+  const ragEnabled = !(knowledgeWiring.knowledge instanceof NullKnowledgePort)
+
   // Custom (non-core) workflow agents → advisory edge agents (CF4). Registration
   // REJECTS any gate capability (defense-in-depth behind save-time validation), so a
   // throw here means a gate-holding custom agent slipped past validation. Each gets
@@ -257,7 +265,13 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     github,
     validator: new DeterministicValidator(),
     critic: new CriticAgent({ generateText }, 75),
-    scribe: new ScribeAgent({ bus, provider: providerFor('scribe'), ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}) }),
+    // RAG ON ⇒ Scribe composes via the bounded retrieve_knowledge tool loop; OFF ⇒
+    // single-shot. The same knowledge port the SharedContext reads is reused (P3-AGENT-2).
+    scribe: new ScribeAgent({
+      bus, provider: providerFor('scribe'),
+      ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}),
+      ...(ragEnabled ? { knowledge: knowledgeWiring.knowledge, ragEnabled: true } : {}),
+    }),
     proto: new ProtoAgent({ bus, provider: providerFor('proto') }),
     trace: new TraceAgent({ bus, verifier: resolveVerifier(verifierSpec) }),
     approvalAuthority: createApprovalAuthority(),
@@ -267,9 +281,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     ...(opts.iterateBudget !== undefined ? { iterateBudget: opts.iterateBudget } : {}),
     ...(opts.gatePolicy !== undefined ? { gatePolicy: opts.gatePolicy } : {}),
     ...(advisoryAgents.size > 0 ? { advisoryAgents } : {}),
-    // RAG read path reads the in-memory `mockGithub` (mock-only `.read()`); the push
-    // seam (`github`, above) is the selected adapter (mock or RealGitHubAdapter).
-    ...resolveKnowledge(opts, bus, mockGithub),
+    ...knowledgeWiring,
   }
 }
 
