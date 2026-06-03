@@ -35,6 +35,14 @@ describe('Markdown', () => {
     expect(a?.getAttribute('rel')).toContain('noreferrer')
   })
 
+  it('sanitizes a javascript: link href (no script-url sink)', () => {
+    // react-markdown's default urlTransform drops dangerous schemes; pin it so a future
+    // urlTransform override can never silently re-open a javascript:/data: link sink.
+    const { container } = render(<Markdown content="[x](javascript:alert(1))" />)
+    const href = container.querySelector('a')?.getAttribute('href') ?? ''
+    expect(href.toLowerCase()).not.toContain('javascript:')
+  })
+
   it('does NOT render raw HTML — a <script> tag is shown as text, never executed (XSS guard)', () => {
     const { container } = render(<Markdown content={'before <script>alert(1)</script> after'} />)
     // react-markdown disables raw HTML by default: no real <script> node lands in the DOM.

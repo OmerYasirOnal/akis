@@ -46,4 +46,21 @@ describe('extractBuildSpec', () => {
   it('does not match a plain code fence (different info string)', () => {
     expect(extractBuildSpec('```ts\nconst x = 1\n```')).toBeNull()
   })
+
+  it('does NOT truncate a 4-backtick block that contains an inner ```code fence (the real-spec case)', () => {
+    // A build spec routinely embeds code examples; a 4-backtick outer fence must contain
+    // inner 3-backtick blocks instead of closing at the first inner ``` (the must-fix).
+    const spec = '# API\nExample:\n```js\nconst x = 1\n```\nThat is the whole spec.'
+    const out = extractBuildSpec('````akis-spec\n' + spec + '\n````')
+    expect(out?.spec).toBe(spec)
+  })
+
+  it('detects a fence indented up to 3 spaces (CommonMark)', () => {
+    const out = extractBuildSpec('   ```akis-spec\nbody\n   ```')
+    expect(out?.spec).toBe('body')
+  })
+
+  it('does NOT treat `akis-spec-v2` (no separator) as the akis-spec tag', () => {
+    expect(extractBuildSpec('```akis-spec-v2\nbody\n```')).toBeNull()
+  })
 })
