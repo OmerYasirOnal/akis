@@ -1,4 +1,5 @@
 import http from 'node:http'
+import net from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import type { SessionStore } from '../store/SessionStore.js'
 import type { EventBus } from '../events/bus.js'
@@ -13,6 +14,36 @@ export interface PreviewDeps {
   bus: EventBus
   /** Upstream port resolver (defaults to the registry); injectable for tests. */
   portFor?: (sessionId: string) => number | undefined
+}
+
+/** Hop-by-hop headers (RFC 7230 §6.1) — never forwarded by a proxy. */
+const HOP_BY_HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade'])
+
+/**
+ * Rewrite a redirect `Location` that targets the internal loopback upstream
+ * (http(s)://127.0.0.1:<port>/...) back to the browser-visible same-origin prefix
+ * (/preview/:id/...), so the internal port never leaks into a browser-followed redirect.
+ * Leaves already-relative or foreign locations untouched. Pure (exported for tests).
+ */
+export function rewriteLocation(location: string | undefined, id: string, port: number): string | undefined {
+  if (location === undefined) return undefined
+  const m = /^https?:\/\/127\.0\.0\.1:(\d+)(\/[^\s]*)?$/i.exec(location)
+  if (!m || Number(m[1]) !== port) return location
+  const rest = (m[2] ?? '/').replace(/^\//, '')
+  return `/preview/${id}/${rest}`
+}
+
+/** Copy upstream response headers, dropping hop-by-hop and rewriting Location. */
+function sanitizeResponseHeaders(headers: http.IncomingHttpHeaders, id: string, port: number): http.OutgoingHttpHeaders {
+  const out: http.OutgoingHttpHeaders = {}
+  for (const [k, v] of Object.entries(headers)) {
+    if (v === undefined) continue
+    const lk = k.toLowerCase()
+    if (HOP_BY_HOP.has(lk)) continue
+    if (lk === 'location') { const rw = rewriteLocation(Array.isArray(v) ? v[0] : v, id, port); if (rw !== undefined) out[k] = rw; continue }
+    out[k] = v
+  }
+  return out
 }
 
 /**
@@ -47,7 +78,7 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): 
     return reply.send({ stopped: true })
   })
 
-  // Same-origin reverse proxy to the running preview (HMR/websocket upgrade deferred).
+  // Same-origin reverse proxy to the running preview.
   app.all<{ Params: { id: string; '*': string } }>('/preview/:id/*', async (req, reply) => {
     const id = req.params.id
     const subPath = '/' + (req.params['*'] ?? '')
@@ -62,10 +93,56 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): 
     const raw = reply.raw
     const upstream = http.request(
       { host: '127.0.0.1', port, path: subPath, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
-      up => { raw.writeHead(up.statusCode ?? 502, up.headers); up.pipe(raw) },
+      // Drop hop-by-hop headers and rewrite any Location back to /preview/:id/ so the
+      // internal loopback port never surfaces in a browser-visible redirect.
+      up => { raw.writeHead(up.statusCode ?? 502, sanitizeResponseHeaders(up.headers, id, port)); up.pipe(raw) },
     )
     upstream.on('error', () => { try { if (!raw.headersSent) raw.writeHead(502); raw.end('preview unavailable') } catch { /* socket gone */ } })
     req.raw.pipe(upstream)
+  })
+
+  // Raw WebSocket upgrade tunnel for vite HMR (and any other ws under a preview). Fastify's
+  // route layer doesn't see `Upgrade` requests, so we hook the underlying server. We ONLY
+  // handle /preview/:id/* upgrades to a READY port; everything else is left untouched for
+  // other upgrade handlers. The tunnel opens a raw net.connect to the loopback upstream,
+  // replays the upgrade head verbatim, and pipes both directions. Defensive: any error
+  // destroys both sockets (a half-open tunnel would hang the browser).
+  app.server.on('upgrade', (req, socket, head) => {
+    const url = req.url ?? ''
+    const m = /^\/preview\/([^/]+)(\/.*)?$/.exec(url.split('?')[0] ?? '')
+    // Registering ANY 'upgrade' listener disables Node's default of destroying unhandled upgrade
+    // sockets — and this is the only such listener. So a non-preview upgrade (or one with no ready
+    // port) MUST be destroyed, not left dangling: a bare `return` would leak the socket, an
+    // unauthenticated FD-exhaustion surface (the listener sits below Fastify's auth hooks). (PR #83 review)
+    if (!m) { socket.destroy(); return }
+    const id = decodeURIComponent(m[1] ?? '')
+    const port = portFor(id)
+    if (port === undefined) { socket.destroy(); return }
+    const subPath = (m[2] ?? '/') + (url.includes('?') ? '?' + url.slice(url.indexOf('?') + 1) : '')
+
+    const upstream = net.connect(port, '127.0.0.1', () => {
+      upstream.setTimeout(0) // connected — cancel the connect deadline (do NOT idle-kill a long-lived HMR ws)
+      // Replay the request line + headers (host rewritten to the loopback upstream), then
+      // any bytes already buffered by Node, then pipe both ways for the lifetime of the ws.
+      const headerLines = [`${req.method} ${subPath} HTTP/1.1`]
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (k.toLowerCase() === 'host') continue
+        for (const val of Array.isArray(v) ? v : [v]) if (val !== undefined) headerLines.push(`${k}: ${val}`)
+      }
+      headerLines.push(`host: 127.0.0.1:${port}`)
+      upstream.write(headerLines.join('\r\n') + '\r\n\r\n')
+      if (head?.length) upstream.write(head)
+      upstream.pipe(socket)
+      socket.pipe(upstream)
+    })
+    upstream.setTimeout(10_000) // bound the CONNECT phase only (cleared once connected)
+    const destroy = (): void => { upstream.destroy(); socket.destroy() }
+    // Reap BOTH sockets when EITHER errors OR closes (not just on error). On shutdown,
+    // forceCloseConnections destroys the client `socket` (a tracked server connection) — its
+    // 'close' then tears down the upstream net.connect socket (which Fastify does NOT track),
+    // so no half-open tunnel survives to wedge close(). 'timeout' fires only for a stalled connect.
+    upstream.on('error', destroy); upstream.on('close', destroy); upstream.on('timeout', destroy)
+    socket.on('error', destroy); socket.on('close', destroy)
   })
   // Note: routes don't emit events directly — the registry's onStatus emits preview_status.
 }

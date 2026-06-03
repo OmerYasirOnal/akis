@@ -23,8 +23,16 @@ export interface PreviewEntry {
   reason?: string
 }
 
-/** A launched long-running preview process we can kill. */
-export interface PreviewProc { readonly pid?: number; kill(): void }
+/** A launched long-running preview process we can kill and inspect. */
+export interface PreviewProc {
+  readonly pid?: number
+  kill(): void
+  /** Last ~8KB of the child's COMBINED stdout+stderr (for diagnostics on a failed/early-exit
+   *  launch — many dev servers print the fatal error to stdout, so both are captured). */
+  stderrTail?(): string
+  /** Resolves with the exit code if/when the child exits BEFORE we kill it (early death). */
+  onExit?(cb: (code: number | null) => void): void
+}
 export type Launch = (spec: StartSpec, cwd: string) => PreviewProc
 export type Probe = (port: number) => Promise<boolean>
 
@@ -36,14 +44,56 @@ export interface PreviewRegistryDeps {
   installTimeoutMs?: number
   probeAttempts?: number
   probeIntervalMs?: number
+  /** Install preflight (does `cmd` resolve on PATH?). Injectable so the lifecycle stays unit-
+   *  testable WITHOUT depending on a real pnpm on the test runner's global PATH — the default
+   *  spawns the real `<cmd> --version`. (PR #83 review: keep tests host-independent.) */
+  commandOnPath?: (cmd: string) => Promise<boolean>
 }
 
-/** Real launcher: spawn the start command detached so we can kill its whole group. */
+/** A bounded string buffer keeping only the last `max` bytes (ring-trimmed) so capturing
+ *  a long-running child's output never grows unbounded. */
+function ringBuffer(max = 8 * 1024): { push: (s: string) => void; value: () => string } {
+  let buf = ''
+  return {
+    push: (s: string) => { buf += s; if (buf.length > max) buf = buf.slice(buf.length - max) },
+    value: () => buf,
+  }
+}
+
+/** Real launcher: spawn the start command detached so we can kill its whole group.
+ *  stdout AND stderr are PIPED (not ignored) and ring-buffered together to the last ~8KB so a
+ *  failed or early-exiting child can surface a useful output tail + exit code (vs. a blank
+ *  "readiness probe timed out"). The launch env is scrubEnv'd, so no AI key can be in the tail. */
 const defaultLaunch: Launch = (spec, cwd) => {
-  const child = spawn(spec.cmd, spec.args, { cwd, env: buildLaunchEnv(spec), detached: true, stdio: 'ignore' })
+  const child = spawn(spec.cmd, spec.args, { cwd, env: buildLaunchEnv(spec), detached: true, stdio: ['ignore', 'pipe', 'pipe'] })
+  const err = ringBuffer()
+  child.stdout?.on('data', d => err.push(String(d)))
+  child.stderr?.on('data', d => err.push(String(d)))
   child.unref()
   const kill = (): void => { const p = child.pid; if (p) { try { process.kill(-p, 'SIGKILL') } catch { try { process.kill(p, 'SIGKILL') } catch { /* gone */ } } } }
-  return child.pid !== undefined ? { pid: child.pid, kill } : { kill }
+  const onExit = (cb: (code: number | null) => void): void => { child.once('exit', code => cb(code)) }
+  const stderrTail = (): string => err.value()
+  return child.pid !== undefined ? { pid: child.pid, kill, stderrTail, onExit } : { kill, stderrTail, onExit }
+}
+
+/** Whether the install runner resolves on PATH — so we can give a clear "enable corepack"
+ *  hint instead of the bare "install failed (code null)" when pnpm simply isn't installed.
+ *  Spawns `<cmd> --version` directly (no shell): a spawn ENOENT means it isn't on PATH. */
+async function commandOnPath(cmd: string): Promise<boolean> {
+  const { spawn: sp } = await import('node:child_process')
+  return new Promise(res => {
+    const p = sp(cmd, ['--version'], { stdio: 'ignore' })
+    p.on('error', () => res(false)) // ENOENT etc. → not resolvable
+    p.on('close', () => res(true))  // resolved + ran (exit code irrelevant for presence)
+  })
+}
+
+/** Trim a captured stderr tail for inclusion in a `reason` (last few lines, bounded). */
+function tailForReason(tail: string | undefined): string {
+  const t = (tail ?? '').trim()
+  if (!t) return ''
+  const lines = t.split('\n').slice(-8).join('\n')
+  return ` — ${lines.slice(-600)}`
 }
 
 /** Real readiness probe: a 200-ish response from the loopback port. */
@@ -67,9 +117,11 @@ export class PreviewRegistry {
   private procs = new Map<string, PreviewProc>()
   private launch: Launch
   private probe: Probe
+  private commandOnPath: (cmd: string) => Promise<boolean>
   constructor(private deps: PreviewRegistryDeps) {
     this.launch = deps.launch ?? defaultLaunch
     this.probe = deps.probe ?? defaultProbe
+    this.commandOnPath = deps.commandOnPath ?? commandOnPath
   }
 
   get(sessionId: string): PreviewEntry | undefined { return this.entries.get(sessionId) }
@@ -83,21 +135,40 @@ export class PreviewRegistry {
     if (type === 'static') {
       return this.set({ sessionId, status: 'ready', dir, type, url: `/preview/${sessionId}/` })
     }
-    const spec = startSpec(type, 0)
+    const spec = startSpec(type, 0, sessionId)
     if (!spec) { await teardown(dir).catch(() => {}); return this.set({ sessionId, status: 'unsupported', dir, type, reason: `app type '${type}' not previewable` }) }
 
     this.set({ sessionId, status: 'starting', dir })
     const install = installSpec()
+    // Install preflight: a missing pnpm yields a bare "code null" — give an actionable hint.
+    if (!(await this.commandOnPath(install.cmd))) {
+      await teardown(dir).catch(() => {})
+      return this.set({ sessionId, status: 'failed', dir, reason: `${install.cmd} not found — enable corepack (corepack enable)` })
+    }
     const res = await this.deps.sandbox.run(install.cmd, install.args, { cwd: dir, timeoutMs: this.deps.installTimeoutMs ?? 120_000 })
-    if (res.code !== 0) { await teardown(dir).catch(() => {}); return this.set({ sessionId, status: 'failed', dir, reason: `install failed (code ${res.code})` }) }
+    if (res.code !== 0) {
+      await teardown(dir).catch(() => {})
+      // Surface the captured install stderr tail (previously captured then discarded).
+      return this.set({ sessionId, status: 'failed', dir, reason: `install failed (code ${res.code})${tailForReason(res.stderr)}` })
+    }
 
     const port = await allocatePort()
-    const proc = this.launch(startSpec(type, port)!, dir)
+    const proc = this.launch(startSpec(type, port, sessionId)!, dir)
     this.procs.set(sessionId, proc)
 
-    const attempts = this.deps.probeAttempts ?? 20
+    // Watch for an early death: if the child exits before readiness, FAIL FAST with its exit
+    // code + a stderr tail instead of burning the whole probe budget on a dead process.
+    let earlyExit: { code: number | null } | undefined
+    proc.onExit?.(code => { earlyExit = { code } })
+
+    const attempts = this.deps.probeAttempts ?? (Number(process.env.AKIS_PREVIEW_PROBE_ATTEMPTS) || 60)
     const interval = this.deps.probeIntervalMs ?? 250
     for (let i = 0; i < attempts; i++) {
+      if (earlyExit) {
+        releasePort(port); this.procs.delete(sessionId)
+        await teardown(dir).catch(() => {})
+        return this.set({ sessionId, status: 'failed', dir, port, reason: `preview process exited early (code ${earlyExit.code})${tailForReason(proc.stderrTail?.())}` })
+      }
       if (await this.probe(port)) {
         return this.set({ sessionId, status: 'ready', dir, port, url: `/preview/${sessionId}/` })
       }
@@ -105,7 +176,7 @@ export class PreviewRegistry {
     }
     proc.kill(); releasePort(port); this.procs.delete(sessionId)
     await teardown(dir).catch(() => {})
-    return this.set({ sessionId, status: 'failed', dir, port, reason: 'readiness probe timed out' })
+    return this.set({ sessionId, status: 'failed', dir, port, reason: `readiness probe timed out${tailForReason(proc.stderrTail?.())}` })
   }
 
   async stop(sessionId: string): Promise<void> {
@@ -114,6 +185,17 @@ export class PreviewRegistry {
     const e = this.entries.get(sessionId)
     if (e?.port !== undefined) releasePort(e.port)
     if (e) { this.set({ ...e, status: 'stopped', ...(e.port !== undefined ? {} : {}) }); await teardown(e.dir).catch(() => {}) }
+  }
+
+  /**
+   * Stop EVERY tracked preview (graceful shutdown): kill each process group, release its
+   * port, tear down its workspace, emit 'stopped'. Per-entry errors are tolerated
+   * (Promise.allSettled) so one stuck preview can't block a clean server shutdown. Covers
+   * both live procs and any tracked entry (e.g. a static preview with no proc).
+   */
+  async stopAll(): Promise<void> {
+    const ids = new Set<string>([...this.entries.keys(), ...this.procs.keys()])
+    await Promise.allSettled([...ids].map(id => this.stop(id)))
   }
 
   /** Port for a session's ready preview (for the proxy upstream). */
