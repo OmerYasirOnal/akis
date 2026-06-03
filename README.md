@@ -23,10 +23,11 @@ Flexibility lives at the **edges** (agentic dispatch, a verified iterate loop, f
 |---|---|
 | **Agentic core + 4 gates** | Orchestrator dispatches Scribe/Proto/Trace/Critic; gates enforced structurally (branded tokens, capability encapsulation). |
 | **Real providers + keys** | Anthropic (default) / OpenAI / OpenRouter / Gemini behind one `LlmProvider` seam; encrypted `KeyStore`; `GET/PUT/DELETE /api/providers`. Mock fallback for tests/keyless runs. |
-| **Live sub-agents** | Scribe (idea→spec) and Proto (spec→code) call the LLM and parse typed artifacts; Trace runs a real verifier (Playwright/Cucumber, opt-in). |
-| **Live visibility** | Orchestrator HTTP routes + **resumable SSE** (per-session `seq` + `Last-Event-ID`; no lost/dup on reconnect). |
+| **Live sub-agents** | Scribe (idea→spec) and Proto (spec→code) call the LLM and parse typed artifacts; Trace runs a real verifier (Playwright/Cucumber, opt-in). When RAG is on, Scribe pulls grounding on demand via a bounded, read-only `retrieve_knowledge` tool-loop (Scribe only today). |
+| **Live visibility** | Orchestrator HTTP routes + **resumable SSE** (per-session `seq` + `Last-Event-ID`; no lost/dup on reconnect). A **DEMO badge** marks mock-verified results — on the verify card + live preview, not just the header — so a demo build is never mistaken for a real-verified one. |
 | **SharedContext** | One typed, read-only context every agent reads (no untyped blob). |
-| **Auto-RAG** | Zero-touch, event-driven ingest + hybrid retrieve behind a `KnowledgePort` (embedded now; pgvector drops in behind the same seam). Read-only, holds no gate capability. |
+| **Auto-RAG** | Zero-touch, event-driven ingest + hybrid retrieve behind a `KnowledgePort`. Retrieval is **semantic when an OpenAI embedding key is set** (OpenAI `text-embedding-3-small`), and offline **feature-hash** otherwise — keyless/test stays self-hostable. BM25 + the vector corpus both persist + re-hydrate on boot (Postgres; a real `vector(N)` column when pgvector is present). Read-only, holds no gate capability. |
+| **Real GitHub push (opt-in)** | The push gate can open a real PR via `RealGitHubAdapter` — selected **only** when `AKIS_GITHUB_PUSH_TOKEN` + a target repo are set, and only behind the `ApprovedPush` token (verified **and** human-confirmed). Default boot stays on the mock. |
 | **Agents & Workflows tab** | Per-agent model picker (consumes `/api/providers`) + gate-safe workflow presets (tighten-only) + per-session selection. |
 | **Chat-to-Build** | When "Ask AKIS" emits a build-ready spec (in a fenced `akis-spec` block), the UI renders it, offers a `.md` download, and a one-click **Approve & Build** runs the unchanged `startSession` → same gates + pipeline. No copy-paste, no new build path. See [`docs/CHAT_TO_BUILD.md`](docs/CHAT_TO_BUILD.md). |
 | **Frontend** | React 19 + Vite + Tailwind v4; live-preview-first chat studio; rendered markdown via one XSS-safe `<Markdown>` (no raw HTML); the FE holds **no** gate authority (approve/confirm only POST to the gated routes). |
@@ -44,3 +45,4 @@ Flexibility lives at the **edges** (agentic dispatch, a verified iterate loop, f
 - Install: `pnpm install` (workspace root).
 - Backend tests (the gate): `pnpm -C backend test` — `tsc --noEmit` strict + vitest.
 - Live on real AI: set `ANTHROPIC_API_KEY` (env or via `/api/providers`) and the opt-in run flags (`AKIS_REAL_TESTS`, `AKIS_RAG`). With no key, the system runs the deterministic mock — **never a silent fake "verified"** in production (providers fail closed outside `NODE_ENV=test`).
+- Run the published image (no local build): each tagged release publishes a smoke-gated image to GHCR, so you can `docker run -p 3000:3000 ghcr.io/omeryasironal/akis-platform-mvp:latest` directly (Ollama-style). See [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md) for the full run + compose story.
