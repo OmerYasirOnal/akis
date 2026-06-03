@@ -5,8 +5,8 @@ import type { RepoFile } from '../di/MockGitHubAdapter.js'
 import type { Sandbox } from '../exec/Sandbox.js'
 import { materialize, teardown } from '../preview/Workspace.js'
 import { generateFeature } from '../bdd/featureGen.js'
-import { parseCucumberMessages, type BddStats } from '../bdd/messageStats.js'
-import { parsePlaywrightReport, type E2eStats } from '../e2e/playwrightStats.js'
+import { parseCucumberMessages, parseCucumberScenarios, type BddStats, type BddScenario } from '../bdd/messageStats.js'
+import { parsePlaywrightReport, parsePlaywrightScenarios, type E2eStats, type E2eScenario } from '../e2e/playwrightStats.js'
 
 const EMPTY_BDD: BddStats = { built: 0, run: 0, passed: 0, failed: 0, skipped: 0, durationMs: 0 }
 const EMPTY_E2E: E2eStats = { testsRun: 0, passed: false, expected: 0, unexpected: 0, flaky: 0, skipped: 0, durationMs: 0 }
@@ -22,7 +22,16 @@ export interface RealRunDeps {
   onProgress?: (phase: 'bdd' | 'e2e', stats: BddStats | E2eStats) => void
 }
 
-export interface RealRunResult { testsRun: number; passed: boolean; bdd: BddStats; e2e: E2eStats }
+export interface RealRunResult {
+  testsRun: number
+  passed: boolean
+  bdd: BddStats
+  e2e: E2eStats
+  /** ADDITIVE per-scenario detail (names + structured failure reasons). Observability
+   *  only — never feeds `passed`/`testsRun` (the gate truth). */
+  bddScenarios: BddScenario[]
+  e2eScenarios: E2eScenario[]
+}
 
 /** Read a reporter file written by a child; missing/garbage → undefined (fail-closed). */
 async function readReport(dir: string, name: string): Promise<string | undefined> {
@@ -49,6 +58,7 @@ export async function runRealTests(files: RepoFile[], deps: RealRunDeps): Promis
     const cuc = await deps.sandbox.run('pnpm', ['exec', 'cucumber-js', '--format', `message:${CUC_REPORT}`], { cwd: dir, timeoutMs })
     const cucJson = await readReport(dir, CUC_REPORT)
     const bdd = cucJson ? parseCucumberMessages(cucJson) : EMPTY_BDD
+    const bddScenarios = cucJson ? parseCucumberScenarios(cucJson) : []
     deps.onProgress?.('bdd', bdd)
 
     // E2E: playwright with the JSON reporter; baseURL = the running preview.
@@ -57,13 +67,14 @@ export async function runRealTests(files: RepoFile[], deps: RealRunDeps): Promis
     const pw = await deps.sandbox.run('pnpm', ['exec', 'playwright', 'test', '--reporter=json'], { cwd: dir, env: e2eEnv, timeoutMs })
     const pwJson = await readReport(dir, PW_REPORT)
     const e2e = pwJson ? parsePlaywrightReport(pwJson) : EMPTY_E2E
+    const e2eScenarios = pwJson ? parsePlaywrightScenarios(pwJson) : []
     deps.onProgress?.('e2e', e2e)
 
     const timedOut = cuc.timedOut || pw.timedOut
     const testsRun = bdd.run + e2e.testsRun
     const anyPass = bdd.passed > 0 || e2e.expected > 0 || e2e.flaky > 0
     const passed = !timedOut && testsRun >= 1 && bdd.failed === 0 && e2e.unexpected === 0 && anyPass
-    return { testsRun, passed, bdd, e2e }
+    return { testsRun, passed, bdd, e2e, bddScenarios, e2eScenarios }
   } finally {
     await teardown(dir).catch(() => {})
   }

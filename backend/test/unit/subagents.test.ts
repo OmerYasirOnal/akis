@@ -264,7 +264,7 @@ describe('TraceAgent (verifier)', () => {
     const seen: AkisEvent[] = []
     bus.subscribe('s1', e => seen.push(e))
     const trace = new TraceAgent({ bus, verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 2, passed: true } }) })
-    const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
+    const { token } = await trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
     expect(token).not.toBeNull()
     expect(token?.testsRun).toBe(2)
     const v = seen.find(e => e.kind === 'verify')
@@ -275,12 +275,12 @@ describe('TraceAgent (verifier)', () => {
   })
   it('returns null for a 0-test run (no false green)', async () => {
     const trace = new TraceAgent({ bus: new EventBus(), verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 0, passed: true } }) })
-    const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
+    const { token } = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
     expect(token).toBeNull()
   })
   it('returns null when tests ran but failed', async () => {
     const trace = new TraceAgent({ bus: new EventBus(), verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 3, passed: false } }) })
-    const token = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
+    const { token } = await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
     expect(token).toBeNull()
   })
 

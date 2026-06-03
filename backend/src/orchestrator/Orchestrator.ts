@@ -214,13 +214,21 @@ export class Orchestrator {
     await this.runAdvisory(id, 'post_code_review', `Advise on the reviewed build for: ${session.idea}`)
 
     // Gate 2 + 3: only Trace holds a TestRunner; verification is the persisted token.
-    const token = await this.s.trace.run({ sessionId: id, laneId: 'verify', files: lastFiles })
+    const { token, evidence } = await this.s.trace.run({ sessionId: id, laneId: 'verify', files: lastFiles })
+    // ADDITIVE, NON-GATE: the structured evidence (scenarios + counts + durationMs +
+    // structured failure) is folded into the SAME normal update patch below. It is
+    // OBSERVABILITY ONLY — written via the generic `update` (the gate-field allowlist
+    // is unchanged), never via a gate method, and it never affects the token/gate.
+    const evidencePatch = evidence ? { testEvidence: evidence } : {}
     if (token) {
       const verified = await this.s.store.recordVerification(id, token, session.version)
-      session = await this.s.store.update(id, { status: 'awaiting_push_confirm' }, verified.version)
+      session = await this.s.store.update(id, { status: 'awaiting_push_confirm', ...evidencePatch }, verified.version)
       this.emitGate(id, 'push_confirm', 'awaiting')
     } else {
-      session = await this.s.store.update(id, { status: 'building' }, session.version)
+      // Persist the structured failure evidence alongside the status reset, so a FAILED
+      // run's named failing scenarios + reasons survive on GET /sessions/:id (this is
+      // what the self-repair loop / Trust Report will read).
+      session = await this.s.store.update(id, { status: 'building', ...evidencePatch }, session.version)
       this.narrate(id, '⚠️ Not verified — no real passing test was produced.')
     }
     return session

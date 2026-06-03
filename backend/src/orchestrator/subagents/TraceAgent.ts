@@ -1,4 +1,4 @@
-import type { VerifyToken } from '@akis/shared'
+import type { VerifyToken, TestEvidence } from '@akis/shared'
 import type { EventBus } from '../../events/bus.js'
 import type { RepoFile } from '../../di/MockGitHubAdapter.js'
 import type { Verifier } from '../../verify/verifier.js'
@@ -8,6 +8,18 @@ export interface TraceInput {
   sessionId: string
   laneId: string
   files: RepoFile[]
+}
+
+/**
+ * Trace's verification outcome. `token` is the GATE TRUTH (null ⇔ no genuine pass).
+ * `evidence` is the ADDITIVE, NON-GATE structured detail the verifier computed
+ * (scenarios + counts + durationMs + structured failure) — observability only; the
+ * orchestrator persists it on the normal (non-gate) update path. Absent only if the
+ * runner reported none.
+ */
+export interface TraceResult {
+  token: VerifyToken | null
+  evidence?: TestEvidence
 }
 
 /**
@@ -24,12 +36,16 @@ export interface TraceInput {
 export class TraceAgent {
   constructor(private deps: { bus: EventBus; verifier: Verifier }) {}
 
-  async run(input: TraceInput): Promise<VerifyToken | null> {
+  async run(input: TraceInput): Promise<TraceResult> {
     const { sessionId, laneId } = input
     this.deps.bus.emit({ kind: 'agent_start', role: 'trace', agent: 'trace', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'tool_call', tool: 'run_tests', args: { files: input.files.length }, agent: 'trace', laneId, sessionId, ts: nextTs() })
 
-    const token = await this.deps.verifier.verify(sessionId, input.files)
+    // ADDITIVE: capture the structured evidence the verifier reports via the side
+    // channel. The token below is the UNCHANGED gate truth — minting reads only the
+    // branded result, never this evidence, so the captured value cannot affect it.
+    let evidence: TestEvidence | undefined
+    const token = await this.deps.verifier.verify(sessionId, input.files, { onEvidence: e => { evidence = e } })
 
     this.deps.bus.emit({ kind: 'tool_result', tool: 'run_tests', ok: token !== null, result: { testsRun: token?.testsRun ?? 0, passed: token !== null }, agent: 'trace', laneId, sessionId, ts: nextTs() })
     // Stamp `demo:true` ONLY when this verifier runs the mock/injected runner (simulated
@@ -38,6 +54,6 @@ export class TraceAgent {
     // byte-identical verify event with NO `demo` field (never `demo:false` noise).
     this.deps.bus.emit({ kind: 'verify', testsRun: token?.testsRun ?? 0, passed: token !== null, ...(this.deps.verifier.demo ? { demo: true } : {}), agent: 'trace', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'agent_end', role: 'trace', ok: token !== null, agent: 'trace', laneId, sessionId, ts: nextTs() })
-    return token
+    return { token, ...(evidence ? { evidence } : {}) }
   }
 }
