@@ -12,6 +12,7 @@ import { PreviewPanel } from '../components/PreviewPanel.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import type { WorkflowOption } from '../live/types.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
+import type { CodeArtifact } from '@akis/shared'
 
 /**
  * The AKIS chat studio: a conversational thread (left) where you talk to AKIS and watch
@@ -54,6 +55,19 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const status = live.view.status
   const specState = live.view.gates.specApproval?.state
   const pushState = live.view.gates.pushConfirm?.state
+
+  // The agent-written code lives on SessionState.code.files (returned by the EXISTING
+  // GET /sessions/:id — no events carry file contents). Re-fetch via the existing client
+  // when the run progresses so the Code tab in the preview rail shows the real artifact.
+  const [codeFiles, setCodeFiles] = useState<CodeArtifact['files'] | undefined>(undefined)
+  useEffect(() => {
+    if (!sessionId) { setCodeFiles(undefined); return }
+    let cancelled = false
+    void api.getSession(sessionId)
+      .then(s => { if (!cancelled) setCodeFiles(s.code?.files) })
+      .catch(() => { /* code tab simply stays empty; surfaced nowhere else */ })
+    return () => { cancelled = true }
+  }, [sessionId, status, api])
 
   // The single build path: the spec/idea becomes a session via the UNCHANGED startSession
   // → the same 4 structural gates + pipeline + History. Used by both the composer and the
@@ -176,7 +190,7 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
 
       {/* Live preview rail */}
       <aside className="rounded-2xl border border-white/10 bg-white/[0.02] p-4 backdrop-blur-sm">
-        <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} />
+        <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} />
       </aside>
     </div>
   )

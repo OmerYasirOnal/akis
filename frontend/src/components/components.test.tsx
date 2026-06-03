@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { PreviewPanel } from './PreviewPanel.js'
 import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
@@ -78,5 +79,52 @@ describe('PreviewPanel', () => {
     renderI18n(<PreviewPanel view={view} />)
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.queryByText(STRINGS.en['result.demo.badge'], { exact: false })).toBeNull()
+  })
+
+  // ── Code tab: the read-only browser of the agent-written files (SessionState.code.files) ──
+  it('shows NO Preview⇄Code toggle when there are no generated files', () => {
+    renderI18n(<PreviewPanel view={emptyView('s1')} />)
+    expect(screen.queryByRole('tab', { name: STRINGS.en['preview.tab.code'] })).toBeNull()
+  })
+  it('shows the Preview⇄Code toggle (with file count) once files exist, defaulting to Preview', () => {
+    const files = [{ filePath: 'app.ts', content: 'a' }, { filePath: 'README.md', content: 'b' }]
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
+    const { container } = renderI18n(<PreviewPanel view={view} files={files} />)
+    expect(screen.getByRole('tab', { name: /Code/ })).toBeInTheDocument()
+    // default tab is Preview → iframe still shown, no code list yet
+    expect(container.querySelector('iframe')).not.toBeNull()
+  })
+  it('switches to the Code view, showing the file list + selected content (iframe gone)', async () => {
+    const user = userEvent.setup()
+    const files = [{ filePath: 'app.ts', content: 'export const hello = 1' }]
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
+    const { container } = renderI18n(<PreviewPanel view={view} files={files} />)
+    await user.click(screen.getByRole('tab', { name: /Code/ }))
+    expect(screen.getByText('export const hello = 1')).toBeInTheDocument()
+    // 'app.ts' shows in the file list (and the viewer header) — assert it's in the list
+    expect(screen.getByRole('list', { name: /Generated code/i })).toHaveTextContent('app.ts')
+    // the preview iframe is not mounted on the Code tab
+    expect(container.querySelector('iframe')).toBeNull()
+  })
+  it('renders code content as TEXT on the Code tab — never an executed <script> (XSS guard)', async () => {
+    const user = userEvent.setup()
+    const files = [{ filePath: 'evil.html', content: '<script>alert(1)</script>' }]
+    const { container } = renderI18n(<PreviewPanel view={emptyView('s1')} files={files} />)
+    await user.click(screen.getByRole('tab', { name: /Code/ }))
+    expect(screen.getByText('<script>alert(1)</script>')).toBeInTheDocument()
+    expect(container.querySelector('script')).toBeNull()
+  })
+  it('recovers to Preview when files vanish while on the Code tab (no dead-end trap)', async () => {
+    const user = userEvent.setup()
+    const files = [{ filePath: 'app.ts', content: 'export const x = 1' }]
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
+    const { container, rerender } = renderI18n(<PreviewPanel view={view} files={files} />)
+    await user.click(screen.getByRole('tab', { name: /Code/ }))
+    expect(container.querySelector('iframe')).toBeNull() // now on the Code tab
+    // Files vanish (e.g. New chat, or switching to a session with no code yet) → the tablist hides.
+    rerender(<I18nProvider><PreviewPanel view={view} files={undefined} /></I18nProvider>)
+    // Must NOT be stranded on an empty Code view: the Code tab is gone AND the live preview is back.
+    expect(screen.queryByRole('tab', { name: STRINGS.en['preview.tab.code'] })).toBeNull()
+    expect(container.querySelector('iframe')).not.toBeNull()
   })
 })
