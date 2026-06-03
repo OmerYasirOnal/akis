@@ -51,6 +51,83 @@ export function providerErrorDetail(body: string): string {
   return body.slice(0, 300)
 }
 
+/**
+ * Stream a provider response as Server-Sent-Events: POST `body`, then hand each
+ * parsed `data:` payload to `onEvent`. Mirrors `postJson`'s auth/timeout surface
+ * (same typed errors, same injectable fetch) but does NOT retry — a retry mid-stream
+ * would replay already-emitted deltas, so a failed stream surfaces to the caller (the
+ * route falls back to the non-stream path). Bytes are decoded incrementally and split
+ * on blank-line frame boundaries; each frame's `data:` line value is forwarded (the
+ * OpenAI `[DONE]` sentinel is filtered so it never reaches the adapter). Whether a
+ * payload is JSON-for-this-adapter is the adapter's concern — this layer is transport
+ * + framing only.
+ */
+export async function streamSse(
+  url: string,
+  body: unknown,
+  headers: Record<string, string>,
+  onEvent: (data: string) => void,
+  opts: PostOpts = {},
+): Promise<void> {
+  const fetchFn = opts.fetchFn ?? fetch
+  const timeoutMs = opts.timeoutMs ?? 60_000
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  let r: Response
+  try {
+    r = await fetchFn(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream', ...headers },
+      body: JSON.stringify(body),
+      signal: ctrl.signal,
+    })
+  } catch (e) {
+    clearTimeout(timer)
+    throw e
+  }
+  if (!r.ok) {
+    clearTimeout(timer)
+    if (r.status === 401 || r.status === 403) throw new AuthError()
+    if (r.status === 404) throw new ModelNotFoundError()
+    const errBody = await r.text().catch(() => '')
+    const detail = providerErrorDetail(errBody)
+    throw new ProviderHttpError(r.status, `provider HTTP ${r.status}${detail ? `: ${detail}` : ''}`, errBody)
+  }
+  if (!r.body) { clearTimeout(timer); throw new ProviderHttpError(0, 'streaming response had no body') }
+
+  const reader = r.body.getReader()
+  const decoder = new TextDecoder()
+  let buf = ''
+  // Forward every `data:` line in a frame (one SSE frame may carry several).
+  const flushFrame = (frame: string): void => {
+    for (const line of frame.split('\n')) {
+      const trimmed = line.trimStart()
+      if (!trimmed.startsWith('data:')) continue
+      const payload = trimmed.slice(5).trim()
+      if (!payload || payload === '[DONE]') continue // OpenAI terminator
+      onEvent(payload)
+    }
+  }
+  try {
+    for (;;) {
+      const { value, done } = await reader.read()
+      if (done) break
+      buf += decoder.decode(value, { stream: true })
+      // Process each complete frame (blank-line terminated); keep the trailing partial.
+      let idx: number
+      while ((idx = buf.search(/\r?\n\r?\n/)) !== -1) {
+        const frame = buf.slice(0, idx)
+        buf = buf.slice(idx + (buf[idx] === '\r' ? 4 : 2))
+        flushFrame(frame)
+      }
+    }
+    // A provider that ends without a trailing blank line still has a final frame.
+    if (buf.trim()) flushFrame(buf)
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 export async function postJson<T = unknown>(
   url: string,
   body: unknown,
