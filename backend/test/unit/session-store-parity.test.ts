@@ -26,8 +26,8 @@ function fakeSessionsTable(): SqlClient {
       const sql = text.trim()
       if (sql.startsWith('INSERT INTO sessions')) {
         // params are positional in the column list order used by PgSessionStore.create.
-        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, version] = params
-        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, version }
+        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, version] = params
+        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, version }
         rows.set(id as string, r)
         order.push(id as string)
         return { rows: [] }
@@ -52,7 +52,7 @@ function fakeSessionsTable(): SqlClient {
         if (!cur || cur.version !== expected) return { rows: [] } // optimistic miss
         const next: Record<string, unknown> = { ...cur, version: (cur.version as number) + 1 }
         // apply whichever known columns this UPDATE set (by placeholder index).
-        for (const col of ['status', 'idea', 'owner_id', 'spec', 'code', 'approval', 'verify_token', 'test_evidence']) {
+        for (const col of ['status', 'idea', 'owner_id', 'spec', 'code', 'approval', 'verify_token', 'test_evidence', 'passport']) {
           const i = num(sql, col)
           if (i >= 1) next[col] = params[i - 1]
         }
@@ -135,6 +135,22 @@ function paritySuite(name: string, make: () => SessionStore) {
       const got = await store.get('s1')
       expect(got?.testEvidence).toEqual(evidence)
       // testEvidence is NON-GATE: writing it never sets a gate token.
+      expect(isVerified(got!)).toBe(false)
+      expect(got?.approval).toBeUndefined()
+    })
+
+    it('persists ADDITIVE passport on the NORMAL update path and round-trips it via get() (durable on Pg too)', async () => {
+      const store = make()
+      await store.create(seed())
+      const passport = {
+        v: 1 as const, sessionId: 's1', testsRun: 2, codeDigest: 'cd', evidenceDigest: 'ed',
+        issuedAt: '2026-06-03T00:00:00.000Z', signature: 'sig', publicKey: 'pk',
+      }
+      const next = await store.update('s1', { passport }, 0)
+      expect(next.version).toBe(1)
+      const got = await store.get('s1')
+      expect(got?.passport).toEqual(passport) // survives on the Pg backend, not just Mock (the fix-first finding)
+      // passport is NON-GATE: writing it never sets a gate token.
       expect(isVerified(got!)).toBe(false)
       expect(got?.approval).toBeUndefined()
     })

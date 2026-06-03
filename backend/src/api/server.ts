@@ -42,6 +42,7 @@ import { LocalDirectSandbox } from '../exec/Sandbox.js'
 import { MockProvider } from '../agent/providers/mock/MockProvider.js'
 import { hasRealProviderKey } from '../agent/providers/createProvider.js'
 import { createMockTestRunner } from '../verify/TestRunner.js'
+import { loadOrCreatePassportSigner, fileDevKeyStore, type PassportSigner } from '../verify/passport.js'
 import { nextTs } from '../events/clock.js'
 
 export interface ServerDeps {
@@ -114,6 +115,19 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // without a key, createProvider still throws (no silent mock).
   const useMock = flag(env.AKIS_ALLOW_MOCK) && !hasRealProviderKey(env, deps.keyStore)
 
+  // Build Passport signer (the durable, third-party-verifiable proof of a verified build).
+  // From AKIS_PASSPORT_PRIVATE_KEY when configured (Ed25519 PKCS#8 PEM); otherwise a clearly
+  // DEV keypair persisted OUTSIDE the repo (AKIS_PASSPORT_KEY_PATH, default ~/.config/akis/
+  // passport.json, mode 0600) so the public key is stable across restarts. The PRIVATE key is
+  // read here and held ONLY on the signer (never logged/returned — the logger is off, and only
+  // signer.publicKey is ever exposed by the read route). Reachable to host injection via
+  // deps.services; in the default boot we wire it into buildServices below.
+  const passportSigner: PassportSigner = resolvePassportSigner(env)
+  if (passportSigner.dev) {
+    // eslint-disable-next-line no-console
+    console.warn('passport: AKIS_PASSPORT_PRIVATE_KEY unset — using a DEV signing key (set AKIS_PASSPORT_PRIVATE_KEY for a stable, operator-owned key). Public key is published on GET /sessions/:id/passport.')
+  }
+
   // AKIS_RERANK is a default QUALITY toggle (issue #7 AC3), default ON. Only an explicit
   // 0/false disables it (wiring a NoopReranker); anything else leaves the stack default.
   // It is a sibling of the rag flag — never a gate. Returns undefined → use the default.
@@ -168,6 +182,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // loop). Implied by AKIS_ALLOW_MOCK. Explicit opt-in only; the default stays
       // fail-closed (real verification still needs AKIS_REAL_TESTS / a real >=1-test pass).
       ...(flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY) ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
+      // ADDITIVE: a verified build signs a durable Build Passport over its already-minted facts.
+      passportSigner,
     })
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
   // Expose the orchestrator services to the host (start()) so graceful shutdown can drain
@@ -224,6 +240,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // rerank: the workflow's per-run knob wins (issue #7 AC3); else the env default.
     ...(wf.rerank !== undefined ? { rerank: wf.rerank } : rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
     ...(realTests ? { realTests: true } : {}),
+    // Same passport signer as the default orchestrator — one server key signs every run.
+    passportSigner,
   }))
 
   // Auth: JWT-in-cookie (reusing AUTH_JWT_SECRET + AUTH_COOKIE_* from env). Fail CLOSED
@@ -355,6 +373,18 @@ export function resolveDemoMode(env: Record<string, string | undefined>): { mode
  *  explicit AKIS_ALLOW_DEMO_IN_PROD acknowledgment must refuse to boot. */
 export function demoModeFatalInProd(env: Record<string, string | undefined>): boolean {
   return resolveDemoMode(env).fatal
+}
+
+/**
+ * Resolve the Build Passport signer. Uses AKIS_PASSPORT_PRIVATE_KEY (Ed25519 PKCS#8 PEM) when
+ * configured (`dev:false`); otherwise a clearly-DEV keypair persisted OUTSIDE the repo at
+ * AKIS_PASSPORT_KEY_PATH (default ~/.config/akis/passport.json, mode 0600 — mirrors the KeyStore
+ * path discipline) so the public key is stable across restarts. The PRIVATE key is held ONLY on
+ * the returned signer (a KeyObject) — never logged, returned, or placed on a passport.
+ */
+export function resolvePassportSigner(env: Record<string, string | undefined>): PassportSigner {
+  const path = env.AKIS_PASSPORT_KEY_PATH?.trim() || join(homedir(), '.config', 'akis', 'passport.json')
+  return loadOrCreatePassportSigner(env, fileDevKeyStore(path))
 }
 
 /** The durable stores selected together when DATABASE_URL is set — built over ONE shared

@@ -22,4 +22,14 @@ export type VerifyToken = {
   readonly sessionId: string
   readonly testsRun: number
   readonly codeDigest: string
+  /**
+   * Tamper-evidence digest of the STRUCTURED test evidence (the parsed reporter facts —
+   * scenarios + counts + outcome). DERIVED from the evidence and PURELY ADDITIVE: it makes
+   * "passed N tests" tamper-evident at the SAME structural rigor as `codeDigest` (which binds
+   * verified-code to pushed-code). It is computed alongside — and NEVER feeds — the fail-closed
+   * pass decision: mint still requires a genuine ≥1-test pass (see verifier.ts/mint), so this
+   * field can never relax the gate. Bound here so a recorded verification cannot be made to
+   * claim a different test outcome than the run produced; the signed Build Passport attests it.
+   */
+  readonly evidenceDigest: string
 }

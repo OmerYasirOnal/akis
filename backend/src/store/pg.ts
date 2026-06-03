@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   code          jsonb,
   verify_token  jsonb,
   test_evidence jsonb,
+  passport      jsonb,
   version       integer NOT NULL DEFAULT 0,
   created_at    timestamptz NOT NULL DEFAULT now()
 )`
@@ -73,6 +74,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 /** Idempotent migration for pre-existing sessions tables: add the additive, NON-GATE
  *  `test_evidence` jsonb column (no constraint, nullable) so an upgraded DB persists evidence. */
 export const ADD_TEST_EVIDENCE = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS test_evidence jsonb`
+
+/** Idempotent migration for pre-existing sessions tables: add the additive, NON-GATE
+ *  `passport` jsonb column (nullable) so an upgraded DB persists the signed Build Passport. */
+export const ADD_PASSPORT = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS passport jsonb`
 
 /** Newest-first per-owner history listing (listByOwner) is the hot read path. */
 export const CREATE_SESSIONS_OWNER_INDEX = `CREATE INDEX IF NOT EXISTS sessions_owner_id_idx ON sessions (owner_id, created_at DESC)`
@@ -134,6 +139,7 @@ const MIGRATIONS: readonly string[] = [
   CREATE_USERS_EXTERNAL_ID_UNIQUE,
   CREATE_SESSIONS_TABLE,
   ADD_TEST_EVIDENCE,
+  ADD_PASSPORT,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,
   CREATE_VECTOR_CHUNKS_TABLE,
