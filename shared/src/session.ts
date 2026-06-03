@@ -1,5 +1,6 @@
 import type { VerifyToken } from './verify.js'
 import type { ApprovalToken } from './approval.js'
+import type { BuildPassport } from './passport.js'
 
 export type SessionStatus =
   | 'composing' | 'awaiting_spec_approval' | 'building'
@@ -120,6 +121,15 @@ export interface SessionState {
    * verification remains the presence of `verifyToken` (see `isVerified`).
    */
   testEvidence?: TestEvidence
+  /**
+   * ADDITIVE, NON-GATE signed Build Passport — the durable, third-party-verifiable proof of
+   * THIS session's verification (Ed25519-signed already-minted facts: sessionId, testsRun,
+   * codeDigest, evidenceDigest, issuedAt). Produced AFTER verification and written on the
+   * NORMAL (generic-patch) update path, NOT a gate method, so it never widens the gate-write
+   * surface. It ATTESTS the gate truth; it can never fabricate it — verification remains the
+   * presence of `verifyToken` (see `isVerified`). Absent until a verified build signs one.
+   */
+  passport?: BuildPassport
   version: number               // optimistic lock
 }
 

@@ -322,6 +322,29 @@ Behavior and safety guarantees:
 
 ---
 
+## Build Passport (optional)
+
+On a **verified** build AKIS produces a durable, **Ed25519-signed Build Passport** — a portable,
+offline-verifiable proof that the build *"passed N real tests behind the structural gates"*. It
+signs the already-minted facts `{sessionId, testsRun, codeDigest, evidenceDigest, issuedAt}`; anyone
+holding the public key can verify it **without trusting AKIS, the network, or replaying the build**.
+Read it at `GET /sessions/:id/passport` (returns the passport, the server's trusted public key, and a
+server-side `verified` result).
+
+```bash
+# .env — optional; without it a clearly-DEV key is generated + persisted (stable across restarts)
+AKIS_PASSPORT_PRIVATE_KEY=    # Ed25519 PKCS#8 PEM → a stable, operator-owned signing key
+# AKIS_PASSPORT_KEY_PATH=~/.config/akis/passport.json   # where the DEV key persists (mode 0600)
+```
+
+- The signing **private key is held only in memory and is NEVER logged or returned** — only the
+  **public** key is published (on the passport + the read route). The dev key file is `0600`, outside the repo.
+- The passport **signs already-minted facts** — it can never mint or forge verification; `mint` still
+  requires a genuine ≥1-test pass. Generate an operator key with
+  `openssl genpkey -algorithm ed25519` (keep the private PEM secret; publish only the public key).
+
+---
+
 ## Upgrading
 
 ```bash

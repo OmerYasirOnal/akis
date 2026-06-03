@@ -5,6 +5,7 @@ import type { OrchestratorServices } from '../di/services.js'
 import type { SeqEvent } from '../events/bus.js'
 import type { WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { sseEvent, sseControl, sseComment } from './sse.js'
+import { verifyPassport } from '../verify/passport.js'
 
 export interface SessionsDeps {
   orchestrator: Orchestrator
@@ -105,6 +106,23 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     const s = await accessibleSession(req, req.params.id)
     if (!s) return notFound(reply, req.params.id)
     return reply.send(s)
+  })
+
+  // Read path: the durable, third-party-verifiable Build Passport for a session. Returns the
+  // signed passport, the server's trusted public key, and a SERVER-SIDE verification result
+  // (verified against the trusted key the server holds — NOT just the key embedded on the
+  // passport, so a passport carrying an attacker's own key+signature reads `verified:false`).
+  // The PRIVATE key is NEVER exposed. 404 when the session is unknown/unauthorized; 404 with
+  // a clear code when this session has no passport yet (no verified build signed one).
+  app.get<{ Params: { id: string } }>('/sessions/:id/passport', async (req, reply) => {
+    const s = await accessibleSession(req, req.params.id)
+    if (!s) return notFound(reply, req.params.id)
+    if (!s.passport) return reply.code(404).send({ error: 'no passport for this session', code: 'NoPassport' })
+    const trustedKey = services.passportSigner?.publicKey
+    // Verify against the server's TRUSTED key when configured; else fall back to the passport's
+    // embedded key (self-check). NEVER return/echo the private key — only the public key.
+    const verified = trustedKey ? verifyPassport(s.passport, trustedKey) : verifyPassport(s.passport)
+    return reply.send({ passport: s.passport, verified, ...(trustedKey ? { publicKey: trustedKey } : {}) })
   })
 
   const TERMINAL = new Set(['done', 'failed', 'cancelled'])
