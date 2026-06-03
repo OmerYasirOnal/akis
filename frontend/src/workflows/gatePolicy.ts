@@ -10,6 +10,9 @@ import {
   isGateTool,
   GATE_TOOL_OWNER,
   MAX_ITERATE_BUDGET,
+  isCoreRole,
+  isAdvisoryPhase,
+  ADVISORY_PHASES,
   type GateTool,
   type Role,
   type WorkflowConfigInput,
@@ -104,6 +107,14 @@ export function validateWorkflowDraft(cfg: WorkflowConfigInput, catalog: readonl
       }
     }
 
+    // The advisory dispatch edge (`phase`) is valid only for a custom (non-core) agent
+    // and must be a known edge. It carries no gate authority — only narrows when an
+    // advisory note runs (mirrors validate.ts).
+    if (a.phase !== undefined) {
+      if (isCoreRole(a.role)) errors.push(`${where}: 'phase' is only valid for a custom (advisory) agent, not a core role`)
+      else if (!isAdvisoryPhase(a.phase)) errors.push(`${where}: unknown advisory phase '${a.phase}' (allowed: ${ADVISORY_PHASES.join(', ')})`)
+    }
+
     // Per-agent model must exist in the (injected) catalog.
     if (a.model?.providerId !== undefined) {
       const pid = a.model.providerId
@@ -115,6 +126,14 @@ export function validateWorkflowDraft(cfg: WorkflowConfigInput, catalog: readonl
         if (!models.includes(a.model.modelId)) errors.push(`${where}: model '${a.model.modelId}' not in provider '${pid}' catalog`)
       }
     }
+  }
+
+  // Roles must be unique (mirrors validate.ts — a duplicate custom role would throw at
+  // registration). Surface it client-side before the POST.
+  const seen = new Set<string>()
+  for (const a of cfg.agents ?? []) {
+    if (seen.has(a.role)) errors.push(`duplicate agent role '${a.role}'`)
+    seen.add(a.role)
   }
 
   if (cfg.iterateBudget !== undefined) {
