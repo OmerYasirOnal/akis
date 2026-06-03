@@ -6,7 +6,7 @@
 > **GitHub mirror:** parent roadmap issue #4 + sub-issues #5–#10.
 > All milestones ship behind a feature flag and must not touch the demo path or the gate contract test.
 
-> **✅ Reconciled with shipped code (2026-06-03).** M0–M5 are merged (issues #5–#10 closed; see `git log`). Checkboxes below now reflect what is actually in the tree, grounded in the file noted after each tick. A handful of items are honestly **left unchecked** (real semantic embeddings, pgvector ANN, the golden-eval quality gate, the core-pipeline tool-loop, sandbox isolation) with a one-line note on *why*. For the canonical current state see `README.md`; for what's next see [`docs/NEXT.md`](NEXT.md).
+> **✅ Reconciled with shipped code (2026-06-03, refreshed after the #61–#71 deep-gap batch).** M0–M5 are merged (issues #5–#10 closed; see `git log`). Checkboxes below reflect what is actually in the tree, grounded in the file noted after each tick. The deep-gap batch since landed **real semantic embeddings (keyed)**, **BM25 persistence + a guarded `vector(N)` column**, and the **Scribe `retrieve_knowledge` tool-loop** — the NOTEs below have been updated. Items honestly **still unchecked / TODO**: the golden-eval retrieval quality gate, real ANN-at-scale (the column/index exist but are not the ranking path), the Proto/Critic tool-loop, and sandbox isolation. For the canonical current state see `README.md`; for what's next see [`docs/NEXT.md`](NEXT.md).
 
 ---
 
@@ -45,19 +45,19 @@ A code review (2026-06-01) found seams the plan assumed were **not built yet**. 
 - [x] `KnowledgePort` — `ingest(record)` / `retrieve(query, ctx)` (`backend/src/knowledge/KnowledgePort.ts`)
 - [x] `IngestRecord` — `{source, sourceId, userId, sessionId, agent?, commitSha?, content, contentHash, createdAt}` (`knowledge/IngestionSink.ts` + `KnowledgePort.ts`)
 - [x] `RetrievalResult` — chunk + provenance + score (`knowledge/store/VectorStore.ts` `Scored`/`ChunkMeta`)
-- [x] `EmbeddingProvider` port (`knowledge/embedding/EmbeddingProvider.ts`). NOTE: the only adapter today is the offline `LocalEmbeddingProvider` (signed feature-hash, no key); a KeyStore-backed semantic adapter is the deferred drop-in.
+- [x] `EmbeddingProvider` port (`knowledge/embedding/EmbeddingProvider.ts`). NOTE: a KeyStore-backed semantic adapter has since landed (PR #61) — `ApiEmbeddingProvider` (OpenAI `text-embedding-3-small`) is selected when an OpenAI key resolves; the offline `LocalEmbeddingProvider` (signed feature-hash, no key) stays the keyless/test default.
 - [x] `WorkflowConfig` / `AgentConfig` / `CustomAgentSpec` — typed in `@akis/shared`, validated in `backend/src/workflow/validate.ts`
-- [x] Migration for the persistent corpus — landed as `vector_chunks` (`user_id` + `session_id` columns) in `backend/src/store/pg.ts` (named `vector_chunks`, not `knowledge_chunks`; brute-force JS cosine, no `vector(N)`/pgvector)
-- [x] **D1 unblocked** (#1 agentic core + bus + skills, #2 providers/KeyStore/`/api/providers` all merged); **D3** resolved by choosing the offline feature-hash embedding (so `vector(N)` was replaced by `double precision[]`)
+- [x] Migration for the persistent corpus — landed as `vector_chunks` (`user_id` + `session_id` columns) in `backend/src/store/pg.ts` (named `vector_chunks`, not `knowledge_chunks`). NOTE: a guarded `vector(N)` upgrade + ivfflat index landed (PR #63) **when the pgvector extension is present** (fallback to `double precision[]` otherwise); ranking is still brute-force JS cosine, so the column/index are not yet the ranking path.
+- [x] **D1 unblocked** (#1 agentic core + bus + skills, #2 providers/KeyStore/`/api/providers` all merged); **D3** originally resolved via the offline feature-hash embedding; the real semantic adapter (PR #61) + the guarded `vector(N)` column (PR #63) have since landed behind the same seam.
 - **Exit:** ✅ interfaces merged; consumers compile against them.
 
 ## M1 — Auto-RAG core (flag off) ✅ MOSTLY SHIPPED (2 items honestly deferred)
-- [x] `knowledge/store/` — corpus store + typed repo (`MemoryVectorStore` default; durable `PgVectorStore` when `DATABASE_URL` set, w/ `user_id`/`session_id`). NOTE: **no pgvector ANN** — ranking is brute-force JS cosine; the persisted `vector_chunks` table is a plain `double precision[]`, re-hydrated into the in-memory index on boot.
-- [x] `EmbeddingProvider` port + default adapter — `LocalEmbeddingProvider` (offline signed feature-hash; no key). The KeyStore-backed semantic adapter (open-decision #1) is **deferred**.
+- [x] `knowledge/store/` — corpus store + typed repo (`MemoryVectorStore` default; durable `PgVectorStore` when `DATABASE_URL` set, w/ `user_id`/`session_id`). NOTE: ranking is still brute-force JS cosine via the in-memory delegate. The persisted `vector_chunks.vector` is upgraded to a real `vector(N)` column + ivfflat index when the pgvector extension is present (PR #63), else `double precision[]`; either way it re-hydrates into the in-memory index on boot. The ANN index is **not yet the ranking path** (real ANN-at-scale is still TODO — see `docs/NEXT.md`).
+- [x] `EmbeddingProvider` port + adapters — `LocalEmbeddingProvider` (offline signed feature-hash; no key) is the keyless/test default; the KeyStore-backed semantic `ApiEmbeddingProvider` (OpenAI `text-embedding-3-small`) is selected when an OpenAI key resolves (open-decision #1, landed PR #61).
 - [x] `ingestQueue` — async, idempotent, content-hash dedup, retry + dead-letter (`knowledge/ingest/IngestQueue.ts`, F1-AC7)
 - [x] event-driven ingest sources — `IngestionSink` subscribes per session; conversation + agent-output + repo + upload sources (`knowledge/IngestionSink.ts`, `ingest/*Source.ts`, F1-AC2)
-- [x] hybrid **vector + BM25** retrieval fused with RRF, **tenancy-filtered by `user_id`/`session_id`** (`retrieve/hybrid.ts` + `store/Bm25Index.ts`, F1-AC5). NOTE: BM25 is **in-memory only** (rebuilt from the corpus on boot), not a persisted index.
-- [x] `retrieve_knowledge` **tool** registered (read-only, no gate cap) over the DI `KnowledgePort` (`agent/tools/retrieveKnowledgeTool.ts`, F1-AC9). NOTE: today it is wired into the **advisory/ASK** agent (`agent/dynamic/AdvisoryAgent.ts`), **not** the core Scribe/Proto/Trace pipeline — the core pipeline gets RAG via the pre-assembled SharedContext, not an in-turn tool-loop. A core-pipeline tool-loop is the remaining piece (see `docs/NEXT.md`).
+- [x] hybrid **vector + BM25** retrieval fused with RRF, **tenancy-filtered by `user_id`/`session_id`** (`retrieve/hybrid.ts` + `store/Bm25Index.ts`, F1-AC5). NOTE: BM25 now **persists + re-hydrates on boot** from the same persisted corpus rows as the vector store (PR #63 — was previously in-memory-only and lost on restart), so both halves of hybrid retrieval survive a restart in lockstep.
+- [x] `retrieve_knowledge` **tool** registered (read-only, no gate cap) over the DI `KnowledgePort` (`agent/tools/retrieveKnowledgeTool.ts`, F1-AC9). NOTE: wired into the **advisory/ASK** agent (`agent/dynamic/AdvisoryAgent.ts`) and — when RAG is on — into **Scribe** via a bounded tool-loop (PR #64). **Proto/Critic do not run the loop yet** (they get RAG via the pre-assembled SharedContext) — extending it to them is the remaining piece (see `docs/NEXT.md`).
 - [ ] **Golden eval set (≥20 query→chunk pairs) + top-5 ≥80% quality gate (F1-AC8)** — NOT built. No golden-eval suite exists in `backend/test`; retrieval quality is covered by unit/contract tests but not a measured top-5 quality gate. **Genuinely TODO.**
 - [x] Observability: ingest success/fail, dead-letter depth, dedup-hit, retrieval metrics surfaced via `RagService.getMetrics` + `/api/knowledge` (F1-AC14; OpenTelemetry export is deferred — see `docs/NEXT.md`)
 - [x] Wire RAG behind a feature flag; flag-off parity preserved (default-off wiring in `knowledge/buildRag.ts`; gate contract test untouched, F1-AC11)
@@ -86,7 +86,7 @@ A code review (2026-06-01) found seams the plan assumed were **not built yet**. 
 - [x] custom (non-core) agents registered with **no gate capability** (runtime re-check rejects any gate cap) (`backend/src/agent/dynamic/AgentRegistry.ts`, F2-AC3)
 - [x] orchestrator consumes a resolved `WorkflowConfig` (per-agent models/tools/iterate budget/RAG) with no new control flow (`backend/src/workflow/resolve.ts`, F2-AC9)
 - [x] tests — producer granted a gate tool / unknown model / over-budget iterate → save-time error; gates stay structural (`backend/test` workflow validate suite)
-- **Exit:** ✅ workflows persisted/versioned; invalid configs rejected at save; gate contract test unchanged. NOTE: custom-agent **registration/validation** is shipped backend-side; a dedicated **custom-agent authoring UI** is not (the builder edits the core roster) — see `docs/NEXT.md`.
+- **Exit:** ✅ workflows persisted/versioned; invalid configs rejected at save; gate contract test unchanged. NOTE: the custom **advisory-agent authoring UI** has since shipped (PR #58) in the Workflow Builder — advisory agents can never hold a gate capability (enforced in the palette and in server validation).
 
 ## M5 — Workflow builder + live preview UI ✅ SHIPPED
 - [x] `frontend/src/workflows/WorkflowList.tsx` — saved workflows + versions
@@ -99,7 +99,7 @@ A code review (2026-06-01) found seams the plan assumed were **not built yet**. 
 
 ## Open decisions — RESOLVED (how each landed)
 (from `docs/rag-and-agents-design.md §E`)
-1. Embedding provider default → **resolved: offline signed feature-hash** (`LocalEmbeddingProvider`, no key, replaced `vector(N)` with `double precision[]`). A KeyStore-backed semantic adapter remains a deferred drop-in (`docs/NEXT.md`).
+1. Embedding provider default → **resolved: offline signed feature-hash by default** (`LocalEmbeddingProvider`, no key) — keyless/test path. The KeyStore-backed semantic adapter has since landed (PR #61): `ApiEmbeddingProvider` (OpenAI `text-embedding-3-small`) is selected when an OpenAI key resolves, and a guarded real `vector(N)` column (PR #63) sits behind the same store seam.
 2. Rerank budget → **resolved: pluggable + skippable** (`LocalReranker`/`NoopReranker`); default-off stack wires the no-op. The `p95 < 300 ms` budget is **not benchmarked** (no perf gate).
 3. Repo ingestion guardrails → **resolved:** secret/binary exclusion (`ingest/exclude.ts`) + real GitHub reader behind `AKIS_GITHUB_TOKEN`, auto-ingest on `confirmPush`.
 4. Custom-agent capability surface → **resolved: never a gate capability** — enforced at save (`workflow/validate.ts`) and at runtime registration (`agent/dynamic/AgentRegistry.ts`).
