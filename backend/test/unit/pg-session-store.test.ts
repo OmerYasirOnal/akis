@@ -88,6 +88,24 @@ describe('PgSessionStore', () => {
     expect(JSON.stringify(upd.params)).not.toMatch(/forged/)
   })
 
+  it('ADDITIVE: update() WRITES the NON-GATE test_evidence column but the SAME patch still rejects gate columns (allowlist not widened)', async () => {
+    const { db, calls } = fakeDb([
+      { match: s => s.startsWith('UPDATE'), rows: () => [dbRow({ status: 'building', version: 1, test_evidence: { testsRun: 1 } })] },
+    ])
+    const evidence = { testsRun: 1, passed: true, durationMs: 5, bdd: { built: 1, run: 1, passed: 1, failed: 0, skipped: 0, durationMs: 5 }, e2e: { testsRun: 0, passed: false, expected: 0, unexpected: 0, flaky: 0, skipped: 0, durationMs: 0 }, scenarios: [{ name: 'x', suite: 'bdd' as const, passed: true }] }
+    // Pollute the SAME patch with gate columns alongside the legit testEvidence.
+    const patch = { status: 'building', testEvidence: evidence, approval: { forged: true }, verifyToken: { forged: true } } as never
+    await new PgSessionStore(db).update('s1', patch, 0)
+    const upd = calls.find(c => c.text.startsWith('UPDATE'))!
+    // test_evidence IS in the SET clause (additive, non-gate)…
+    expect(upd.text).toMatch(/test_evidence = /)
+    expect(JSON.stringify(upd.params)).toMatch(/testsRun/)
+    // …but the gate columns are STILL never written and the forged values never reach params.
+    expect(upd.text).not.toMatch(/approval/i)
+    expect(upd.text).not.toMatch(/verify_token/i)
+    expect(JSON.stringify(upd.params)).not.toMatch(/forged/)
+  })
+
   it('update() throws a `version conflict` error matching MockSessionStore when the optimistic UPDATE matches no row', async () => {
     const { db } = fakeDb([
       { match: s => s.startsWith('UPDATE'), rows: () => [] },                       // no row updated

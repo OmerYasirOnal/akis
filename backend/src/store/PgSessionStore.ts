@@ -1,4 +1,4 @@
-import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken } from '@akis/shared'
+import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken, TestEvidence } from '@akis/shared'
 import type { SessionStore, SessionPatch } from './SessionStore.js'
 import type { SqlClient } from './pg.js'
 
@@ -22,11 +22,11 @@ export class PgSessionStore implements SessionStore {
 
   async create(s: SessionState): Promise<void> {
     await this.db.query(
-      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
       [
         s.id, s.status, s.idea, s.ownerId ?? null,
-        toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken),
+        toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken), toJson(s.testEvidence),
         s.version,
       ],
     )
@@ -42,6 +42,10 @@ export class PgSessionStore implements SessionStore {
    * EXCLUDING `approval`/`verifyToken` (the gate columns) and `id`/`version`. The SET
    * clause is built ONLY from these, so a stray `update({ approval })` can never write
    * a gate column. `ownerId` maps to the `owner_id` column.
+   *
+   * `testEvidence` is an ADDITIVE, NON-GATE column (`test_evidence` jsonb): it is on the
+   * normal patch path (NOT a gate method), so this does NOT widen the gate-write surface
+   * — the gate columns stay reachable only via recordApproval/recordVerification.
    */
   private static readonly PATCH_COLUMNS: ReadonlyArray<[keyof SessionPatch, string]> = [
     ['status', 'status'],
@@ -49,7 +53,11 @@ export class PgSessionStore implements SessionStore {
     ['ownerId', 'owner_id'],
     ['spec', 'spec'],
     ['code', 'code'],
+    ['testEvidence', 'test_evidence'],
   ]
+
+  /** Columns whose value is a nested object stored as jsonb (must be passed through toJson). */
+  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence'])
 
   async update(id: string, patch: SessionPatch, expectedVersion: number): Promise<SessionState> {
     const sets: string[] = []
@@ -57,7 +65,7 @@ export class PgSessionStore implements SessionStore {
     for (const [key, col] of PgSessionStore.PATCH_COLUMNS) {
       if (!(key in patch)) continue
       const raw = patch[key]
-      params.push(col === 'spec' || col === 'code' ? toJson(raw) : (raw ?? null))
+      params.push(PgSessionStore.JSON_COLUMNS.has(col) ? toJson(raw) : (raw ?? null))
       sets.push(`${col} = $${params.length}`)
     }
     return this.optimisticUpdate(id, sets, params, expectedVersion)
@@ -120,7 +128,7 @@ function toJson(v: unknown): unknown {
  *  already parsed by `pg` into JS objects). */
 interface SessionRow {
   id: unknown; status: unknown; idea: unknown; owner_id: unknown
-  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; version: unknown
+  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; version: unknown
 }
 
 /**
@@ -144,6 +152,8 @@ function toSession(raw: Record<string, unknown>): SessionState {
     ...(r.owner_id != null ? { ownerId: String(r.owner_id) } : {}),
     ...(r.spec != null ? { spec: r.spec as SpecArtifact } : {}),
     ...(r.code != null ? { code: r.code as CodeArtifact } : {}),
+    // ADDITIVE, NON-GATE: plain jsonb round-trip (no brand to re-attach), so no audited cast.
+    ...(r.test_evidence != null ? { testEvidence: r.test_evidence as TestEvidence } : {}),
     ...(r.approval != null ? { approval: r.approval as unknown as ApprovalToken } : {}),
     ...(r.verify_token != null ? { verifyToken: r.verify_token as unknown as VerifyToken } : {}),
   }

@@ -1,5 +1,7 @@
+import type { TestEvidence } from '@akis/shared'
 import type { RepoFile } from '../di/MockGitHubAdapter.js'
 import { digestFiles } from './digest.js'
+import { buildTestEvidence } from './evidence.js'
 
 /**
  * Evidence of a real test execution.
@@ -35,8 +37,19 @@ function brandResult(testsRun: number, passed: boolean, codeDigest: string): Tes
   return { testsRun, passed, codeDigest } as unknown as TestRunResult
 }
 
+/**
+ * ADDITIVE, NON-GATE options for a run. `onEvidence` is an observability sink: the
+ * runner reports the structured {@link TestEvidence} it computed alongside (NEVER
+ * feeding) the fail-closed pass/fail decision. It is purely a side-channel — it
+ * cannot alter the branded {@link TestRunResult} (which stays `{ testsRun, passed,
+ * codeDigest }`), so the gate truth is byte-identical whether or not it is supplied.
+ */
+export interface RunOptions {
+  onEvidence?: (evidence: TestEvidence) => void
+}
+
 export interface TestRunner {
-  run(files: RepoFile[]): Promise<TestRunResult>
+  run(files: RepoFile[], opts?: RunOptions): Promise<TestRunResult>
 }
 
 export interface TestRunConfig {
@@ -53,9 +66,32 @@ export interface TestRunConfig {
  */
 class MockTestRunnerImpl implements TestRunner {
   constructor(private readonly cfg: TestRunConfig = { testsRun: 0, passed: false }) {}
-  async run(files: RepoFile[]): Promise<TestRunResult> {
+  async run(files: RepoFile[], opts?: RunOptions): Promise<TestRunResult> {
+    // ADDITIVE: synthesize structured evidence from the deterministic config so the
+    // mock/demo path ALSO surfaces persisted evidence (one synthetic BDD scenario per
+    // configured test). This never touches the branded result below.
+    opts?.onEvidence?.(synthMockEvidence(this.cfg))
     return brandResult(this.cfg.testsRun, this.cfg.passed, digestFiles(files))
   }
+}
+
+/** Build structured evidence for the mock/demo runner from its config — one synthetic
+ *  BDD scenario per configured test, all passing iff the run passed. Observability
+ *  only; the branded result is computed independently. */
+function synthMockEvidence(cfg: TestRunConfig): TestEvidence {
+  const n = Math.max(0, Math.trunc(cfg.testsRun))
+  const bddScenarios = Array.from({ length: n }, (_, i) => ({
+    name: `mock scenario ${i + 1}`,
+    passed: cfg.passed,
+    ...(cfg.passed ? {} : { failedStatus: 'FAILED', failedStep: 'step reported FAILED' }),
+  }))
+  return buildTestEvidence({
+    passed: cfg.passed,
+    bdd: { built: n, run: n, passed: cfg.passed ? n : 0, failed: cfg.passed ? 0 : n, skipped: 0, durationMs: 0 },
+    e2e: { testsRun: 0, passed: false, expected: 0, unexpected: 0, flaky: 0, skipped: 0, durationMs: 0 },
+    bddScenarios,
+    e2eScenarios: [],
+  })
 }
 
 /**
@@ -87,9 +123,19 @@ export interface RealTestRunnerDeps {
  */
 export function createRealTestRunner(deps: RealTestRunnerDeps): TestRunner {
   return {
-    async run(files: RepoFile[]): Promise<TestRunResult> {
+    async run(files: RepoFile[], opts?: RunOptions): Promise<TestRunResult> {
       const { runRealTests } = await import('./realRun.js')
       const r = await runRealTests(files, deps)
+      // ADDITIVE: report the structured evidence from the rich stats. `passed` here is
+      // the run's REAL outcome (r.passed) for display — NOT the zeroed mint value below.
+      // This side-channel cannot influence the branded result.
+      opts?.onEvidence?.(buildTestEvidence({
+        passed: r.passed,
+        bdd: r.bdd,
+        e2e: r.e2e,
+        bddScenarios: r.bddScenarios,
+        e2eScenarios: r.e2eScenarios,
+      }))
       const testsRun = r.passed ? r.testsRun : 0
       return brandResult(testsRun, r.passed, digestFiles(files))
     },
