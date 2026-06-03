@@ -77,8 +77,13 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
       case 'review':
         if (cr) {
           if (cr.critical) { status = 'failed'; stat = 'critical finding' }
-          else if (cr.approved && cr.findings === 0) { status = 'done'; stat = 'review clean' }
-          else { status = status === 'failed' ? 'failed' : 'done'; stat = `${cr.findings} findings` }
+          // Approved (the normal flow ships with advisory findings) → done.
+          else if (cr.approved) { status = 'done'; stat = cr.findings === 0 ? 'review clean' : `${cr.findings} findings` }
+          // NOT approved (the critic parked the run at awaiting_critic_resolution) must NOT
+          // look like a clean pass — surface it as 'awaiting' (amber), not a green 'done', so
+          // a stalled build is visible. (No auto-resolution action yet — a gate-semantics
+          // decision.) The findings stat stays localizable; the amber status carries the signal.
+          else if (status !== 'failed') { status = 'awaiting'; stat = cr.findings > 0 ? `${cr.findings} findings` : undefined }
         } else if (status === 'active') stat = 'reviewing'
         break
       case 'verify':
