@@ -100,6 +100,35 @@ describe('foldSessionView (pure live view-model)', () => {
     expect(demo.preview.demo).toBe(true) // sticks once seen
   })
 
+  // Lane A: a preview-boot FAILURE is surfaced (with its human reason), never silently dropped.
+  it('surfaces a preview_status failure with its reason, and a later starting clears it', () => {
+    const failed = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'starting' }),
+      ev({ kind: 'preview_status', status: 'failed', reason: 'install failed: npm ci exited 1' }),
+    ])
+    expect(failed.preview.error).toEqual({ status: 'failed', reason: 'install failed: npm ci exited 1' })
+    expect(failed.preview.ready).toBe(false)
+    expect(failed.preview.starting).toBe(false)
+
+    // A retry's spinner supersedes the prior failure (error cleared on the next 'starting' frame).
+    const retried = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'failed', reason: 'boom' }),
+      ev({ kind: 'preview_status', status: 'starting' }),
+    ])
+    expect(retried.preview.error).toBeUndefined()
+    expect(retried.preview.starting).toBe(true)
+  })
+  it('surfaces an unsupported preview (no reason) and a later ready clears it', () => {
+    const unsupported = foldSessionView('s1', [ev({ kind: 'preview_status', status: 'unsupported' })])
+    expect(unsupported.preview.error).toEqual({ status: 'unsupported' })
+    const ready = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'unsupported' }),
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+    ])
+    expect(ready.preview.error).toBeUndefined()
+    expect(ready.preview.ready).toBe(true)
+  })
+
   it('folds the structured code_review verdict (last wins) as a read-only card', () => {
     const v = foldSessionView('s1', [
       ev({ kind: 'code_review', approved: false, findings: 4, critical: true, iteration: 1, agent: 'critic' }),

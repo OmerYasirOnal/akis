@@ -101,7 +101,17 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
             )
           }
           case 'preview':
-            return (
+            // A recoverable boot FAILURE shows as a rose card with its reason — never collapsed to
+            // a misleading "starting…" (text-only, XSS-safe). Otherwise the usual ready/starting card.
+            return m.error ? (
+              <div key={m.id} className="flex items-start gap-3">
+                <Avatar role="orchestrator" />
+                <div className="rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-300">
+                  {t(m.error.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed')}
+                  {m.error.reason ? <> · <span className="break-all text-rose-200/90">{m.error.reason}</span></> : null}
+                </div>
+              </div>
+            ) : (
               <div key={m.id} className="flex items-start gap-3">
                 <Avatar role="orchestrator" />
                 <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-200">

@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PreviewPanel } from './PreviewPanel.js'
@@ -175,5 +175,38 @@ describe('PreviewPanel', () => {
     rerender(<I18nProvider><PreviewPanel view={view} testEvidence={undefined} /></I18nProvider>)
     expect(screen.queryByRole('tab', { name: STRINGS.en['trust.tab'] })).toBeNull()
     expect(container.querySelector('iframe')).not.toBeNull()
+  })
+
+  // ── Lane A: a preview-boot FAILURE is visible + recoverable, never a silent collapse to empty ──
+  it('shows a rose error card with the reason on a failed preview boot (XSS-safe text)', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { ready: false, error: { status: 'failed', reason: 'install failed: npm ci exited 1' } } }
+    const { container } = renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun={false} />)
+    expect(screen.getByText(STRINGS.en['preview.failed'])).toBeInTheDocument()
+    expect(screen.getByText('install failed: npm ci exited 1')).toBeInTheDocument()
+    // It must NOT collapse to the empty "Run the app…" placeholder.
+    expect(screen.queryByText(STRINGS.en['preview.empty'])).toBeNull()
+    // Reason is rendered as text — no script sink.
+    expect(container.querySelector('script')).toBeNull()
+  })
+  it('uses the unsupported copy when the failure status is unsupported', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { ready: false, error: { status: 'unsupported' } } }
+    renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun={false} />)
+    expect(screen.getByText(STRINGS.en['preview.unsupported'])).toBeInTheDocument()
+    expect(screen.queryByText(STRINGS.en['preview.failed'])).toBeNull()
+  })
+  it('renders a working Retry that calls onRun, even when canRun is false', async () => {
+    const user = userEvent.setup()
+    const onRun = vi.fn()
+    const view: SessionView = { ...emptyView('s1'), preview: { ready: false, error: { status: 'failed', reason: 'boom' } } }
+    renderI18n(<PreviewPanel view={view} onRun={onRun} canRun={false} />)
+    const retry = screen.getByRole('button', { name: new RegExp(STRINGS.en['preview.retry']) })
+    expect(retry).toBeInTheDocument()
+    await user.click(retry)
+    expect(onRun).toHaveBeenCalledTimes(1)
+  })
+  it('renders the actionError note near the Run control', () => {
+    const view: SessionView = { ...emptyView('s1'), provider: 'anthropic' }
+    renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun actionError="preview failed: boom" />)
+    expect(screen.getByText('preview failed: boom')).toBeInTheDocument()
   })
 })
