@@ -59,17 +59,47 @@ describe('POST /api/chat', () => {
     await a.close()
   })
 
-  it('caps and sanitizes history before sending it to the provider', async () => {
+  it('drops non-user/assistant roles even within the kept window (sanitize, NOT just the cap)', async () => {
     const p = provider(() => ({ text: 'ok' }))
     const a = await app(p)
-    const history = [
-      { role: 'system', content: 'ignored bad role' },
-      ...Array.from({ length: 20 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` })),
-    ]
+    // The bad role is among the last <=12 entries, so only the ROLES filter (not the slice) can remove it.
+    const history = [{ role: 'user', content: 'u1' }, { role: 'system', content: 'INJECT' }, { role: 'assistant', content: 'a1' }]
     await a.inject({ method: 'POST', url: '/api/chat', payload: { message: 'final', history } })
-    // history is capped (MAX_HISTORY) + the final user message; no 'system' role survives.
+    expect(p.last!.messages.some(m => m.content === 'INJECT')).toBe(false)
     expect(p.last!.messages.every(m => m.role === 'user' || m.role === 'assistant')).toBe(true)
+    await a.close()
+  })
+
+  it('caps history to the last MAX_HISTORY (12) turns + the final message', async () => {
+    const p = provider(() => ({ text: 'ok' }))
+    const a = await app(p)
+    const history = Array.from({ length: 20 }, (_, i) => ({ role: i % 2 ? 'assistant' : 'user', content: `m${i}` }))
+    await a.inject({ method: 'POST', url: '/api/chat', payload: { message: 'final', history } })
+    expect(p.last!.messages).toHaveLength(13) // 12 kept (ends assistant) + the final user — no merge
     expect(p.last!.messages.at(-1)).toEqual({ role: 'user', content: 'final' })
+    await a.close()
+  })
+
+  it('keeps the payload STRICTLY ALTERNATING when history ends in a user turn + a new user msg (Retry / send-after-error fix)', async () => {
+    const p = provider(() => ({ text: 'ok' }))
+    const a = await app(p)
+    // History ending in an unanswered user turn (the failed turn, error row excluded) — the
+    // route appends the new user message → WOULD be two consecutive users (Anthropic/Gemini 400).
+    const history = [{ role: 'user', content: 'first' }, { role: 'assistant', content: 'hi' }, { role: 'user', content: 'unanswered' }]
+    await a.inject({ method: 'POST', url: '/api/chat', payload: { message: 'new text', history } })
+    const roles = p.last!.messages.map(m => m.role)
+    expect(roles.every((r, i) => i === 0 || r !== roles[i - 1])).toBe(true) // no two consecutive same roles
+    await a.close()
+  })
+
+  it('de-duplicates an identical consecutive user turn (Retry of the same text → ONE user turn, not two)', async () => {
+    const p = provider(() => ({ text: 'ok' }))
+    const a = await app(p)
+    const history = [{ role: 'assistant', content: 'hi' }, { role: 'user', content: 'same' }]
+    await a.inject({ method: 'POST', url: '/api/chat', payload: { message: 'same', history } })
+    const users = p.last!.messages.filter(m => m.role === 'user')
+    expect(users).toHaveLength(1)
+    expect(users[0]!.content).toBe('same') // merged/deduped, not "same\n\nsame"
     await a.close()
   })
 })

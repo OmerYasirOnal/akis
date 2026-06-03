@@ -6,6 +6,7 @@ import { AuthProvider, useAuth } from './AuthContext.js'
 import { RouterProvider, useRouter, Link } from '../router/router.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { Login } from '../pages/Login.js'
+import { saveThread, loadThread } from '../chat/akisThread.js'
 
 beforeEach(() => { window.history.pushState({}, '', '/') })
 
@@ -39,6 +40,20 @@ describe('AuthContext', () => {
     })
     render(<I18nProvider><AuthProvider api={api}><Probe /></AuthProvider></I18nProvider>)
     await waitFor(() => expect(screen.getByText('anon')).toBeInTheDocument())
+  })
+
+  it('logout clears the persisted AKIS chat thread — a different user on this browser cannot see it', async () => {
+    saveThread([{ role: 'user', content: 'my private app idea' }])
+    const { api } = fakeApi({
+      '/auth/me': () => ({ ok: true, status: 200, body: { user: { id: '1', name: 'Ada', email: 'a@b.com' } } }),
+      '/auth/logout': () => ({ ok: true, status: 200, body: { ok: true } }),
+    })
+    render(<I18nProvider><AuthProvider api={api}><Probe /></AuthProvider></I18nProvider>)
+    await waitFor(() => expect(screen.getByText('hi Ada')).toBeInTheDocument())
+    expect(loadThread()).toHaveLength(1) // thread present while signed in
+    await userEvent.click(screen.getByText('out'))
+    await waitFor(() => expect(screen.getByText('anon')).toBeInTheDocument())
+    expect(loadThread()).toEqual([]) // logout wiped it (the cross-user-leak fix)
   })
 })
 

@@ -56,6 +56,10 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   // chatting (and persists it to localStorage); we snapshot it when a build starts so the
   // transcript can show it above the pipeline even after the chat unmounts / a reload.
   const [thread, setThread] = useState<AkisMsg[]>([])
+  // The persisted thread is the CURRENT live conversation, so it belongs to a build STARTED
+  // from this chat (or its reload), NOT to an OLD build re-opened from History — showing it
+  // there would be a stale, unrelated transcript. `reopened` gates that out.
+  const [reopened, setReopened] = useState(false)
   useEffect(() => { if (sessionId) setThread(loadThread()) }, [sessionId])
 
   const live = useLiveChat(sessionId, sent, api, baseUrl, makeClient)
@@ -87,14 +91,14 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
     setBusy(true); setActionError(undefined)
     try {
       const s = await api.startSession(idea, workflowId || undefined)
-      setSent(idea); setSessionId(s.id); setIdea('')
+      setSent(idea); setSessionId(s.id); setIdea(''); setReopened(false)
       setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
     } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) }
     finally { setBusy(false) }
   }
   const send = (): Promise<void> => startBuild(idea)
   /** Re-open a past build — useLiveChat replays /log + /events to rebuild the thread. */
-  const openSession = (b: RecentBuild): void => { setActionError(undefined); setSent(b.idea); setSessionId(b.id) }
+  const openSession = (b: RecentBuild): void => { setActionError(undefined); setSent(b.idea); setSessionId(b.id); setReopened(true) }
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setActionError(undefined)
     try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }
@@ -105,7 +109,7 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const newChat = (): void => {
     setSessionId(undefined); setSent(''); setActionError(undefined)
     // Start a fresh conversation: drop the persisted thread so AkisChat re-seeds the greeting.
-    clearThread(); setThread([])
+    clearThread(); setThread([]); setReopened(false)
     // Drop a stale /?s= deep-link from the address bar so a refresh starts clean.
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
   }
@@ -149,7 +153,7 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
           {sessionId
             ? (
               <>
-                <AkisTranscript messages={thread} />
+                {!reopened && <AkisTranscript messages={thread} />}
                 <RunPipeline
                   view={live.view}
                   onApprove={approve}

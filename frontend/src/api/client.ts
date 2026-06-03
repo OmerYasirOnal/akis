@@ -158,7 +158,9 @@ export class ApiClient {
       // app to clear the cached user + route to login. Exempt /auth/me — its 401 is the
       // normal anonymous-on-load signal (AuthContext handles it), not an expiry, so firing
       // here would bounce a guest to /login on every page load.
-      if (res.status === 401 && path !== '/auth/me') this.onUnauthorized?.()
+      // Fire on any authenticated 401 EXCEPT the anon-load probe (GET /auth/me) — a PATCH
+      // /auth/me (profile update) on an expired session SHOULD still route to login.
+      if (res.status === 401 && !(path === '/auth/me' && (init?.method ?? 'GET') === 'GET')) this.onUnauthorized?.()
       const b = body as { error?: string; code?: string; errors?: unknown }
       const errors = Array.isArray(b.errors) ? b.errors.filter((e): e is string => typeof e === 'string') : undefined
       throw new ApiError(res.status, b.error ?? `HTTP ${res.status}`, b.code, errors)

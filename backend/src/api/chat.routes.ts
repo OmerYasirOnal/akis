@@ -31,6 +31,26 @@ const isStr = (v: unknown): v is string => typeof v === 'string'
 const ROLES = new Set(['user', 'assistant'])
 const MAX_HISTORY = 12
 
+type ChatMsg = { role: 'user' | 'assistant'; content: string }
+
+/**
+ * Collapse consecutive same-role turns so the payload is STRICTLY ALTERNATING — the Anthropic
+ * (default) + Gemini Messages APIs reject two consecutive `user` (or `assistant`) turns with a
+ * 400. This happens whenever the client's history ends in an unanswered `user` turn (a failed
+ * turn whose error row is excluded from history) and we then append the new `user` message, or
+ * on a Retry that re-sends the same text. Identical adjacent content is de-duplicated (the
+ * Retry case); distinct content is joined with a blank line (an unanswered turn + the new one).
+ */
+export function alternating(messages: ChatMsg[]): ChatMsg[] {
+  const out: ChatMsg[] = []
+  for (const m of messages) {
+    const last = out[out.length - 1]
+    if (last && last.role === m.role) last.content = last.content === m.content ? last.content : `${last.content}\n\n${m.content}`
+    else out.push({ ...m })
+  }
+  return out
+}
+
 /**
  * Token budget for an AKIS chat turn. Generous (8k) so a sizeable build-ready `akis-spec`
  * block is emitted in full — a truncated reply would cut the spec mid-fence, leaving the UI
@@ -57,7 +77,7 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       .slice(-MAX_HISTORY)
       .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content }))
     try {
-      const res = await deps.provider.chat({ system: AKIS_PERSONA, messages: [...history, { role: 'user', content: message }], maxTokens: CHAT_MAX_TOKENS })
+      const res = await deps.provider.chat({ system: AKIS_PERSONA, messages: alternating([...history, { role: 'user', content: message }]), maxTokens: CHAT_MAX_TOKENS })
       // Return the reply verbatim (trimmed). An empty reply is surfaced HONESTLY as '' so the
       // UI can show a real "empty reply" notice — never disguised as a friendly '…' answer.
       return reply.send({ reply: (res.text ?? '').trim() })
