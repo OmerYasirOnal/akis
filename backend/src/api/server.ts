@@ -137,6 +137,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       ...(flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY) ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     })
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
+  // Expose the orchestrator services to the host (start()) so graceful shutdown can drain
+  // the ingest queue before flushing the corpus write-through + closing the pool. Not part
+  // of the public route surface.
+  app.decorate('akisServices', services)
 
   // Preview registry: the registry never spawns until POST /sessions/:id/preview is
   // called; its status changes ride the `preview_status` event so the live UI updates.
@@ -344,9 +348,17 @@ export async function start(): Promise<void> {
   installGracefulShutdown({
     close: async () => {
       await app.close()
-      // Settle any pending durable corpus write-through BEFORE draining the pool, so a
-      // chunk ingested just before shutdown is persisted (not lost) on the next boot.
-      if (pg?.vectorStore) await pg.vectorStore.flush()
+      // Drain the ingest queue FIRST so a chunk enqueued just before shutdown (e.g. the
+      // post-push repo auto-ingest) finishes embed→upsert and reaches the write-through
+      // chain — otherwise its upsert would run later against an already-closed pool and be
+      // lost. THEN settle the write-through, THEN close the pool. Both are best-effort so a
+      // stuck ingest/write can never block a clean shutdown.
+      const services = (app as FastifyInstance & { akisServices?: OrchestratorServices }).akisServices
+      try { await services?.ragQueue?.drain() } catch { /* best-effort */ }
+      if (pg?.vectorStore) {
+        // eslint-disable-next-line no-console
+        try { await pg.vectorStore.flush() } catch (e) { console.error('shutdown: vector flush failed:', (e as Error).message) }
+      }
       if (pg?.pool.end) await pg.pool.end()
     },
   })
