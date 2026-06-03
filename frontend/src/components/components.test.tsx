@@ -114,4 +114,17 @@ describe('PreviewPanel', () => {
     expect(screen.getByText('<script>alert(1)</script>')).toBeInTheDocument()
     expect(container.querySelector('script')).toBeNull()
   })
+  it('recovers to Preview when files vanish while on the Code tab (no dead-end trap)', async () => {
+    const user = userEvent.setup()
+    const files = [{ filePath: 'app.ts', content: 'export const x = 1' }]
+    const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
+    const { container, rerender } = renderI18n(<PreviewPanel view={view} files={files} />)
+    await user.click(screen.getByRole('tab', { name: /Code/ }))
+    expect(container.querySelector('iframe')).toBeNull() // now on the Code tab
+    // Files vanish (e.g. New chat, or switching to a session with no code yet) → the tablist hides.
+    rerender(<I18nProvider><PreviewPanel view={view} files={undefined} /></I18nProvider>)
+    // Must NOT be stranded on an empty Code view: the Code tab is gone AND the live preview is back.
+    expect(screen.queryByRole('tab', { name: STRINGS.en['preview.tab.code'] })).toBeNull()
+    expect(container.querySelector('iframe')).not.toBeNull()
+  })
 })

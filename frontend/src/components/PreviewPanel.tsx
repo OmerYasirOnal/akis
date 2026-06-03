@@ -19,6 +19,11 @@ export function PreviewPanel({ view, onRun, busy, canRun, files }: { view: Sessi
   const { t } = useI18n()
   const [tab, setTab] = useState<'preview' | 'code'>('preview')
   const fileCount = files?.length ?? 0
+  // `tab` is local state, but the tablist (the only control back to Preview) only renders when
+  // files exist. If the files vanish (New chat / switching to a session with no code yet) a stale
+  // tab==='code' would hide the live preview/Run/TestStats with no way back. Derive the active
+  // surface so it can never be 'code' without files — auto-recovers to Preview the moment files go.
+  const activeTab = fileCount > 0 ? tab : 'preview'
   const url = view.preview.url
   const artifact = view.preview.artifactUrl
   const embeddable = !!url && url.startsWith('/preview/')
@@ -33,12 +38,12 @@ export function PreviewPanel({ view, onRun, busy, canRun, files }: { view: Sessi
         {fileCount > 0 ? (
           // Preview ⇄ Code toggle — surfaces once the agents have written files.
           <div role="tablist" aria-label={t('preview.title')} className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
-            <button role="tab" aria-selected={tab === 'preview'} onClick={() => setTab('preview')}
-              className={`rounded-md px-2.5 py-1 ${tab === 'preview' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+            <button role="tab" aria-selected={activeTab === 'preview'} onClick={() => setTab('preview')}
+              className={`rounded-md px-2.5 py-1 ${activeTab === 'preview' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
               {t('preview.tab.preview')}
             </button>
-            <button role="tab" aria-selected={tab === 'code'} onClick={() => setTab('code')}
-              className={`rounded-md px-2.5 py-1 ${tab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+            <button role="tab" aria-selected={activeTab === 'code'} onClick={() => setTab('code')}
+              className={`rounded-md px-2.5 py-1 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
               {t('preview.tab.code')} <span className="text-slate-500">{fileCount}</span>
             </button>
           </div>
@@ -68,7 +73,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files }: { view: Sessi
         </div>
       </div>
 
-      {tab === 'code' ? (
+      {activeTab === 'code' ? (
         <CodeBrowser files={files} />
       ) : (
       <>
