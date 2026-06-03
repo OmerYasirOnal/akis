@@ -38,6 +38,7 @@ import { registerStatic, staticServingEnabled, defaultStaticRoot } from './stati
 import { installGracefulShutdown } from './shutdown.js'
 import type { SqlClient } from '../store/pg.js'
 import { PreviewRegistry } from '../preview/PreviewRegistry.js'
+import { reclaimWorkspaces } from '../preview/Workspace.js'
 import { LocalDirectSandbox } from '../exec/Sandbox.js'
 import { MockProvider } from '../agent/providers/mock/MockProvider.js'
 import { hasRealProviderKey } from '../agent/providers/createProvider.js'
@@ -206,6 +207,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       agent: 'orchestrator', laneId: 'main', sessionId: e.sessionId, ts: nextTs(),
     }),
   })
+  // Expose the registry to the host (start()) so graceful shutdown can stopAll() the
+  // running previews (kill their process groups + release ports) before the pool closes.
+  app.decorate('akisPreviewRegistry', previewRegistry)
 
   // One shared workflow store (workflow CRUD + session-bound runs use the same one).
   const workflowStore = deps.workflowStore ?? new WorkflowStore()
@@ -477,6 +481,10 @@ export async function start(): Promise<void> {
       'in-memory fallback.',
     )
   }
+  // Reclaim any preview workspaces orphaned by a hard kill (SIGKILL skips graceful
+  // teardown). Idempotent + strictly scoped to the workspaces root; best-effort so a
+  // stuck dir never blocks boot.
+  try { await reclaimWorkspaces() } catch (e) { console.error('preview: workspace reclaim failed:', (e as Error).message) } // eslint-disable-line no-console
   const app = buildServer({
     keyStore,
     persistence: pg ? 'postgres' : 'memory',
@@ -495,6 +503,12 @@ export async function start(): Promise<void> {
   installGracefulShutdown({
     close: async () => {
       await app.close()
+      // Stop all running previews (kill their detached process groups + release ports +
+      // tear down workspaces) BEFORE the pool closes — orphaned dev servers would otherwise
+      // survive the parent and hold loopback ports. Best-effort (stopAll tolerates per-entry
+      // errors) so it can't block the rest of a clean shutdown.
+      const previewRegistry = (app as FastifyInstance & { akisPreviewRegistry?: PreviewRegistry }).akisPreviewRegistry
+      try { await previewRegistry?.stopAll() } catch { /* best-effort */ }
       // Drain the ingest queue FIRST so a chunk enqueued just before shutdown (e.g. the
       // post-push repo auto-ingest) finishes embed→upsert and reaches the write-through
       // chain — otherwise its upsert would run later against an already-closed pool and be

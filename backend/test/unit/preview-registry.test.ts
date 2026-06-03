@@ -11,6 +11,18 @@ function fakeProc(): PreviewProc & { killed: boolean } {
   return p
 }
 
+/** A fake proc that can simulate an early exit + a stderr tail (diagnostics). */
+function exitingProc(code: number | null, stderr = ''): PreviewProc & { killed: boolean } {
+  let cb: ((c: number | null) => void) | undefined
+  const p = {
+    pid: 4243, killed: false,
+    kill() { p.killed = true },
+    stderrTail: () => stderr,
+    onExit(fn: (c: number | null) => void) { cb = fn; setTimeout(() => cb?.(code), 1) },
+  }
+  return p
+}
+
 describe('Runner specs', () => {
   it('install blocks lifecycle scripts', () => {
     expect(installSpec().args).toContain('--ignore-scripts')
@@ -19,6 +31,16 @@ describe('Runner specs', () => {
     const s = startSpec('vite', 5190)!
     expect(s.cmd).toBe('pnpm')
     expect(s.args.join(' ')).toContain('vite --port 5190 --strictPort --host 127.0.0.1')
+  })
+  it('vite start threads the same-origin --base so assets resolve under /preview/:id/', () => {
+    const s = startSpec('vite', 5190, 'sess-abc')!
+    expect(s.args.join(' ')).toContain('--base /preview/sess-abc/')
+  })
+  it('next start runs `next dev` on the loopback port', () => {
+    const s = startSpec('next', 7100, 'sess-x')!
+    expect(s.cmd).toBe('pnpm')
+    expect(s.args.join(' ')).toContain('next dev --port 7100 --hostname 127.0.0.1')
+    expect(s.env.NEXT_PUBLIC_BASE_PATH).toBe('/preview/sess-x')
   })
   it('node-service passes PORT via env', () => {
     expect(startSpec('node-service', 7000)!.env.PORT).toBe('7000')
@@ -107,5 +129,60 @@ describe('PreviewRegistry lifecycle', () => {
     await reg.start('s1', '/ws/s1', 'vite')
     expect(seen).toContain('starting')
     expect(seen).toContain('ready')
+  })
+})
+
+describe('PreviewRegistry.stopAll (graceful shutdown)', () => {
+  it('kills every tracked proc, releases ports, and marks each stopped (tolerating errors)', async () => {
+    const procs = [fakeProc(), fakeProc()]
+    let i = 0
+    const reg = new PreviewRegistry({ sandbox: okSandbox, launch: () => procs[i++]!, probe: async () => true })
+    const a = await reg.start('a', '/ws/a', 'vite')
+    const b = await reg.start('b', '/ws/b', 'vite')
+    expect(a.status).toBe('ready'); expect(b.status).toBe('ready')
+
+    await reg.stopAll()
+    expect(procs[0]!.killed).toBe(true)
+    expect(procs[1]!.killed).toBe(true)
+    expect(reg.get('a')?.status).toBe('stopped')
+    expect(reg.get('b')?.status).toBe('stopped')
+    // Ports released → no longer a live upstream for the proxy.
+    expect(reg.portFor('a')).toBeUndefined()
+    expect(reg.portFor('b')).toBeUndefined()
+  })
+
+  it('tolerates a proc whose kill throws (one bad entry cannot block the rest)', async () => {
+    const bad = { pid: 1, killed: false, kill() { throw new Error('kill boom') } } as PreviewProc & { killed: boolean }
+    const good = fakeProc()
+    let i = 0
+    const reg = new PreviewRegistry({ sandbox: okSandbox, launch: () => [bad, good][i++]!, probe: async () => true })
+    await reg.start('bad', '/ws/bad', 'vite')
+    await reg.start('good', '/ws/good', 'vite')
+    await expect(reg.stopAll()).resolves.toBeUndefined()
+    expect(good.killed).toBe(true)
+  })
+})
+
+describe('PreviewRegistry diagnostics (D)', () => {
+  it('fails FAST with the exit code + stderr tail when the child exits early (not the whole probe budget)', async () => {
+    const reg = new PreviewRegistry({
+      sandbox: okSandbox,
+      launch: () => exitingProc(137, 'Error: Cannot find module react\n    at ...'),
+      probe: async () => false, // never ready — must surface the early exit, not "timed out"
+      probeAttempts: 50, probeIntervalMs: 5,
+    })
+    const e = await reg.start('s1', '/ws/s1', 'vite')
+    expect(e.status).toBe('failed')
+    expect(e.reason).toMatch(/exited early \(code 137\)/)
+    expect(e.reason).toMatch(/Cannot find module react/)
+  })
+
+  it('attaches the install stderr tail to an install-failed reason', async () => {
+    const sb: Sandbox = { async run(): Promise<RunResult> { return { code: 1, stdout: '', stderr: 'ERR_PNPM_NO_MATCHING_VERSION foo@99', timedOut: false } } }
+    const reg = new PreviewRegistry({ sandbox: sb, launch: () => fakeProc(), probe: async () => true })
+    const e = await reg.start('s1', '/ws/s1', 'vite')
+    expect(e.status).toBe('failed')
+    expect(e.reason).toMatch(/install failed \(code 1\)/)
+    expect(e.reason).toMatch(/ERR_PNPM_NO_MATCHING_VERSION/)
   })
 })
