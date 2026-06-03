@@ -1,8 +1,9 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { SessionView } from '../live/types.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
 import { agentName } from '../agents/names.js'
+import { ApiClient } from '../api/client.js'
 import { derivePipeline, summarizePipeline, type PipelineStep, type PipelineStatus, type PipelineStepKey } from './pipeline.js'
 
 const STEP_LABEL: Record<PipelineStepKey, StringKey> = {
@@ -25,6 +26,7 @@ function statText(t: (k: StringKey) => string, stat: string | undefined): string
   const KEYS: Record<string, StringKey> = {
     'spec ready': 'pipeline.stat.specReady', 'spec approved': 'pipeline.stat.specApproved',
     'spec rejected': 'pipeline.stat.specRejected', 'spec failed': 'pipeline.stat.specFailed',
+    'critic rejected': 'pipeline.stat.criticRejected',
     'writing code': 'pipeline.stat.writingCode', 'code written': 'pipeline.stat.codeWritten',
     'build failed': 'pipeline.stat.buildFailed', 'reviewing': 'pipeline.stat.reviewing',
     'review clean': 'pipeline.stat.reviewClean', 'critical finding': 'pipeline.stat.criticalFinding',
@@ -45,9 +47,11 @@ const NODE: Record<PipelineStatus, { ring: string; dot: string; num: string }> =
   failed: { ring: 'border-rose-400/40 bg-rose-400/[0.07]', dot: 'bg-rose-400', num: 'text-rose-300' },
 }
 
-function StepNode({ step, t, onApprove, onConfirm, busy }: {
+function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry, busy }: {
   step: PipelineStep; t: (k: StringKey) => string
-  onApprove: () => void; onConfirm: () => void; busy?: boolean
+  onApprove: () => void; onConfirm: () => void
+  onProceed: () => void; onAbandon: () => void; onRetry: () => void
+  busy?: boolean
 }) {
   const v = NODE[step.status]
   const stat = statText(t, step.stat)
@@ -71,6 +75,26 @@ function StepNode({ step, t, onApprove, onConfirm, busy }: {
           {t(step.action === 'approve' ? 'chat.approve' : 'chat.confirm')}
         </button>
       )}
+      {/* Recovery actions: a parked run is actionable here, not a silent amber dot. These are
+          NOT structural gates — proceed/retry never bypass verify/push (server-enforced). */}
+      {step.recovery === 'critic_resolution' && (
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          <button onClick={onProceed} disabled={busy}
+            className="rounded-md bg-gradient-to-r from-[#07D1AF] to-violet-500 px-2 py-1 text-[11px] font-semibold text-slate-900 shadow-[0_0_14px_rgba(7,209,175,0.35)] disabled:opacity-40">
+            {t('recovery.critic.proceed')}
+          </button>
+          <button onClick={onAbandon} disabled={busy}
+            className="rounded-md border border-rose-400/40 px-2 py-1 text-[11px] font-semibold text-rose-200 hover:bg-rose-400/10 disabled:opacity-40">
+            {t('recovery.critic.abandon')}
+          </button>
+        </div>
+      )}
+      {step.recovery === 'verify_failed' && (
+        <button onClick={onRetry} disabled={busy}
+          className="mt-1 rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-2 py-1 text-[11px] font-semibold text-slate-900 shadow-[0_0_14px_rgba(251,191,36,0.3)] disabled:opacity-40">
+          {t('recovery.verify.retry')}
+        </button>
+      )}
     </div>
   )
 }
@@ -83,29 +107,68 @@ function StepNode({ step, t, onApprove, onConfirm, busy }: {
  * wired to the same onApprove/onConfirm the verbose thread uses. The verbose chronological
  * log lives below this in a collapsed <details> (rendered by ChatStudio).
  */
-export function RunPipeline({ view, onApprove, onConfirm, busy, details }: {
+export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: {
   view: SessionView
   onApprove: () => void
   onConfirm: () => void
   busy?: boolean
   /** The collapsed raw-log slot (the existing ChatThread), rendered inside <details>. */
   details?: ReactNode
+  /** REST client used to drive the recovery actions (resolve/retry). Same-origin default
+   *  (prod). A caller can inject a baseUrl-bound client; tests inject a fake. */
+  api?: ApiClient
 }) {
   const { t } = useI18n()
   const steps = derivePipeline(view)
   const summary = summarizePipeline(view)
+  // Self-contained recovery driving (no ChatStudio change needed): the run is parked in a
+  // recoverable state; these POST to the owner-scoped recovery endpoints, which NEVER bypass
+  // a structural gate (the server re-runs real verification; spec/push gates still apply).
+  const client = api ?? new ApiClient()
+  const [recovering, setRecovering] = useState(false)
+  const drive = (fn: (id: string) => Promise<unknown>) => (): void => {
+    const id = view.sessionId
+    if (!id || recovering) return
+    setRecovering(true)
+    void Promise.resolve(fn(id)).catch(() => { /* the SSE stream reflects the outcome; banner clears on next event */ }).finally(() => setRecovering(false))
+  }
+  const onProceed = drive(id => client.resolveCritic(id, 'proceed'))
+  const onAbandon = drive(id => client.resolveCritic(id, 'abandon'))
+  const onRetry = drive(id => client.retryRun(id))
+  const acting = busy || recovering
+  // The relevant recovery hint (one at a time — a run is in at most one parked state).
+  const recoveryHint: StringKey | undefined = steps.some(s => s.recovery === 'critic_resolution')
+    ? 'recovery.critic.hint'
+    : steps.some(s => s.recovery === 'verify_failed')
+      ? 'recovery.verify.hint'
+      : undefined
 
   return (
     <div className="flex flex-col gap-3">
       <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{t('pipeline.title')}</div>
+
+      {/* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run)
+          so the live view stops pulsing forever; the resumable stream re-syncs via Last-Event-ID. */}
+      {view.connectionLost && (
+        <div role="status" className="flex items-center gap-2 rounded-xl border border-amber-400/20 bg-amber-400/[0.05] px-3 py-1.5 text-[11px] text-amber-200/90">
+          <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" aria-hidden />
+          {t('live.reconnecting')}
+        </div>
+      )}
       <div className="flex flex-col gap-2 sm:flex-row sm:items-stretch">
         {steps.map((s, i) => (
           <div key={s.key} className="flex min-w-0 flex-1 items-center gap-2">
-            <StepNode step={s} t={t} onApprove={onApprove} onConfirm={onConfirm} {...(busy !== undefined ? { busy } : {})} />
+            <StepNode step={s} t={t} onApprove={onApprove} onConfirm={onConfirm} onProceed={onProceed} onAbandon={onAbandon} onRetry={onRetry} {...(acting !== undefined ? { busy: acting } : {})} />
             {i < steps.length - 1 && <span aria-hidden className="hidden shrink-0 text-slate-600 sm:inline">→</span>}
           </div>
         ))}
       </div>
+
+      {recoveryHint && (
+        <div role="status" className="rounded-xl border border-amber-400/30 bg-amber-400/[0.06] px-3 py-2 text-xs text-amber-200">
+          {t(recoveryHint)}
+        </div>
+      )}
 
       {summary && (
         <div className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-2 text-sm font-medium text-slate-200">

@@ -88,6 +88,15 @@ export class ApiClient {
   approve(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/approve`) }
   run(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/run`) }
   confirm(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/confirm`) }
+  /** Recovery: resolve an awaiting_critic_resolution park. 'proceed' continues the pipeline
+   *  (to the spec gate if unapproved, else the REAL verify + push gates); 'abandon' cancels.
+   *  This is NOT a structural gate — the server never lets it bypass verify/push. */
+  resolveCritic(id: string, decision: 'proceed' | 'abandon'): Promise<SessionState> {
+    return this.json<SessionState>(`/sessions/${id}/resolve`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ decision }) })
+  }
+  /** Recovery: retry a verify_failed run. Re-enters the iterate loop and RE-RUNS REAL
+   *  verification (mint still needs a genuine ≥1-test pass — no bypass). */
+  retryRun(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/retry`) }
   /** Start (or restart) the local in-browser preview of the produced app. Emits
    *  preview_status on the SSE stream; the iframe embeds /preview/:id/ when ready. */
   startPreview(id: string): Promise<PreviewEntry> {
