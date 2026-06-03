@@ -1,11 +1,11 @@
 import { describe, it, expect, afterEach } from 'vitest'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { readFile, mkdtemp } from 'node:fs/promises'
+import { readFile, mkdtemp, writeFile, mkdir } from 'node:fs/promises'
 import { existsSync } from 'node:fs'
 import { LocalDirectSandbox, scrubEnv } from '../../src/exec/Sandbox.js'
 import { detectAppType } from '../../src/preview/AppDetector.js'
-import { materialize, teardown } from '../../src/preview/Workspace.js'
+import { materialize, teardown, reclaimWorkspaces } from '../../src/preview/Workspace.js'
 import { allocatePort, releasePort } from '../../src/preview/ports.js'
 import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
 
@@ -69,8 +69,15 @@ describe('detectAppType', () => {
   it('detects a static site', () => {
     expect(detectAppType([f('index.html', '<html></html>')])).toBe('static')
   })
-  it('flags db-needing apps as unsupported', () => {
-    expect(detectAppType([f('package.json', JSON.stringify({ dependencies: { pg: '^8', vite: '^5' } }))])).toBe('unsupported')
+  it('a runnable app that merely LISTS a db dep still previews (vite wins over the db hint)', () => {
+    expect(detectAppType([f('package.json', JSON.stringify({ dependencies: { pg: '^8', vite: '^5' } }))])).toBe('vite')
+  })
+  it('flags PURELY db-infra apps (no runnable surface) as unsupported', () => {
+    expect(detectAppType([f('package.json', JSON.stringify({ dependencies: { pg: '^8', prisma: '^5' } }))])).toBe('unsupported')
+  })
+  it('detects a next app (dep or script)', () => {
+    expect(detectAppType([f('package.json', JSON.stringify({ dependencies: { next: '^14' } }))])).toBe('next')
+    expect(detectAppType([f('package.json', JSON.stringify({ scripts: { dev: 'next dev' } }))])).toBe('next')
   })
   it('unsupported when nothing recognizable', () => {
     expect(detectAppType([f('readme.md', 'hi')])).toBe('unsupported')
@@ -93,6 +100,48 @@ describe('Workspace', () => {
   it('rejects path traversal', async () => {
     const root = await mkdtemp(join(tmpdir(), 'akis-ws-'))
     await expect(materialize('s', [{ filePath: '../escape.ts', content: 'x' }], root)).rejects.toThrow(/escapes/)
+  })
+})
+
+describe('reclaimWorkspaces (startup recovery)', () => {
+  it('removes every entry UNDER the root, keeps the root, and never escapes it', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'akis-reclaim-'))
+    // A sibling OUTSIDE the root that must survive (proves we never rm outside the guard).
+    const outside = await mkdtemp(join(tmpdir(), 'akis-outside-'))
+    await writeFile(join(outside, 'keep.txt'), 'keep', 'utf8')
+    // Two orphaned workspace dirs under the root.
+    const w1 = await materialize('sessA', [{ filePath: 'a.ts', content: 'a' }], root)
+    const w2 = await materialize('sessB', [{ filePath: 'b.ts', content: 'b' }], root)
+    expect(existsSync(w1)).toBe(true); expect(existsSync(w2)).toBe(true)
+
+    await reclaimWorkspaces(root)
+
+    expect(existsSync(w1)).toBe(false)
+    expect(existsSync(w2)).toBe(false)
+    expect(existsSync(root)).toBe(true)              // the root itself is preserved
+    expect(existsSync(join(outside, 'keep.txt'))).toBe(true) // nothing outside touched
+    await teardown(root); await teardown(outside)
+  })
+  it('is a no-op when the root does not exist (fresh boot)', async () => {
+    const root = join(tmpdir(), `akis-missing-${Math.random().toString(36).slice(2)}`)
+    await expect(reclaimWorkspaces(root)).resolves.toBeUndefined()
+  })
+  // PR #83 review: ownership sentinel — only entries matching the materialize naming pattern
+  // (`<id>-<12hex>`) are reclaimed, so a mis-pointed AKIS_WORKSPACES_DIR (a populated dir / $HOME)
+  // can't wipe unrelated files at boot, even though they're inside the configured root.
+  it('only reclaims AKIS-created workspaces — unrelated files/dirs inside the root survive', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'akis-reclaim-own-'))
+    const ws = await materialize('sessX', [{ filePath: 'a.ts', content: 'a' }], root) // AKIS-owned → removed
+    await writeFile(join(root, 'important.txt'), 'do not delete', 'utf8')              // unrelated → kept
+    await mkdir(join(root, 'my-project'), { recursive: true })
+    await writeFile(join(root, 'my-project', 'README.md'), 'mine', 'utf8')             // unrelated dir → kept
+
+    await reclaimWorkspaces(root)
+
+    expect(existsSync(ws)).toBe(false)
+    expect(existsSync(join(root, 'important.txt'))).toBe(true)
+    expect(existsSync(join(root, 'my-project', 'README.md'))).toBe(true)
+    await teardown(root)
   })
 })
 

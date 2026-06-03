@@ -110,6 +110,24 @@ configured key is never masked. (To require a real key and refuse the mock
 entirely, also set `AKIS_ALLOW_MOCK=0`.) See the full key list in
 [`backend/.env.example`](../backend/.env.example).
 
+#### Live preview — what runs in the iframe
+
+Once a build reaches `done`, AKIS materializes the produced files under
+`AKIS_WORKSPACES_DIR` and runs them locally, embedding the running app in the
+Studio iframe at `/preview/:id/` (a same-origin reverse proxy; HMR WebSockets are
+tunneled). Supported app shapes: **static** (an `index.html`, served from disk),
+**Vite** (launched with `--base /preview/:id/`, so assets resolve under the proxy),
+and **Node services** (`node .`, must honor `PORT`). A boot that fails or an
+unsupported app type surfaces its reason in the panel (with a Retry) — never a
+silent blank.
+
+> **Next.js caveat.** A detected Next app is launched with `next dev` and the proxy
+> prefix exposed as `NEXT_PUBLIC_BASE_PATH`, but `next dev` does **not** read that
+> natively — the generated app's own `next.config` must wire
+> `basePath`/`assetPrefix` from it. Without that, the app still boots but serves
+> root-absolute assets under the proxy and renders blank. Genuine base-path support
+> for Next is a known follow-up.
+
 ### Open a real GitHub PR on a verified build (optional)
 
 By default a finished build is published to the **in-memory mock** adapter (no
