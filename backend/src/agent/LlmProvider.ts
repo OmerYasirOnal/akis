@@ -5,8 +5,11 @@
  * (see createProvider).
  *
  * Tool-calling is first-class so the agent loop can dispatch model tool calls.
- * Streaming is intentionally omitted for now (added as an optional method when
- * the live UI lands).
+ *
+ * Streaming is an OPTIONAL second method: a provider MAY implement `chatStream` to
+ * push text deltas as they arrive (the persona chat uses this to feel alive). It is
+ * optional so a provider without it — and every non-streaming caller (the agents) —
+ * keeps working through `chat`; callers fall back to `chat` when `chatStream` is absent.
  */
 export interface ToolSpec {
   name: string
@@ -47,8 +50,19 @@ export interface ChatResult {
   stopReason?: string
 }
 
+/** Sink for streamed text deltas — called once per chunk as it arrives. */
+export type OnDelta = (delta: string) => void
+
 export interface LlmProvider {
   readonly name: string
   readonly model: string
   chat(req: ChatRequest): Promise<ChatResult>
+  /**
+   * OPTIONAL token-by-token streaming. Calls `onDelta(chunk)` as text arrives and
+   * resolves with the final assembled ChatResult (text = the concatenation of all
+   * deltas) — so a caller can stream live AND still get the full reply for spec
+   * detection. MUST use the SAME request/message assembly as `chat`. Absent on
+   * providers that don't stream; callers fall back to `chat` in that case.
+   */
+  chatStream?(req: ChatRequest, onDelta: OnDelta): Promise<ChatResult>
 }
