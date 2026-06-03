@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { PgVectorStore } from '../../src/knowledge/store/PgVectorStore.js'
 import type { StoredChunk, ChunkMeta } from '../../src/knowledge/store/VectorStore.js'
 import type { SqlClient } from '../../src/store/pg.js'
@@ -52,6 +52,19 @@ describe('PgVectorStore (write-through to an injected SqlClient)', () => {
     expect(ins.params[4]).toBe('a/b.ts')
     expect(ins.params[5]).toBe('scribe')
     expect(ins.params[7]).toEqual([1, 2, 3]) // the embedding as a Postgres array param
+  })
+
+  it('a rejecting write is observed (logged) — never an orphaned unhandled rejection — and does not break later writes or hang flush', async () => {
+    const errs: string[] = []
+    const spy = vi.spyOn(console, 'error').mockImplementation((...a: unknown[]) => { errs.push(a.join(' ')) })
+    let n = 0
+    const db: SqlClient = { async query(text: string) { n++; if (n === 1 && text.includes('INSERT')) throw new Error('pool closed'); return { rows: [] } } }
+    const store = new PgVectorStore(db)
+    store.upsert(stored({ id: 'fails' })) // first write rejects
+    store.upsert(stored({ id: 'ok' }))    // a later write still succeeds
+    await expect(store.flush()).resolves.toBeUndefined() // flush settles, never hangs/throws-unobserved
+    spy.mockRestore()
+    expect(errs.some(e => e.includes('write-through failed'))).toBe(true) // the failure was observed, not orphaned
   })
 
   it('upsert with no agent persists NULL for the agent column (exactOptionalPropertyTypes-safe)', async () => {

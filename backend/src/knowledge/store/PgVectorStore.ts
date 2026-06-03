@@ -111,10 +111,16 @@ export class PgVectorStore implements VectorStore {
     await this.writes
   }
 
-  /** Chain a write so failures propagate through {@link flush} (no unhandled rejection) and
-   *  writes apply in submission order. */
+  /** Chain a write so failures propagate through {@link flush} and writes apply in
+   *  submission order. A SIDE catch observes the chain so a write that rejects AFTER the
+   *  last flush() — e.g. a late upsert against a pool closed during shutdown — is logged,
+   *  never an orphaned unhandled rejection. flush() still surfaces a live chain's failures. */
   private enqueue(op: () => Promise<void>): void {
     this.writes = this.writes.then(op, op)
+    this.writes.catch((err: unknown) => {
+      // eslint-disable-next-line no-console
+      console.error('vector_chunks write-through failed:', (err as Error)?.message ?? err)
+    })
   }
 }
 
