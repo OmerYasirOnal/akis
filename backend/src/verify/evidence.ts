@@ -29,6 +29,14 @@ export function buildTestEvidence(input: {
   const testsRun = input.bdd.run + input.e2e.testsRun
   const durationMs = input.bdd.durationMs + input.e2e.durationMs
   const failed = scenarios.filter(s => !s.passed)
+  // When the run did NOT pass but no per-scenario failure was captured (a timeout, zero tests,
+  // or all-skipped), record a top-level reason so the failure signal is never empty — the
+  // self-repair loop + Trust Report need a non-empty signal even on these non-scenario modes.
+  const failureReason = input.passed || failed.length > 0
+    ? undefined
+    : testsRun === 0
+      ? 'no tests were executed'
+      : 'run did not pass and no failing scenario was captured (e.g. a timeout or all scenarios skipped)'
   return {
     testsRun,
     passed: input.passed,
@@ -36,7 +44,7 @@ export function buildTestEvidence(input: {
     bdd: { ...input.bdd },
     e2e: { ...input.e2e },
     scenarios,
-    ...(input.passed ? {} : { failure: { failedCount: failed.length, scenarios: failed } }),
+    ...(input.passed ? {} : { failure: { failedCount: failed.length, scenarios: failed, ...(failureReason ? { reason: failureReason } : {}) } }),
   }
 }
 

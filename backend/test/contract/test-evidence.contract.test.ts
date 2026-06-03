@@ -98,8 +98,10 @@ describe('CONTRACT: persisted test evidence (additive, non-gate)', () => {
     expect(st.testEvidence!.testsRun).toBe(0)
   })
 
-  it('the gate-field allowlist is NOT widened: testEvidence is on the NORMAL patch, never a gate method', async () => {
-    // Writing testEvidence via the generic update never sets a gate token.
+  it('testEvidence round-trips on the NORMAL patch without setting any gate field (Pg allowlist enforcement: pg-session-store.test.ts)', async () => {
+    // MockSessionStore round-trip: writing testEvidence via the generic update never sets a gate
+    // token. The REAL gate-write allowlist rejection (a forged approval/verifyToken in the patch is
+    // dropped before SQL) is enforced + asserted on PgSessionStore in backend/test/unit/pg-session-store.test.ts.
     const store = new MockSessionStore()
     const evidence: TestEvidence = {
       testsRun: 1, passed: true, durationMs: 0,

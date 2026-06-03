@@ -107,7 +107,9 @@ export function parseCucumberScenarios(ndjson: string): BddScenario[] {
   return order.map(startedId => {
     const tcId = startedTc.get(startedId) ?? ''
     const pickleId = tcPickle.get(tcId) ?? ''
-    const name = pickleName.get(pickleId) ?? pickleId ?? startedId
+    // `||` (not `??`) so an empty pickleId/name falls through to the stable startedId placeholder
+    // rather than surfacing an empty scenario name when the cucumber id chain is broken.
+    const name = pickleName.get(pickleId) || pickleId || startedId
     const statuses = stepStatuses.get(startedId) ?? []
     const bad = statuses.find(s => BAD.includes(s))
     const passed = bad === undefined && statuses.length > 0 && !statuses.every(s => s === 'SKIPPED')

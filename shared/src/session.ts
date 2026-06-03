@@ -60,6 +60,9 @@ export interface E2eEvidence {
 export interface TestFailureReport {
   failedCount: number
   scenarios: ScenarioEvidence[]
+  /** A top-level reason for a non-pass that has NO per-scenario failure (timeout / zero tests /
+   *  all-skipped) — so the failure signal the self-repair loop + Trust Report read is never empty. */
+  reason?: string
 }
 
 /**
