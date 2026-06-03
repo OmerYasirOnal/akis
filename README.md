@@ -28,7 +28,8 @@ Flexibility lives at the **edges** (agentic dispatch, a verified iterate loop, f
 | **SharedContext** | One typed, read-only context every agent reads (no untyped blob). |
 | **Auto-RAG** | Zero-touch, event-driven ingest + hybrid retrieve behind a `KnowledgePort` (embedded now; pgvector drops in behind the same seam). Read-only, holds no gate capability. |
 | **Agents & Workflows tab** | Per-agent model picker (consumes `/api/providers`) + gate-safe workflow presets (tighten-only) + per-session selection. |
-| **Frontend** | React 19 + Vite + Tailwind v4; live-preview-first chat studio; the FE holds **no** gate authority (approve/confirm only POST to the gated routes). |
+| **Chat-to-Build** | When "Ask AKIS" emits a build-ready spec (in a fenced `akis-spec` block), the UI renders it, offers a `.md` download, and a one-click **Approve & Build** runs the unchanged `startSession` → same gates + pipeline. No copy-paste, no new build path. See [`docs/CHAT_TO_BUILD.md`](docs/CHAT_TO_BUILD.md). |
+| **Frontend** | React 19 + Vite + Tailwind v4; live-preview-first chat studio; rendered markdown via one XSS-safe `<Markdown>` (no raw HTML); the FE holds **no** gate authority (approve/confirm only POST to the gated routes). |
 
 ## Start here
 1. **`README.md`** (this file) — current state + thesis.
