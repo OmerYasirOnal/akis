@@ -21,8 +21,10 @@ import { mintApprovedPush, NotVerifiedError } from '../../src/gates/pushGate.js'
 import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 import { EventBus } from '../../src/events/bus.js'
-import { initialSession, isVerified } from '@akis/shared'
+import { initialSession, isVerified, isGateTool, GATE_TOOLS } from '@akis/shared'
 import { verifyWith } from '../helpers/tokens.js'
+import { buildAdvisoryTools } from '../../src/agent/tools/advisoryTools.js'
+import { NullKnowledgePort } from '../../src/knowledge/KnowledgePort.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -163,6 +165,22 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     // Gate 4: confirmPush mints ApprovedPush, which throws without a VerifyToken.
     await expect(orch.confirmPush(s.id)).rejects.toBeInstanceOf(NotVerifiedError)
     expect(services.github.read(s.id)).toHaveLength(0)
+  })
+
+  it('K — Gate 2 (producer): Scribe\'s RAG tool scope carries ZERO gate authority', () => {
+    // P3-AGENT-2: when RAG is on, Scribe composes via the bounded tool loop with a
+    // registry from the SAME single choke point (buildAdvisoryTools). That choke point
+    // is read-only by construction. Even if asked for EVERY gate capability, no gate
+    // tool can ever be wired — and the read-only retrieve_knowledge is never a gate tool.
+    const askForEverything = new Set([...GATE_TOOLS, 'retrieve_knowledge'])
+    const registry = buildAdvisoryTools(askForEverything, { knowledge: new NullKnowledgePort(), sessionId: 's1' })
+    // Scribe sees ONLY retrieve_knowledge — never a gate capability.
+    expect(registry.specs().map(s => s.name)).toEqual(['retrieve_knowledge'])
+    expect(registry.specs().some(s => isGateTool(s.name))).toBe(false)
+    for (const g of GATE_TOOLS) expect(registry.has(g)).toBe(false)
+    // And the producer's deps still refuse a verify capability (compile-time tripwire
+    // below at line ~197 keeps this structural); retrieve_knowledge is not in GATE_TOOLS.
+    expect(isGateTool('retrieve_knowledge')).toBe(false)
   })
 })
 

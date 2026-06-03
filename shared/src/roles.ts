@@ -8,6 +8,7 @@ export type ToolName =
   | 'run_tests'
   | 'request_spec_approval' | 'request_push_confirm'
   | 'push_to_github'
+  | 'retrieve_knowledge' // read-only RAG grounding; NOT a gate tool (see GATE_TOOLS)
   | 'ask' | 'chat'
 
 /** The code-defined core roster (F2-AC2). The gates key on these; they're
