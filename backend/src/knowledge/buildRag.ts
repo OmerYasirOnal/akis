@@ -30,6 +30,13 @@ export interface BuildRagOpts {
    *  PgVectorStore (durable across restart) behind the SAME VectorStore interface — no
    *  consumer changes. The default path stays byte-for-byte unchanged. */
   vectorStore?: VectorStore
+  /** The BM25 lexical index (the OTHER half of hybrid retrieval). Defaults to a FRESH, empty
+   *  Bm25Index — the in-memory default, byte-for-byte unchanged. When DATABASE_URL is set the
+   *  server injects an index ALREADY HYDRATED from the persisted `vector_chunks` corpus, so the
+   *  lexical half survives a restart alongside the PgVectorStore (it is otherwise silently
+   *  rebuilt empty on boot, degrading RRF to vector-only). In-memory-store-agnostic: with no
+   *  Pg backing the default empty index is used exactly as before. */
+  bm25?: Bm25Index
   /** Single-user MVP → a constant tenant; multi-tenant resolves a real user id later. */
   userIdFor?: (sessionId: string) => string
   queue?: IngestQueueOpts
@@ -93,7 +100,10 @@ export function buildRag(opts: BuildRagOpts): RagStack {
   const service = new RagService({
     embedding,
     vectorStore: opts.vectorStore ?? new MemoryVectorStore(),
-    bm25: new Bm25Index(),
+    // An injected (already-hydrated) BM25 index wins; else a fresh empty one (in-memory default,
+    // unchanged). The Pg boot path hydrates this from the persisted corpus so RRF's lexical half
+    // survives a restart — see BuildRagOpts.bm25.
+    bm25: opts.bm25 ?? new Bm25Index(),
     queue,
     // Default reranker is the offline LocalReranker; a default-off stack wires the
     // NoopReranker so retrieval returns the raw fused order even on default calls.

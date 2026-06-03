@@ -119,6 +119,27 @@ export function selectEmbeddingProvider(opts: SelectEmbeddingOpts = {}): Embeddi
   return new ApiEmbeddingProvider({ apiKey, model, ...(baseUrl ? { baseUrl } : {}) })
 }
 
+/**
+ * The OUTPUT DIMENSION of the provider {@link selectEmbeddingProvider} would pick for the SAME
+ * inputs — WITHOUT constructing it (no network, no key surfaced). Used to size a real `vector(N)`
+ * column to the active embedder so persisted vectors fit exactly. The rule mirrors the selection
+ * one-for-one so the column dim can NEVER diverge from what is actually stored:
+ *
+ *   - `NODE_ENV==='test'` OR no resolvable key → the offline LocalEmbeddingProvider's dim (256).
+ *   - else → the catalog dim of the active model (AKIS_EMBEDDING_MODEL, else the default), via
+ *     {@link embeddingDimFor} (default text-embedding-3-small = 1536; an unknown id → default dim).
+ *
+ * The key is read only to decide local-vs-API and is NEVER logged or returned.
+ */
+export function activeEmbeddingDim(opts: SelectEmbeddingOpts = {}): number {
+  const env = opts.env ?? (process.env as Record<string, string | undefined>)
+  if (env.NODE_ENV === 'test') return new LocalEmbeddingProvider().dim
+  const apiKey = resolveEmbeddingKey(env, opts.keyStore)
+  if (!apiKey) return new LocalEmbeddingProvider().dim
+  const model = env.AKIS_EMBEDDING_MODEL?.trim() || DEFAULT_EMBEDDING_MODEL
+  return embeddingDimFor(model)
+}
+
 /** Resolve the OpenAI key for embeddings from the SAME sources as the chat provider: the
  *  catalog's per-provider env vars first, then the KeyStore (provider id `openai`). A
  *  blank/whitespace value is ABSENT (parity with createProvider.firstPresentKey). */
