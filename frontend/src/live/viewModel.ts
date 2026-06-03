@@ -99,17 +99,32 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
         // The shipped artifact (e.g. pushed repo URL): a link, not the embedded app.
         v.preview = { ...v.preview, ...(e.url !== undefined ? { artifactUrl: e.url } : {}) }
         break
-      case 'preview_status':
+      case 'preview_status': {
         // Live local-preview lifecycle: 'ready' → embed the same-origin /preview/:id app.
         // `demo` (P1-CORE-1) sticks once seen so the badge persists across lifecycle frames.
+        // A 'failed'/'unsupported' frame is a RECOVERABLE failure → surface its reason (never a
+        // silent collapse to the empty state); a 'starting'/'ready' frame supersedes it (a retry's
+        // spinner/iframe clears the prior failure).
+        const failed = e.status === 'failed' || e.status === 'unsupported'
+        // Drop any prior `url` AND `error` from the spread. Only a 'ready' frame yields a live,
+        // embeddable /preview/:id/ url, so a non-ready frame (starting/failed/unsupported/stopped)
+        // must NOT keep a torn-down preview embeddable — else the stale iframe shadows the spinner
+        // (on a re-run's 'starting') or the error card + Retry (on a re-run that 'failed'), silently
+        // re-introducing the very dead-end this surfacing exists to kill. 'ready' re-adds the fresh
+        // url; a 'starting'/'ready' frame clears `error` (the retry supersedes the failure); a
+        // failure frame re-adds `error`.
+        const { error: _prevError, url: _prevUrl, ...prevPreview } = v.preview
+        void _prevError; void _prevUrl
         v.preview = {
-          ...v.preview,
+          ...prevPreview,
           ready: e.status === 'ready',
           starting: e.status === 'starting',
-          ...(e.url !== undefined ? { url: e.url } : {}),
+          ...(e.status === 'ready' && e.url !== undefined ? { url: e.url } : {}),
           ...(e.demo ? { demo: true } : {}),
+          ...(failed ? { error: { status: e.status as 'failed' | 'unsupported', ...(e.reason ? { reason: e.reason } : {}) } } : {}),
         }
         break
+      }
       case 'test_stats':
         // Rich BDD/E2E telemetry for the dashboard (verify stays the gate's truth).
         v.tests = { ...v.tests, ran: true, scenariosBuilt: e.built, scenariosRunning: e.running }

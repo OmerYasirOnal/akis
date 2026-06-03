@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PreviewPanel } from './PreviewPanel.js'
 import { emptyView } from '../live/viewModel.js'
@@ -175,5 +175,70 @@ describe('PreviewPanel', () => {
     rerender(<I18nProvider><PreviewPanel view={view} testEvidence={undefined} /></I18nProvider>)
     expect(screen.queryByRole('tab', { name: STRINGS.en['trust.tab'] })).toBeNull()
     expect(container.querySelector('iframe')).not.toBeNull()
+  })
+
+  // ── Lane A: a preview-boot FAILURE is visible + recoverable, never a silent collapse to empty ──
+  it('shows a rose error card with the reason on a failed preview boot (XSS-safe text)', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { ready: false, error: { status: 'failed', reason: 'install failed: npm ci exited 1' } } }
+    const { container } = renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun={false} />)
+    expect(screen.getByText(STRINGS.en['preview.failed'])).toBeInTheDocument()
+    expect(screen.getByText('install failed: npm ci exited 1')).toBeInTheDocument()
+    // It must NOT collapse to the empty "Run the app…" placeholder.
+    expect(screen.queryByText(STRINGS.en['preview.empty'])).toBeNull()
+    // Reason is rendered as text — no script sink.
+    expect(container.querySelector('script')).toBeNull()
+  })
+  it('uses the unsupported copy when the failure status is unsupported', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { ready: false, error: { status: 'unsupported' } } }
+    renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun={false} />)
+    expect(screen.getByText(STRINGS.en['preview.unsupported'])).toBeInTheDocument()
+    expect(screen.queryByText(STRINGS.en['preview.failed'])).toBeNull()
+  })
+  it('renders a working Retry that calls onRun, even when canRun is false', async () => {
+    const user = userEvent.setup()
+    const onRun = vi.fn()
+    const view: SessionView = { ...emptyView('s1'), preview: { ready: false, error: { status: 'failed', reason: 'boom' } } }
+    renderI18n(<PreviewPanel view={view} onRun={onRun} canRun={false} />)
+    const retry = screen.getByRole('button', { name: new RegExp(STRINGS.en['preview.retry']) })
+    expect(retry).toBeInTheDocument()
+    await user.click(retry)
+    expect(onRun).toHaveBeenCalledTimes(1)
+  })
+  it('renders the actionError note near the Run control', () => {
+    const view: SessionView = { ...emptyView('s1'), provider: 'anthropic' }
+    renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun actionError="preview failed: boom" />)
+    expect(screen.getByText('preview failed: boom')).toBeInTheDocument()
+  })
+  // Regression (PR #82 review): a re-run that fails can leave a STALE /preview/ url in the view
+  // (ready→stopped→starting→failed). The iframe is gated on `!previewError`, so a present failure
+  // must win — the dead frame can never shadow the error card + Retry.
+  it('shows the error card (not a stale iframe) when a failed preview still carries a url', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { ready: false, url: '/preview/s1/', error: { status: 'failed', reason: 'readiness probe timed out' } } }
+    const { container } = renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun={false} />)
+    expect(container.querySelector('iframe')).toBeNull() // the dead frame is NOT mounted
+    expect(screen.getByText(STRINGS.en['preview.failed'])).toBeInTheDocument()
+    expect(screen.getByText('readiness probe timed out')).toBeInTheDocument()
+  })
+  // The same failure must not be double-banner'd: when the rose error card is already shown, the
+  // redundant actionError banner is suppressed (it stays as the fallback for a dropped SSE frame).
+  it('suppresses the actionError banner when a preview_status failure card is shown', () => {
+    const view: SessionView = { ...emptyView('s1'), preview: { ready: false, error: { status: 'failed', reason: 'probe timed out' } } }
+    renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun actionError="run failed: dup" />)
+    expect(screen.getByText('probe timed out')).toBeInTheDocument() // the card reason
+    expect(screen.queryByText('run failed: dup')).toBeNull() // the duplicate banner is gone
+  })
+  // Boot watchdog: a still-running boot past the threshold must surface a non-blocking note + Retry
+  // so a LOST terminal frame can't strand the spinner forever.
+  it('surfaces the boot-watchdog note after the threshold while still booting', () => {
+    vi.useFakeTimers()
+    try {
+      const view: SessionView = { ...emptyView('s1'), preview: { ready: false, starting: true } }
+      renderI18n(<PreviewPanel view={view} onRun={() => {}} canRun />)
+      expect(screen.queryByText(STRINGS.en['preview.bootSlow'])).toBeNull() // not yet
+      act(() => { vi.advanceTimersByTime(125_000) })
+      expect(screen.getByText(STRINGS.en['preview.bootSlow'])).toBeInTheDocument()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

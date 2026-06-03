@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import type { CodeArtifact, TestEvidence } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
 import { TestStats } from './TestStats.js'
@@ -18,9 +18,24 @@ import { useI18n } from '../i18n/I18nContext.js'
  * + the critic verdict). The Code tab appears once files exist; the Trust tab once a
  * verification has run (test evidence is present). Both sit right next to the pass badge.
  */
-export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined }) {
+/** After ~125s of a still-running boot we surface a non-blocking "taking longer than expected"
+ *  note — so a LOST terminal frame can't leave the spinner pulsing forever (the boot watchdog). */
+const BOOT_SLOW_MS = 125_000
+
+export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, actionError }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined; actionError?: string | undefined }) {
   const { t } = useI18n()
   const [tab, setTab] = useState<'preview' | 'code' | 'trust'>('preview')
+  // Boot watchdog: while `starting`, arm a single timer; if it elapses before a terminal frame
+  // arrives, flip `bootSlow` so a stuck spinner becomes a recoverable "taking longer" note.
+  const [bootSlow, setBootSlow] = useState(false)
+  const starting = view.preview.starting
+  const timerRef = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => {
+    if (!starting) { setBootSlow(false); return }
+    setBootSlow(false)
+    timerRef.current = setTimeout(() => setBootSlow(true), BOOT_SLOW_MS)
+    return () => { if (timerRef.current) clearTimeout(timerRef.current) }
+  }, [starting])
   const fileCount = files?.length ?? 0
   const hasTrust = testEvidence !== undefined
   // `tab` is local state, but the only control back to Preview is the tablist, which only renders
@@ -31,6 +46,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence }:
   const activeTab = tab === 'code' && fileCount === 0 ? 'preview' : tab === 'trust' && !hasTrust ? 'preview' : tab
   const showTablist = fileCount > 0 || hasTrust
   const url = view.preview.url
+  const previewError = view.preview.error
   const artifact = view.preview.artifactUrl
   const embeddable = !!url && url.startsWith('/preview/')
   const artifactSafe = !!artifact && /^https?:\/\//i.test(artifact)
@@ -88,6 +104,14 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence }:
         </div>
       </div>
 
+      {/* A failed Run-app action (rejected startPreview) surfaces here, next to the Run control —
+          text-only, never a silent no-op. Suppressed when a preview_status failure is already
+          shown in the surface below (the rose error card), so the same failure isn't double-banner'd;
+          it stays as the fallback channel for a dropped/missed SSE frame (no preview_status arrives). */}
+      {actionError && !previewError && (
+        <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>
+      )}
+
       {activeTab === 'code' ? (
         <CodeBrowser files={files} />
       ) : activeTab === 'trust' ? (
@@ -110,17 +134,51 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence }:
         </div>
 
         <div className="relative flex-1 overflow-hidden">
-          {embeddable ? (
+          {embeddable && !previewError ? (
             // The framed app is UNTRUSTED agent-generated code served same-origin from
             // /preview/:id/. Deliberately NO allow-same-origin: that would let it reach
             // the AKIS origin (session cookie, parent DOM). allow-scripts in an opaque
             // origin is enough to run a self-contained app. (Apps needing real same-origin
             // storage are a deferred cross-origin-preview hardening.)
             <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-popups" />
+          ) : previewError ? (
+            // A failed/unsupported boot is a RECOVERABLE failure — never a silent collapse to the
+            // empty state. Show a rose card with the backend's reason as TEXT (XSS-safe, no HTML)
+            // plus an explicit Retry. The Retry is shown even when !canRun: a boot that already ran
+            // proves the session is runnable, so the human can always try again.
+            <div role="alert" className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+              <div className="max-w-sm rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-rose-300">
+                <div className="text-sm font-semibold">
+                  {t(previewError.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed')}
+                </div>
+                {previewError.reason && (
+                  <div className="mt-1 break-words text-xs text-rose-200/90">{previewError.reason}</div>
+                )}
+              </div>
+              {onRun && (
+                <button onClick={onRun} disabled={busy}
+                  className="mt-1 rounded-lg border border-teal-400/30 bg-teal-400/10 px-3 py-1.5 text-sm font-semibold text-teal-200 hover:bg-teal-400/20 disabled:opacity-40">
+                  ▶ {t('preview.retry')}
+                </button>
+              )}
+            </div>
           ) : view.preview.starting ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
+            <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
               <span className="h-6 w-6 animate-spin rounded-full border-2 border-teal-400/40 border-t-teal-300" />
               <span className="text-xs text-slate-400">{t('preview.booting')}</span>
+              {/* Boot watchdog: a still-running boot past the threshold gets a non-blocking note +
+                  Retry, so a lost terminal frame can't strand the spinner forever. */}
+              {bootSlow && (
+                <div className="flex flex-col items-center gap-1.5">
+                  <span className="text-[11px] text-amber-200/90">{t('preview.bootSlow')}</span>
+                  {onRun && (
+                    <button onClick={onRun} disabled={busy}
+                      className="rounded-md border border-teal-400/30 bg-teal-400/10 px-2.5 py-1 text-xs text-teal-200 hover:bg-teal-400/20 disabled:opacity-40">
+                      ▶ {t('preview.retry')}
+                    </button>
+                  )}
+                </div>
+              )}
             </div>
           ) : (
             <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">

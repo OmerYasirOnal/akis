@@ -62,6 +62,11 @@ export interface PreviewState {
    *  demo, not a real-verified build. Carried by the `preview_status` event's `demo` flag
    *  (P1-CORE-1). Drives the badge on the PreviewPanel. Absent on a live boot. */
   demo?: boolean
+  /** A terminal preview-boot FAILURE the human can recover from (NOT a silent dead-end): the
+   *  local run failed to start ('failed') or this app can't be previewed locally ('unsupported').
+   *  Carried by the `preview_status` event; `reason` is the backend's short human label. Cleared
+   *  on the next 'starting'/'ready' frame (a retry's spinner/iframe supersedes the failure). */
+  error?: { status: 'failed' | 'unsupported'; reason?: string }
 }
 
 /** The critic's READ-ONLY code-review verdict (a status card, NOT a human gate).

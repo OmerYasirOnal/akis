@@ -150,6 +150,11 @@ export const STRINGS = {
     'preview.shipped': 'Shipped to',
     'preview.mockNote': 'Demo preview (mock provider) — add a provider key in Settings for a real build.',
     'preview.attribution': 'Running app · built by AKIS agents',
+    // ── Live-preview failures (recoverable, never a silent dead-end) ──
+    'preview.failed': 'The live preview couldn’t start.',
+    'preview.unsupported': 'This app can’t be previewed live.',
+    'preview.retry': 'Retry',
+    'preview.bootSlow': 'Still booting — taking longer than expected.',
     // ── Code file browser (read-only view of the agent-written artifact) ──
     'preview.tab.preview': 'Preview',
     'preview.tab.code': 'Code',
@@ -691,6 +696,11 @@ export const STRINGS = {
     'preview.shipped': 'Yayınlandı:',
     'preview.mockNote': 'Demo önizleme (mock sağlayıcı) — gerçek bir geliştirme için Ayarlar’dan bir sağlayıcı anahtarı ekle.',
     'preview.attribution': 'Çalışan uygulama · AKIS ajanları tarafından üretildi',
+    // ── Canlı önizleme hataları (kurtarılabilir, asla sessiz çıkmaz sokak değil) ──
+    'preview.failed': 'Canlı önizleme başlatılamadı.',
+    'preview.unsupported': 'Bu uygulama canlı önizlenemiyor.',
+    'preview.retry': 'Yeniden dene',
+    'preview.bootSlow': 'Hâlâ başlatılıyor — beklenenden uzun sürüyor.',
     // ── Kod dosya tarayıcısı (ajanın yazdığı çıktının salt-okunur görünümü) ──
     'preview.tab.preview': 'Önizleme',
     'preview.tab.code': 'Kod',
