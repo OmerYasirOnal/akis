@@ -55,16 +55,20 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
   const specState = live.view.gates.specApproval?.state
   const pushState = live.view.gates.pushConfirm?.state
 
-  const send = async (): Promise<void> => {
-    const v = idea.trim(); if (!v || busy) return
+  // The single build path: the spec/idea becomes a session via the UNCHANGED startSession
+  // → the same 4 structural gates + pipeline + History. Used by both the composer and the
+  // Chat-to-Build approval (so a chat-authored spec gets no new trust surface or path).
+  const startBuild = async (v: string): Promise<void> => {
+    const idea = v.trim(); if (!idea || busy) return
     setBusy(true); setActionError(undefined)
     try {
-      const s = await api.startSession(v, workflowId || undefined)
-      setSent(v); setSessionId(s.id); setIdea('')
-      setRecent(recordRecentBuild({ id: s.id, idea: v, ts: Date.now() }))
+      const s = await api.startSession(idea, workflowId || undefined)
+      setSent(idea); setSessionId(s.id); setIdea('')
+      setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
     } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) }
     finally { setBusy(false) }
   }
+  const send = (): Promise<void> => startBuild(idea)
   /** Re-open a past build — useLiveChat replays /log + /events to rebuild the thread. */
   const openSession = (b: RecentBuild): void => { setActionError(undefined); setSent(b.idea); setSessionId(b.id) }
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
@@ -127,8 +131,13 @@ export function ChatStudio({ api, baseUrl = '', workflows = [], makeClient }: { 
               />
             )
             : (
-              <div className="flex flex-col gap-4">
-                <AkisChat api={api} />
+              // Give AkisChat real height: this column is `flex-1` of the studio card, so
+              // a full-height flex wrapper lets the chat's scroll area expand instead of
+              // collapsing to its content (the spec called this out).
+              <div className="flex h-full min-h-[24rem] flex-col gap-4">
+                <div className="min-h-0 flex-1">
+                  <AkisChat api={api} onBuild={(spec) => void startBuild(spec)} />
+                </div>
                 {recent.length > 0 && (
                   <div className="border-t border-white/10 pt-3">
                     <div className="mb-2 text-xs uppercase tracking-widest text-slate-500">{t('chat.recent')}</div>
