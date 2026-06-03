@@ -55,6 +55,11 @@ export const STRINGS = {
     'pipeline.summary.shipped': 'shipped',
     'pipeline.summary.runFailed': 'Run failed',
     'pipeline.details': 'Details (raw log)',
+    // P1-CORE-1: per-run "this result is simulated" badge — shown ON the verify gate card and
+    // the live preview when the run's verify/preview event carries `demo:true`, so a mock
+    // "verified"/running app can never be mistaken for a real one AT THE RESULT.
+    'result.demo.badge': 'DEMO · verification simulated',
+    'result.demo.title': 'This result was produced by the mock test runner — it is NOT a real ≥1-test pass. Add a provider key and disable AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY for a live, real-verified build.',
     'chat.empty.title': 'Describe the app you want to build.',
     'chat.empty.hint': 'The agents plan, build, verify with real tests, and ship it — live.',
     'chat.placeholder': 'e.g. a QR-code generator app…',
@@ -591,6 +596,10 @@ export const STRINGS = {
     'preview.shipped': 'Yayınlandı:',
     'preview.mockNote': 'Demo önizleme (mock sağlayıcı) — gerçek bir geliştirme için Ayarlar’dan bir sağlayıcı anahtarı ekle.',
     'preview.attribution': 'Çalışan uygulama · AKIS ajanları tarafından üretildi',
+    // P1-CORE-1: çalıştırma başına "bu sonuç simüle edildi" rozeti — verify gate kartında ve
+    // canlı önizlemede, çalıştırmanın verify/preview olayı `demo:true` taşıdığında gösterilir.
+    'result.demo.badge': 'DEMO · doğrulama simüle edildi',
+    'result.demo.title': 'Bu sonuç taklit (mock) test koşucusu tarafından üretildi — GERÇEK bir ≥1-test geçişi DEĞİLDİR. Canlı, gerçekten doğrulanmış bir derleme için bir sağlayıcı anahtarı ekleyin ve AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY seçeneklerini kapatın.',
     // ── Geliştirme geçmişi (stüdyo yeniden tasarımı) ──
     'history.title': 'Geliştirme geçmişi',
     'history.sub': 'AKIS ile inşa ettiğin her uygulama — çalışmasını ve önizlemesini görmek için birini aç.',

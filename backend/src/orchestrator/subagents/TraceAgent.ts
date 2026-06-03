@@ -32,7 +32,11 @@ export class TraceAgent {
     const token = await this.deps.verifier.verify(sessionId, input.files)
 
     this.deps.bus.emit({ kind: 'tool_result', tool: 'run_tests', ok: token !== null, result: { testsRun: token?.testsRun ?? 0, passed: token !== null }, agent: 'trace', laneId, sessionId, ts: nextTs() })
-    this.deps.bus.emit({ kind: 'verify', testsRun: token?.testsRun ?? 0, passed: token !== null, agent: 'trace', laneId, sessionId, ts: nextTs() })
+    // Stamp `demo:true` ONLY when this verifier runs the mock/injected runner (simulated
+    // verification). It is informational metadata about the runner, never about the outcome —
+    // the token above is the unchanged source of truth. Spread it so a live run emits a
+    // byte-identical verify event with NO `demo` field (never `demo:false` noise).
+    this.deps.bus.emit({ kind: 'verify', testsRun: token?.testsRun ?? 0, passed: token !== null, ...(this.deps.verifier.demo ? { demo: true } : {}), agent: 'trace', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'agent_end', role: 'trace', ok: token !== null, agent: 'trace', laneId, sessionId, ts: nextTs() })
     return token
   }

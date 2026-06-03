@@ -82,6 +82,24 @@ describe('foldSessionView (pure live view-model)', () => {
     expect(v.tests.scenariosRunning).toBe(4)
   })
 
+  // P1-CORE-1: the optional `demo` annotation flows from the events into the view-model.
+  it('folds the verify event demo flag into tests.demo (and omits it on a live verify)', () => {
+    const live = foldSessionView('s1', [ev({ kind: 'verify', testsRun: 2, passed: true, agent: 'trace', laneId: 'verify' })])
+    expect(live.tests.demo).toBeUndefined()
+    const demo = foldSessionView('s1', [ev({ kind: 'verify', testsRun: 2, passed: true, demo: true, agent: 'trace', laneId: 'verify' })])
+    expect(demo.tests.demo).toBe(true)
+  })
+
+  it('folds the preview_status demo flag into preview.demo, and it sticks across lifecycle frames', () => {
+    const live = foldSessionView('s1', [ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' })])
+    expect(live.preview.demo).toBeUndefined()
+    const demo = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'starting', demo: true }),
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }), // a later frame w/o demo
+    ])
+    expect(demo.preview.demo).toBe(true) // sticks once seen
+  })
+
   it('folds the structured code_review verdict (last wins) as a read-only card', () => {
     const v = foldSessionView('s1', [
       ev({ kind: 'code_review', approved: false, findings: 4, critical: true, iteration: 1, agent: 'critic' }),
