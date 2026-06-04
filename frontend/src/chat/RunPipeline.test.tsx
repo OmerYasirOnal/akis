@@ -144,6 +144,15 @@ describe('RunPipeline', () => {
     expect(cancelRun).toHaveBeenCalledWith('s1')
   })
 
+  it('keeps the Stop button ENABLED while busy is true (busy no longer greys out cancel)', () => {
+    // Liveness regression: approve→run no longer holds `busy` across the whole build, and Stop is
+    // gated on `recovering` (a cancel-in-flight), NOT `busy`. A running build with busy=true must
+    // still show an ENABLED Stop — the one control whose job is to cancel that very run.
+    const running = viewWith({ status: 'running' })
+    render(wrap(<RunPipeline view={running} onApprove={() => {}} onConfirm={() => {}} busy={true} api={new ApiClient()} />))
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeEnabled()
+  })
+
   it('hides the Stop button once the run is terminal (done / cancelled)', () => {
     const done = viewWith({ status: 'done', verified: true, gates: { pushConfirm: { gate: 'push_confirm', state: 'satisfied' } } })
     const { rerender } = render(wrap(<RunPipeline view={done} onApprove={() => {}} onConfirm={() => {}} api={new ApiClient()} />))
