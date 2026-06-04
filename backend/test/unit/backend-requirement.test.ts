@@ -30,6 +30,13 @@ describe('backendRequirementGap (the live-caught Potemkin-backend guard)', () =>
     const spec = { title: 'QR generator', body: 'A single-page QR code generator for users.' }
     expect(backendRequirementGap(spec, STATIC)).toBeUndefined()
   })
+  it('ignores demands inside "Out of scope" / "Non-goals" sections (the mock-spec false positive)', () => {
+    const spec = { title: 'Todo app', body: '# Todo\n\n## Acceptance criteria\n- core action works\n\n## Out of scope\n- Authentication, deployment.' }
+    expect(backendRequirementGap(spec, STATIC)).toBeUndefined()
+    // …but an IN-SCOPE demand above the section still flags.
+    const spec2 = { title: 'Voting', body: 'Users sign up and log in.\n\n## Out of scope\n- deployment.' }
+    expect(backendRequirementGap(spec2, STATIC)).toMatch(/BACKEND REQUIRED/)
+  })
 })
 
 describe('Orchestrator — the guard drives the iterate loop (tighten-only)', () => {

@@ -20,8 +20,17 @@ import { detectAppType } from '../preview/AppDetector.js'
  */
 const BACKEND_DEMAND = /\b(sign ?-?up|log ?-?in|user accounts?|authentication|real backend|server-?side|multi-?user|per-?user data)\b/i
 
+/** Drop "Out of scope" / "Non-goals" sections before matching: a spec saying
+ *  "Out of scope: Authentication" explicitly does NOT demand a backend — matching
+ *  inside it false-positived every mock-spec build (caught by the full suite). A
+ *  section ends at the next heading or the end of the body. */
+function inScopeText(spec: SpecArtifact): string {
+  const all = `${spec.title}\n${spec.body}`
+  return all.replace(/^#{1,6}\s*(out of scope|non-?goals)\b[\s\S]*?(?=^#{1,6}\s|(?![\s\S]))/gim, '')
+}
+
 export function backendRequirementGap(spec: SpecArtifact, files: readonly RepoFile[]): string | undefined {
-  if (!BACKEND_DEMAND.test(`${spec.title}\n${spec.body}`)) return undefined
+  if (!BACKEND_DEMAND.test(inScopeText(spec))) return undefined
   if (detectAppType([...files]) !== 'static') return undefined
   return [
     'BACKEND REQUIRED BUT MISSING: the approved spec explicitly requires user accounts /',
