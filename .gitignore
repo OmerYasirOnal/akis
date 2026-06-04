@@ -70,6 +70,8 @@ tmp/
 **/.akis/keys.json
 **/.akis/*.json
 .akis/keys.json
+# persisted dev auth secret (never commit — PR #95 review)
+**/.akis/dev-secret
 .akis/*.json
 
 # Playwright MCP run artifacts (screenshots, snapshots, console logs)
