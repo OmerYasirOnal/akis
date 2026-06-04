@@ -46,8 +46,10 @@ export function makePreviewBoot(registry: PreviewRegistry): (sessionId: string, 
     // STATIC apps (the most common Proto output — a self-contained index.html) get a tiny
     // throwaway loopback file server over the materialized workspace (PR3): the registry's
     // static path serves only THROUGH the Fastify proxy (no own port), so without this the
-    // most common build couldn't be boot-verified at all. Zero dependencies; probes get the
-    // real served bytes, so body/criteria checks are genuine observations.
+    // most common build couldn't be boot-verified at all. Zero dependencies. HONEST SCOPE
+    // (PR #99 review): this verifies the app's files EXIST and HTTP-SERVE (and any
+    // body/criteria checks against the served bytes) — it does NOT execute JS or render in
+    // a browser, so runtime correctness stays the (future) browser-tier's job.
     if (type === 'static') {
       let dir: string
       try {
@@ -61,6 +63,10 @@ export function makePreviewBoot(registry: PreviewRegistry): (sessionId: string, 
         return {
           url: `http://127.0.0.1:${port}`,
           teardown: async () => {
+            // Force-drop keep-alive sockets FIRST (PR #99 review): the probes' fetch() pools
+            // connections, and a bare close() waits for them — teardown would hang for the
+            // keep-alive timeout (or forever), wedging the verify.
+            server.closeAllConnections()
             await new Promise<void>(resolveClose => server.close(() => resolveClose()))
             await teardownWorkspace(dir).catch(() => {})
           },
