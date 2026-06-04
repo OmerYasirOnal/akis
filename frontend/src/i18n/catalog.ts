@@ -16,9 +16,7 @@ export const STRINGS = {
     'agents.saved': 'Workflow saved',
     'agents.default': '(default)',
     'agents.loading': 'Loading providers…',
-    'chat.idle': 'idle',
     'chat.new': 'New build',
-    'chat.recent': 'Recent builds',
     // ── Run pipeline (studio redesign) ──
     'pipeline.title': 'Pipeline',
     'pipeline.step.spec': 'Spec',
@@ -61,16 +59,13 @@ export const STRINGS = {
     // NOT structural gates — proceeding/retrying never bypasses verify/push (the backend
     // re-runs real verification and the spec/push gates still apply).
     'pipeline.stat.criticRejected': 'critic rejected',
-    'recovery.critic.title': 'Critic did not approve',
     'recovery.critic.hint': 'The automatic critic review is unresolved. Proceed to continue the build (real verification + push confirmation still apply) or abandon to cancel.',
     'recovery.critic.proceed': 'Proceed',
     'recovery.critic.abandon': 'Abandon',
-    'recovery.verify.title': 'Tests did not pass',
     'recovery.verify.hint': 'No real passing test was produced, so the run is not verified. Retry to re-run the real tests — push stays blocked until a genuine pass.',
     'recovery.verify.retry': 'Retry tests',
     // push_failed: a VERIFIED run whose push failed (network/adapter). The retry re-runs the
     // GATED push (Gate 4 still mints from the VerifyToken) — a retry affordance, not a bypass.
-    'recovery.push.title': 'Push failed',
     'recovery.push.hint': 'The build is verified, but pushing it failed. Retry the push — it still requires the verified push approval (the push gate is never bypassed).',
     'recovery.push.retry': 'Push failed — retry',
     // Run control: STOP/CANCEL an in-flight run — a clean terminal abandon (never a gate bypass:
@@ -83,11 +78,6 @@ export const STRINGS = {
     // "verified"/running app can never be mistaken for a real one AT THE RESULT.
     'result.demo.badge': 'DEMO · verification simulated',
     'result.demo.title': 'This result was produced by the mock test runner — it is NOT a real ≥1-test pass. Add a provider key and disable AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY for a live, real-verified build.',
-    'chat.empty.title': 'Describe the app you want to build.',
-    'chat.empty.hint': 'The agents plan, build, verify with real tests, and ship it — live.',
-    'chat.placeholder': 'e.g. a QR-code generator app…',
-    'chat.defaultWorkflow': 'default workflow',
-    'chat.send': 'Build',
     'chat.working': 'working…',
     'chat.gate.spec_approval': 'Spec approval',
     'chat.gate.push_confirm': 'Push confirm',
@@ -109,8 +99,6 @@ export const STRINGS = {
     'chat.preview.ready': 'Preview ready',
     'chat.preview.starting': 'Preview starting…',
     'chat.shipped': 'Shipped',
-    'chat.auto': 'Autopilot',
-    'chat.auto.hint': 'Auto-approve the spec and confirm the push — fully hands-off (verification stays real).',
     'akis.greeting': 'Hi, I’m AKIS. Describe an app and my agents will plan, build, verify with real tests, and ship it — live. What should we build?',
     'akis.thinking': 'AKIS is thinking…',
     'akis.ask': 'Ask AKIS anything…',
@@ -319,7 +307,7 @@ export const STRINGS = {
     'docs.v2.quickstart.step1.t': 'Open the Studio',
     'docs.v2.quickstart.step1.d': 'Head to the Studio tab. AKIS greets you and waits for an idea.',
     'docs.v2.quickstart.step2.t': 'Describe an app',
-    'docs.v2.quickstart.step2.d': 'Type something like “a QR-code generator app” and press Build.',
+    'docs.v2.quickstart.step2.d': 'Tell AKIS what you want to build — it shapes a build-ready spec, then you approve it to start the run.',
     'docs.v2.quickstart.step3.t': 'Approve the spec',
     'docs.v2.quickstart.step3.d': 'Scribe drafts a spec; review it and approve to let the build proceed.',
     'docs.v2.quickstart.step4.t': 'Confirm the push',
@@ -386,7 +374,7 @@ export const STRINGS = {
     'docs.v2.chat.p2': 'Chat-to-Build (landing) lets AKIS offer a build-ready spec right in the conversation: it renders nicely, you can download it, and one approval runs the whole pipeline with that spec — no copy-paste. The spec is treated as untrusted input and still flows through all four gates.',
     // Section: workflows
     'docs.v2.workflows.title': 'Workflows',
-    'docs.v2.workflows.lead': 'Workflows are typed, versioned presets that seed a build — which agents are enabled, the model per agent, the gate policy, the iterate budget, and retrieval. Pick one in the composer.',
+    'docs.v2.workflows.lead': 'Workflows are typed, versioned presets that seed a build — which agents are enabled, the model per agent, the gate policy, the iterate budget, and retrieval.',
     'docs.v2.workflows.p1': 'Gates are tighten-only. A workflow can require critic resolution or lower the iterate budget, but the four structural gates are always enforced and can never be disabled — the builder shows them as locked.',
     'docs.v2.workflows.b1': 'Enable core agents and choose a model per agent.',
     'docs.v2.workflows.b2': 'Tighten the gate policy (e.g. require critic resolution).',
@@ -567,9 +555,7 @@ export const STRINGS = {
     'agents.saved': 'İş akışı kaydedildi',
     'agents.default': '(varsayılan)',
     'agents.loading': 'Sağlayıcılar yükleniyor…',
-    'chat.idle': 'beklemede',
     'chat.new': 'Yeni geliştirme',
-    'chat.recent': 'Son geliştirmeler',
     // ── Çalışma hattı (stüdyo yeniden tasarımı) ──
     'pipeline.title': 'Hat',
     'pipeline.step.spec': 'Spec',
@@ -612,16 +598,13 @@ export const STRINGS = {
     // kartıdır. Bunlar yapısal kapı DEĞİLDİR — devam etmek/yeniden denemek doğrulama/push'u
     // asla atlamaz (backend gerçek doğrulamayı yeniden çalıştırır, spec/push kapıları geçerli kalır).
     'pipeline.stat.criticRejected': 'eleştirmen reddetti',
-    'recovery.critic.title': 'Eleştirmen onaylamadı',
     'recovery.critic.hint': 'Otomatik eleştirmen incelemesi çözülmedi. İnşaya devam etmek için ilerle (gerçek doğrulama + push onayı yine de geçerlidir) ya da iptal etmek için vazgeç.',
     'recovery.critic.proceed': 'İlerle',
     'recovery.critic.abandon': 'Vazgeç',
-    'recovery.verify.title': 'Testler geçmedi',
     'recovery.verify.hint': 'Gerçek geçen bir test üretilmedi, bu yüzden çalışma doğrulanmadı. Gerçek testleri yeniden çalıştırmak için yeniden dene — gerçek bir geçiş olana dek push engelli kalır.',
     'recovery.verify.retry': 'Testleri yeniden dene',
     // push_failed: DOĞRULANMIŞ bir çalışmanın push'u başarısız oldu (ağ/adaptör). Yeniden deneme
     // KAPILI push'u yeniden çalıştırır (Gate 4 yine VerifyToken'dan üretir) — atlatma değil.
-    'recovery.push.title': 'Push başarısız',
     'recovery.push.hint': 'İnşa doğrulandı, ancak push başarısız oldu. Push\'u yeniden dene — yine doğrulanmış push onayını gerektirir (push kapısı asla atlanmaz).',
     'recovery.push.retry': 'Push başarısız — yeniden dene',
     // Çalışma denetimi: yürüyen bir çalışmayı DURDUR/İPTAL ET — temiz, kalıcı bir vazgeçiş (asla
@@ -629,11 +612,6 @@ export const STRINGS = {
     'run.stop': 'Çalışmayı durdur',
     // SSE kopması: kalıcı olmayan bir "yeniden bağlanılıyor" bandı, böylece kopan akış sonsuza dek atmaz.
     'live.reconnecting': 'Bağlantı koptu — yeniden bağlanılıyor…',
-    'chat.empty.title': 'İnşa etmek istediğin uygulamayı tarif et.',
-    'chat.empty.hint': 'Ajanlar planlar, inşa eder, gerçek testlerle doğrular ve yayınlar — canlı.',
-    'chat.placeholder': 'örn. bir QR kod üretici uygulaması…',
-    'chat.defaultWorkflow': 'varsayılan iş akışı',
-    'chat.send': 'Geliştir',
     'chat.working': 'çalışıyor…',
     'chat.gate.spec_approval': 'Spec onayı',
     'chat.gate.push_confirm': 'Push onayı',
@@ -655,8 +633,6 @@ export const STRINGS = {
     'chat.preview.ready': 'Önizleme hazır',
     'chat.preview.starting': 'Önizleme başlıyor…',
     'chat.shipped': 'Yayınlandı',
-    'chat.auto': 'Otopilot',
-    'chat.auto.hint': 'Spec’i otomatik onayla ve push’u doğrula — tamamen otomatik (doğrulama yine gerçek).',
     'akis.greeting': 'Merhaba, ben AKIS. Bir uygulama tarif et; ajanlarım planlar, kodlar, gerçek testlerle doğrular ve yayınlar — canlı. Ne geliştirelim?',
     'akis.thinking': 'AKIS düşünüyor…',
     'akis.ask': 'AKIS’e bir şey sor…',
@@ -869,7 +845,7 @@ export const STRINGS = {
     'docs.v2.quickstart.step1.t': 'Stüdyoyu aç',
     'docs.v2.quickstart.step1.d': 'Stüdyo sekmesine git. AKIS seni karşılar ve bir fikir bekler.',
     'docs.v2.quickstart.step2.t': 'Bir uygulama tarif et',
-    'docs.v2.quickstart.step2.d': '“bir QR kod üretici uygulaması” gibi bir şey yaz ve Geliştir’e bas.',
+    'docs.v2.quickstart.step2.d': 'AKIS’e ne inşa etmek istediğini anlat — inşaya hazır bir spec çıkarır, sen onaylayınca çalışma başlar.',
     'docs.v2.quickstart.step3.t': 'Spec’i onayla',
     'docs.v2.quickstart.step3.d': 'Scribe bir spec taslağı yazar; incele ve geliştirmenin devamı için onayla.',
     'docs.v2.quickstart.step4.t': 'Push’u onayla',
@@ -936,7 +912,7 @@ export const STRINGS = {
     'docs.v2.chat.p2': 'Sohbetten İnşa (açılış), AKIS’in sohbette doğrudan inşaya hazır bir spec sunmasını sağlar: güzelce görünür, indirebilirsin ve tek onayla tüm hat o spec ile çalışır — kopyala-yapıştır yok. Spec güvenilmeyen girdi olarak ele alınır ve yine dört kapının tamamından geçer.',
     // Bölüm: iş akışları
     'docs.v2.workflows.title': 'İş Akışları',
-    'docs.v2.workflows.lead': 'İş akışları, bir geliştirmeyi başlatan tipli, sürümlü ön ayarlardır — hangi ajanların etkin olduğu, ajan başına model, kapı politikası, yineleme bütçesi ve bilgi getirme. Birini bestecide seç.',
+    'docs.v2.workflows.lead': 'İş akışları, bir geliştirmeyi başlatan tipli, sürümlü ön ayarlardır — hangi ajanların etkin olduğu, ajan başına model, kapı politikası, yineleme bütçesi ve bilgi getirme.',
     'docs.v2.workflows.p1': 'Kapılar yalnızca sıkılaştırılabilir. Bir iş akışı critic çözümünü zorunlu kılabilir veya yineleme bütçesini düşürebilir, ancak dört yapısal kapı her zaman zorunludur ve asla devre dışı bırakılamaz — besteci bunları kilitli gösterir.',
     'docs.v2.workflows.b1': 'Çekirdek ajanları etkinleştir ve ajan başına bir model seç.',
     'docs.v2.workflows.b2': 'Kapı politikasını sıkılaştır (örn. critic çözümünü zorunlu kıl).',
