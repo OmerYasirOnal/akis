@@ -31,7 +31,9 @@ describe('AnthropicProvider', () => {
     expect(h['x-api-key']).toBe('sk-ant-x')
     expect(h['anthropic-version']).toBe('2023-06-01')
     const body = JSON.parse(captured!.init.body as string)
-    expect(body.system).toBe('SYS')
+    // System rides as a content block with a PROMPT-CACHE breakpoint (cache_control), so the
+    // shared agent prefix is cached across calls. Same text, byte-identical responses.
+    expect(body.system).toEqual([{ type: 'text', text: 'SYS', cache_control: { type: 'ephemeral' } }])
     expect(body.max_tokens).toBe(100)
     expect(body.tools[0].input_schema).toEqual({ type: 'object' })
 
