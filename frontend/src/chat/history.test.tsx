@@ -85,7 +85,7 @@ describe('ChatStudio AKIS transcript persistence', () => {
 
     // The only way to build is to talk to AKIS: it returns a spec card → approve it. The chat
     // unmounts, the run pipeline mounts, and the prior conversation persists as the transcript.
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'build it{Enter}')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build it{Enter}')
     await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
 
     // The transcript header appears above the pipeline; expanding it reveals the conversation.

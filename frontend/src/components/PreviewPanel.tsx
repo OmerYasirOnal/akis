@@ -121,7 +121,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
         <TrustReport evidence={testEvidence} codeReview={view.codeReview} demo={view.tests.demo} />
       ) : (
       <>
-      <div className="relative flex flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
+      <div className="relative flex min-h-[20rem] flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
         {/* Intentional browser-chrome header so the framed area never reads as dead space —
             traffic-light dots, an agent attribution, and (when live) the preview path. */}
         <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5">

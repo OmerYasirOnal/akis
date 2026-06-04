@@ -84,7 +84,7 @@ code, pre, .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regu
    removes default outlines, so restore a clear teal ring. Inputs/textareas are excluded
    because they already carry their own focus:border + focus:ring (avoids a doubled,
    mismatched-radius outline). The outline follows each element's own border-radius. */
-:where(a, button, select, [tabindex]):focus-visible {
+:where(a, button, select, summary, [tabindex]):focus-visible {
   outline: 2px solid var(--akis-teal);
   outline-offset: 2px;
 }

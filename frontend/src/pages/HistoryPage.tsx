@@ -49,7 +49,11 @@ export function HistoryPage({ api }: { api: ApiClient }) {
       ) : builds && builds.length === 0 ? (
         <div className="grid min-h-[50vh] place-items-center">
           <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-8 py-10 text-center text-sm text-slate-400">
-            {t('history.empty')}
+            <p>{t('history.empty')}</p>
+            <button onClick={() => navigate('/')}
+              className="mt-4 inline-flex rounded-lg bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-900">
+              {t('nav.dashboard')} →
+            </button>
           </div>
         </div>
       ) : (

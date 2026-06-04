@@ -32,7 +32,7 @@ export function AkisTranscript({ messages }: { messages: AkisMsg[] }) {
             if (m.role === 'user') {
               return (
                 <div key={i} className="flex justify-end">
-                  <div className="max-w-[85%] rounded-xl rounded-br-sm bg-[#07D1AF]/15 px-3 py-1.5 text-sm text-slate-100">{m.content}</div>
+                  <div className="max-w-[85%] break-words rounded-xl rounded-br-sm bg-[#07D1AF]/15 px-3 py-1.5 text-sm text-slate-100">{m.content}</div>
                 </div>
               )
             }

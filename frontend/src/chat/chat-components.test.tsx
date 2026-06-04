@@ -67,7 +67,7 @@ describe('ChatStudio', () => {
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
 
     // The ONLY entry point is the conversation: ask AKIS → it offers a spec → approve it.
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'build a qr app{Enter}')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
     await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
     // The session started via the UNCHANGED startSession (no separate idea box / autopilot).
     await waitFor(() => expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining('/sessions'), expect.objectContaining({ method: 'POST' })))
@@ -88,6 +88,6 @@ describe('ChatStudio', () => {
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
     expect(screen.queryByLabelText('idea')).toBeNull()
     expect(screen.queryByLabelText('Autopilot')).toBeNull()
-    expect(screen.getByLabelText('ask-akis')).toBeInTheDocument()
+    expect(screen.getByLabelText(/ask akis/i)).toBeInTheDocument()
   })
 })

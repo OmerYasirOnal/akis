@@ -22,7 +22,9 @@ export function AnalyticsPage({ api }: { api: ApiClient }) {
       <SectionTitle sub={t('analytics.sub')}>{t('analytics.title')}</SectionTitle>
 
       {empty ? (
-        <Card className="grid place-items-center p-10 text-center text-slate-500">{t('analytics.empty')}</Card>
+        <div className="grid min-h-[50vh] place-items-center">
+          <Card className="grid place-items-center p-10 text-center text-slate-500">{t('analytics.empty')}</Card>
+        </div>
       ) : (
         <>
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
