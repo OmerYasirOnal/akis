@@ -44,6 +44,8 @@ import { LocalDirectSandbox } from '../exec/Sandbox.js'
 import { MockProvider } from '../agent/providers/mock/MockProvider.js'
 import { hasRealProviderKey } from '../agent/providers/createProvider.js'
 import { createMockTestRunner } from '../verify/TestRunner.js'
+import { makePreviewBoot } from '../verify/previewBoot.js'
+import type { BootSmokeDeps } from '../verify/bootSmoke.js'
 import { loadOrCreatePassportSigner, fileDevKeyStore, type PassportSigner } from '../verify/passport.js'
 import { nextTs } from '../events/clock.js'
 
@@ -159,6 +161,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (origin !== trustedOrigin) return reply.code(403).send({ error: 'cross-origin request blocked', code: 'CsrfBlocked' })
   })
 
+  // LAZY boot adapter for the boot-smoke verifier (PR2): the PreviewRegistry is constructed
+  // AFTER services (its onStatus emits on services.bus), so the verifier gets a closure that
+  // resolves the registry at VERIFY time — runs happen long after boot. FAIL-CLOSED if a
+  // verify somehow fires before wiring completes (returns a failed boot → no token).
+  let verifyBootImpl: BootSmokeDeps['boot'] | undefined
+  const lazyVerifyBoot: BootSmokeDeps['boot'] = async (sessionId, files) =>
+    verifyBootImpl ? verifyBootImpl(sessionId, files) : { failed: 'verify boot not wired yet' }
+
   // One shared orchestrator stack (single store + single bus) across all requests,
   // so the SSE stream observes the same events the command routes produce. The
   // provider resolves via createProvider (fail-closed; mock only under NODE_ENV=test).
@@ -171,8 +181,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Thread env unconditionally: the push-adapter selection (P1-CORE-2) reads
       // AKIS_GITHUB_PUSH_TOKEN/REPO here regardless of RAG, and NODE_ENV gates the mock.
       env,
-      // Opt-in real Playwright+Cucumber verification (browsers required); mock default.
-      ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true } : {}),
+      // Opt-in REAL verification: with the boot adapter, Trace BOOTS the produced app and
+      // probes the running server (boot-smoke, PR2) — "verified" means it genuinely served.
+      ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true, verifyBoot: lazyVerifyBoot } : {}),
       // RAG on → also thread env so a configured AKIS_GITHUB_TOKEN selects the real reader.
       ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
       // Durable corpus: a hydrated PgVectorStore when DATABASE_URL is set (only effective with
@@ -214,6 +225,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       agent: 'orchestrator', laneId: 'main', sessionId: e.sessionId, ts: nextTs(),
     }),
   })
+  // Wire the boot-smoke verifier's boot adapter now that the registry exists (PR2): every
+  // verify boots under a unique '<sessionId>#verify-<nonce>' registry entry + tears down.
+  verifyBootImpl = makePreviewBoot(previewRegistry)
   // Expose the registry to the host (start()) so graceful shutdown can stopAll() the
   // running previews (kill their process groups + release ports) before the pool closes.
   app.decorate('akisPreviewRegistry', previewRegistry)
@@ -250,7 +264,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(wf.rag && deps.bm25 ? { bm25: deps.bm25 } : {}),
     // rerank: the workflow's per-run knob wins (issue #7 AC3); else the env default.
     ...(wf.rerank !== undefined ? { rerank: wf.rerank } : rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
-    ...(realTests ? { realTests: true } : {}),
+    ...(realTests ? { realTests: true, verifyBoot: lazyVerifyBoot } : {}),
     // Same passport signer as the default orchestrator — one server key signs every run.
     passportSigner,
   }))

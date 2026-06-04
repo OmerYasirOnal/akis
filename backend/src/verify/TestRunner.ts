@@ -51,9 +51,16 @@ function brandResult(testsRun: number, passed: boolean, codeDigest: string, evid
  * feeding) the fail-closed pass/fail decision. It is purely a side-channel — it
  * cannot alter the branded {@link TestRunResult} (which stays `{ testsRun, passed,
  * codeDigest }`), so the gate truth is byte-identical whether or not it is supplied.
+ *
+ * `spec`/`sessionId` (PR2) are PER-RUN data for the boot-smoke runner: the spec's
+ * acceptance criteria derive its probes and the session id isolates its verify boot.
+ * Data only — what is PROBED, never whether a probe passed; the mock/real runners
+ * ignore both, so every existing path is byte-identical.
  */
 export interface RunOptions {
   onEvidence?: (evidence: TestEvidence) => void
+  spec?: import('@akis/shared').SpecArtifact
+  sessionId?: string
 }
 
 export interface TestRunner {
@@ -164,7 +171,10 @@ export interface BootSmokeRunnerDeps {
   spec?: import('@akis/shared').SpecArtifact
   fetchImpl?: import('./bootSmoke.js').BootSmokeDeps['fetchImpl']
   timeoutMs?: number
-  sessionId: string
+  /** Static fallback only (PR2): the runner is built once at DI time, where no session exists —
+   *  the REAL session id arrives per-run via {@link RunOptions.sessionId} (createVerifier
+   *  forwards the verify() session id), and per-run wins. */
+  sessionId?: string
 }
 
 /**
@@ -185,10 +195,13 @@ export function createBootSmokeRunner(deps: BootSmokeRunnerDeps): TestRunner {
   return {
     async run(files: RepoFile[], opts?: RunOptions): Promise<TestRunResult> {
       const { runBootSmoke } = await import('./bootSmoke.js')
+      // PER-RUN data wins over DI-time statics (PR2): the verify() call threads the real
+      // session id + the run's approved spec via RunOptions; the deps act as fallbacks.
+      const spec = opts?.spec ?? deps.spec
       const r = await runBootSmoke(files, {
         boot: deps.boot,
-        sessionId: deps.sessionId,
-        ...(deps.spec ? { spec: deps.spec } : {}),
+        sessionId: opts?.sessionId ?? deps.sessionId ?? 'verify',
+        ...(spec ? { spec } : {}),
         ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
         ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
       })

@@ -3,9 +3,11 @@ import type { RepoFile } from '../di/MockGitHubAdapter.js'
 import {
   createMockTestRunner,
   createRealTestRunner,
+  createBootSmokeRunner,
   type TestRunner,
   type TestRunConfig,
   type RealTestRunnerDeps,
+  type BootSmokeRunnerDeps,
   type RunOptions,
 } from './TestRunner.js'
 
@@ -81,7 +83,9 @@ function createVerifier(runner: TestRunner, demo: boolean): Verifier {
     async verify(sessionId, files, opts) {
       // The evidence sink (opts.onEvidence) is forwarded to the runner UNCHANGED; the
       // mint below reads ONLY the branded result, so evidence can never affect minting.
-      const r = await runner.run(files, opts)
+      // The verify() session id rides along (PR2, additive) so the boot-smoke runner can
+      // isolate its per-run verify boot — the mock/real runners simply ignore it.
+      const r = await runner.run(files, { ...(opts ?? {}), sessionId })
       return mint(sessionId, r.testsRun, r.passed, r.codeDigest, r.evidenceDigest)
     },
   }
@@ -92,6 +96,11 @@ function createVerifier(runner: TestRunner, demo: boolean): Verifier {
  *   - `{ kind: 'mock', cfg? }`  → deterministic mock runner (keyless dev/demo + tests).
  *                                 Fail-closed default (0 tests / not passed) when no cfg.
  *   - `{ kind: 'real', ...deps }` → the REAL Playwright+Cucumber runner via a Sandbox.
+ *   - `{ kind: 'boot', ...deps }` → the BOOT-SMOKE runner (PR2): BOOTS the generated app and
+ *                                 probes the RUNNING server (always-on smoke + criteria
+ *                                 probes). A LIVE verifier (demo:false) — its pass is a
+ *                                 genuine observation of the booted app, and the runner is
+ *                                 constructed HERE from the trusted factory.
  *   - `{ kind: 'runner', runner }` → the DI container relaying a runner it ALREADY owns
  *                                 (the single injectable `buildServices({ testRunner })`
  *                                 seam used by the keyless demo and tests). This is not a
@@ -108,17 +117,24 @@ function createVerifier(runner: TestRunner, demo: boolean): Verifier {
 export type VerifierSpec =
   | { kind: 'mock'; cfg?: TestRunConfig }
   | ({ kind: 'real' } & RealTestRunnerDeps)
+  | ({ kind: 'boot' } & BootSmokeRunnerDeps)
   | { kind: 'runner'; runner: TestRunner }
 
 /** Build a Verifier from a runner selection (the only public seam to a Verifier). The `demo`
  *  flag is derived HERE from the same runner selection the DI makes from #59's demo signal:
- *  ONLY `kind:'real'` is a live verifier; `mock` (fail-closed default) and `runner` (the
- *  injected mock under AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) are simulated verification ⇒ demo. */
+ *  ONLY `kind:'real'` and `kind:'boot'` are live verifiers (their pass is a genuine
+ *  observation); `mock` (fail-closed default) and `runner` (the injected mock under
+ *  AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) are simulated verification ⇒ demo. */
 export function resolveVerifier(spec: VerifierSpec): Verifier {
   if (spec.kind === 'real') {
     const { kind: _kind, ...deps } = spec
     void _kind
     return createVerifier(createRealTestRunner(deps), false)
+  }
+  if (spec.kind === 'boot') {
+    const { kind: _kind, ...deps } = spec
+    void _kind
+    return createVerifier(createBootSmokeRunner(deps), false)
   }
   if (spec.kind === 'runner') return createVerifier(spec.runner, true)
   return createVerifier(createMockTestRunner(spec.cfg), true)
