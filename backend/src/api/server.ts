@@ -100,8 +100,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // and then stopAll()/drain/pool-close never run, orphaning preview process groups + leaking
   // loopback ports (the exact failure the teardown work fixes). Force-close so close() resolves
   // promptly and the rest of graceful shutdown actually runs. (PR #83 review)
-  const app = Fastify({ logger: false, forceCloseConnections: true })
-  const env = deps.env ?? (process.env as Record<string, string | undefined>)
+  const env0 = deps.env ?? (process.env as Record<string, string | undefined>)
+  // TRUST_PROXY (review #112): behind a reverse proxy, req.ip is otherwise the PROXY's
+  // address — every client shares one rate-limit bucket (collective lockout). Opt-IN by
+  // env because the inverse is worse: trusting X-Forwarded-For while directly exposed
+  // lets clients spoof fresh IPs and rotate around the limiter entirely.
+  const app = Fastify({ logger: false, forceCloseConnections: true, trustProxy: env0.TRUST_PROXY === '1' || env0.TRUST_PROXY === 'true' })
+  const env = env0
 
   // FAIL-CLOSED in production: a demo flag (AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) fakes
   // verification — a build can reach done+preview WITHOUT real tests. In production that
