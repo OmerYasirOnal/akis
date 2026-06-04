@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import type { ApiClient, SessionSummary } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { useRouter } from '../router/router.js'
+import { ideaTitle } from '../chat/recentBuilds.js'
 
 /** Status → tone token for the small build-status pill. */
 function tone(status: string): string {
@@ -46,8 +47,14 @@ export function HistoryPage({ api }: { api: ApiClient }) {
           {t('history.loading')}
         </div>
       ) : builds && builds.length === 0 ? (
-        <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-10 text-center text-sm text-slate-400">
-          {t('history.empty')}
+        <div className="grid min-h-[50vh] place-items-center">
+          <div className="rounded-2xl border border-white/10 bg-white/[0.02] px-8 py-10 text-center text-sm text-slate-400">
+            <p>{t('history.empty')}</p>
+            <button onClick={() => navigate('/')}
+              className="mt-4 inline-flex rounded-lg bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-900">
+              {t('nav.dashboard')} →
+            </button>
+          </div>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
@@ -58,7 +65,7 @@ export function HistoryPage({ api }: { api: ApiClient }) {
               className="group flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-3 text-left transition hover:border-[#07D1AF]/40 hover:bg-white/[0.04]"
             >
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm font-medium text-slate-100">{b.idea || t('history.untitled')}</div>
+                <div className="truncate text-sm font-medium text-slate-100">{ideaTitle(b.idea) || t('history.untitled')}</div>
                 <div className="mt-1 flex items-center gap-2">
                   <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${tone(b.status)}`}>{b.status}</span>
                   {b.verified && <span className="text-[10px] font-medium text-emerald-300">✓ {t('history.verified')}</span>}

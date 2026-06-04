@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { ApiClient } from '../api/client.js'
-import { type WorkflowOption } from '../live/types.js'
 import { ChatStudio } from '../chat/ChatStudio.js'
 import { CosmicBackground } from '../components/CosmicBackground.js'
 import { AkisLogo } from '../components/AkisLogo.js'
@@ -66,15 +65,13 @@ function AppFrame({ api }: { api: ApiClient }) {
   const { t, locale, setLocale } = useI18n()
   const { path } = useRouter()
   const { user, logout } = useAuth()
-  const [workflows, setWorkflows] = useState<WorkflowOption[]>([])
-  useEffect(() => { void api.listWorkflows().then(ws => setWorkflows(ws.map(w => ({ id: w.id, name: w.name })))).catch(() => {}) }, [api, path])
 
   const page = path === '/analytics' ? <AnalyticsPage api={api} />
     : path === '/history' ? <HistoryPage api={api} />
     : path === '/workflows' ? <WorkflowsPage api={api} />
     : path === '/settings' ? <SettingsPage api={api} />
     : path === '/docs' ? <DocsPage />
-    : path === '/' ? <ChatStudio api={api} baseUrl={BASE} workflows={workflows} />
+    : path === '/' ? <ChatStudio api={api} baseUrl={BASE} />
     : <Navigate to="/" />
 
   return (

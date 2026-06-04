@@ -71,6 +71,9 @@ describe('ChatStudio AKIS transcript persistence', () => {
     ]))
     const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
       if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([]), text: async () => '' } as unknown as Response
+      // Force the stream to fail → AkisChat falls back to the non-stream reply with the spec block.
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: 'Here is your spec 👇\n\n````akis-spec\n# Habit Tracker\nTrack daily habits.\n````' }), text: async () => '' } as unknown as Response
       if (path.endsWith('/sessions') && (init as RequestInit | undefined)?.method === 'POST') {
         return { ok: true, status: 201, json: async () => ({ id: 's9', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
       }
@@ -80,9 +83,10 @@ describe('ChatStudio AKIS transcript persistence', () => {
     const fake = new FakeStream()
     render(<I18nProvider><RouterProvider><ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} /></RouterProvider></I18nProvider>)
 
-    // Start a build from the composer → the chat unmounts, the run pipeline mounts.
-    await userEvent.type(screen.getByLabelText('idea'), 'a habit tracker')
-    await userEvent.click(screen.getByRole('button', { name: 'Build' }))
+    // The only way to build is to talk to AKIS: it returns a spec card → approve it. The chat
+    // unmounts, the run pipeline mounts, and the prior conversation persists as the transcript.
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build it{Enter}')
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
 
     // The transcript header appears above the pipeline; expanding it reveals the conversation.
     const toggle = await screen.findByRole('button', { name: /Conversation with AKIS/i })

@@ -53,7 +53,7 @@ const COMPONENTS: Components = {
 
 export const Markdown = memo(function Markdown({ content, className }: { content: string; className?: string }): ReactNode {
   return (
-    <div className={`text-[0.9375rem] text-slate-200 ${className ?? ''}`}>
+    <div className={`break-words text-[0.9375rem] text-slate-200 ${className ?? ''}`}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={COMPONENTS}>{content}</ReactMarkdown>
     </div>
   )

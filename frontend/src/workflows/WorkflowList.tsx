@@ -55,7 +55,9 @@ export function WorkflowList({
       </div>
 
       {workflows.length === 0 ? (
-        <Card className="p-8 text-center text-slate-400">{t('workflows.list.empty')}</Card>
+        <div className="grid min-h-[50vh] place-items-center">
+          <Card className="p-8 text-center text-slate-400">{t('workflows.list.empty')}</Card>
+        </div>
       ) : (
         <ul className="space-y-3">
           {workflows.map(wf => {

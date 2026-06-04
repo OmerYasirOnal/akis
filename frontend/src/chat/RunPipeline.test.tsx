@@ -53,11 +53,16 @@ describe('RunPipeline', () => {
     expect(screen.getByText(/✓ Verified · 2 tests · review clean · shipped/)).toBeInTheDocument()
   })
 
-  it('renders the collapsed raw-log details slot', () => {
-    render(wrap(<RunPipeline view={emptyView('s1')} onApprove={() => {}} onConfirm={() => {}} details={<div>RAW LOG HERE</div>} />))
-    // details is present (default collapsed) and the slot content is in the DOM.
-    expect(screen.getByText('Details (raw log)')).toBeInTheDocument()
+  it('renders the live-agent-activity slot, COLLAPSED when the run is not in-flight', () => {
+    const { container } = render(wrap(<RunPipeline view={emptyView('s1')} onApprove={() => {}} onConfirm={() => {}} details={<div>RAW LOG HERE</div>} />))
+    expect(screen.getByText('Live agent activity')).toBeInTheDocument()
     expect(screen.getByText('RAW LOG HERE')).toBeInTheDocument()
+    expect(container.querySelector('details')?.open).toBe(false) // idle/terminal → collapsed
+  })
+  it('defaults the live-agent-activity log OPEN while the run is in-flight (watch each agent work)', () => {
+    const view = { ...emptyView('s1'), status: 'running' as const }
+    const { container } = render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} details={<div>RAW LOG HERE</div>} />))
+    expect(container.querySelector('details')?.open).toBe(true)
   })
 
   // ── Run-state recovery: a parked run shows ACTION buttons (not a silent amber dot). ──
