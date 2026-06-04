@@ -90,6 +90,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // startSession → the same 4 structural gates + pipeline + History. The ONLY caller is the
   // Chat-to-Build approval (the SpecCard's "Approve & Build"), so every build flows through
   // the conversation — there is no other entry point.
+  /** Keep the address bar's ?s= deep-link pointing at the ACTIVE session (refresh-safe). */
+  const syncUrl = (id: string): void => {
+    if (typeof window !== 'undefined') window.history.replaceState({}, '', `${window.location.pathname}?s=${id}`)
+  }
   const startBuild = async (v: string): Promise<void> => {
     const idea = v.trim(); if (!idea || busy || startingRef.current) return
     startingRef.current = true
@@ -104,12 +108,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       const baseId = sessionId && codeFiles?.length ? sessionId : undefined
       const s = await api.startSession(idea, undefined, baseId)
       setSent(idea); setSessionId(s.id); setReopened(false); setStartingSpec(undefined)
+      syncUrl(s.id) // keep the ?s= deep-link current (audit gap: a refresh mid-FOLLOW-UP reopened the prior session)
       setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
     } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)); setStartingSpec(undefined) }
     finally { setBusy(false); startingRef.current = false }
   }
   /** Re-open a past build — useLiveChat replays /log + /events to rebuild the thread. */
-  const openSession = (b: RecentBuild): void => { setActionError(undefined); setStartingSpec(undefined); setSent(b.idea); setSessionId(b.id); setReopened(true) }
+  const openSession = (b: RecentBuild): void => { setActionError(undefined); setStartingSpec(undefined); setSent(b.idea); setSessionId(b.id); setReopened(true); syncUrl(b.id) }
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setActionError(undefined)
     try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }

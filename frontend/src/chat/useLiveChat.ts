@@ -24,6 +24,10 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
   // stream dropped and the resumable EventSource is reconnecting (Last-Event-ID/seq, no double
   // counting). Drives the subtle "reconnecting" banner; cleared on the next delivered event.
   const lostRef = useRef(false)
+  // TERMINAL transport state: every manual reconnect of a CLOSED source is exhausted — the
+  // banner must switch from "reconnecting…" to an honest "live updates stopped + Reload"
+  // (the audit's frozen-view gap: the old subtle banner span pulsed forever).
+  const goneRef = useRef(false)
 
   useEffect(() => {
     if (!sessionId) { setState({ messages: [], view: emptyView('') }); return }
@@ -33,19 +37,29 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
     let client: EventStreamClient | undefined
     bySeq.current = new Map()
     lostRef.current = false
+    goneRef.current = false
     const refold = (): void => {
       if (cancelled) return
       const ordered = [...bySeq.current.entries()].sort((a, b) => a[0] - b[0]).map(([, e]) => e)
       const view = foldSessionView(sessionId, ordered)
-      setState({ messages: foldChat(idea, ordered), view: { ...view, ...(lostRef.current ? { connectionLost: true } : {}) } })
+      setState({ messages: foldChat(idea, ordered), view: { ...view, ...(lostRef.current ? { connectionLost: true } : {}), ...(goneRef.current ? { connectionGone: true } : {}) } })
     }
     const connect = (): void => {
       client = (makeClient ?? (() => new EventStreamClient()))()
       client.connect(`${baseUrl}/sessions/${sessionId}/events`, {
         // A delivered event means the stream is live again → clear the reconnecting flag + reset
         // the backoff. The event is keyed by seq, so a resumed/replayed event is deduped.
-        onEvent: (e, seq) => { attempts = 0; lostRef.current = false; bySeq.current.set(seq, e); refold() },
-        onReset: () => { lostRef.current = false; bySeq.current = new Map(); void api.getSessionLog(sessionId).then(log => { if (cancelled) return; for (const { seq, event } of log) bySeq.current.set(seq, event); refold() }).catch(() => {}) },
+        onEvent: (e, seq) => { attempts = 0; lostRef.current = false; goneRef.current = false; bySeq.current.set(seq, e); refold() },
+        onReset: () => {
+          lostRef.current = false; bySeq.current = new Map()
+          // The /log re-sync must not fail SILENTLY (audit gap): one retry after 2s; if that
+          // fails too, surface the transient banner so the partial thread is honest.
+          const sync = (retry: boolean): void => {
+            void api.getSessionLog(sessionId).then(log => { if (cancelled) return; for (const { seq, event } of log) bySeq.current.set(seq, event); refold() })
+              .catch(() => { if (cancelled) return; if (retry) { timer = setTimeout(() => sync(false), 2000) } else { lostRef.current = true; refold() } })
+          }
+          sync(true)
+        },
         // SSE dropped: mark reconnecting (subtle banner). A CONNECTING source the browser auto-
         // resumes via Last-Event-ID (the next onEvent clears the flag). A CLOSED source will NOT
         // retry (e.g. a 404), so reconnect it manually with capped backoff — a fresh connection
@@ -56,6 +70,9 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
           if (closed && attempts < MAX_RECONNECT) {
             attempts++
             timer = setTimeout(() => { if (cancelled) return; client?.close(); connect() }, Math.min(1500 * attempts, 8000))
+          } else if (closed) {
+            // Give-up is now VISIBLE (audit gap): flip the terminal flag exactly once.
+            if (!goneRef.current) { goneRef.current = true; refold() }
           }
         },
       })
