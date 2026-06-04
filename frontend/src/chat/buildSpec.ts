@@ -49,7 +49,7 @@ export function extractBuildSpec(message: string): BuildSpec | null {
 // Quick-reply SUGGESTIONS: AKIS may end a reply with a fenced `akis-suggest` block, one short
 // suggestion per line (optionally bulleted), which the UI turns into tappable chips. Same
 // backtick-count-aware, indent-tolerant fencing as akis-spec so the seam is consistent.
-const SUGGEST_BLOCK = /(^|\n)[ ]{0,3}(`{3,})akis-suggest(?:[ \t][^\n]*)?\n([\s\S]*?)\r?\n[ ]{0,3}\2`*[ \t]*(?:\n|$)/
+const SUGGEST_BLOCK = /(^|\n)[ ]{0,3}(`{3,})akis-suggest(?:[ \t][^\n]*)?\r?\n([\s\S]*?)\r?\n[ ]{0,3}\2`*[ \t]*(?:\r?\n|$)/
 
 /**
  * Pull tappable quick-reply suggestions out of an `akis-suggest` block and return them along
