@@ -11,11 +11,12 @@ class FakeEventSource implements EventSourceLike {
   onerror: ((ev: unknown) => void) | null = null
   private named = new Map<string, (ev: { data: string }) => void>()
   closed = false
+  readyState = 1
   constructor(readonly url: string) {}
   addEventListener(type: string, fn: (ev: { data: string }) => void): void { this.named.set(type, fn) }
-  close(): void { this.closed = true }
+  close(): void { this.closed = true; this.readyState = 2 }
   msg(event: object, seq: number): void { this.onmessage?.({ data: JSON.stringify(event), lastEventId: String(seq) }) }
-  err(): void { this.onerror?.({}) }
+  err(): void { this.onerror?.({}) } // transient: readyState stays OPEN (browser auto-retries)
 }
 
 const E = (kind: string, over: object = {}): AkisEvent =>
@@ -46,6 +47,33 @@ describe('useLiveChat — SSE-drop reconnecting overlay', () => {
     await waitFor(() => expect(hook.result.current.view.connectionLost).toBe(true))
     // It's a transport flag, NOT a terminal failure: status is unchanged (still running).
     expect(hook.result.current.view.status).not.toBe('failed')
+  })
+
+  it('manually reconnects a CLOSED stream (closes the old, opens a new) with capped backoff', () => {
+    vi.useFakeTimers()
+    try {
+      const created: FakeEventSource[] = []
+      const makeClient = (): EventStreamClient => new EventStreamClient(url => { const es = new FakeEventSource(url); created.push(es); return es })
+      const fetchFn = vi.fn(() => Promise.resolve({ ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response))
+      const api = new ApiClient('', fetchFn)
+      const hook = renderHook(() => useLiveChat('s1', 'todo app', api, '', makeClient))
+      expect(created).toHaveLength(1)
+      const first = created[0]!
+      // A CLOSED EventSource (readyState 2) will NOT auto-retry → the hook must reconnect manually.
+      act(() => { first.readyState = 2; first.err() })
+      expect(hook.result.current.view.connectionLost).toBe(true) // banner while reconnecting
+      act(() => { vi.advanceTimersByTime(1600) })                // first backoff is ~1500ms
+      expect(first.closed).toBe(true)                            // the OLD source is closed first
+      expect(created.length).toBeGreaterThanOrEqual(2)           // a NEW source opened (no double-connect)
+      // Cleanup clears the pending backoff timer → no post-unmount reconnect.
+      const before = created.length
+      act(() => { created[created.length - 1]!.readyState = 2; created[created.length - 1]!.err() })
+      hook.unmount()
+      act(() => { vi.advanceTimersByTime(10000) })
+      expect(created.length).toBe(before) // unmount stopped the chain
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('clears connectionLost on the next delivered event, deduped by seq (no double-count on resume)', async () => {

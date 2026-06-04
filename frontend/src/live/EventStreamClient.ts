@@ -1,9 +1,11 @@
 import type { AkisEvent } from '@akis/shared'
 
-/** Minimal EventSource surface we depend on (so it's mockable in tests). */
+/** Minimal EventSource surface we depend on (so it's mockable in tests). `readyState`
+ *  follows the EventSource spec: 0 CONNECTING, 1 OPEN, 2 CLOSED. */
 export interface EventSourceLike {
   onmessage: ((ev: { data: string; lastEventId: string }) => void) | null
   onerror: ((ev: unknown) => void) | null
+  readonly readyState: number
   addEventListener(type: string, fn: (ev: { data: string }) => void): void
   close(): void
 }
@@ -12,7 +14,9 @@ export type EventSourceFactory = (url: string) => EventSourceLike
 export interface ConnectHandlers {
   onEvent: (e: AkisEvent, seq: number) => void
   onReset?: (data: { head: number }) => void
-  onError?: (e: unknown) => void
+  /** Called on a transport error. `closed` is true when the EventSource is CLOSED and will
+   *  NOT auto-retry (e.g. a non-retriable 404) — the consumer must reconnect manually. */
+  onError?: (info: { closed: boolean }) => void
 }
 
 /**
@@ -40,7 +44,10 @@ export class EventStreamClient {
       const data = parseReset(e.data)
       if (data && handlers.onReset) handlers.onReset(data)
     })
-    if (handlers.onError) es.onerror = handlers.onError
+    // EventSource fires onerror on BOTH transient drops (readyState CONNECTING — it auto-retries
+    // via Last-Event-ID) and permanent failures (readyState CLOSED — it gives up). Surface which,
+    // so the consumer can manually reconnect a CLOSED stream instead of "reconnecting" forever.
+    if (handlers.onError) es.onerror = () => handlers.onError?.({ closed: es.readyState === 2 })
   }
 
   close(): void {
