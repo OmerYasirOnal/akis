@@ -76,6 +76,33 @@ describe('useLiveChat — SSE-drop reconnecting overlay', () => {
     }
   })
 
+  it('exhausted reconnects flip the TERMINAL connectionGone flag (the give-up is visible)', () => {
+    vi.useFakeTimers()
+    try {
+      const created: FakeEventSource[] = []
+      const makeClient = (): EventStreamClient => new EventStreamClient(url => { const es = new FakeEventSource(url); created.push(es); return es })
+      const fetchFn = vi.fn(() => Promise.resolve({ ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response))
+      const api = new ApiClient('', fetchFn)
+      const hook = renderHook(() => useLiveChat('s1', 'todo app', api, '', makeClient))
+      // Exhaust every manual reconnect: fail each CLOSED source in turn.
+      for (let round = 0; round < 12 && hook.result.current.view.connectionGone !== true; round++) {
+        const cur = created[created.length - 1]!
+        act(() => { cur.readyState = 2; cur.err() })
+        act(() => { vi.advanceTimersByTime(9000) })
+      }
+      expect(hook.result.current.view.connectionGone).toBe(true)
+      expect(hook.result.current.view.connectionLost).toBe(true)
+      // A delivered event afterwards clears BOTH (the stream genuinely came back).
+      const last = created[created.length - 1]
+      if (last) {
+        act(() => { last.msg(E('narration', { text: 'hi', ts: 1 }), 1) })
+        expect(hook.result.current.view.connectionGone).not.toBe(true)
+      }
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears connectionLost on the next delivered event, deduped by seq (no double-count on resume)', async () => {
     const { hook, es } = setup()
     act(() => { es().msg(E('agent_start', { role: 'scribe', agent: 'scribe' }), 1) })
