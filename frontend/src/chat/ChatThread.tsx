@@ -1,5 +1,17 @@
 import type { ChatMessage } from './chatModel.js'
 import { useI18n } from '../i18n/I18nContext.js'
+import type { StringKey } from '../i18n/catalog.js'
+import { Markdown } from '../components/Markdown.js'
+
+/** Friendly, localized labels for the raw agent tool names — so the activity reads as clean
+ *  steps ("Kod yazılıyor…") instead of dev slugs ("dispatch_proto"). Unknown tools fall back
+ *  to their raw name (never blank). */
+const TOOL_LABEL: Record<string, StringKey> = {
+  dispatch_scribe: 'chat.tool.dispatch_scribe',
+  dispatch_proto: 'chat.tool.dispatch_proto',
+  run_tests: 'chat.tool.run_tests',
+  retrieve_knowledge: 'chat.tool.retrieve_knowledge',
+}
 
 const ROLE_TINT: Record<string, string> = {
   orchestrator: 'from-teal-400/30 to-teal-400/5 text-teal-200',
@@ -23,19 +35,34 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
     <div className="flex flex-col gap-4">
       {messages.map(m => {
         switch (m.kind) {
-          case 'user':
-            return (
+          case 'user': {
+            // A short chat ask keeps the friendly gradient bubble. A long, multi-line / markdown-y
+            // seed (the promoted spec that started the build) would otherwise be a giant garish wall
+            // of raw "# ## **" — render THAT as a contained, FORMATTED, scrollable spec card so it's
+            // readable and never dominates the activity. Markdown is the single XSS-safe renderer.
+            const isSpec = m.text.length > 180 || m.text.includes('\n')
+            return isSpec ? (
+              <div key={m.id} className="flex justify-end">
+                <div className="w-full max-w-[88%] overflow-hidden rounded-2xl rounded-br-sm border border-teal-400/25 bg-gradient-to-br from-teal-500/[0.07] to-violet-500/[0.07]">
+                  <div className="flex items-center gap-1.5 border-b border-white/10 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-200/80">
+                    <span className="h-1.5 w-1.5 rounded-full bg-teal-300" aria-hidden />{t('chat.seedSpec')}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto px-4 py-2.5">
+                    <Markdown content={m.text} />
+                  </div>
+                </div>
+              </div>
+            ) : (
               <div key={m.id} className="flex justify-end">
                 <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-gradient-to-br from-teal-500/90 to-violet-500/90 px-4 py-2 text-slate-950">{m.text}</div>
               </div>
             )
+          }
           case 'narration':
-            return (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role={m.agent} />
-                <div className="max-w-[80%] rounded-2xl rounded-tl-sm bg-white/[0.05] px-4 py-2 text-slate-200">{m.text}</div>
-              </div>
-            )
+            // Suppressed: orchestrator narration is free-text (and English), which would break the
+            // fully-Turkish, clean step view. The localized structured cards (agent steps, gate,
+            // review, verify, done) + the pipeline convey the flow.
+            return null
           case 'agent':
             return (
               <div key={m.id} className="flex items-start gap-3">
@@ -45,10 +72,14 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
                     <span title={t(`roster.status.${m.ok === false ? 'failed' : m.done ? 'done' : 'working'}`)} className={`h-2 w-2 rounded-full ${dot(m.ok, m.done)}`} />{AKIS_NAME[m.agent] ?? m.agent}
                     {!m.done && <span className="text-xs font-normal text-teal-300">{t('chat.working')}</span>}
                   </div>
-                  {m.tools.map((t, i) => (
-                    <div key={i} className="ml-1 text-xs text-slate-400"><span className="text-violet-300">{t.tool}</span>{t.ok === undefined ? ' …' : t.ok ? ' ✓' : ' ✗'}</div>
-                  ))}
-                  {m.notes.map((nt, i) => <div key={`n${i}`} className="ml-1 text-xs italic text-slate-500">{nt}</div>)}
+                  {m.tools.map((tl, i) => {
+                    const key = TOOL_LABEL[tl.tool]
+                    return (
+                      <div key={i} className="ml-1 text-xs text-slate-400">
+                        <span className="text-violet-300">{key ? t(key) : tl.tool}</span>{tl.ok === undefined ? ' …' : tl.ok ? ' ✓' : ' ✗'}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             )

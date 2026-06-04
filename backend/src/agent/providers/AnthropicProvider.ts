@@ -46,7 +46,10 @@ export class AnthropicProvider implements LlmProvider {
   constructor(private cfg: AnthropicConfig) {
     this.model = cfg.model
     this.baseUrl = cfg.baseUrl ?? 'https://api.anthropic.com'
-    this.maxTokens = cfg.maxTokens ?? 4096
+    // 8192 (not 4096): the build agents (Proto writes WHOLE apps, Scribe/Critic) don't set a
+    // per-request maxTokens, and 4096 TRUNCATED a non-trivial app mid-JSON → unparseable → the
+    // agent failed. 8192 is the safe cross-model output ceiling (every modern Claude supports it).
+    this.maxTokens = cfg.maxTokens ?? 8192
   }
 
   /** Build the shared request body (identical for the stream + non-stream paths). */

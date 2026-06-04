@@ -49,7 +49,9 @@ export class GeminiProvider implements LlmProvider {
     // API keeps its own defaults (backward compatible).
     const generationConfig: Record<string, unknown> = {}
     if (req.temperature !== undefined) generationConfig.temperature = req.temperature
-    if (req.maxTokens !== undefined) generationConfig.maxOutputTokens = req.maxTokens
+    // Clamp to a safe ceiling: a big agent request that Anthropic (64k) allows would exceed
+    // Gemini's output limit (~8192) and 400. Clamp so a generous request degrades, never errors.
+    if (req.maxTokens !== undefined) generationConfig.maxOutputTokens = Math.min(req.maxTokens, 8192)
     if (Object.keys(generationConfig).length > 0) body.generationConfig = generationConfig
 
     const opts: PostOpts = {}

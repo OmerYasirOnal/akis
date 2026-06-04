@@ -48,7 +48,10 @@ export class OpenAiCompatibleProvider implements LlmProvider {
     for (const m of req.messages) messages.push(this.mapMessage(m))
 
     const body: Record<string, unknown> = { model: req.model?.trim() || this.model, messages } // trim+`||`: empty/blank model falls back, never sends "" / "  "
-    if (req.maxTokens !== undefined) body.max_tokens = req.maxTokens
+    // Clamp to a safe ceiling: an agent (Proto) may request a big budget that Anthropic (64k)
+    // allows but OpenAI-compatible models reject (gpt-4o ≈ 16384) with a 400. Clamp so a generous
+    // request degrades instead of erroring.
+    if (req.maxTokens !== undefined) body.max_tokens = Math.min(req.maxTokens, 16384)
     if (req.temperature !== undefined) body.temperature = req.temperature
     if (req.tools?.length) {
       body.tools = req.tools.map(t => ({ type: 'function', function: { name: t.name, description: t.description, parameters: t.schema } }))
