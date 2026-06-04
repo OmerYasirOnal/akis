@@ -23,6 +23,25 @@ const TRUNCATED = new Set(['max_tokens', 'MAX_TOKENS', 'length'])
 /** One continuation turn; phrased so the model resumes mid-token without re-emitting. */
 const CONTINUE_PROMPT = 'Continue EXACTLY where you left off. Do not repeat anything already written; do not restart the JSON — resume mid-string if needed.'
 
+/** How far back we look for a repeated seam when joining a continuation (chars). */
+const MAX_OVERLAP = 2000
+
+/**
+ * Join a continuation onto the accumulated text, TRIMMING any re-emitted overlap: models
+ * are instructed not to repeat, but a model that restates the tail of the partial (or even
+ * restarts from a recent line) would otherwise corrupt the concatenation (doubled JSON).
+ * We find the LONGEST suffix of `acc` that is also a prefix of `next` (bounded) and drop it
+ * from `next`. A non-overlapping continuation is appended unchanged — the guard is pure
+ * defense and can never remove non-duplicated content.
+ */
+export function joinContinuation(acc: string, next: string): string {
+  const max = Math.min(acc.length, next.length, MAX_OVERLAP)
+  for (let n = max; n > 0; n--) {
+    if (acc.endsWith(next.slice(0, n))) return acc + next.slice(n)
+  }
+  return acc + next
+}
+
 export async function chatWithContinuation(
   provider: LlmProvider,
   req: ChatRequest,
@@ -30,6 +49,9 @@ export async function chatWithContinuation(
 ): Promise<ChatResult> {
   let res = await provider.chat(req)
   let text = res.text ?? ''
+  // Real cost across ALL rounds — returning only the last round's usage would under-report
+  // (a truncated 16k round + a 3k continue is 19k out, not 3k) and corrupt billing/quota math.
+  const usage = res.usage ? { ...res.usage } : undefined
   let rounds = 0
   while (res.stopReason !== undefined && TRUNCATED.has(res.stopReason) && rounds < maxContinues) {
     rounds++
@@ -41,7 +63,8 @@ export async function chatWithContinuation(
         { role: 'user', content: CONTINUE_PROMPT },
       ],
     })
-    text += res.text ?? ''
+    text = joinContinuation(text, res.text ?? '')
+    if (res.usage && usage) { usage.inTokens += res.usage.inTokens; usage.outTokens += res.usage.outTokens }
   }
-  return { ...res, text }
+  return { ...res, text, ...(usage ? { usage } : {}) }
 }

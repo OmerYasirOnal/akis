@@ -50,6 +50,22 @@ describe('GeminiProvider', () => {
     expect(r.stopReason).toBe('STOP')
   })
 
+  it("the output clamp never cuts Proto's 16384 budget (the old 8192 clamp guaranteed truncation)", async () => {
+    let captured: { url: string; init: RequestInit } | undefined
+    const resBody = { candidates: [{ content: { parts: [{ text: 'ok' }] }, finishReason: 'STOP' }] }
+    const fetchFn = (async (url: string, init: RequestInit) => {
+      captured = { url, init }
+      return new Response(JSON.stringify(resBody), { status: 200, headers: { 'content-type': 'application/json' } })
+    }) as unknown as typeof fetch
+    const p = new GeminiProvider({ apiKey: 'AIza-x', model: 'm', fetchFn })
+    // Proto's exact budget passes through UNCLAMPED (catalog Gemini 2.5 supports 65 536 out)…
+    await p.chat({ system: 's', messages: [{ role: 'user', content: 'go' }], maxTokens: 16384 })
+    expect(JSON.parse(captured!.init.body as string).generationConfig.maxOutputTokens).toBe(16384)
+    // …and an over-the-ceiling request degrades to the 65 536 ceiling instead of a 400.
+    await p.chat({ system: 's', messages: [{ role: 'user', content: 'go' }], maxTokens: 100_000 })
+    expect(JSON.parse(captured!.init.body as string).generationConfig.maxOutputTokens).toBe(65536)
+  })
+
   it('omits generationConfig when no generation params are set', async () => {
     let captured: { url: string; init: RequestInit } | undefined
     const fetchFn = (async (url: string, init: RequestInit) => {
