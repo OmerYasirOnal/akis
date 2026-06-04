@@ -6,7 +6,6 @@ import type { LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
 import { parseAIJson } from './critic/json-extract.js'
 import { renderKnowledge } from './context-prompt.js'
-import { chatWithLiveNotes } from './streamNotes.js'
 
 export interface ProtoInput {
   sessionId: string
@@ -74,8 +73,8 @@ export class ProtoAgent {
       // maxTokens 16384: Proto writes the WHOLE app in one JSON reply, so a small budget truncates
       // it mid-string → unparseable JSON → a failed build (observed at both 4096 and 8192 on a
       // modern single-page app). 16384 fits a sizeable app and is well within every catalog model's
-      // output limit (all Claude 4.x support ≥64k output). The verifier/preview cap large apps.
-      res = await chatWithLiveNotes(this.deps, { system: this.base, messages: [{ role: 'user', content: user }], maxTokens: 16384 }, { agent: 'proto', laneId, sessionId })
+      // output limit (all Claude 4.x support ≥64k; OpenAI/Gemini providers clamp to their ceiling).
+      res = await this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: user }], maxTokens: 16384 })
     } catch (err) {
       // A throwing provider must still CLOSE the event frame (failed tool_result +
       // agent_end) so the live stream never has an orphaned tool_call, then re-throw.

@@ -1,5 +1,16 @@
 import type { ChatMessage } from './chatModel.js'
 import { useI18n } from '../i18n/I18nContext.js'
+import type { StringKey } from '../i18n/catalog.js'
+
+/** Friendly, localized labels for the raw agent tool names — so the activity reads as clean
+ *  steps ("Kod yazılıyor…") instead of dev slugs ("dispatch_proto"). Unknown tools fall back
+ *  to their raw name (never blank). */
+const TOOL_LABEL: Record<string, StringKey> = {
+  dispatch_scribe: 'chat.tool.dispatch_scribe',
+  dispatch_proto: 'chat.tool.dispatch_proto',
+  run_tests: 'chat.tool.run_tests',
+  retrieve_knowledge: 'chat.tool.retrieve_knowledge',
+}
 
 const ROLE_TINT: Record<string, string> = {
   orchestrator: 'from-teal-400/30 to-teal-400/5 text-teal-200',
@@ -30,12 +41,10 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
               </div>
             )
           case 'narration':
-            return (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role={m.agent} />
-                <div className="max-w-[80%] rounded-2xl rounded-tl-sm bg-white/[0.05] px-4 py-2 text-slate-200">{m.text}</div>
-              </div>
-            )
+            // Suppressed: orchestrator narration is free-text (and English), which would break the
+            // fully-Turkish, clean step view. The localized structured cards (agent steps, gate,
+            // review, verify, done) + the pipeline convey the flow.
+            return null
           case 'agent':
             return (
               <div key={m.id} className="flex items-start gap-3">
@@ -45,10 +54,14 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
                     <span title={t(`roster.status.${m.ok === false ? 'failed' : m.done ? 'done' : 'working'}`)} className={`h-2 w-2 rounded-full ${dot(m.ok, m.done)}`} />{AKIS_NAME[m.agent] ?? m.agent}
                     {!m.done && <span className="text-xs font-normal text-teal-300">{t('chat.working')}</span>}
                   </div>
-                  {m.tools.map((t, i) => (
-                    <div key={i} className="ml-1 text-xs text-slate-400"><span className="text-violet-300">{t.tool}</span>{t.ok === undefined ? ' …' : t.ok ? ' ✓' : ' ✗'}</div>
-                  ))}
-                  {m.notes.map((nt, i) => <div key={`n${i}`} className="ml-1 text-xs italic text-slate-500">{nt}</div>)}
+                  {m.tools.map((tl, i) => {
+                    const key = TOOL_LABEL[tl.tool]
+                    return (
+                      <div key={i} className="ml-1 text-xs text-slate-400">
+                        <span className="text-violet-300">{key ? t(key) : tl.tool}</span>{tl.ok === undefined ? ' …' : tl.ok ? ' ✓' : ' ✗'}
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
             )

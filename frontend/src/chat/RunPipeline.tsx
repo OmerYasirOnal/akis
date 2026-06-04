@@ -209,6 +209,7 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
             .replace('✓ Verified', `✓ ${t('pipeline.summary.verified')}`)
             .replace('✗ Not verified', `✗ ${t('pipeline.summary.notVerified')}`)
             .replace('✗ Run failed', `✗ ${t('pipeline.summary.runFailed')}`)
+            .replace('critical finding', t('pipeline.stat.criticalFinding'))
             .replace('review clean', t('pipeline.summary.reviewClean'))
             .replace('shipped', t('pipeline.summary.shipped'))
             .replace(/(\d+) tests/, `$1 ${t('pipeline.stat.tests')}`)
