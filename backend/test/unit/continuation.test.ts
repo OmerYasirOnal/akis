@@ -90,6 +90,27 @@ describe('chatWithContinuation', () => {
     expect(res.usage).toEqual({ inTokens: 1200, outTokens: 1500 })
   })
 
+  it('an INCOMPLETE-JSON tail concatenates seamlessly across the cap (final-review regression)', async () => {
+    const p = scripted([
+      { text: '{"files":[{"name":"a","content":"<incomplete', stopReason: 'max_tokens' },
+      { text: 'object"}]}', stopReason: 'end_turn' },
+    ])
+    const res = await chatWithContinuation(p, req)
+    expect(res.text).toBe('{"files":[{"name":"a","content":"<incompleteobject"}]}')
+    expect(() => JSON.parse(res.text ?? '')).not.toThrow()
+  })
+
+  it('usage still accumulates when the FIRST round omits it (Gemini can) — final-review regression', async () => {
+    const p = scripted([
+      { text: 'a', stopReason: 'max_tokens' }, // no usage on round 1
+      { text: 'b', stopReason: 'max_tokens', usage: { inTokens: 100, outTokens: 700 } },
+      { text: 'c', stopReason: 'end_turn', usage: { inTokens: 900, outTokens: 300 } },
+    ])
+    const res = await chatWithContinuation(p, req)
+    expect(res.text).toBe('abc')
+    expect(res.usage).toEqual({ inTokens: 1000, outTokens: 1000 }) // later rounds NOT dropped
+  })
+
   it('GUARDS against re-emission: a continuation that repeats the tail of the partial is deduped at the seam', async () => {
     // The model was told not to repeat, but restates the last chars anyway — without the
     // overlap trim this would corrupt the JSON ('"content":"<ht"content":"<html>…').

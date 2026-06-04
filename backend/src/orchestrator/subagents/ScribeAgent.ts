@@ -31,6 +31,7 @@ export const SCRIBE_SYSTEM = [
   '- Acceptance criteria: testable Given/When/Then bullets the verifier can check by',
   '  driving the UI (concrete selectors/labels/outcomes, no vague wording).',
   '- Out of scope: list what the MVP intentionally omits (auth, backend, persistence…).',
+  'BACKEND SIGNALING: when the app genuinely needs a server, say so EXPLICITLY in the spec body using these exact terms — "user accounts", "sign up", "log in", "authentication", or "real backend" — (the builder keys on them); a purely client-side app instead lists auth/backend under Out of scope. Avoid vague substitutes like "sharing" or "collaboration" as the only signal.',
   'Be decisive: pick sensible defaults instead of asking. Reply in the user’s language.',
   'Respond with ONLY a JSON object, no prose, in one of these shapes:',
   '{"kind":"spec","title":"...","body":"# <Title>\\n\\n## Problem\\n...\\n\\n## User stories\\n...\\n\\n## Acceptance criteria\\n- Given ... When ... Then ...\\n\\n## Out of scope\\n- ..."}',

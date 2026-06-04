@@ -214,12 +214,13 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
     // A successful boot's teardown must ALWAYS run — but a boot that NEVER settles must not
     // wedge the verifier in this finally (PR #94 review: the deadline already resolved the
     // race fail-closed; awaiting `settled` unconditionally would hang forever on a hung boot).
-    // Give the work a short grace to settle; if it's still pending, attach the teardown as a
+    // Give the work a SHORT grace (250ms — final review: 1s added avoidable wall-clock to every
+    // fail-closed timeout response) to settle; if still pending, attach the teardown as a
     // continuation so the straggler is torn down WHENEVER it finally boots, and return now.
     let grace: ReturnType<typeof setTimeout> | undefined
     const settledInTime = await Promise.race([
       settled.then(() => true as const),
-      new Promise<false>(resolve => { grace = setTimeout(() => resolve(false), 1_000) }),
+      new Promise<false>(resolve => { grace = setTimeout(() => resolve(false), 250) }),
     ])
     if (grace) clearTimeout(grace)
     if (settledInTime) {

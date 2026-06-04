@@ -100,15 +100,24 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): 
       }
       reply.hijack()
       const raw = reply.raw
+      // Strip REQUEST-direction hop-by-hop headers too (final-review fix — RFC 7230 §6.1:
+      // they describe THIS hop, not the upstream one; only response headers were sanitized).
+      const fwdHeaders: Record<string, string | string[]> = { host: `127.0.0.1:${port}` }
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (HOP_BY_HOP.has(k.toLowerCase()) || k.toLowerCase() === 'host' || v === undefined) continue
+        fwdHeaders[k] = v
+      }
       const upstream = http.request(
-        { host: '127.0.0.1', port, path: subPath, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
+        { host: '127.0.0.1', port, path: subPath, method: req.method, headers: fwdHeaders },
         // Drop hop-by-hop headers and rewrite any Location back to /preview/:id/ so the
         // internal loopback port never surfaces in a browser-visible redirect.
         up => { raw.writeHead(up.statusCode ?? 502, sanitizeResponseHeaders(up.headers, id, port)); up.pipe(raw) },
       )
       upstream.on('error', () => { try { if (!raw.headersSent) raw.writeHead(502); raw.end('preview unavailable') } catch { /* socket gone */ } })
-      // The passthrough parser hands us the UNCONSUMED body stream (GET/HEAD parse nothing →
-      // fall back to req.raw, already ended, which simply closes the upstream write side).
+      // The passthrough parser hands us the UNCONSUMED body stream for every parsed request.
+      // (GET/HEAD run no parser → req.body undefined → the req.raw fallback; for parsed
+      // methods the '*' parser always yields a stream, so the fallback is effectively
+      // GET/HEAD-only — comment corrected per the final review.)
       const body = req.body as NodeJS.ReadableStream | undefined
       if (body && typeof body.pipe === 'function') body.pipe(upstream)
       else req.raw.pipe(upstream)
