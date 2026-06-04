@@ -6,7 +6,7 @@ import { presenceOf } from '../components/AgentRoster.js'
 export type PipelineStepKey = 'spec' | 'build' | 'review' | 'verify' | 'ship'
 
 /** A step's live status. `awaiting` = a human gate is open and the user must act. */
-export type PipelineStatus = 'pending' | 'active' | 'done' | 'awaiting' | 'failed'
+export type PipelineStatus = 'pending' | 'active' | 'done' | 'awaiting' | 'failed' | 'caution'
 
 /** The gate action a step can surface (wired to ChatStudio's onApprove/onConfirm). */
 export type PipelineAction = 'approve' | 'confirm'
@@ -102,8 +102,11 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
           // The backend /resolve accepts either decision here, and PROCEED routes to the REAL
           // verify + push gates (no bypass) — so a critical park is recoverable like any other.
           if (cr.critical && criticAwaiting) { status = 'awaiting'; recovery = 'critic_resolution'; stat = 'critical finding' }
-          // A critical finding with NO live recovery signal stays a plain failure (e.g. an
-          // unrecoverable critic verdict on an unrecoverable run) — no stray action.
+          // The user PROCEEDED past the critical finding and the run moved on (verified / shipped):
+          // a CAUTION (amber), not a red failure — the build succeeded, but the critical finding
+          // stays VISIBLE (never hidden — trust). Only a critical finding on a run that did NOT
+          // proceed stays a plain red failure.
+          else if (cr.critical && (view.tests.ran || view.status === 'done')) { status = 'caution'; stat = 'critical proceeded' }
           else if (cr.critical) { status = 'failed'; stat = 'critical finding' }
           // Approved (the normal flow ships with advisory findings) → done.
           else if (cr.approved) { status = 'done'; stat = cr.findings === 0 ? 'review clean' : `${cr.findings} findings` }
