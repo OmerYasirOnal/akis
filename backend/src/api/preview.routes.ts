@@ -78,27 +78,41 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): 
     return reply.send({ stopped: true })
   })
 
-  // Same-origin reverse proxy to the running preview.
-  app.all<{ Params: { id: string; '*': string } }>('/preview/:id/*', async (req, reply) => {
-    const id = req.params.id
-    const subPath = '/' + (req.params['*'] ?? '')
-    const port = portFor(id)
-    if (port === undefined) {
-      // Static preview: serve the materialized files directly (no upstream process).
-      const sdir = deps.registry.staticDirFor(id)
-      if (sdir) { const r = await serveStatic(sdir, subPath); return reply.code(r.code).type(r.type ?? 'application/octet-stream').send(r.body) }
-      return reply.code(404).send({ error: 'no running preview', code: 'NotFound' })
-    }
-    reply.hijack()
-    const raw = reply.raw
-    const upstream = http.request(
-      { host: '127.0.0.1', port, path: subPath, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
-      // Drop hop-by-hop headers and rewrite any Location back to /preview/:id/ so the
-      // internal loopback port never surfaces in a browser-visible redirect.
-      up => { raw.writeHead(up.statusCode ?? 502, sanitizeResponseHeaders(up.headers, id, port)); up.pipe(raw) },
-    )
-    upstream.on('error', () => { try { if (!raw.headersSent) raw.writeHead(502); raw.end('preview unavailable') } catch { /* socket gone */ } })
-    req.raw.pipe(upstream)
+  // Same-origin reverse proxy to the running preview — in its OWN encapsulated scope with a
+  // PASSTHROUGH content-type parser. Fastify's default JSON parser CONSUMES the request body
+  // before the handler runs, so the old `req.raw.pipe(upstream)` forwarded ZERO bytes on
+  // POST/PUT — the upstream waited for content-length forever and every body-carrying API
+  // call through the proxy HUNG (caught LIVE: the generated voting app's /api/signup answered
+  // 200 direct but timed out through the proxy). In this scope the body is never parsed:
+  // `req.body` IS the raw stream, piped verbatim — JSON, forms and binary all survive.
+  void app.register(async scope => {
+    scope.removeAllContentTypeParsers()
+    scope.addContentTypeParser('*', (_req, payload, done) => { done(null, payload) })
+    scope.all<{ Params: { id: string; '*': string } }>('/preview/:id/*', async (req, reply) => {
+      const id = req.params.id
+      const subPath = '/' + (req.params['*'] ?? '')
+      const port = portFor(id)
+      if (port === undefined) {
+        // Static preview: serve the materialized files directly (no upstream process).
+        const sdir = deps.registry.staticDirFor(id)
+        if (sdir) { const r = await serveStatic(sdir, subPath); return reply.code(r.code).type(r.type ?? 'application/octet-stream').send(r.body) }
+        return reply.code(404).send({ error: 'no running preview', code: 'NotFound' })
+      }
+      reply.hijack()
+      const raw = reply.raw
+      const upstream = http.request(
+        { host: '127.0.0.1', port, path: subPath, method: req.method, headers: { ...req.headers, host: `127.0.0.1:${port}` } },
+        // Drop hop-by-hop headers and rewrite any Location back to /preview/:id/ so the
+        // internal loopback port never surfaces in a browser-visible redirect.
+        up => { raw.writeHead(up.statusCode ?? 502, sanitizeResponseHeaders(up.headers, id, port)); up.pipe(raw) },
+      )
+      upstream.on('error', () => { try { if (!raw.headersSent) raw.writeHead(502); raw.end('preview unavailable') } catch { /* socket gone */ } })
+      // The passthrough parser hands us the UNCONSUMED body stream (GET/HEAD parse nothing →
+      // fall back to req.raw, already ended, which simply closes the upstream write side).
+      const body = req.body as NodeJS.ReadableStream | undefined
+      if (body && typeof body.pipe === 'function') body.pipe(upstream)
+      else req.raw.pipe(upstream)
+    })
   })
 
   // Raw WebSocket upgrade tunnel for vite HMR (and any other ws under a preview). Fastify's
