@@ -81,6 +81,54 @@ describe('ChatStudio', () => {
     expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('keeps the user in chat while the workflow starts from the approved spec', async () => {
+    const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: SPEC_REPLY }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && init?.method === 'POST') return { ok: true, status: 201, json: async () => ({ id: 's1', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/s1/preview/start')) return { ok: true, status: 200, json: async () => ({ status: 'ready', url: '/preview/s1/' }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workflow started' })).toBeDisabled())
+    expect(screen.getAllByLabelText(/ask akis/i).length).toBeGreaterThanOrEqual(1)
+    act(() => fake.emit(ev({ kind: 'done', verified: true, provider: 'mock' }), 1))
+    await userEvent.click(screen.getByRole('button', { name: 'Collapse preview' }))
+    expect(screen.getByRole('button', { name: 'Expand preview' })).toBeInTheDocument()
+    expect(screen.getByText('Preview')).toBeInTheDocument()
+  })
+
+  it('shows progress instead of a silent Starting button while session creation is pending', async () => {
+    let resolveSession: ((r: Response) => void) | undefined
+    const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: SPEC_REPLY }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && init?.method === 'POST') {
+        return await new Promise<Response>(resolve => { resolveSession = resolve })
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+
+    expect(await screen.findByText('Workflow is starting')).toBeInTheDocument()
+    expect(screen.getByText(/Creating the run session/)).toBeInTheDocument()
+    expect(screen.getByText(/Elapsed 00:00/)).toBeInTheDocument()
+
+    resolveSession?.({ ok: true, status: 201, json: async () => ({ id: 's1', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workflow started' })).toBeDisabled())
+  })
+
   it('has no separate idea composer or autopilot — the conversation is the only entry', () => {
     const fetchFn = vi.fn(async () => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response))
     const api = new ApiClient('', fetchFn)
