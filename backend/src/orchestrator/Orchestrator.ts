@@ -11,6 +11,7 @@ import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 import { signPassport } from '../verify/passport.js'
 import type { BuildPassport, VerifyToken } from '@akis/shared'
 import { mergeFiles } from './mergeFiles.js'
+import { backendRequirementGap } from './backendRequirement.js'
 
 export interface StartInput {
   idea: string
@@ -231,6 +232,11 @@ export class Orchestrator {
       const validation = this.s.validator.validate({
         files: candidate.map(f => ({ path: f.filePath, content: f.content, language: 'typescript' as const })),
       })
+      // TIGHTEN-ONLY deterministic guard (caught LIVE): a spec that explicitly demands user
+      // accounts / a real backend must not ship as a STATIC localStorage simulation — the
+      // "Potemkin backend". A gap blocks approval and feeds Proto actionable iterate feedback;
+      // it can never loosen anything (approval only gets stricter) and never bypasses a gate.
+      const backendGap = backendRequirementGap(approved.spec, candidate)
       const review = await this.s.critic.reviewCode({
         reviewType: 'code_review', artifact: candidate, originalIdea: session.idea, referenceSpec: approved.spec,
       })
@@ -239,7 +245,7 @@ export class Orchestrator {
         this.emitFailed(id)
         throw new CriticFailedError(review.error.code)
       }
-      const approvedCode = review.data.approved && validation.passed
+      const approvedCode = review.data.approved && validation.passed && !backendGap
       const critical = review.data.hasCriticalFinding
       // Surface the critic verdict as a read-only status card (automatic, not a gate).
       // `approved` reflects the full produce-able verdict (critic approval AND validator),
@@ -267,7 +273,8 @@ export class Orchestrator {
         return session
       }
       attempt++
-      feedback = review.data.summary
+      // The backend gap LEADS the feedback (the structural miss matters more than style notes).
+      feedback = [backendGap, review.data.summary].filter(Boolean).join('\n')
       // Edit-mode only: the next attempt edits the REJECTED CANDIDATE (what the feedback
       // describes), not the original base — otherwise Proto's view and the critic's
       // feedback would drift apart on every iteration.
