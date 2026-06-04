@@ -103,7 +103,9 @@ const tcpOpen = (port: number): Promise<boolean> => new Promise(res => {
   void import('node:net').then(({ connect }) => {
     const sock = connect({ host: '127.0.0.1', port }, () => { sock.destroy(); res(true) })
     sock.setTimeout(500, () => { sock.destroy(); res(false) })
-    sock.on('error', () => res(false))
+    // destroy() on the ERROR path too (PR #101 review): probes run in a loop across many
+    // sessions — an undestroyed errored socket leaks an FD per failed probe (EMFILE under load).
+    sock.on('error', () => { sock.destroy(); res(false) })
   }).catch(() => res(false))
 })
 
