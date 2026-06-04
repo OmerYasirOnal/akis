@@ -37,7 +37,8 @@ describe('AnthropicProvider.chatStream', () => {
     expect(captured!.url).toContain('/v1/messages')
     const body = JSON.parse(captured!.init.body as string)
     expect(body.stream).toBe(true)
-    expect(body.system).toBe('S')
+    // Shared buildBody: the stream path carries the SAME prompt-cache breakpoint block.
+    expect(body.system).toEqual([{ type: 'text', text: 'S', cache_control: { type: 'ephemeral' } }])
     expect(deltas).toEqual(['Hel', 'lo'])
     expect(res.text).toBe('Hello')
     expect(res.stopReason).toBe('end_turn')
