@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { runBootSmoke, type BootResult, type ProbeResponse } from '../../src/verify/bootSmoke.js'
+import { runBootSmoke, deriveAssetChecks, type BootResult, type ProbeResponse } from '../../src/verify/bootSmoke.js'
 import { createBootSmokeRunner } from '../../src/verify/TestRunner.js'
 import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
 
@@ -165,5 +165,34 @@ describe('createBootSmokeRunner (brands in the trusted parent)', () => {
     expect(res.testsRun).toBe(0)
     // The finally's grace is 1s — the call returns in ~timeout+grace, NOT forever.
     expect(Date.now() - started).toBeLessThan(5_000)
+  })
+})
+
+describe('asset probes (Phase E: multi-file apps verify their own references)', () => {
+  const MULTI: RepoFile[] = [
+    { filePath: 'index.html', content: '<!doctype html><link rel="stylesheet" href="./styles.css"><script src="./app.js" defer></script><script src="https://cdn.example/lib.js"></script><div id="app"></div>' },
+    { filePath: 'styles.css', content: 'body{}' },
+    { filePath: 'app.js', content: 'window.app = 1' },
+  ]
+
+  it('derives one pathStatus probe per LOCAL src/href (never CDN/data/anchor), deduped + bounded', () => {
+    const checks = deriveAssetChecks(MULTI)
+    expect(checks.map(c => c.kind === 'pathStatus' ? c.path : c.kind)).toEqual(['/styles.css', '/app.js'])
+    expect(deriveAssetChecks([{ filePath: 'server.js', content: 'no html' }])).toEqual([])
+  })
+
+  it('a MISSING referenced asset fails the run honestly (404) — a blank page can never be "verified"', async () => {
+    const { boot, teardown } = okBoot()
+    // The served index.html references ./app.js, but the "server" 404s it (file never emitted).
+    const fetchImpl = async (url: string): Promise<ProbeResponse> =>
+      url.endsWith('/app.js') ? { status: 404, body: 'not found' } : OK_RES
+    const res = await runBootSmoke(MULTI, { boot, sessionId: 's20', fetchImpl })
+    expect(res.passed).toBe(false)
+    expect(res.e2eScenarios.find(s => s.name.includes('/app.js'))).toMatchObject({ passed: false, outcome: 'status 404' })
+    expect(teardown).toHaveBeenCalledTimes(1)
+    // All assets served → the same app passes (smoke + 2 assets = 3 genuine probes).
+    const ok = await runBootSmoke(MULTI, { boot, sessionId: 's20', fetchImpl: constFetch(OK_RES) })
+    expect(ok.passed).toBe(true)
+    expect(ok.testsRun).toBe(3)
   })
 })
