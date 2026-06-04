@@ -1,4 +1,4 @@
-import type { VerifyToken, TestEvidence } from '@akis/shared'
+import type { VerifyToken, TestEvidence, SpecArtifact } from '@akis/shared'
 import type { EventBus } from '../../events/bus.js'
 import type { RepoFile } from '../../di/MockGitHubAdapter.js'
 import type { Verifier } from '../../verify/verifier.js'
@@ -8,6 +8,9 @@ export interface TraceInput {
   sessionId: string
   laneId: string
   files: RepoFile[]
+  /** The run's approved spec (PR2) — its acceptance criteria derive the boot-smoke probes.
+   *  Data only: it shapes what is PROBED, never whether a probe passed (mint unchanged). */
+  spec?: SpecArtifact
 }
 
 /**
@@ -45,7 +48,7 @@ export class TraceAgent {
     // channel. The token below is the UNCHANGED gate truth — minting reads only the
     // branded result, never this evidence, so the captured value cannot affect it.
     let evidence: TestEvidence | undefined
-    const token = await this.deps.verifier.verify(sessionId, input.files, { onEvidence: e => { evidence = e } })
+    const token = await this.deps.verifier.verify(sessionId, input.files, { onEvidence: e => { evidence = e }, ...(input.spec ? { spec: input.spec } : {}) })
 
     this.deps.bus.emit({ kind: 'tool_result', tool: 'run_tests', ok: token !== null, result: { testsRun: token?.testsRun ?? 0, passed: token !== null }, agent: 'trace', laneId, sessionId, ts: nextTs() })
     // Stamp `demo:true` ONLY when this verifier runs the mock/injected runner (simulated

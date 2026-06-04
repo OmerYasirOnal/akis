@@ -291,7 +291,9 @@ export class Orchestrator {
    * state (NOT a silent reset to 'building', the old dead-end). NEVER bypasses verify.
    */
   private async verifyAndTransition(id: string, session: SessionState, files: { filePath: string; content: string }[]): Promise<SessionState> {
-    const { token, evidence } = await this.s.trace.run({ sessionId: id, laneId: 'verify', files })
+    // The run's approved spec rides along (PR2, data only): the boot-smoke verifier derives
+    // its acceptance-criteria probes from it. It never shapes the OUTCOME — mint unchanged.
+    const { token, evidence } = await this.s.trace.run({ sessionId: id, laneId: 'verify', files, ...(session.spec ? { spec: session.spec } : {}) })
     // ADDITIVE, NON-GATE: the structured evidence (scenarios + counts + durationMs +
     // structured failure) is folded into the SAME normal update patch below. It is
     // OBSERVABILITY ONLY — written via the generic `update` (the gate-field allowlist

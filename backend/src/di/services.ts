@@ -108,6 +108,11 @@ export interface BuildServicesOptions {
   /** Opt-in: use the REAL runner (Playwright+Cucumber via Sandbox) instead of the
    *  mock, so 'verified' means a real >=1-test pass. Ignored if `testRunner` is given. */
   realTests?: boolean
+  /** With `realTests`, a BOOT adapter (makePreviewBoot(previewRegistry)) selects the
+   *  boot-smoke verifier (PR2): Trace BOOTS the produced app and probes the RUNNING server,
+   *  so 'verified' means the app genuinely served — the credible path for GENERATED apps
+   *  (the bare `real` runner shells out to repo test suites a generated app doesn't have). */
+  verifyBoot?: import('../verify/bootSmoke.js').BootSmokeDeps['boot']
   /** Sandbox for the real runner (default LocalDirectSandbox; injectable for tests). */
   sandbox?: Sandbox
   /** Per-run iterate budget (a workflow may tighten it below the default 3). */
@@ -188,6 +193,9 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   // into a Verifier (B2 — capability leak closed). Only Trace is handed the result.
   const verifierSpec: VerifierSpec =
     opts.testRunner ? { kind: 'runner', runner: opts.testRunner }
+      // realTests + a boot adapter → the boot-smoke verifier (PR2): Trace boots the produced
+      // app and probes the running server. Preferred over bare 'real' for generated apps.
+      : opts.realTests && opts.verifyBoot ? { kind: 'boot', boot: opts.verifyBoot }
       : opts.realTests ? { kind: 'real', sandbox: opts.sandbox ?? new LocalDirectSandbox() }
       : { kind: 'mock' }
 
