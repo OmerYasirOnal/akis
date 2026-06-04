@@ -1,6 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import { homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
+import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
 import { randomBytes } from 'node:crypto'
@@ -329,6 +330,32 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   if (staticServingEnabled(env, staticRoot)) registerStatic(app, { root: staticRoot })
 
   return app
+}
+
+/**
+ * DEV-ONLY auth secret that SURVIVES restarts: generated once into ~/.akis/dev-secret
+ * (0600) and reused on every boot, so a tsx-watch restart no longer silently logs the
+ * user out mid-session (the top finding of the reset/state audit). Production never
+ * reaches this path (buildServer throws without AUTH_JWT_SECRET there). Fail-open to
+ * the old per-boot ephemeral if the file can't be read or written (read-only FS, CI).
+ * Exported for tests; `file` is injectable so tests never touch the real home dir.
+ */
+export function loadOrCreateDevSecret(file = join(homedir(), '.akis', 'dev-secret')): string {
+  try {
+    const existing = readFileSync(file, 'utf8').trim()
+    if (existing.length >= 32) return existing
+  } catch { /* not created yet (or unreadable) — fall through to create */ }
+  const secret = randomBytes(32).toString('hex')
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    writeFileSync(file, secret, { mode: 0o600 })
+    // eslint-disable-next-line no-console
+    console.warn(`auth: AUTH_JWT_SECRET unset — using a persisted dev secret (${file}); not multi-instance safe`)
+  } catch {
+    // eslint-disable-next-line no-console
+    console.warn('auth: AUTH_JWT_SECRET unset and dev-secret file unwritable — using an ephemeral per-boot secret (sessions reset on restart)')
+  }
+  return secret
 }
 
 /**
