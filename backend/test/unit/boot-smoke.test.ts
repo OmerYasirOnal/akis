@@ -154,7 +154,12 @@ describe('createBootSmokeRunner (brands in the trusted parent)', () => {
     // …while a redirecting app (3xx) still counts as serving.
     const res2 = await runBootSmoke(VITE_FILES, { boot, sessionId: 's13', fetchImpl: constFetch({ status: 302, body: 'redirect' }) })
     expect(res2.passed).toBe(true)
-    expect(teardown).toHaveBeenCalledTimes(2)
+    // …but 304 FAILS (final review): our probes send no conditional headers, so a compliant
+    // server can never 304 — one that does is broken and carries no body to verify.
+    const res3 = await runBootSmoke(VITE_FILES, { boot, sessionId: 's13', fetchImpl: constFetch({ status: 304, body: '' }) })
+    expect(res3.passed).toBe(false)
+    expect(res3.e2eScenarios[0]).toMatchObject({ passed: false, outcome: 'status 304' })
+    expect(teardown).toHaveBeenCalledTimes(3)
   })
 
   it('a boot that NEVER settles cannot wedge the verifier: the deadline returns fail-closed promptly (PR #94 review)', async () => {
