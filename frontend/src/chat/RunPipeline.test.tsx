@@ -41,6 +41,24 @@ describe('RunPipeline', () => {
     expect(screen.getByText(/verification is simulated/i)).toBeInTheDocument()
   })
 
+  it('trust ledger: shows the 3 structural tokens cleared vs pending (proof, not copy)', () => {
+    // A verified, shipped run: all three tokens cleared.
+    const shipped = viewWith({
+      status: 'done', verified: true,
+      gates: { specApproval: { gate: 'spec_approval', state: 'satisfied' }, pushConfirm: { gate: 'push_confirm', state: 'satisfied' } },
+      tests: { testsRun: 2, passed: true, ran: true },
+    })
+    render(wrap(<RunPipeline view={shipped} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByLabelText('Trust ledger')).toBeInTheDocument()
+    expect(screen.getByText('Spec approved')).toBeInTheDocument()
+    expect(screen.getByText('Verified')).toBeInTheDocument()
+    expect(screen.getByText('Deploy approved')).toBeInTheDocument()
+    // A demo run marks the VerifyToken as standing on a simulated result.
+    const demo = viewWith({ status: 'running', tests: { testsRun: 2, passed: true, ran: true, demo: true } })
+    const { container } = render(wrap(<RunPipeline view={demo} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(container.textContent).toContain('simulated')
+  })
+
   it('surfaces an Approve button on the spec step when the spec gate is awaiting', async () => {
     const onApprove = vi.fn()
     const view = viewWith({ status: 'running', gates: { specApproval: { gate: 'spec_approval', state: 'awaiting' } } })
