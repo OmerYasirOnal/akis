@@ -7,7 +7,7 @@ import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
 import { randomBytes } from 'node:crypto'
 import { registerProviderRoutes } from './providers.routes.js'
 import { registerSessionRoutes } from './sessions.routes.js'
-import { registerPreviewRoutes } from './preview.routes.js'
+import { registerPreviewRoutes, wirePreviewPrewarm } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
 import { registerAuthRoutes, userIdFromRequest } from './auth.routes.js'
 import { UserStore, type UserStorePort } from '../auth/UserStore.js'
@@ -320,6 +320,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env, requireAuth: hasSession })
   registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator, userIdOf })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
+  // Ship-time preview PREWARM (perceived latency): boot the preview on the `done` event so
+  // the first "Run app" click finds it READY. Non-gating, fire-and-forget, kill switch:
+  // AKIS_PREVIEW_PREWARM=0. Disabled under test env so route tests keep exact lifecycles.
+  if (process.env.AKIS_PREVIEW_PREWARM !== '0' && env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'test') {
+    wirePreviewPrewarm(services.bus, services.store, previewRegistry)
+  }
   registerWorkflowRoutes(app, { store: workflowStore })
   // Mailer seam (P5-OPS-1): a NoopMailer unless SMTP is configured (default boot unchanged).
   // When a real mailer is configured the reset LINK is emailed (dev-echo suppressed); the
