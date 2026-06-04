@@ -92,7 +92,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     startingRef.current = true
     setBusy(true); setActionError(undefined); setStartingSpec(idea)
     try {
-      const s = await api.startSession(idea)
+      // Follow-up CHANGES edit the prior app (Phase B.5): when the conversation already
+      // shipped a build, the next approved spec EDITS that session's app (baseSessionId →
+      // agents see + merge over the existing files) instead of regenerating from scratch.
+      // "New build" resets sessionId, so a fresh conversation still starts from zero.
+      const baseId = sessionId && status === 'done' ? sessionId : undefined
+      const s = await api.startSession(idea, undefined, baseId)
       setSent(idea); setSessionId(s.id); setReopened(false); setStartingSpec(undefined)
       setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
     } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)); setStartingSpec(undefined) }
