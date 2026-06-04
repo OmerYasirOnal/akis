@@ -72,8 +72,10 @@ export class ApiClient {
   /** Server health + serving mode (read once on load to surface the demo badge). */
   health(): Promise<HealthInfo> { return this.json<HealthInfo>('/health') }
 
-  startSession(idea: string, workflowId?: string): Promise<SessionState> {
-    return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea, ...(workflowId ? { workflowId } : {}) }) })
+  /** `baseSessionId` (Phase B.5): seed the new build with a prior session's app so the
+   *  agents EDIT it (merge semantics) instead of regenerating — the follow-up-changes flow. */
+  startSession(idea: string, workflowId?: string, baseSessionId?: string): Promise<SessionState> {
+    return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea, ...(workflowId ? { workflowId } : {}), ...(baseSessionId ? { baseSessionId } : {}) }) })
   }
   getSession(id: string): Promise<SessionState> {
     return this.json<SessionState>(`/sessions/${id}`)
