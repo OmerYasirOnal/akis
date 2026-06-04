@@ -147,9 +147,14 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
  * demo run, that the VerifyToken stands on a simulated result). This is the moat, made legible.
  */
 function TrustLedger({ view, t }: { view: SessionView; t: (k: StringKey) => string }) {
+  // PROOF, NOT COPY: each token state is read from the SAME structural signal the backend gates on,
+  // never inferred. VerifyToken mirrors the fail-closed mint rule exactly (≥1-test pass) rather than
+  // trusting a backend invariant; deploy reflects the ApprovedPush gate ONLY (no status fallback that
+  // could claim "approved" without the gate event). Spec approval is a real human action even in a
+  // demo run, so it is never marked simulated — only the test RESULT behind VerifyToken is.
   const specOk = view.gates.specApproval?.state === 'satisfied'
-  const verifyOk = view.tests.ran && view.tests.passed
-  const deployOk = view.gates.pushConfirm?.state === 'satisfied' || view.status === 'done'
+  const verifyOk = view.tests.ran && view.tests.passed && view.tests.testsRun >= 1
+  const deployOk = view.gates.pushConfirm?.state === 'satisfied'
   const items: { key: string; label: StringKey; ok: boolean; simulated: boolean }[] = [
     { key: 'spec', label: 'trust.ledger.spec', ok: specOk, simulated: false },
     { key: 'verify', label: 'trust.ledger.verify', ok: verifyOk, simulated: verifyOk && !!view.tests.demo },
@@ -160,6 +165,7 @@ function TrustLedger({ view, t }: { view: SessionView; t: (k: StringKey) => stri
       <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">{t('trust.ledger.title')}</span>
       {items.map(it => (
         <span key={it.key}
+          aria-label={`${t(it.label)} — ${it.ok ? t('trust.ledger.cleared') : t('trust.ledger.pending')}${it.simulated ? ', ' + t('trust.ledger.simulated') : ''}`}
           className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${it.ok ? 'border-emerald-400/30 bg-emerald-400/[0.07] text-emerald-200' : 'border-white/10 bg-white/[0.02] text-slate-500'}`}>
           <span aria-hidden>{it.ok ? '✓' : '◻'}</span> {t(it.label)}
           {it.simulated
