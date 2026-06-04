@@ -72,6 +72,15 @@ describe('preview proxy forwards request BODIES (the live-caught POST hang)', ()
     expect(await res.json()).toEqual({ method: 'PUT', echo: 'raw text Δ payload' })
   })
 
+  it('DELETE with NO body proxies cleanly (parser runs, empty stream)', async () => {
+    const res = await fetch(`http://127.0.0.1:${proxyPort}/preview/s1/api/items/1`, {
+      method: 'DELETE',
+      signal: AbortSignal.timeout(5000),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ method: 'DELETE', echo: '' })
+  })
+
   it('GET still proxies (no body; the raw fallback closes the upstream write side)', async () => {
     const res = await fetch(`http://127.0.0.1:${proxyPort}/preview/s1/api/items`, { signal: AbortSignal.timeout(5000) })
     expect(res.status).toBe(200)

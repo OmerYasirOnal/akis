@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify'
 import { homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
 import { randomBytes } from 'node:crypto'
@@ -382,6 +382,7 @@ export function loadOrCreateDevSecret(file = join(homedir(), '.akis', 'dev-secre
   try {
     mkdirSync(dirname(file), { recursive: true })
     writeFileSync(file, secret, { mode: 0o600 })
+    chmodSync(file, 0o600) // mode above is masked by umask — chmod makes 0600 unconditional (final review)
     // NOTE: never log the secret; the location is described generically (no interpolation),
     // so aggregated logs don't pinpoint a per-user absolute path.
     // eslint-disable-next-line no-console

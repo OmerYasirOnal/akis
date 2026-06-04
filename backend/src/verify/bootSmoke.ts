@@ -101,7 +101,9 @@ async function probe(check: Check, baseUrl: string, fetchImpl: (url: string) => 
 
   const path = check.kind === 'bodyContains' || check.kind === 'render' || check.kind === 'pathStatus' ? check.path : '/'
   const res = await fetchImpl(joinUrl(baseUrl, path))
-  if (res.status >= 400 || res.status === 0) return { name, passed: false, outcome: `status ${res.status}` }
+  // 304 also FAILS (final review): our probes send NO conditional headers, so a spec-compliant
+  // server can never answer 304 — one that does is broken, and it carries no body to verify.
+  if (res.status >= 400 || res.status === 0 || res.status === 304) return { name, passed: false, outcome: `status ${res.status}` }
   if ((check.kind === 'render') && res.body.length === 0) return { name, passed: false, outcome: 'empty body' }
   if (check.kind === 'bodyContains' && !res.body.includes(check.literal)) return { name, passed: false, outcome: 'missing literal' }
   return { name, passed: true }
