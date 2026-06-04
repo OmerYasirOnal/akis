@@ -8,7 +8,7 @@ function fakeBus() {
   return { events, bus: { emit: (e: AkisEvent) => { events.push(e) } } as unknown as Parameters<typeof chatWithLiveNotes>[0]['bus'] }
 }
 const who = { agent: 'proto' as const, laneId: 'l', sessionId: 's' }
-const req = { messages: [{ role: 'user' as const, content: 'x' }] }
+const req = { system: 'sys', messages: [{ role: 'user' as const, content: 'x' }] }
 
 describe('chatWithLiveNotes (live build narration)', () => {
   it('falls back to chat() with NO text notes when the provider cannot stream', async () => {
