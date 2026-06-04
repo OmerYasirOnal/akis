@@ -55,8 +55,10 @@ function joinUrl(base: string, path: string): string {
   return base.replace(/\/$/, '') + (path.startsWith('/') ? path : `/${path}`)
 }
 
-/** Local-asset references in index.html (src/href to ./x or x — never http(s)/protocol-relative). */
-const LOCAL_REF = /(?:src|href)\s*=\s*["'](?!https?:|\/\/|data:|#|mailto:)\.?\/?([A-Za-z0-9_\-./]+)["']/g
+/** Local-asset references in index.html (src/href to ./x, /x or x — never http(s)/protocol-
+ *  relative/data/anchor/mailto). Case-insensitive (PR #100 review): uppercase `SRC=` is valid
+ *  HTML, and missing it would let a broken reference escape verification (fail-closed broken). */
+const LOCAL_REF = /(?:src|href)\s*=\s*["'](?!https?:|\/\/|data:|#|mailto:)\.?\/?([A-Za-z0-9_\-./]+)["']/gi
 
 /**
  * Derive one probe per LOCAL asset index.html references (Phase E): a multi-file app whose

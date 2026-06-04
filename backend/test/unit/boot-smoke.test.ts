@@ -181,6 +181,14 @@ describe('asset probes (Phase E: multi-file apps verify their own references)', 
     expect(deriveAssetChecks([{ filePath: 'server.js', content: 'no html' }])).toEqual([])
   })
 
+  it('matches UPPERCASE SRC/HREF and absolute /paths too (PR #100 review: valid HTML must not escape verification)', () => {
+    const files: RepoFile[] = [{
+      filePath: 'index.html',
+      content: '<SCRIPT SRC="./app.js"></SCRIPT><LINK HREF="/styles.css"><a href="#top">x</a>',
+    }]
+    expect(deriveAssetChecks(files).map(c => c.kind === 'pathStatus' ? c.path : c.kind)).toEqual(['/app.js', '/styles.css'])
+  })
+
   it('a MISSING referenced asset fails the run honestly (404) — a blank page can never be "verified"', async () => {
     const { boot, teardown } = okBoot()
     // The served index.html references ./app.js, but the "server" 404s it (file never emitted).
