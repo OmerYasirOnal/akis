@@ -100,8 +100,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // and then stopAll()/drain/pool-close never run, orphaning preview process groups + leaking
   // loopback ports (the exact failure the teardown work fixes). Force-close so close() resolves
   // promptly and the rest of graceful shutdown actually runs. (PR #83 review)
-  const app = Fastify({ logger: false, forceCloseConnections: true })
-  const env = deps.env ?? (process.env as Record<string, string | undefined>)
+  const env0 = deps.env ?? (process.env as Record<string, string | undefined>)
+  // TRUST_PROXY (review #112): behind a reverse proxy, req.ip is otherwise the PROXY's
+  // address — every client shares one rate-limit bucket (collective lockout). Opt-IN by
+  // env because the inverse is worse: trusting X-Forwarded-For while directly exposed
+  // lets clients spoof fresh IPs and rotate around the limiter entirely.
+  const app = Fastify({ logger: false, forceCloseConnections: true, trustProxy: env0.TRUST_PROXY === '1' || env0.TRUST_PROXY === 'true' })
+  const env = env0
 
   // FAIL-CLOSED in production: a demo flag (AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) fakes
   // verification — a build can reach done+preview WITHOUT real tests. In production that
@@ -304,12 +309,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   const cookie = cookieConfigFromEnv(env)
   // A valid-session guard reused to protect provider-key writes.
-  const hasSession = (req: Parameters<typeof userIdFromRequest>[0]): boolean => {
-    try { userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }); return true } catch { return false }
+  // ASYNC since token revocation: userIdFromRequest now compares the JWT's tv claim to the
+  // user record, so every consumer awaits (a revoked token reads as unauthenticated).
+  const hasSession = async (req: Parameters<typeof userIdFromRequest>[0]): Promise<boolean> => {
+    try { await userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }); return true } catch { return false }
   }
   // Resolve the user id from a request (undefined if unauthenticated) — for per-user history.
-  const userIdOf = (req: Parameters<typeof userIdFromRequest>[0]): string | undefined => {
-    try { return userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }) } catch { return undefined }
+  const userIdOf = async (req: Parameters<typeof userIdFromRequest>[0]): Promise<string | undefined> => {
+    try { return await userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }) } catch { return undefined }
   }
 
   // /health surfaces the active serving mode so a demo (fake-verification) boot is never

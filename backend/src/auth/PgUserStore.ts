@@ -6,11 +6,12 @@ import { type SqlClient, createPgPool, runMigrations } from '../store/pg.js'
  *  callers and tests that import `SqlClient` from here keep working. */
 export type { SqlClient }
 
-interface Row { id: string; name: string; email: string; password_hash: string; created_at: string | Date; external_id?: string | null }
+interface Row { id: string; name: string; email: string; password_hash: string; created_at: string | Date; external_id?: string | null; token_version?: number | string | null }
 const toUser = (r: Row): AuthUser => ({
   id: r.id, name: r.name, email: r.email, passwordHash: r.password_hash,
   createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   ...(r.external_id ? { externalId: r.external_id } : {}),
+  ...(r.token_version !== null && r.token_version !== undefined ? { tokenVersion: Number(r.token_version) } : {}),
 })
 const norm = (e: string): string => e.trim().toLowerCase()
 const PG_UNIQUE_VIOLATION = '23505'
@@ -49,6 +50,10 @@ export class PgUserStore implements UserStorePort {
 
   async updatePassword(id: string, passwordHash: string): Promise<void> {
     await this.db.query('UPDATE users SET password_hash = $1 WHERE id = $2', [passwordHash, id])
+  }
+
+  async bumpTokenVersion(id: string): Promise<void> {
+    await this.db.query('UPDATE users SET token_version = COALESCE(token_version, 0) + 1 WHERE id = $1', [id])
   }
 
   async updateName(id: string, name: string): Promise<AuthUser | undefined> {

@@ -25,6 +25,11 @@ function fakes(opts?: { existing?: PreviewEntry; files?: typeof FILES | [] }) {
 const done = (sessionId: string) => ({ kind: 'done' as const, verified: true, provider: 'mock', agent: 'orchestrator' as const, laneId: 'main', sessionId, ts: nextTs() })
 
 const settle = (): Promise<void> => new Promise(r => setTimeout(r, 20))
+/** Poll until the spy fires (the prewarm chain does REAL fs work — a fixed 20ms flaked on CI). */
+const until = async (cond: () => boolean, ms = 3000): Promise<void> => {
+  const t0 = Date.now()
+  while (!cond() && Date.now() - t0 < ms) await new Promise(r => setTimeout(r, 25))
+}
 
 describe('wirePreviewPrewarm (ship-time boot, task #50 perceived latency)', () => {
   // startPreviewForSession MATERIALIZES real files — isolate the workspace dir per test
@@ -47,7 +52,7 @@ describe('wirePreviewPrewarm (ship-time boot, task #50 perceived latency)', () =
     const { registry, store, start } = fakes()
     wirePreviewPrewarm(bus, store, registry)
     bus.emit(done('s1'))
-    await settle()
+    await until(() => start.mock.calls.length > 0)
     expect(start).toHaveBeenCalledTimes(1)
     expect(start.mock.calls[0]?.[0]).toBe('s1')
     expect(start.mock.calls[0]?.[2]).toBe('static')

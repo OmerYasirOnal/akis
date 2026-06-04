@@ -29,11 +29,16 @@ CREATE TABLE IF NOT EXISTS users (
   email         text NOT NULL UNIQUE,
   password_hash text NOT NULL DEFAULT '',
   external_id   text UNIQUE,
+  token_version integer NOT NULL DEFAULT 0,
   created_at    timestamptz NOT NULL DEFAULT now()
 )`
 
 /** Idempotent migration for pre-existing user tables (added in the OAuth-identity fix). */
 export const ADD_EXTERNAL_ID = `ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id text`
+
+/** Idempotent migration: token revocation (audit gap) — session JWTs carry the version
+ *  they were signed with; a bump invalidates every outstanding token for the user. */
+export const ADD_TOKEN_VERSION = `ALTER TABLE users ADD COLUMN IF NOT EXISTS token_version integer NOT NULL DEFAULT 0`
 
 /**
  * Idempotent UNIQUE index on external_id. The fresh-table inline `external_id text UNIQUE`
@@ -141,6 +146,7 @@ export const CREATE_VECTOR_CHUNKS_TENANT_INDEX =
 const MIGRATIONS: readonly string[] = [
   CREATE_USERS_TABLE,
   ADD_EXTERNAL_ID,
+  ADD_TOKEN_VERSION,
   CREATE_USERS_EXTERNAL_ID_UNIQUE,
   CREATE_SESSIONS_TABLE,
   ADD_TEST_EVIDENCE,

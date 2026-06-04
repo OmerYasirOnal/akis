@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string }
+export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string; tokenVersion?: number }
 /** The user projection safe to return over the wire — never includes the hash. */
 export interface PublicUser { id: string; name: string; email: string }
 export const toPublic = (u: AuthUser): PublicUser => ({ id: u.id, name: u.name, email: u.email })
@@ -15,6 +15,10 @@ export interface UserStorePort {
   findById(id: string): Promise<AuthUser | undefined>
   updatePassword(id: string, passwordHash: string): Promise<void>
   updateName(id: string, name: string): Promise<AuthUser | undefined>
+  /** REVOCATION (audit gap): bump the user's token version — every outstanding session
+   *  JWT (which carries the version it was signed with) stops verifying. Called on
+   *  password reset and logout-all. */
+  bumpTokenVersion(id: string): Promise<void>
   upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser>
 }
 
@@ -55,6 +59,10 @@ export class UserStore implements UserStorePort {
     const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock(), externalId: input.externalId }
     this.byEmail.set(email, u); this.byId.set(u.id, u); this.byExternalId.set(input.externalId, u)
     return u
+  }
+  async bumpTokenVersion(id: string): Promise<void> {
+    const u = this.byId.get(id)
+    if (u) u.tokenVersion = (u.tokenVersion ?? 0) + 1
   }
   /** Replace a user's password hash (password reset). No-op if the id is unknown. */
   async updatePassword(id: string, passwordHash: string): Promise<void> {
