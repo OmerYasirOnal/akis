@@ -209,3 +209,59 @@ describe('PreviewRegistry install preflight (injectable commandOnPath)', () => {
     expect(run).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('PreviewRegistry — post-ready crash watch (live-caught stale-ready 502s)', () => {
+  /** A proc that supports MULTIPLE onExit listeners (like the real launcher) and can be
+   *  crashed ON DEMAND after the registry reports ready. */
+  function crashableProc(stderr = 'TypeError: boom') {
+    const cbs: ((c: number | null) => void)[] = []
+    const p = {
+      pid: 4244, killed: false,
+      kill() { p.killed = true },
+      stderrTail: () => stderr,
+      onExit(fn: (c: number | null) => void) { cbs.push(fn) },
+      crash(code: number) { for (const cb of cbs) cb(code) },
+    }
+    return p
+  }
+
+  it('a crash AFTER ready flips the entry to failed with the exit code + stderr tail (no more silent 502s)', async () => {
+    const proc = crashableProc('Error [ERR_HTTP_HEADERS_SENT]: Cannot write headers after they are sent')
+    const statuses: string[] = []
+    const reg = new PreviewRegistry({
+      sandbox: okSandbox,
+      launch: (() => proc) as Launch,
+      probe: (async () => true) as Probe,
+      commandOnPath: async () => true,
+      probeAttempts: 2, probeIntervalMs: 1,
+      onStatus: e => statuses.push(e.status),
+    })
+    const entry = await reg.start('s-crash', '/tmp/akis-test-crash', 'node-service')
+    expect(entry.status).toBe('ready')
+    proc.crash(1)
+    await new Promise(r => setTimeout(r, 10))
+    const after = reg.get('s-crash')!
+    expect(after.status).toBe('failed')
+    expect(after.reason).toMatch(/crashed after start \(code 1\)/)
+    expect(after.reason).toMatch(/ERR_HTTP_HEADERS_SENT/)
+    expect(statuses).toContain('failed')
+    // The dead port is no longer advertised to the proxy.
+    expect(reg.portFor('s-crash')).toBeUndefined()
+  })
+
+  it('a stop() BEFORE the exit fires is not overwritten (stale-guard)', async () => {
+    const proc = crashableProc()
+    const reg = new PreviewRegistry({
+      sandbox: okSandbox,
+      launch: (() => proc) as Launch,
+      probe: (async () => true) as Probe,
+      commandOnPath: async () => true,
+      probeAttempts: 2, probeIntervalMs: 1,
+    })
+    await reg.start('s-stop', '/tmp/akis-test-stop', 'node-service')
+    await reg.stop('s-stop')
+    proc.crash(137) // SIGKILL from stop() surfaces as an exit — must NOT flip stopped → failed
+    await new Promise(r => setTimeout(r, 10))
+    expect(reg.get('s-stop')!.status).toBe('stopped')
+  })
+})

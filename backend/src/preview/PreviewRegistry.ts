@@ -196,6 +196,19 @@ export class PreviewRegistry {
         return this.set({ sessionId, status: 'failed', dir, port, reason: `preview process exited early (code ${earlyExit.code})${tailForReason(proc.stderrTail?.())}` })
       }
       if (await this.probe(port)) {
+        // POST-READY crash watch (caught LIVE): a generated server that crashes on a later
+        // request used to leave a STALE 'ready' entry — the proxy answered 502 "preview
+        // unavailable" with no reason and no recovery hint. Flip the entry to 'failed' with
+        // the exit code + stderr tail (the preview_status event reaches the UI), release the
+        // port and tear the workspace down. Guard: only if the entry is STILL this run's
+        // 'ready' (a stop()/restart in between must not be overwritten).
+        proc.onExit?.(code => {
+          const cur = this.entries.get(sessionId)
+          if (cur?.status !== 'ready' || cur.port !== port) return
+          releasePort(port); this.procs.delete(sessionId)
+          void teardown(dir).catch(() => {})
+          this.set({ sessionId, status: 'failed', dir, port, reason: `preview crashed after start (code ${code})${tailForReason(proc.stderrTail?.())}` })
+        })
         return this.set({ sessionId, status: 'ready', dir, port, url: `/preview/${sessionId}/` })
       }
       if (Date.now() - started >= budgetMs) break
