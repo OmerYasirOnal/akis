@@ -81,6 +81,7 @@ export const STRINGS = {
     'result.demo.badge': 'DEMO · verification simulated',
     'result.demo.title': 'This result was produced by the mock test runner — it is NOT a real ≥1-test pass. Add a provider key and disable AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY for a live, real-verified build.',
     'chat.working': 'working…',
+    'chat.seedSpec': 'Spec',
     'chat.gate.spec_approval': 'Spec approval',
     'chat.gate.push_confirm': 'Push confirm',
     'chat.gate.label': 'Gate',
@@ -622,6 +623,7 @@ export const STRINGS = {
     // SSE kopması: kalıcı olmayan bir "yeniden bağlanılıyor" bandı, böylece kopan akış sonsuza dek atmaz.
     'live.reconnecting': 'Bağlantı koptu — yeniden bağlanılıyor…',
     'chat.working': 'çalışıyor…',
+    'chat.seedSpec': 'Spec',
     'chat.gate.spec_approval': 'Spec onayı',
     'chat.gate.push_confirm': 'Push onayı',
     'chat.gate.label': 'Kapı',

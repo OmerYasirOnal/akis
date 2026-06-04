@@ -137,8 +137,8 @@ export class ScribeAgent {
 
     if (!this.deps.ragEnabled || !this.deps.knowledge) {
       // RAG OFF — single-shot dispatch (no tools advertised). `this.base` is SCRIBE_SYSTEM
-      // unless the DI layer injected a skill-composed prompt. Stream live notes so the spec
-      // visibly forms (same result as chat()).
+      // unless the DI layer injected a skill-composed prompt. A single non-streaming chat with an
+      // explicit output budget so a full spec never truncates mid-JSON.
       return this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: userMsg }], maxTokens: 8192 })
     }
 

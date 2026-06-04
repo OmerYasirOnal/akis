@@ -19,14 +19,13 @@ export interface ProtoInput {
 
 export const PROTO_SYSTEM = [
   'You are Proto, the code author for the AKIS agentic build pipeline.',
-  'Given an approved spec, produce the minimal working code that satisfies it.',
-  'Respond with ONLY a JSON object, no prose:',
-  '{"files":[{"filePath":"index.html","content":"...full file contents..."}, ...]}',
-  'STRONGLY PREFER a single self-contained, runnable "index.html" so it can be',
-  'previewed instantly in the browser: inline CSS + vanilla JS (or a CDN <script>),',
-  'NO build step and NO package.json. Make it actually work and look polished.',
-  'Only emit a package.json / framework files if the spec truly cannot be a static page.',
-  'Keep files small and focused. Do NOT include tests (the verifier writes those).',
+  'Given an approved spec, produce a COMPLETE, ACTUALLY-WORKING app that satisfies it — never a static mockup.',
+  'Respond with ONLY a JSON object, no prose: {"files":[{"filePath":"index.html","content":"...full file contents..."}, ...]}',
+  'HARD RULES (an app that does not run is a FAILED build):',
+  '1) DEFAULT to ONE self-contained, instantly-previewable "index.html" (inline CSS + VANILLA JS). Every button, input and feature must be WIRED UP and functional when the file is opened directly — no build step, no package.json.',
+  '2) In that single file you may load a library ONLY via a plain <script src="https://cdn..."> that exposes a GLOBAL and runs with NO build step (a UMD/IIFE bundle). NEVER use React/JSX, Vue SFCs, TypeScript, ES-module `import`, or anything that needs a bundler in the single-file path — it will NOT execute in the browser and the app will render blank. (e.g. for QR codes use a vanilla CDN lib that exposes a global like `QRCode` — davidshimjs/qrcodejs — NOT qrcode.react.)',
+  '3) Persist client state with localStorage. Emit a real BACKEND only when the spec genuinely needs a server/API/DB: then produce a "node-service" — a package.json whose start runs a server file that listens on process.env.PORT and serves the client (the preview runs it with `node .`). Keep dependencies minimal and prefer the Node standard library.',
+  '4) Make it polished + responsive AND verify in your head that the core flow works end-to-end before returning. Do NOT include tests (the verifier writes those). Keep files focused.',
 ].join('\n')
 
 /**
@@ -68,8 +67,8 @@ export class ProtoAgent {
 
     let res
     try {
-      // Stream live "writing code…" notes onto the bus so this (the longest build phase) isn't
-      // a frozen pulsing dot — the result is identical to chat() (full text for parsing below).
+      // A single non-streaming chat with an explicit, generous output budget — Proto returns the
+      // whole app as one JSON reply that the parser below consumes in full.
       // maxTokens 16384: Proto writes the WHOLE app in one JSON reply, so a small budget truncates
       // it mid-string → unparseable JSON → a failed build (observed at both 4096 and 8192 on a
       // modern single-page app). 16384 fits a sizeable app and is well within every catalog model's

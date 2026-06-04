@@ -1,6 +1,7 @@
 import type { ChatMessage } from './chatModel.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
+import { Markdown } from '../components/Markdown.js'
 
 /** Friendly, localized labels for the raw agent tool names — so the activity reads as clean
  *  steps ("Kod yazılıyor…") instead of dev slugs ("dispatch_proto"). Unknown tools fall back
@@ -34,12 +35,29 @@ export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
     <div className="flex flex-col gap-4">
       {messages.map(m => {
         switch (m.kind) {
-          case 'user':
-            return (
+          case 'user': {
+            // A short chat ask keeps the friendly gradient bubble. A long, multi-line / markdown-y
+            // seed (the promoted spec that started the build) would otherwise be a giant garish wall
+            // of raw "# ## **" — render THAT as a contained, FORMATTED, scrollable spec card so it's
+            // readable and never dominates the activity. Markdown is the single XSS-safe renderer.
+            const isSpec = m.text.length > 180 || m.text.includes('\n')
+            return isSpec ? (
+              <div key={m.id} className="flex justify-end">
+                <div className="w-full max-w-[88%] overflow-hidden rounded-2xl rounded-br-sm border border-teal-400/25 bg-gradient-to-br from-teal-500/[0.07] to-violet-500/[0.07]">
+                  <div className="flex items-center gap-1.5 border-b border-white/10 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-200/80">
+                    <span className="h-1.5 w-1.5 rounded-full bg-teal-300" aria-hidden />{t('chat.seedSpec')}
+                  </div>
+                  <div className="max-h-64 overflow-y-auto px-4 py-2.5">
+                    <Markdown content={m.text} />
+                  </div>
+                </div>
+              </div>
+            ) : (
               <div key={m.id} className="flex justify-end">
                 <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-gradient-to-br from-teal-500/90 to-violet-500/90 px-4 py-2 text-slate-950">{m.text}</div>
               </div>
             )
+          }
           case 'narration':
             // Suppressed: orchestrator narration is free-text (and English), which would break the
             // fully-Turkish, clean step view. The localized structured cards (agent steps, gate,

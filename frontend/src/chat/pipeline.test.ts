@@ -113,10 +113,38 @@ describe('derivePipeline', () => {
       [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
     expect(step(notApproved, 'review').status).toBe('awaiting')
     expect(step(notApproved, 'review').stat).toBe('3 findings')
-    // A critical finding is a failure.
+    // A critical finding on a run that did NOT proceed (no tests ran, still running) is a red failure.
     const critical = viewWith({ status: 'running', codeReview: { approved: false, findings: 1, critical: true, iteration: 2 } },
       [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
     expect(step(critical, 'review').status).toBe('failed')
+  })
+
+  it('review: a critical finding the user PROCEEDED past is an amber CAUTION (visible, not hidden), not red', () => {
+    // The user proceeded and the run moved on to REAL verification → caution, never a red failure
+    // (the build shipped) and never a green done (the critical finding stays VISIBLE — trust).
+    const proceededVerified = viewWith({
+      status: 'running',
+      codeReview: { approved: false, findings: 1, critical: true, iteration: 2 },
+      tests: { testsRun: 2, passed: true, ran: true },
+    }, [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(proceededVerified, 'review').status).toBe('caution')
+    expect(step(proceededVerified, 'review').stat).toBe('critical proceeded')
+    // Same on a fully-done run (proceeded → shipped) even if tests didn't run.
+    const proceededShipped = viewWith({
+      status: 'done',
+      codeReview: { approved: false, findings: 1, critical: true, iteration: 2 },
+    }, [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(proceededShipped, 'review').status).toBe('caution')
+    expect(step(proceededShipped, 'review').stat).toBe('critical proceeded')
+    // Branch ORDER lock: an UNRESOLVED critical (parked at critic-resolution) is still the
+    // actionable awaiting recovery, NOT caution — caution must not swallow a live park.
+    const parkedCritical = viewWith({
+      status: 'running',
+      codeReview: { approved: false, findings: 1, critical: true, iteration: 2 },
+      recovery: { critic: 'awaiting' },
+    }, [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
+    expect(step(parkedCritical, 'review').status).toBe('awaiting')
+    expect(step(parkedCritical, 'review').recovery).toBe('critic_resolution')
   })
 
   // ── Run-state recovery: a parked run surfaces an ACTION (recovery), not a silent dot. ──
