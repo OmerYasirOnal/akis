@@ -1,3 +1,4 @@
+import { randomBytes } from 'node:crypto'
 import type { RepoFile } from '../di/MockGitHubAdapter.js'
 import { detectAppType } from '../preview/AppDetector.js'
 import { materialize, teardown as teardownWorkspace } from '../preview/Workspace.js'
@@ -7,8 +8,11 @@ import type { BootResult } from './bootSmoke.js'
 /**
  * Synthetic session suffix for a VERIFY boot. The boot-smoke runner needs to start the produced
  * app to probe it, but it must NOT collide with — or stop — the user's LIVE preview (the registry
- * keys everything by sessionId; `start()` first `stop()`s any prior preview for that id). Suffixing
- * a dedicated id keeps the verify boot a SEPARATE registry entry, torn down independently.
+ * keys everything by sessionId; `start()` first `stop()`s any prior preview for that id). The id
+ * additionally carries a PER-RUN nonce (PR #94 review): with a bare `<sessionId>#verify`, two
+ * CONCURRENT verifies of the same session would share one registry key — the second `start()`
+ * would silently `stop()` (kill) the first verify's booted app mid-probe and leak its workspace.
+ * A unique id per run keeps every verify boot an independent entry with independent teardown.
  */
 export const VERIFY_SESSION_SUFFIX = '#verify'
 
@@ -30,7 +34,7 @@ export const VERIFY_SESSION_SUFFIX = '#verify'
  */
 export function makePreviewBoot(registry: PreviewRegistry): (sessionId: string, files: RepoFile[]) => Promise<BootResult> {
   return async (sessionId, files) => {
-    const verifyId = `${sessionId}${VERIFY_SESSION_SUFFIX}`
+    const verifyId = `${sessionId}${VERIFY_SESSION_SUFFIX}-${randomBytes(4).toString('hex')}`
     const type = detectAppType(files)
     if (type === 'unsupported') return { failed: `app type '${type}' cannot be booted to verify` }
 

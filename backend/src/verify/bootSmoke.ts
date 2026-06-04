@@ -58,9 +58,12 @@ function joinUrl(base: string, path: string): string {
 /**
  * Run a check against the booted app and report a structured pass/fail (NEVER prose). The
  * assertion per kind:
- *   - smoke/render → status < 500 AND a non-empty body (the page actually rendered)
- *   - bodyContains → status < 500 AND the body contains the literal
- *   - pathStatus   → status < 500 (the route exists / doesn't 5xx)
+ *   - smoke/render → status < 400 AND a non-empty body (the page actually rendered)
+ *   - bodyContains → status < 400 AND the body contains the literal
+ *   - pathStatus   → status < 400 (the route exists and answers)
+ * 4xx FAILS (PR #94 review): a node-service with no `/` route 404s with a non-empty error
+ * body — under a <500 rule that would smoke-"pass" an app whose front door doesn't exist,
+ * and "verified" must never over-claim. 3xx is fine (a redirecting app is serving).
  * A failure records a bounded outcome label only (status / 'empty body' / 'missing literal').
  */
 async function probe(check: Check, baseUrl: string, fetchImpl: (url: string) => Promise<ProbeResponse>): Promise<E2eScenario> {
@@ -70,7 +73,7 @@ async function probe(check: Check, baseUrl: string, fetchImpl: (url: string) => 
 
   const path = check.kind === 'bodyContains' || check.kind === 'render' || check.kind === 'pathStatus' ? check.path : '/'
   const res = await fetchImpl(joinUrl(baseUrl, path))
-  if (res.status >= 500 || res.status === 0) return { name, passed: false, outcome: `status ${res.status}` }
+  if (res.status >= 400 || res.status === 0) return { name, passed: false, outcome: `status ${res.status}` }
   if ((check.kind === 'render') && res.body.length === 0) return { name, passed: false, outcome: 'empty body' }
   if (check.kind === 'bodyContains' && !res.body.includes(check.literal)) return { name, passed: false, outcome: 'missing literal' }
   return { name, passed: true }
@@ -82,7 +85,8 @@ async function probe(check: Check, baseUrl: string, fetchImpl: (url: string) => 
  *  E2E-flavored (they exercise the running app over HTTP), so they populate the e2e half; BDD
  *  stays empty here. `skipped` checks count as skipped, NOT as run tests. */
 function resultFromProbes(scenarios: E2eScenario[]): RealRunResult {
-  const ran = scenarios.filter(s => s.outcome !== 'skipped' || s.passed)
+  // A skipped check never counts as run (probe() only ever emits 'skipped' with passed:false).
+  const ran = scenarios.filter(s => s.outcome !== 'skipped')
   const expected = ran.filter(s => s.passed).length
   const unexpected = ran.filter(s => !s.passed).length
   const skipped = scenarios.length - ran.length
@@ -176,9 +180,21 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
     return await Promise.race([settled, deadline])
   } finally {
     if (timer) clearTimeout(timer)
-    // AWAIT the work to settle so a boot that succeeded AFTER a timeout still hands us its
-    // teardown hook — then tear down iff boot succeeded. A failed boot has nothing to tear down.
-    await settled
-    if (teardown) await teardown().catch(() => {})
+    // A successful boot's teardown must ALWAYS run — but a boot that NEVER settles must not
+    // wedge the verifier in this finally (PR #94 review: the deadline already resolved the
+    // race fail-closed; awaiting `settled` unconditionally would hang forever on a hung boot).
+    // Give the work a short grace to settle; if it's still pending, attach the teardown as a
+    // continuation so the straggler is torn down WHENEVER it finally boots, and return now.
+    let grace: ReturnType<typeof setTimeout> | undefined
+    const settledInTime = await Promise.race([
+      settled.then(() => true as const),
+      new Promise<false>(resolve => { grace = setTimeout(() => resolve(false), 1_000) }),
+    ])
+    if (grace) clearTimeout(grace)
+    if (settledInTime) {
+      if (teardown) await teardown().catch(() => {})
+    } else {
+      void settled.then(() => teardown?.().catch(() => {}))
+    }
   }
 }

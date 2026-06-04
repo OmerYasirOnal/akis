@@ -35,8 +35,10 @@ function boundName(s: string): string {
 const RENDER = /\b(renders?|loads?|displays?|shows?|opens?|appears?)\b/i
 /** A double- or single-quoted literal the rendered body should contain. */
 const QUOTED = /["“”']([^"“”']{1,80})["“”']/
-/** An explicit URL path (e.g. `/about`, `/api/todos`). Trailing punctuation is trimmed below. */
-const PATH = /(?:^|\s)(\/[A-Za-z0-9_\-./]*)/
+/** An explicit URL path (e.g. `/about`, `/api/todos`). The first segment char must be
+ *  alphanumeric so a bare `/`, a `//`-comment marker, or stray slash-runs never parse as a
+ *  "path" (PR #94 review). Trailing punctuation is trimmed below. */
+const PATH = /(?:^|\s)(\/[A-Za-z0-9][A-Za-z0-9_\-./]*)/
 
 /**
  * Derive the mechanical boot-smoke checks for a spec's acceptance criteria. PURE

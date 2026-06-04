@@ -143,4 +143,27 @@ describe('createBootSmokeRunner (brands in the trusted parent)', () => {
     expect(ev.testsRun).toBe(1)
     expect(ev.scenarios.every((s: { suite: string }) => s.suite === 'e2e')).toBe(true)
   })
+
+  it('a 404 front door FAILS the smoke probe — "verified" never over-claims on a missing route (PR #94 review)', async () => {
+    const { boot, teardown } = okBoot()
+    // A node-service with no `/` route: 404 + a NON-EMPTY error body. Under a <500 rule
+    // this would have "passed" — the exact false-pass the review flagged.
+    const res = await runBootSmoke(VITE_FILES, { boot, sessionId: 's13', fetchImpl: constFetch({ status: 404, body: 'Cannot GET /' }) })
+    expect(res.passed).toBe(false)
+    expect(res.e2eScenarios[0]).toMatchObject({ passed: false, outcome: 'status 404' })
+    // …while a redirecting app (3xx) still counts as serving.
+    const res2 = await runBootSmoke(VITE_FILES, { boot, sessionId: 's13', fetchImpl: constFetch({ status: 302, body: 'redirect' }) })
+    expect(res2.passed).toBe(true)
+    expect(teardown).toHaveBeenCalledTimes(2)
+  })
+
+  it('a boot that NEVER settles cannot wedge the verifier: the deadline returns fail-closed promptly (PR #94 review)', async () => {
+    const hangingBoot = (): Promise<BootResult> => new Promise<BootResult>(() => { /* never resolves */ })
+    const started = Date.now()
+    const res = await runBootSmoke(VITE_FILES, { boot: hangingBoot, sessionId: 's14', timeoutMs: 150, fetchImpl: constFetch(OK_RES) })
+    expect(res.passed).toBe(false)
+    expect(res.testsRun).toBe(0)
+    // The finally's grace is 1s — the call returns in ~timeout+grace, NOT forever.
+    expect(Date.now() - started).toBeLessThan(5_000)
+  })
 })
