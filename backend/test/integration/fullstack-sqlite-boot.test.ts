@@ -57,10 +57,12 @@ const server = http.createServer(async (req, res) => {
     if (!row) return json(res, 401, { error: 'invalid credentials' })
     const candidate = Buffer.from(hashPw(password, row.salt), 'hex')
     const stored = Buffer.from(row.hash, 'hex')
-    if (!crypto.timingSafeEqual(candidate, stored)) return json(res, 401, { error: 'invalid credentials' })
+    // Equal-length guard FIRST (review #102): a corrupted/odd-length stored hash would make
+    // timingSafeEqual THROW (crashing login) instead of failing the credential check.
+    if (candidate.length !== stored.length || !crypto.timingSafeEqual(candidate, stored)) return json(res, 401, { error: 'invalid credentials' })
     const token = crypto.randomBytes(16).toString('hex')
     sessions.set(token, row.id)
-    res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'session=' + token + '; HttpOnly; Path=/' })
+    res.writeHead(200, { 'content-type': 'application/json', 'set-cookie': 'session=' + token + '; HttpOnly; SameSite=Strict; Path=/' })
     return res.end(JSON.stringify({ ok: true }))
   }
   if (req.url === '/api/items') {
@@ -94,6 +96,8 @@ describe('Phase G: a generated-style FULL-STACK app (node:sqlite + auth) really 
   })
   afterEach(async () => {
     await registry.stopAll()
+    // Let the SIGKILLed child's file handles (app.db) settle before removing the dir (CI).
+    await new Promise(r => setTimeout(r, 100))
     if (prevEnv === undefined) delete process.env.AKIS_WORKSPACES_DIR
     else process.env.AKIS_WORKSPACES_DIR = prevEnv
     rmSync(wsDir, { recursive: true, force: true })
