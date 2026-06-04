@@ -95,7 +95,7 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
       {/* Deploy is LOCKED until verification passes — make that gate visible, not just an absent
           button: a user/investor should SEE that ship can't happen before the verifier mints. */}
       {step.key === 'ship' && step.status === 'pending' && (
-        <div className="text-[10px] text-slate-500">🔒 {t('trust.deploy.locked')}</div>
+        <div className="text-[10px] text-slate-500"><span aria-hidden>🔒</span> {t('trust.deploy.locked')}</div>
       )}
       {/* The generic gate action (approve / confirm). Suppressed when a push_failed recovery is
           showing, which renders its OWN labeled "retry" button below (also wired to onConfirm) —
@@ -211,9 +211,14 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
       </div>
 
       {/* The trust headline — states the structural moat in one line so it's legible at a glance:
-          these are guarantees enforced by construction (gates + producer/verifier seam), not copy. */}
+          these are guarantees enforced by construction (gates + producer/verifier seam), not copy.
+          HONESTY: in a demo run the structural gates are STILL real, but the test RESULTS are
+          simulated — say so right here, co-located with the trust copy, so "verified" can't mislead. */}
       <div className="rounded-lg border border-[#07D1AF]/15 bg-[#07D1AF]/[0.04] px-3 py-1.5 text-[10.5px] leading-snug text-slate-400">
-        <span className="text-[#07D1AF]/80">🛡</span> {t('trust.headline')}
+        <span className="text-[#07D1AF]/80" aria-hidden>🛡</span> {t('trust.headline')}
+        {view.tests.demo && (
+          <div className="mt-1 text-amber-300/80"><span aria-hidden>⚠</span> {t('trust.headline.demo')}</div>
+        )}
       </div>
 
       {/* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run)

@@ -29,7 +29,16 @@ describe('RunPipeline', () => {
     expect(screen.getByText('· Human-approved')).toBeInTheDocument()
     expect(screen.getByText('· Your approval')).toBeInTheDocument()
     // Deploy is visibly LOCKED until verification passes (not just an absent button).
-    expect(screen.getByText('🔒 Locked until verified')).toBeInTheDocument()
+    expect(screen.getByText(/Locked until verified/)).toBeInTheDocument()
+  })
+
+  it('trust honesty: a demo run says verification is simulated, co-located with the trust headline', () => {
+    const live = viewWith({ status: 'running', tests: { testsRun: 2, passed: true, ran: true } })
+    const { rerender } = render(wrap(<RunPipeline view={live} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByText(/verification is simulated/i)).toBeNull()
+    const demo = viewWith({ status: 'running', tests: { testsRun: 2, passed: true, ran: true, demo: true } })
+    rerender(wrap(<RunPipeline view={demo} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByText(/verification is simulated/i)).toBeInTheDocument()
   })
 
   it('surfaces an Approve button on the spec step when the spec gate is awaiting', async () => {
