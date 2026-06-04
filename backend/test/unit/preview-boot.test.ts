@@ -1,4 +1,7 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, rmSync, readdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { makePreviewBoot } from '../../src/verify/previewBoot.js'
 import type { PreviewRegistry } from '../../src/preview/PreviewRegistry.js'
 import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
@@ -6,6 +9,10 @@ import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
 const VITE_FILES: RepoFile[] = [
   { filePath: 'package.json', content: JSON.stringify({ name: 'x', devDependencies: { vite: '^5' } }) },
   { filePath: 'index.html', content: '<!doctype html><div id="app"></div>' },
+]
+const STATIC_FILES: RepoFile[] = [
+  { filePath: 'index.html', content: '<!doctype html><html><body><h1>Hello Static</h1></body></html>' },
+  { filePath: 'styles.css', content: 'body{color:red}' },
 ]
 
 /** A fake registry that records every start/stop id and reports ready on a fixed port. */
@@ -41,5 +48,43 @@ describe('makePreviewBoot', () => {
     expect(r.url).toBe('http://127.0.0.1:4321')
     await r.teardown()
     expect(stoppedIds).toEqual([startedIds[0]])
+  })
+})
+
+describe('makePreviewBoot — STATIC apps (PR3: the most common Proto output is verifiable)', () => {
+  let wsDir: string
+  let prevEnv: string | undefined
+  beforeEach(() => {
+    // materialize() writes under AKIS_WORKSPACES_DIR — point it at a throwaway tmp dir so
+    // tests never touch the real ~/.akis/workspaces.
+    wsDir = mkdtempSync(join(tmpdir(), 'akis-verify-ws-'))
+    prevEnv = process.env.AKIS_WORKSPACES_DIR
+    process.env.AKIS_WORKSPACES_DIR = wsDir
+  })
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.AKIS_WORKSPACES_DIR
+    else process.env.AKIS_WORKSPACES_DIR = prevEnv
+    rmSync(wsDir, { recursive: true, force: true })
+  })
+
+  it('serves the materialized app over a REAL loopback HTTP server; teardown closes it + removes the workspace', async () => {
+    const { registry, startedIds } = fakeRegistry()
+    const boot = makePreviewBoot(registry)
+    const r = await boot('st1', STATIC_FILES)
+    if (!('url' in r)) throw new Error(`expected a ready static boot, got: ${JSON.stringify(r)}`)
+    // The registry is NOT involved for static (no process to manage).
+    expect(startedIds).toHaveLength(0)
+    // REAL observations: `/` falls back to index.html; assets serve; a miss is 404 (which the
+    // boot-smoke <400 rule honestly fails); traversal cannot escape the workspace.
+    const home = await fetch(r.url)
+    expect(home.status).toBe(200)
+    expect(await home.text()).toContain('Hello Static')
+    expect((await fetch(`${r.url}/styles.css`)).status).toBe(200)
+    expect((await fetch(`${r.url}/missing.html`)).status).toBe(404)
+    expect((await fetch(`${r.url}/..%2f..%2fetc%2fpasswd`)).status).toBe(404)
+    // Teardown: server closed (connection refused) + workspace dir removed.
+    await r.teardown()
+    await expect(fetch(r.url)).rejects.toThrow()
+    expect(readdirSync(wsDir)).toHaveLength(0)
   })
 })

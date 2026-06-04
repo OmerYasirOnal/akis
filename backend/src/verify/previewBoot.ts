@@ -1,4 +1,8 @@
 import { randomBytes } from 'node:crypto'
+import { createServer, type Server } from 'node:http'
+import { readFile } from 'node:fs/promises'
+import { resolve, sep, extname } from 'node:path'
+import type { AddressInfo } from 'node:net'
 import type { RepoFile } from '../di/MockGitHubAdapter.js'
 import { detectAppType } from '../preview/AppDetector.js'
 import { materialize, teardown as teardownWorkspace } from '../preview/Workspace.js'
@@ -28,15 +32,44 @@ export const VERIFY_SESSION_SUFFIX = '#verify'
  * materialized workspace, so a verify boot leaves nothing behind.
  *
  * FAIL-CLOSED: any non-ready outcome (unsupported / install failed / early exit / probe timeout)
- * → `{ failed: boundedReason }`, and the workspace is cleaned up. A static preview is reported as
- * a failure here because it exposes no directly-fetchable local HTTP server (it is served only
- * THROUGH the proxy) — wiring the proxy origin for a static verify boot is deferred to a later PR.
+ * → `{ failed: boundedReason }`, and the workspace is cleaned up. STATIC apps (no process, no
+ * port — the registry serves them only THROUGH the proxy) get a tiny throwaway loopback file
+ * server over the materialized workspace instead (PR3), so the most common Proto output is
+ * boot-verifiable too.
  */
 export function makePreviewBoot(registry: PreviewRegistry): (sessionId: string, files: RepoFile[]) => Promise<BootResult> {
   return async (sessionId, files) => {
     const verifyId = `${sessionId}${VERIFY_SESSION_SUFFIX}-${randomBytes(4).toString('hex')}`
     const type = detectAppType(files)
     if (type === 'unsupported') return { failed: `app type '${type}' cannot be booted to verify` }
+
+    // STATIC apps (the most common Proto output — a self-contained index.html) get a tiny
+    // throwaway loopback file server over the materialized workspace (PR3): the registry's
+    // static path serves only THROUGH the Fastify proxy (no own port), so without this the
+    // most common build couldn't be boot-verified at all. Zero dependencies; probes get the
+    // real served bytes, so body/criteria checks are genuine observations.
+    if (type === 'static') {
+      let dir: string
+      try {
+        dir = await materialize(verifyId, files)
+      } catch (e) {
+        return { failed: `workspace materialize failed — ${boundReason(e)}` }
+      }
+      try {
+        const server = await serveStatic(dir)
+        const port = (server.address() as AddressInfo).port
+        return {
+          url: `http://127.0.0.1:${port}`,
+          teardown: async () => {
+            await new Promise<void>(resolveClose => server.close(() => resolveClose()))
+            await teardownWorkspace(dir).catch(() => {})
+          },
+        }
+      } catch (e) {
+        await teardownWorkspace(dir).catch(() => {})
+        return { failed: `static verify server failed — ${boundReason(e)}` }
+      }
+    }
 
     let dir: string
     try {
@@ -79,4 +112,58 @@ export function makePreviewBoot(registry: PreviewRegistry): (sessionId: string, 
 /** Bound a reason string for a structured failure (never free-form prose into the seam). */
 function boundReason(e: unknown): string {
   return String(e instanceof Error ? e.message : e).slice(0, 200)
+}
+
+/** Just enough content-types for probe-relevant assets; everything else is octet-stream. */
+const MIME: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+}
+
+/**
+ * A MINIMAL throwaway static file server over a verify workspace — loopback only, one
+ * verify run's lifetime, closed in teardown. PATH-TRAVERSAL SAFE: the resolved target must
+ * stay inside the root (same guard idea as Workspace.safeJoin), else 404 — the workspace
+ * holds the generated app, and a probe URL is derived from the spec (LLM text), so `..`
+ * escapes must be structurally impossible. `/` and directory paths fall back to index.html
+ * (how the preview proxy serves a static app). 404 on a miss — under the boot-smoke rule
+ * (status < 400) a missing front door honestly FAILS the probe.
+ */
+async function serveStatic(root: string): Promise<Server> {
+  const base = resolve(root)
+  const server = createServer((req, res) => {
+    void (async () => {
+      const rawPath = decodeURIComponent((req.url ?? '/').split('?')[0] ?? '/')
+      const rel = rawPath.replace(/^\/+/, '').replace(/\/+$/, '')
+      const target = resolve(base, rel === '' ? 'index.html' : rel)
+      const safe = target === base || target.startsWith(base + sep)
+      try {
+        if (!safe) throw new Error('outside root')
+        let body: Buffer
+        let file = target
+        try {
+          body = await readFile(file)
+        } catch {
+          // Directory or extensionless route → index.html fallback (SPA-style), once.
+          file = resolve(target, 'index.html')
+          if (!file.startsWith(base + sep)) throw new Error('outside root')
+          body = await readFile(file)
+        }
+        res.writeHead(200, { 'content-type': MIME[extname(file)] ?? 'application/octet-stream' })
+        res.end(body)
+      } catch {
+        res.writeHead(404, { 'content-type': 'text/plain; charset=utf-8' })
+        res.end('not found')
+      }
+    })()
+  })
+  await new Promise<void>((resolveListen, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', () => resolveListen())
+  })
+  return server
 }
