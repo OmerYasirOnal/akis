@@ -22,6 +22,16 @@ describe('SpecCard', () => {
     expect(onBuild).toHaveBeenCalledWith(spec)
   })
 
+  it('while building: shows a disabled "Starting…" button (instant click feedback, no re-fire)', async () => {
+    const onBuild = vi.fn()
+    renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} building />)
+    const btn = screen.getByRole('button', { name: /Starting/i })
+    expect(btn).toBeDisabled()
+    expect(screen.queryByRole('button', { name: 'Approve & Build' })).toBeNull()
+    await userEvent.click(btn) // disabled → no-op
+    expect(onBuild).not.toHaveBeenCalled()
+  })
+
   describe('Download .md', () => {
     let created: string[] = []
     let lastAnchor: HTMLAnchorElement | undefined

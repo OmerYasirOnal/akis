@@ -49,6 +49,33 @@ describe('useLiveChat — SSE-drop reconnecting overlay', () => {
     expect(hook.result.current.view.status).not.toBe('failed')
   })
 
+  it('manually reconnects a CLOSED stream (closes the old, opens a new) with capped backoff', () => {
+    vi.useFakeTimers()
+    try {
+      const created: FakeEventSource[] = []
+      const makeClient = (): EventStreamClient => new EventStreamClient(url => { const es = new FakeEventSource(url); created.push(es); return es })
+      const fetchFn = vi.fn(() => Promise.resolve({ ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response))
+      const api = new ApiClient('', fetchFn)
+      const hook = renderHook(() => useLiveChat('s1', 'todo app', api, '', makeClient))
+      expect(created).toHaveLength(1)
+      const first = created[0]!
+      // A CLOSED EventSource (readyState 2) will NOT auto-retry → the hook must reconnect manually.
+      act(() => { first.readyState = 2; first.err() })
+      expect(hook.result.current.view.connectionLost).toBe(true) // banner while reconnecting
+      act(() => { vi.advanceTimersByTime(1600) })                // first backoff is ~1500ms
+      expect(first.closed).toBe(true)                            // the OLD source is closed first
+      expect(created.length).toBeGreaterThanOrEqual(2)           // a NEW source opened (no double-connect)
+      // Cleanup clears the pending backoff timer → no post-unmount reconnect.
+      const before = created.length
+      act(() => { created[created.length - 1]!.readyState = 2; created[created.length - 1]!.err() })
+      hook.unmount()
+      act(() => { vi.advanceTimersByTime(10000) })
+      expect(created.length).toBe(before) // unmount stopped the chain
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('clears connectionLost on the next delivered event, deduped by seq (no double-count on resume)', async () => {
     const { hook, es } = setup()
     act(() => { es().msg(E('agent_start', { role: 'scribe', agent: 'scribe' }), 1) })
