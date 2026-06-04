@@ -1,4 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from 'node:fs'
+import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { UserStore, type UserStorePort, type AuthUser } from './UserStore.js'
@@ -46,6 +46,7 @@ export class JsonFileUserStore implements UserStorePort {
     try {
       mkdirSync(dirname(this.file), { recursive: true })
       writeFileSync(this.file, JSON.stringify(this.inner.snapshot(), null, 2), { mode: 0o600 })
+      chmodSync(this.file, 0o600) // mode above is masked by umask — chmod makes 0600 unconditional (final review)
     } catch {
       if (!this.warned) {
         this.warned = true
