@@ -68,4 +68,16 @@ export class UserStore implements UserStorePort {
     return u
   }
   count(): number { return this.byId.size }
+
+  /** Snapshot every user (data only — for the dev-persistence wrapper's save). */
+  snapshot(): AuthUser[] { return [...this.byId.values()] }
+  /** Bulk-load users (data only — for the dev-persistence wrapper's boot hydrate).
+   *  Rebuilds all three indexes; a later duplicate of an email/id simply overwrites. */
+  hydrate(users: AuthUser[]): void {
+    for (const u of users) {
+      this.byEmail.set(u.email, u)
+      this.byId.set(u.id, u)
+      if (u.externalId) this.byExternalId.set(u.externalId, u)
+    }
+  }
 }

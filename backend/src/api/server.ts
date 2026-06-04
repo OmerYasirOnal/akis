@@ -11,6 +11,7 @@ import { registerPreviewRoutes } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
 import { registerAuthRoutes, userIdFromRequest } from './auth.routes.js'
 import { UserStore, type UserStorePort } from '../auth/UserStore.js'
+import { JsonFileUserStore } from '../auth/JsonFileUserStore.js'
 import { createPgUserStoreWithClient } from '../auth/PgUserStore.js'
 import { createPgPool, runMigrations, ensurePgVectorColumn } from '../store/pg.js'
 import { PgSessionStore } from '../store/PgSessionStore.js'
@@ -279,7 +280,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (env.NODE_ENV === 'production') throw new Error('AUTH_JWT_SECRET is required in production')
     authSecret = loadOrCreateDevSecret()
   }
-  const userStore = deps.userStore ?? new UserStore()
+  // User persistence default: injected (Pg when DATABASE_URL — see start()) > the DEV
+  // file-persisted store > plain in-memory. The file store means a tsx-watch restart no
+  // longer DELETES ACCOUNTS in dev ("my signups keep disappearing" — they only ever lived
+  // in RAM). NODE_ENV=test keeps the pure in-memory store (no test writes ~/.akis);
+  // production never reaches the file store (DATABASE_URL → Pg; persistenceRequired guards).
+  // The test guard checks BOTH env sources: integration tests inject their own `env`
+  // object (often without NODE_ENV) while vitest sets process.env.NODE_ENV=test — a
+  // test must NEVER write the real ~/.akis/dev-users.json.
+  const isTestEnv = env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test'
+  const userStore = deps.userStore
+    ?? (env.NODE_ENV !== 'production' && !isTestEnv ? new JsonFileUserStore() : new UserStore())
 
   // OAuth needs a trusted public origin for redirect_uri — don't rely on the client
   // Host header in production. Fail closed if a provider is configured without it.
