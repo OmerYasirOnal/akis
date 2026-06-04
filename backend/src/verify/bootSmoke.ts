@@ -58,6 +58,31 @@ function joinUrl(base: string, path: string): string {
   return base.replace(/\/$/, '') + (path.startsWith('/') ? path : `/${path}`)
 }
 
+/** Local-asset references in index.html (src/href to ./x, /x or x — never http(s)/protocol-
+ *  relative/data/anchor/mailto). Case-insensitive (PR #100 review): uppercase `SRC=` is valid
+ *  HTML, and missing it would let a broken reference escape verification (fail-closed broken). */
+const LOCAL_REF = /(?:src|href)\s*=\s*["'](?!https?:|\/\/|data:|#|mailto:)\.?\/?([A-Za-z0-9_\-./]+)["']/gi
+
+/**
+ * Derive one probe per LOCAL asset index.html references (Phase E): a multi-file app whose
+ * `<script src="./app.js">` points at a file Proto never emitted serves a 200 page that renders
+ * BLANK — the smoke probe alone would over-claim "verified". Probing every referenced asset makes
+ * a broken reference an honest 404 failure. Pure (string scan), bounded to 20 assets.
+ */
+export function deriveAssetChecks(files: RepoFile[]): Check[] {
+  const index = files.find(f => f.filePath === 'index.html' || f.filePath.endsWith('/index.html'))
+  if (!index) return []
+  const seen = new Set<string>()
+  const checks: Check[] = []
+  for (const m of index.content.matchAll(LOCAL_REF)) {
+    const path = `/${m[1]!}`
+    if (seen.has(path) || checks.length >= 20) continue
+    seen.add(path)
+    checks.push({ kind: 'pathStatus', name: `asset ${path}`.slice(0, 60), path })
+  }
+  return checks
+}
+
 /**
  * Run a check against the booted app and report a structured pass/fail (NEVER prose). The
  * assertion per kind:
@@ -164,9 +189,12 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
     if ('failed' in boot) return failClosed(`boot failed — ${boot.failed}`)
     teardown = boot.teardown
 
-    // (a) ALWAYS a smoke probe (the testsRun ≥ 1 floor) + (b) one probe per derived criterion.
+    // (a) ALWAYS a smoke probe (the testsRun ≥ 1 floor) + (b) one probe per LOCAL asset
+    // index.html references (Phase E: a missing ./app.js renders a blank page the smoke
+    // probe alone would over-claim) + (c) one probe per derived acceptance criterion.
     const checks: Check[] = [
       { kind: 'render', name: 'app boots and serves /', path: '/' },
+      ...deriveAssetChecks(files),
       ...deriveChecks(deps.spec),
     ]
     const scenarios: E2eScenario[] = []
