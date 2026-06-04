@@ -40,7 +40,7 @@ function dropPlaceholder(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.filter(m => !m.streaming)
 }
 
-export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: string) => void }) {
+export function AkisChat({ api, onBuild, building }: { api: ApiClient; onBuild?: (spec: string) => void; building?: boolean }) {
   const { t } = useI18n()
   const greeting = t('akis.greeting')
   const [msgs, setMsgs] = useState<ChatMsg[]>(() => {
@@ -210,7 +210,7 @@ export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: st
                           <Markdown content={detected.intro} />
                         </div>
                       )}
-                      <SpecCard spec={detected.spec} onBuild={onBuild!} />
+                      <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building} />
                     </>
                   )
                   : (

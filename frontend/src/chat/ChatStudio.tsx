@@ -31,6 +31,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const [sent, setSent] = useState('')               // the submitted idea (drives the thread)
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
+  // Synchronous re-entrancy guard for the build start: `busy` is async React state, so two
+  // fast clicks on "Approve & Build" both pass a `busy` check before the re-render lands and
+  // create TWO sessions (one orphaned). A ref flips synchronously, so the second click is dropped.
+  const startingRef = useRef(false)
   const [recent, setRecent] = useState<RecentBuild[]>(() => loadRecentBuilds())
   // Deep-link target from /?s=<id> (History page → open in Studio). Read once on mount.
   const deepLinkId = useRef<string | undefined>(typeof window !== 'undefined' ? sessionIdFromSearch(window.location.search) : undefined)
@@ -87,14 +91,15 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Chat-to-Build approval (the SpecCard's "Approve & Build"), so every build flows through
   // the conversation — there is no other entry point.
   const startBuild = async (v: string): Promise<void> => {
-    const idea = v.trim(); if (!idea || busy) return
+    const idea = v.trim(); if (!idea || busy || startingRef.current) return
+    startingRef.current = true
     setBusy(true); setActionError(undefined)
     try {
       const s = await api.startSession(idea)
       setSent(idea); setSessionId(s.id); setReopened(false)
       setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
     } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) }
-    finally { setBusy(false) }
+    finally { setBusy(false); startingRef.current = false }
   }
   /** Re-open a past build — useLiveChat replays /log + /events to rebuild the thread. */
   const openSession = (b: RecentBuild): void => { setActionError(undefined); setSent(b.idea); setSessionId(b.id); setReopened(true) }
@@ -102,7 +107,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     setBusy(true); setActionError(undefined)
     try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }
   }
-  const approve = (): Promise<void> => act(async () => { if (sessionId) { await api.approve(sessionId); await api.run(sessionId) } })
+  // Approve the spec gate, then KICK the run — but do NOT await the run. The /run request stays
+  // open for the WHOLE pipeline (minutes), so awaiting it under `busy` would grey out every
+  // control — Stop, gates, recovery, Run-app — for the entire build (the "a slow request greys
+  // out everything" trap). Fire-and-forget: the SSE stream drives all subsequent state; only a
+  // REJECTED start (e.g. a 409) is surfaced as a non-blocking note.
+  const approve = (): Promise<void> => act(async () => {
+    if (!sessionId) return
+    await api.approve(sessionId)
+    void api.run(sessionId).catch(e => setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)))
+  })
   const confirm = (): Promise<void> => act(async () => { if (sessionId) await api.confirm(sessionId) })
   // Localized note for a failed/unsupported preview boot (carries the backend's short reason).
   const previewFailNote = (e: { status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; reason?: string }): string =>
@@ -188,7 +202,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-3 px-4 py-4">
             {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
             <div className="min-h-0 flex-1">
-              <AkisChat api={api} onBuild={(spec) => void startBuild(spec)} />
+              <AkisChat api={api} building={busy} onBuild={(spec) => void startBuild(spec)} />
             </div>
           </div>
         </section>

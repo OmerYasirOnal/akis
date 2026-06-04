@@ -10,6 +10,7 @@ class FakeEventSource implements EventSourceLike {
   onerror: ((ev: unknown) => void) | null = null
   private named = new Map<string, (ev: { data: string }) => void>()
   closed = false
+  readyState = 1
   constructor(readonly url: string) {}
   addEventListener(type: string, fn: (ev: { data: string }) => void): void { this.named.set(type, fn) }
   close(): void { this.closed = true }

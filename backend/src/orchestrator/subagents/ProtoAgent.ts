@@ -6,6 +6,7 @@ import type { LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
 import { parseAIJson } from './critic/json-extract.js'
 import { renderKnowledge } from './context-prompt.js'
+import { chatWithLiveNotes } from './streamNotes.js'
 
 export interface ProtoInput {
   sessionId: string
@@ -68,7 +69,9 @@ export class ProtoAgent {
 
     let res
     try {
-      res = await this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: user }] })
+      // Stream live "writing code…" notes onto the bus so this (the longest build phase) isn't
+      // a frozen pulsing dot — the result is identical to chat() (full text for parsing below).
+      res = await chatWithLiveNotes(this.deps, { system: this.base, messages: [{ role: 'user', content: user }] }, { agent: 'proto', laneId, sessionId })
     } catch (err) {
       // A throwing provider must still CLOSE the event frame (failed tool_result +
       // agent_end) so the live stream never has an orphaned tool_call, then re-throw.
