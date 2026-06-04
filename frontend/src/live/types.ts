@@ -135,4 +135,7 @@ export interface SessionView {
    * failure) so a dropped stream stops pulsing forever and the run reads as recoverable.
    */
   connectionLost?: boolean
+  /** TERMINAL transport state: every reconnect attempt is exhausted — live updates have
+   *  STOPPED (a reload re-syncs from /log). Distinct from the transient `connectionLost`. */
+  connectionGone?: boolean
 }

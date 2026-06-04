@@ -76,6 +76,9 @@ export const STRINGS = {
     'run.stop': 'Stop run',
     // SSE drop: a non-terminal "reconnecting" banner so a dropped stream stops pulsing forever.
     'live.reconnecting': 'Connection lost — reconnecting…',
+    // TERMINAL: reconnects exhausted — live updates stopped; a reload re-syncs from /log.
+    'live.connectionGone': 'Connection lost — live updates stopped. Reload to re-sync.',
+    'live.reload': 'Reload',
     // P1-CORE-1: per-run "this result is simulated" badge — shown ON the verify gate card and
     // the live preview when the run's verify/preview event carries `demo:true`, so a mock
     // "verified"/running app can never be mistaken for a real one AT THE RESULT.
@@ -652,6 +655,9 @@ export const STRINGS = {
     'run.stop': 'Çalışmayı durdur',
     // SSE kopması: kalıcı olmayan bir "yeniden bağlanılıyor" bandı, böylece kopan akış sonsuza dek atmaz.
     'live.reconnecting': 'Bağlantı koptu — yeniden bağlanılıyor…',
+    // TERMİNAL: yeniden bağlanma hakları bitti — canlı güncellemeler durdu; yenileme /log'dan eşitler.
+    'live.connectionGone': 'Bağlantı koptu — canlı güncellemeler durdu. Yeniden eşitlemek için sayfayı yenileyin.',
+    'live.reload': 'Yenile',
     'chat.working': 'çalışıyor…',
     'chat.seedSpec': 'Spec',
     'trust.role.spec': 'İnsan onaylı',

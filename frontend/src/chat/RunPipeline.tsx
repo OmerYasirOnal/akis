@@ -261,9 +261,17 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
       {/* The trust ledger: which structural tokens have actually cleared this run (proof, not copy). */}
       <TrustLedger view={view} t={t} />
 
-      {/* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run)
-          so the live view stops pulsing forever; the resumable stream re-syncs via Last-Event-ID. */}
-      {view.connectionLost && (
+      {/* TERMINAL transport state: reconnects exhausted — honest "stopped + Reload" (audit gap:
+          the transient banner used to pulse forever after give-up). */}
+      {view.connectionGone ? (
+        <div role="alert" className="flex items-center gap-2 rounded-xl border border-rose-400/25 bg-rose-400/[0.06] px-3 py-1.5 text-[11px] text-rose-200/90">
+          <span className="h-1.5 w-1.5 rounded-full bg-rose-300" aria-hidden />
+          {t('live.connectionGone')}
+          <button onClick={() => window.location.reload()} className="ml-auto shrink-0 rounded border border-rose-300/30 px-2 py-0.5 text-[11px] text-rose-100 hover:bg-rose-400/10">{t('live.reload')}</button>
+        </div>
+      ) : view.connectionLost && (
+        /* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run);
+           the resumable stream re-syncs via Last-Event-ID. */
         <div role="status" className="flex items-center gap-2 rounded-xl border border-amber-400/20 bg-amber-400/[0.05] px-3 py-1.5 text-[11px] text-amber-200/90">
           <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-amber-300" aria-hidden />
           {t('live.reconnecting')}
