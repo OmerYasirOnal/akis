@@ -155,3 +155,57 @@ export function createRealTestRunner(deps: RealTestRunnerDeps): TestRunner {
     },
   }
 }
+
+/** Deps for the boot-smoke runner — the injected boot/probe seam (see verify/bootSmoke.ts).
+ *  `boot` is supplied by the trusted wiring (PR2: the PreviewRegistry adapter), so the runner
+ *  itself never spawns a process; it only decides pass/fail from probe outcomes. */
+export interface BootSmokeRunnerDeps {
+  boot: import('./bootSmoke.js').BootSmokeDeps['boot']
+  spec?: import('@akis/shared').SpecArtifact
+  fetchImpl?: import('./bootSmoke.js').BootSmokeDeps['fetchImpl']
+  timeoutMs?: number
+  sessionId: string
+}
+
+/**
+ * The BOOT-SMOKE test runner — verifies a generated app by BOOTING it and probing the running
+ * server over HTTP (an always-on `GET /` smoke probe + one probe per derivable acceptance
+ * criterion). It delegates the boot+probe flow to {@link import('./bootSmoke.js').runBootSmoke}
+ * (which returns plain {@link RealRunResult} stats), then — IN THIS TRUSTED PARENT — computes the
+ * digest over the exact files and brands the result through the EXISTING `brandResult` path. The
+ * brand stays module-private, so neither the bootSmoke module nor the injected `boot` can forge a
+ * TestRunResult; they can only report stats/URLs.
+ *
+ * Fail-closed semantics live in runBootSmoke (unsupported / boot failure / timeout / failing probe
+ * → passed:false), and — exactly as createRealTestRunner does — we ZERO the count unless it
+ * genuinely passed, so a non-pass can NEVER mint a VerifyToken (verifier.ts/mint). The always-on
+ * smoke probe is the testsRun ≥ 1 floor, so a genuine pass means the app really booted and served.
+ */
+export function createBootSmokeRunner(deps: BootSmokeRunnerDeps): TestRunner {
+  return {
+    async run(files: RepoFile[], opts?: RunOptions): Promise<TestRunResult> {
+      const { runBootSmoke } = await import('./bootSmoke.js')
+      const r = await runBootSmoke(files, {
+        boot: deps.boot,
+        sessionId: deps.sessionId,
+        ...(deps.spec ? { spec: deps.spec } : {}),
+        ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
+        ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
+      })
+      // ADDITIVE observability — same path as the real runner. `passed` is the run's REAL
+      // outcome for display; it cannot influence the branded result below.
+      const evidence = buildTestEvidence({
+        passed: r.passed,
+        bdd: r.bdd,
+        e2e: r.e2e,
+        bddScenarios: r.bddScenarios,
+        e2eScenarios: r.e2eScenarios,
+      })
+      opts?.onEvidence?.(evidence)
+      const testsRun = r.passed ? r.testsRun : 0
+      // evidenceDigest DERIVED from the SAME evidence — additive tamper-evidence; never feeds
+      // the fail-closed pass decision (r.passed/testsRun). Brand via the module-private path.
+      return brandResult(testsRun, r.passed, digestFiles(files), digestEvidence(evidence))
+    },
+  }
+}

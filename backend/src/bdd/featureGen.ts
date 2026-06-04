@@ -21,11 +21,18 @@ export function generateFeature(spec: SpecArtifact): string {
   return lines.join('\n')
 }
 
-interface Scenario { name: string; steps: string[] }
+/** One parsed acceptance-criterion scenario: a display name + its Given/When/Then steps. */
+export interface Scenario { name: string; steps: string[] }
 
 const STEP = /^\s*[-*]?\s*(Given|When|Then|And|But)\b\s*(.*)$/i
 
-function parseScenarios(body: string): Scenario[] {
+/**
+ * Parse a spec body's Given/When/Then lines into scenarios (one per Given→…→Then triple).
+ * PURE (string → Scenario[]); no I/O, no behaviour change from when it was module-private.
+ * Exported so the boot-smoke check derivation (verify/criteria.ts) can reuse the SAME parse
+ * the BDD feature generator uses, rather than re-implementing acceptance-criteria parsing.
+ */
+export function parseScenarios(body: string): Scenario[] {
   const scenarios: Scenario[] = []
   let current: Scenario | undefined
   for (const raw of body.split('\n')) {
