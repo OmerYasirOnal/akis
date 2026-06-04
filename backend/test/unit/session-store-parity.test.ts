@@ -26,8 +26,8 @@ function fakeSessionsTable(): SqlClient {
       const sql = text.trim()
       if (sql.startsWith('INSERT INTO sessions')) {
         // params are positional in the column list order used by PgSessionStore.create.
-        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, version] = params
-        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, version }
+        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, base, version] = params
+        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, base, version }
         rows.set(id as string, r)
         order.push(id as string)
         return { rows: [] }
