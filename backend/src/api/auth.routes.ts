@@ -1,10 +1,11 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { EmailTakenError, toPublic, type PublicUser, type UserStorePort } from '../auth/UserStore.js'
+import { EmailTakenError, toPublic, type AuthUser, type UserStorePort } from '../auth/UserStore.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { verifyJwt, signResetToken, verifyResetToken } from '../auth/jwt.js'
 import { serializeCookie, parseCookies, type CookieConfig } from '../auth/cookie.js'
 import { setSessionCookie } from '../auth/session.js'
 import { NoopMailer, type Mailer } from '../mail/Mailer.js'
+import { createRateLimiter, type RateLimiter } from '../auth/rateLimit.js'
 
 export interface AuthDeps {
   users: UserStorePort
@@ -21,6 +22,8 @@ export interface AuthDeps {
   /** Absolute browser origin (PUBLIC_BASE_URL) used to build the emailed reset link.
    *  When unset the link stays a relative path (today's dev-echo shape). */
   publicBaseUrl?: string
+  /** Injectable per-route limiters (tests). Defaults are created inside registerAuthRoutes. */
+  rateLimits?: { login?: RateLimiter; signup?: RateLimiter; forgot?: RateLimiter }
 }
 
 export class UnauthorizedError extends Error { constructor() { super('unauthorized'); this.name = 'UnauthorizedError' } }
@@ -35,22 +38,42 @@ let dummyHashP: Promise<string> | undefined
 const dummyHash = (): Promise<string> => (dummyHashP ??= hashPassword('timing-equalizer-not-a-real-password'))
 
 /** Resolve the authenticated user id from the session cookie, or throw Unauthorized.
- *  Exported so other protected routes can guard with the same logic. */
-export function userIdFromRequest(req: FastifyRequest, deps: AuthDeps): string {
+ *  Exported so other protected routes can guard with the same logic. ASYNC since the
+ *  REVOCATION check (audit gap): the JWT's `tv` claim must match the user record's
+ *  tokenVersion — a bump (password change / logout-all) kills every outstanding token. */
+export async function userIdFromRequest(req: FastifyRequest, deps: AuthDeps): Promise<string> {
   const token = parseCookies(req.headers.cookie)[deps.cookie.name]
   if (!token) throw new UnauthorizedError()
-  try { return verifyJwt(token, deps.secret).sub } catch { throw new UnauthorizedError() }
+  let claims
+  try { claims = verifyJwt(token, deps.secret) } catch { throw new UnauthorizedError() }
+  const user = await deps.users.findById(claims.sub)
+  if (!user || (claims.tv ?? 0) !== (user.tokenVersion ?? 0)) throw new UnauthorizedError()
+  return claims.sub
 }
 
-function setSession(reply: FastifyReply, user: PublicUser, deps: AuthDeps): void {
-  setSessionCookie(reply, user, deps.secret, deps.cookie)
+function setSession(reply: FastifyReply, user: AuthUser, deps: AuthDeps): void {
+  setSessionCookie(reply, toPublic(user), deps.secret, deps.cookie, user.tokenVersion ?? 0)
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
   // A "real" mailer (SMTP) is configured ⇒ email the reset link AND suppress the dev-echo.
   // The NoopMailer default (and an absent mailer) keep today's dev-echo behavior exactly.
   const mailEnabled = deps.mailer !== undefined && !(deps.mailer instanceof NoopMailer)
+  // RATE LIMITS (audit gap): per-IP sliding windows on the brute-force surfaces. Login is
+  // the scrypt-amplified credential-stuffing target; signup/forgot are abuse surfaces.
+  const limits = {
+    login: deps.rateLimits?.login ?? createRateLimiter({ max: 10, windowMs: 5 * 60_000 }),
+    signup: deps.rateLimits?.signup ?? createRateLimiter({ max: 5, windowMs: 10 * 60_000 }),
+    forgot: deps.rateLimits?.forgot ?? createRateLimiter({ max: 5, windowMs: 15 * 60_000 }),
+  }
+  const overLimit = (limiter: RateLimiter, req: FastifyRequest, reply: FastifyReply): boolean => {
+    const retry = limiter.hit(req.ip || 'unknown')
+    if (retry === undefined) return false
+    void reply.header('retry-after', String(retry)).code(429).send({ error: 'too many attempts — try again later', code: 'RateLimited' })
+    return true
+  }
   app.post<{ Body: { name?: unknown; email?: unknown; password?: unknown } }>('/auth/signup', async (req, reply) => {
+    if (overLimit(limits.signup, req, reply)) return
     const name = isStr(req.body?.name) ? req.body.name.trim() : ''
     const email = isStr(req.body?.email) ? req.body.email.trim() : ''
     const password = isStr(req.body?.password) ? req.body.password : ''
@@ -59,7 +82,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     if (password.length < 8) return reply.code(400).send({ error: 'password must be at least 8 characters', code: 'WeakPassword' })
     try {
       const user = await deps.users.create({ name, email, passwordHash: await hashPassword(password) })
-      setSession(reply, toPublic(user), deps)
+      setSession(reply, user, deps)
       return reply.code(201).send({ user: toPublic(user) })
     } catch (err) {
       if (err instanceof EmailTakenError) return reply.code(409).send({ error: err.message, code: 'EmailTaken' })
@@ -68,6 +91,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
   })
 
   app.post<{ Body: { email?: unknown; password?: unknown } }>('/auth/login', async (req, reply) => {
+    if (overLimit(limits.login, req, reply)) return
     const email = isStr(req.body?.email) ? req.body.email.trim() : ''
     const password = isStr(req.body?.password) ? req.body.password : ''
     const user = await deps.users.findByEmail(email)
@@ -78,13 +102,13 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     if (!user || !ok) {
       return reply.code(401).send({ error: 'invalid email or password', code: 'BadCredentials' })
     }
-    setSession(reply, toPublic(user), deps)
+    setSession(reply, user, deps)
     return reply.send({ user: toPublic(user) })
   })
 
   app.get('/auth/me', async (req, reply) => {
     let id: string
-    try { id = userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
+    try { id = await userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
     const user = await deps.users.findById(id)
     if (!user) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
     return reply.send({ user: toPublic(user) })
@@ -92,7 +116,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
 
   app.patch<{ Body: { name?: unknown } }>('/auth/me', async (req, reply) => {
     let id: string
-    try { id = userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
+    try { id = await userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
     const name = isStr(req.body?.name) ? req.body.name.trim() : ''
     if (!name) return reply.code(400).send({ error: 'name required', code: 'BadRequest' })
     const user = await deps.users.updateName(id, name)
@@ -102,7 +126,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
 
   app.post<{ Body: { currentPassword?: unknown; newPassword?: unknown } }>('/auth/change-password', async (req, reply) => {
     let id: string
-    try { id = userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
+    try { id = await userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
     const current = isStr(req.body?.currentPassword) ? req.body.currentPassword : ''
     const next = isStr(req.body?.newPassword) ? req.body.newPassword : ''
     if (next.length < 8) return reply.code(400).send({ error: 'password must be at least 8 characters', code: 'WeakPassword' })
@@ -114,6 +138,20 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
       return reply.code(400).send({ error: 'current password is incorrect', code: 'BadCredentials' })
     }
     await deps.users.updatePassword(user.id, await hashPassword(next))
+    // REVOCATION: a password change kills every OTHER outstanding session (their JWTs carry
+    // the old tv); this client gets a fresh cookie signed with the new version.
+    await deps.users.bumpTokenVersion(user.id)
+    const fresh = await deps.users.findById(user.id)
+    if (fresh) setSession(reply, fresh, deps)
+    return reply.send({ ok: true })
+  })
+
+  // Sign out EVERYWHERE: bump the token version (every outstanding JWT dies) + clear this cookie.
+  app.post('/auth/logout-all', async (req, reply) => {
+    let id: string
+    try { id = await userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
+    await deps.users.bumpTokenVersion(id)
+    reply.header('set-cookie', serializeCookie(deps.cookie.name, '', { ...deps.cookie, maxAgeMs: 0, httpOnly: true }))
     return reply.send({ ok: true })
   })
 
@@ -124,6 +162,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
   })
 
   app.post<{ Body: { email?: unknown } }>('/auth/forgot-password', async (req, reply) => {
+    if (overLimit(limits.forgot, req, reply)) return
     const email = isStr(req.body?.email) ? req.body.email.trim() : ''
     // Always the SAME generic response whether or not the email exists (no enumeration).
     const generic: Record<string, unknown> = { message: 'If that email has an account, a reset link has been sent.' }
@@ -158,7 +197,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     const user = await deps.users.findById(sub)
     if (!user) return reply.code(400).send({ error: 'invalid or expired reset link', code: 'BadToken' })
     await deps.users.updatePassword(user.id, await hashPassword(password))
-    setSession(reply, toPublic(user), deps) // reset succeeds → sign the user in
+    // REVOCATION: a reset proves account ownership — kill every outstanding session
+    // (stolen cookies included); the fresh sign-in below carries the new version.
+    await deps.users.bumpTokenVersion(user.id)
+    const fresh = await deps.users.findById(user.id)
+    setSession(reply, fresh ?? user, deps) // reset succeeds → sign the user in (with the NEW token version)
     return reply.send({ user: toPublic(user) })
   })
 }

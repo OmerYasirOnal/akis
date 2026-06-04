@@ -63,6 +63,10 @@ export class JsonFileUserStore implements UserStorePort {
   }
   async findByEmail(email: string): Promise<AuthUser | undefined> { return this.inner.findByEmail(email) }
   async findById(id: string): Promise<AuthUser | undefined> { return this.inner.findById(id) }
+  async bumpTokenVersion(id: string): Promise<void> {
+    await this.inner.bumpTokenVersion(id)
+    this.persist()
+  }
   async updatePassword(id: string, passwordHash: string): Promise<void> {
     await this.inner.updatePassword(id, passwordHash)
     this.persist()

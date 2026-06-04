@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 
 /** Verified session JWT claims (HS256). `iat`/`exp` are unix seconds. */
-export interface JwtClaims { sub: string; email: string; name: string; iat: number; exp: number }
+export interface JwtClaims { sub: string; email: string; name: string; iat: number; exp: number; tv?: number }
 /** Verified password-reset token claims — purpose-scoped so it can't act as a session. */
 export interface ResetClaims { sub: string; purpose: 'pwreset'; iat: number; exp: number }
 
@@ -31,7 +31,7 @@ function decodeVerified(token: string, secret: string): Record<string, unknown> 
 }
 
 /** Sign a compact HS256 session JWT with the shared AUTH_JWT_SECRET. ttl default 7d. */
-export function signJwt(payload: { sub: string; email: string; name: string }, secret: string, ttlSeconds = 604800, now = nowSec()): string {
+export function signJwt(payload: { sub: string; email: string; name: string; tv?: number }, secret: string, ttlSeconds = 604800, now = nowSec()): string {
   return encodeToken({ ...payload, iat: now, exp: now + ttlSeconds }, secret)
 }
 

@@ -304,12 +304,14 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
 
   const cookie = cookieConfigFromEnv(env)
   // A valid-session guard reused to protect provider-key writes.
-  const hasSession = (req: Parameters<typeof userIdFromRequest>[0]): boolean => {
-    try { userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }); return true } catch { return false }
+  // ASYNC since token revocation: userIdFromRequest now compares the JWT's tv claim to the
+  // user record, so every consumer awaits (a revoked token reads as unauthenticated).
+  const hasSession = async (req: Parameters<typeof userIdFromRequest>[0]): Promise<boolean> => {
+    try { await userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }); return true } catch { return false }
   }
   // Resolve the user id from a request (undefined if unauthenticated) — for per-user history.
-  const userIdOf = (req: Parameters<typeof userIdFromRequest>[0]): string | undefined => {
-    try { return userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }) } catch { return undefined }
+  const userIdOf = async (req: Parameters<typeof userIdFromRequest>[0]): Promise<string | undefined> => {
+    try { return await userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }) } catch { return undefined }
   }
 
   // /health surfaces the active serving mode so a demo (fake-verification) boot is never
