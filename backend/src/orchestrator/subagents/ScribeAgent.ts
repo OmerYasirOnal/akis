@@ -140,7 +140,7 @@ export class ScribeAgent {
       // RAG OFF — single-shot dispatch (no tools advertised). `this.base` is SCRIBE_SYSTEM
       // unless the DI layer injected a skill-composed prompt. Stream live notes so the spec
       // visibly forms (same result as chat()).
-      return chatWithLiveNotes(this.deps, { system: this.base, messages: [{ role: 'user', content: userMsg }] }, { agent: 'scribe', laneId, sessionId })
+      return chatWithLiveNotes(this.deps, { system: this.base, messages: [{ role: 'user', content: userMsg }], maxTokens: 8192 }, { agent: 'scribe', laneId, sessionId })
     }
 
     // RAG ON — reuse the advisory choke point + bounded loop. The registry holds
