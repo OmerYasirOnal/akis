@@ -210,6 +210,12 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
         )}
       </div>
 
+      {/* The trust headline — states the structural moat in one line so it's legible at a glance:
+          these are guarantees enforced by construction (gates + producer/verifier seam), not copy. */}
+      <div className="rounded-lg border border-[#07D1AF]/15 bg-[#07D1AF]/[0.04] px-3 py-1.5 text-[10.5px] leading-snug text-slate-400">
+        <span className="text-[#07D1AF]/80">🛡</span> {t('trust.headline')}
+      </div>
+
       {/* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run)
           so the live view stops pulsing forever; the resumable stream re-syncs via Last-Event-ID. */}
       {view.connectionLost && (
