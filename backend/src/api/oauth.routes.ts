@@ -58,7 +58,7 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthDeps): void
       const token = await exchangeCode(provider, { code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri: `${base}/oauth/${provider}/callback` }, http)
       const profile = await fetchProfile(provider, token, http)
       const user = await deps.users.upsertOAuth({ externalId: profile.externalId, email: profile.email, name: profile.name })
-      setSessionCookie(reply, toPublic(user), deps.secret, deps.cookie)
+      setSessionCookie(reply, toPublic(user), deps.secret, deps.cookie, user.tokenVersion ?? 0) // explicit tv (review #112): OAuth sessions revoke identically
       return reply.redirect(`${base}/`)
     } catch {
       return redirectLogin(reply, base, 'oauth_failed') // never leak provider/internal detail

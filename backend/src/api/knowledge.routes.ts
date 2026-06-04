@@ -16,7 +16,7 @@ export interface KnowledgeRoutesDeps {
   ragUserIdFor: (sessionId: string) => string
   /** Resolve the authenticated user id from a request (undefined when unauthenticated)
    *  — for owner-scoping, exactly like sessions.routes. */
-  userIdOf?: (req: FastifyRequest) => string | undefined
+  userIdOf?: (req: FastifyRequest) => (string | undefined) | Promise<string | undefined>
   /** Per-upload size ceiling in bytes (413 above it). */
   uploadMaxBytes: number
 }
@@ -56,7 +56,7 @@ export function registerKnowledgeRoutes(app: FastifyInstance, deps: KnowledgeRou
   const accessibleUserId = async (req: FastifyRequest, id: string): Promise<string | null> => {
     const s = await deps.store.get(id)
     if (!s) return null
-    if (s.ownerId && deps.userIdOf?.(req) !== s.ownerId) return null
+    if (s.ownerId && (await deps.userIdOf?.(req)) !== s.ownerId) return null
     // Stamp ingestion with the SAME tenant the RAG port retrieves under, so the write is
     // retrievable through the port (single-user MVP → a constant resolver).
     return deps.ragUserIdFor(id)

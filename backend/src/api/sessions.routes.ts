@@ -17,7 +17,7 @@ export interface SessionsDeps {
   makeOrchestrator?: (wf: WorkflowConfig) => Orchestrator
   /** Resolve the authenticated user id from a request (for per-user build history);
    *  returns undefined when unauthenticated. */
-  userIdOf?: (req: FastifyRequest) => string | undefined
+  userIdOf?: (req: FastifyRequest) => (string | undefined) | Promise<string | undefined>
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -69,7 +69,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const accessibleSession = async (req: FastifyRequest, id: string): Promise<SessionState | null> => {
     const s = await services.store.get(id)
     if (!s) return null
-    if (s.ownerId && deps.userIdOf?.(req) !== s.ownerId) return null
+    if (s.ownerId && (await deps.userIdOf?.(req)) !== s.ownerId) return null
     return s
   }
   const notFound = (reply: FastifyReply, id: string): FastifyReply =>
@@ -96,7 +96,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       if (prior.code?.files.length) base = { files: prior.code.files, fromSession: prior.id }
     }
     try {
-      const ownerId = deps.userIdOf?.(req)
+      const ownerId = await deps.userIdOf?.(req)
       const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(base ? { base } : {}) })
       if (orch !== orchestrator) bound.set(s.id, orch)
       return reply.code(201).send(s)
@@ -106,7 +106,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   // Per-user build history (newest first). Registered before /sessions/:id; Fastify
   // prioritizes the static path anyway. Auth required — lists only the caller's runs.
   app.get('/sessions/mine', async (req, reply) => {
-    const ownerId = deps.userIdOf?.(req)
+    const ownerId = await deps.userIdOf?.(req)
     if (!ownerId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
     const list = await services.store.listByOwner(ownerId)
     return list.map(s => ({ id: s.id, idea: s.idea, status: s.status, verified: isVerified(s) }))
@@ -188,7 +188,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   app.get<{ Params: { id: string } }>('/sessions/:id/log', async (req, reply) => {
     const id = req.params.id
     const stored = await services.store.get(id)
-    if (stored?.ownerId && deps.userIdOf?.(req) !== stored.ownerId) return notFound(reply, id) // owner-scope: no cross-user log read
+    if (stored?.ownerId && (await deps.userIdOf?.(req)) !== stored.ownerId) return notFound(reply, id) // owner-scope: no cross-user log read
     if (services.bus.head(id) === 0 && !stored) return notFound(reply, id)
     const { events, dropped } = services.bus.replaySince(id, 0)
     // `truncated` = the buffer already evicted head events (a >cap-event session), so
@@ -203,7 +203,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       const id = req.params.id
       const stored = await services.store.get(id)
       // Owner-scope: a non-owner cannot stream someone else's owned session (404 before hijack).
-      if (stored?.ownerId && deps.userIdOf?.(req) !== stored.ownerId) return notFound(reply, id)
+      if (stored?.ownerId && (await deps.userIdOf?.(req)) !== stored.ownerId) return notFound(reply, id)
       // 404 only when the session is truly unknown AND has emitted nothing.
       if (services.bus.head(id) === 0 && !stored) return notFound(reply, id)
 
