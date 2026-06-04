@@ -12,8 +12,9 @@ describe('loadOrCreateDevSecret (dev-only persisted auth secret)', () => {
       const first = loadOrCreateDevSecret(file)
       expect(first.length).toBeGreaterThanOrEqual(64) // 32 random bytes hex-encoded
       expect(readFileSync(file, 'utf8').trim()).toBe(first)
-      // Owner-only: the secret file must never be group/world readable.
-      expect(statSync(file).mode & 0o077).toBe(0)
+      // Owner-only: the secret file must never be group/world readable. (POSIX-only —
+      // Windows has no mode bits; CI runs Linux, but keep the assertion portable.)
+      if (process.platform !== 'win32') expect(statSync(file).mode & 0o077).toBe(0)
       // "Restart": a second call reads the SAME secret back — JWTs stay valid.
       expect(loadOrCreateDevSecret(file)).toBe(first)
     } finally { rmSync(dir, { recursive: true, force: true }) }
@@ -28,6 +29,12 @@ describe('loadOrCreateDevSecret (dev-only persisted auth secret)', () => {
       const secret = loadOrCreateDevSecret(file)
       expect(secret).not.toBe('short')
       expect(secret.length).toBeGreaterThanOrEqual(64)
+      // Boundary (PR #95 review): 32 chars = only 16 random bytes — HALF strength. Full
+      // strength is 64 hex chars (32 bytes); anything shorter regenerates.
+      writeFileSync(file, 'a'.repeat(32), 'utf8')
+      const regen = loadOrCreateDevSecret(file)
+      expect(regen).not.toBe('a'.repeat(32))
+      expect(regen.length).toBeGreaterThanOrEqual(64)
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 
