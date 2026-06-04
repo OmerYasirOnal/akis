@@ -32,7 +32,10 @@ export interface BootSmokeDeps {
   sessionId: string
 }
 
-const DEFAULT_TIMEOUT_MS = 120_000
+// 180s (was 120): the budget covers INSTALL + boot + probes, and a cold `npm install` for a
+// vite/node-service app alone can take 60–100s (PR #96 review) — 120s raced it and could fail
+// a healthy build as a timeout. Static apps don't install and finish in milliseconds anyway.
+const DEFAULT_TIMEOUT_MS = 180_000
 
 /** Bound a probe NAME for the structured evidence (mirrors the 60-char scenario-name bound). */
 function boundName(s: string): string {
