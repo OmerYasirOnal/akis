@@ -15,6 +15,27 @@ export interface ProtoInput {
   feedback?: string
   /** Read view of the shared context (F2-AC16). Data only — no gate capability. */
   ctx?: SharedContext
+  /**
+   * EDIT MODE (Phase B.5): the existing app this build edits. When present, Proto sees the
+   * current files and is instructed to return ONLY the files it changes or adds (full
+   * contents each) — the orchestrator merges them over this base. Data only, no capability.
+   */
+  baseFiles?: RepoFile[]
+}
+
+/** Render the existing app for EDIT MODE: the current files + strict edit semantics. */
+function renderBase(files: RepoFile[]): string {
+  const listing = files.map(f => `--- ${f.filePath} ---\n${f.content}`).join('\n\n')
+  return [
+    '',
+    'EDIT MODE — this build MODIFIES the existing app below. Rules:',
+    '1) Return ONLY the files you CHANGE or ADD (each with its FULL final content). Do NOT re-emit unchanged files — they are kept automatically.',
+    '2) NEVER rewrite the whole app from scratch; preserve its working structure, style and behavior except where the spec asks for changes.',
+    '3) Keep every emitted file consistent with the files you did not emit (imports, ids, script/css references).',
+    '',
+    'CURRENT APP FILES:',
+    listing,
+  ].join('\n')
 }
 
 export const PROTO_SYSTEM = [
@@ -62,6 +83,7 @@ export class ProtoAgent {
       `SPEC: ${input.approved.spec.title}`,
       input.approved.spec.body,
       input.feedback ? `\nADDRESS THIS REVIEW FEEDBACK:\n${input.feedback}` : '',
+      input.baseFiles?.length ? renderBase(input.baseFiles) : '',
       renderKnowledge(input.ctx),
     ].join('\n')
 

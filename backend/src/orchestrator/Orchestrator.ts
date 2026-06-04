@@ -10,8 +10,15 @@ import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 import { signPassport } from '../verify/passport.js'
 import type { BuildPassport, VerifyToken } from '@akis/shared'
+import { mergeFiles } from './mergeFiles.js'
 
-export interface StartInput { idea: string; ownerId?: string }
+export interface StartInput {
+  idea: string
+  ownerId?: string
+  /** EDIT MODE (Phase B.5): seed this build with a prior session's app — Proto edits it
+   *  (merge semantics) instead of regenerating from scratch. Owner-checked at the API. */
+  base?: { files: { filePath: string; content: string }[]; fromSession: string }
+}
 
 export class AlreadyPushedError extends Error {
   constructor() { super('Session already pushed (confirmPush is not repeatable)'); this.name = 'AlreadyPushedError' }
@@ -115,6 +122,8 @@ export class Orchestrator {
   async start(input: StartInput): Promise<SessionState> {
     const id = randomUUID()
     let session = initialSession(id, input.idea, input.ownerId)
+    // EDIT MODE seed (data only — no gate capability travels with it).
+    if (input.base?.files.length) session = { ...session, base: input.base }
     await this.s.store.create(session)
     // F1-AC17: subscribe the ingestion sink AS the session starts, before any event
     // is emitted, so zero-touch ingestion misses nothing (RAG flag on → sink present).
@@ -202,19 +211,25 @@ export class Orchestrator {
     let feedback: string | undefined
     let lastFiles: { filePath: string; content: string }[] = []
     let attempt = 0
+    // EDIT MODE (Phase B.5): a session seeded with a base app EDITS it — Proto sees the
+    // current files and emits only what it changes/adds; merging restores the FULL app so
+    // the validator, critic and store always see the whole application (gates unchanged).
+    const baseFiles = session.base?.files
     for (;;) {
       const protoCtx = await this.ctx(id, `${approved.spec.title}\n${approved.spec.body}`)
       const proto = await this.s.proto.run({
         sessionId: id, laneId: 'main', approved, ctx: protoCtx,
         ...(feedback !== undefined ? { feedback } : {}),
+        ...(baseFiles?.length ? { baseFiles } : {}),
       })
-      lastFiles = proto.files
+      const candidate = mergeFiles(baseFiles, proto.files)
+      lastFiles = candidate
 
       const validation = this.s.validator.validate({
-        files: proto.files.map(f => ({ path: f.filePath, content: f.content, language: 'typescript' as const })),
+        files: candidate.map(f => ({ path: f.filePath, content: f.content, language: 'typescript' as const })),
       })
       const review = await this.s.critic.reviewCode({
-        reviewType: 'code_review', artifact: proto.files, originalIdea: session.idea, referenceSpec: approved.spec,
+        reviewType: 'code_review', artifact: candidate, originalIdea: session.idea, referenceSpec: approved.spec,
       })
       if (review.type === 'error') {
         this.s.bus.emit({ kind: 'error', message: review.error.message, code: review.error.code, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
@@ -234,14 +249,14 @@ export class Orchestrator {
       })
 
       if (approvedCode) {
-        session = await this.s.store.update(id, { code: { files: proto.files } }, session.version)
+        session = await this.s.store.update(id, { code: { files: candidate } }, session.version)
         break
       }
       // gatePolicy.requireCriticResolution TIGHTENS the critic gate: any non-approved
       // code goes straight to human resolution instead of auto-iterating.
       const requireResolution = this.s.gatePolicy?.requireCriticResolution === true
       if (critical || requireResolution || attempt >= maxIterate) {
-        session = await this.s.store.update(id, { status: 'awaiting_critic_resolution', code: { files: proto.files } }, session.version)
+        session = await this.s.store.update(id, { status: 'awaiting_critic_resolution', code: { files: candidate } }, session.version)
         this.narrate(id, critical ? 'Critic raised a critical finding — needs human resolution.' : requireResolution ? 'Workflow requires human resolution of the critic review.' : 'Iterate budget exhausted — needs human resolution.')
         // Recoverable, not a dead-end: the FE shows a proceed/abandon action card. PROCEED
         // continues to the REAL verify + push gates (which still apply); it never bypasses them.
