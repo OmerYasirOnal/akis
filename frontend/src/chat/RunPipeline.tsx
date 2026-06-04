@@ -173,7 +173,7 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
         <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{t('pipeline.title')}</div>
         {/* Stop/Cancel: a clean terminal ABANDON of an in-flight run — never a gate bypass. */}
         {inFlight && (
-          <button onClick={onCancel} disabled={acting} aria-label={t('run.stop')}
+          <button onClick={onCancel} disabled={recovering} aria-label={t('run.stop')}
             className="shrink-0 rounded-md border border-rose-400/40 px-2 py-0.5 text-[11px] font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-40">
             {t('run.stop')}
           </button>

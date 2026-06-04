@@ -11,11 +11,12 @@ class FakeEventSource implements EventSourceLike {
   onerror: ((ev: unknown) => void) | null = null
   private named = new Map<string, (ev: { data: string }) => void>()
   closed = false
+  readyState = 1
   constructor(readonly url: string) {}
   addEventListener(type: string, fn: (ev: { data: string }) => void): void { this.named.set(type, fn) }
-  close(): void { this.closed = true }
+  close(): void { this.closed = true; this.readyState = 2 }
   msg(event: object, seq: number): void { this.onmessage?.({ data: JSON.stringify(event), lastEventId: String(seq) }) }
-  err(): void { this.onerror?.({}) }
+  err(): void { this.onerror?.({}) } // transient: readyState stays OPEN (browser auto-retries)
 }
 
 const E = (kind: string, over: object = {}): AkisEvent =>
