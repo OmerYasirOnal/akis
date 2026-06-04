@@ -57,7 +57,14 @@ export class AnthropicProvider implements LlmProvider {
     const body: Record<string, unknown> = {
       model: req.model?.trim() || this.model, // trim + `||`: an empty/blank per-agent model ("(default)") falls back, never sends "" / "  "
       max_tokens: req.maxTokens ?? this.maxTokens,
-      system: req.system,
+      // PROMPT CACHING: the system prompt rides as a content block with a cache breakpoint.
+      // Every agent (Scribe/Proto/Critic/AKIS chat) resends the same skill-composed system
+      // prefix each call — with the breakpoint, repeats within the cache TTL read it at ~10%
+      // input cost and lower latency (iterate loops, continuation rounds, chat turns). Tools
+      // ahead of the breakpoint are cached too. Prompts under the model's cacheable minimum
+      // are silently uncached (documented; never an error) — a pure optimization, responses
+      // byte-identical either way.
+      system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
       messages: req.messages.map(m => this.mapMessage(m)),
     }
     if (req.temperature !== undefined) body.temperature = req.temperature
