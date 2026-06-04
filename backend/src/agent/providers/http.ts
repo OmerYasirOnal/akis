@@ -70,7 +70,9 @@ export async function streamSse(
   opts: PostOpts = {},
 ): Promise<void> {
   const fetchFn = opts.fetchFn ?? fetch
-  const timeoutMs = opts.timeoutMs ?? 60_000
+  // 300s (was 60), matching postJson: the timer spans the WHOLE stream, and a long streamed
+  // reply (a full akis-spec at 8k tokens) can exceed 60s — aborting mid-stream truncated it.
+  const timeoutMs = opts.timeoutMs ?? 300_000
   const ctrl = new AbortController()
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   let r: Response
@@ -137,7 +139,12 @@ export async function postJson<T = unknown>(
   const fetchFn = opts.fetchFn ?? fetch
   const maxRetries = opts.maxRetries ?? 3
   const baseDelayMs = opts.baseDelayMs ?? 250
-  const timeoutMs = opts.timeoutMs ?? 60_000
+  // 300s (was 60): a NON-STREAMING full-app generation (Proto, 16384-token budget, full-stack
+  // iterate with feedback) routinely takes >60s end-to-end — the old default ABORTED the call
+  // mid-generation ("This operation was aborted"), failing the build (caught LIVE on the
+  // Phase G voting-app run). 5 min comfortably bounds the longest catalog-model generation
+  // while still failing a genuinely hung connection.
+  const timeoutMs = opts.timeoutMs ?? 300_000
   let attempt = 0
   for (;;) {
     const ctrl = new AbortController()
