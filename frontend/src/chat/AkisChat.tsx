@@ -163,13 +163,13 @@ export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: st
   }
 
   return (
-    <div className="flex h-full min-h-[24rem] flex-col gap-3">
-      <div ref={scrollRef} onScroll={onScroll} aria-live="polite" className="flex-1 space-y-3 overflow-y-auto">
+    <div className="flex h-full min-h-0 flex-col gap-3">
+      <div ref={scrollRef} onScroll={onScroll} aria-live="polite" aria-atomic="false" aria-relevant="additions" className="flex-1 space-y-3 overflow-y-auto">
         {msgs.map((m, i) => {
           if (m.role === 'user') {
             return (
               <div key={i} className="flex justify-end">
-                <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-gradient-to-br from-[#07D1AF]/90 to-violet-500/90 px-4 py-2 text-slate-950">{m.content}</div>
+                <div className="max-w-[80%] break-words rounded-2xl rounded-br-sm bg-gradient-to-br from-[#07D1AF]/90 to-violet-500/90 px-4 py-2 text-slate-950">{m.content}</div>
               </div>
             )
           }
@@ -232,7 +232,7 @@ export function AkisChat({ api, onBuild }: { api: ApiClient; onBuild?: (spec: st
         {busy && <div className="ml-11 text-xs text-teal-300">{t('akis.thinking')}</div>}
       </div>
       <form className="flex gap-2" onSubmit={send} aria-busy={busy}>
-        <input ref={inputRef} aria-label="ask-akis" value={input} onChange={e => setInput(e.target.value)} placeholder={t('akis.ask')}
+        <input ref={inputRef} aria-label={t('akis.ask')} value={input} onChange={e => setInput(e.target.value)} placeholder={t('akis.ask')}
           className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none" />
         <button type="submit" disabled={busy || input.trim() === ''}
           className="rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2 text-sm font-semibold text-slate-200 hover:border-white/30 disabled:opacity-40">{t('akis.send')}</button>

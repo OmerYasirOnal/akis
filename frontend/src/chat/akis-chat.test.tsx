@@ -22,7 +22,7 @@ describe('AkisChat', () => {
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
 
     expect(screen.getByText(/I’m AKIS/)).toBeInTheDocument() // greeting
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'what can you build?')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'what can you build?')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
 
     await waitFor(() => expect(screen.getByText('Sure — tell me the app and hit Build.')).toBeInTheDocument())
@@ -32,7 +32,7 @@ describe('AkisChat', () => {
   it('renders markdown in a reply (no literal ** or ---)', async () => {
     const api = new ApiClient('', chatFetch('A **bold** plan.'))
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'plan it')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'plan it')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await waitFor(() => expect(screen.getByText('bold').tagName).toBe('STRONG'))
   })
@@ -42,7 +42,7 @@ describe('AkisChat', () => {
     const api = new ApiClient('', chatFetch(reply))
     const onBuild = vi.fn()
     render(<I18nProvider><AkisChat api={api} onBuild={onBuild} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'give me a spec')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'give me a spec')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
 
     await waitFor(() => expect(screen.getByText('Build-ready spec')).toBeInTheDocument())
@@ -54,7 +54,7 @@ describe('AkisChat', () => {
   it('shows NO SpecCard for a plain reply', async () => {
     const api = new ApiClient('', chatFetch('Just chatting, no spec.'))
     render(<I18nProvider><AkisChat api={api} onBuild={() => {}} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'hi')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hi')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await waitFor(() => expect(screen.getByText('Just chatting, no spec.')).toBeInTheDocument())
     expect(screen.queryByText('Build-ready spec')).toBeNull()
@@ -70,7 +70,7 @@ describe('AkisChat', () => {
     })
     const api = new ApiClient('', fetchFn)
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'hello?')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hello?')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
 
     const alert = await screen.findByRole('alert')
@@ -88,7 +88,7 @@ describe('AkisChat', () => {
     })
     const api = new ApiClient('', fetchFn)
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'ping')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'ping')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/Couldn’t reach AKIS/)
@@ -97,7 +97,7 @@ describe('AkisChat', () => {
   it('surfaces an empty reply honestly as an error row (not a real answer)', async () => {
     const api = new ApiClient('', chatFetch('   '))
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'say something')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'say something')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/empty reply/i)
@@ -115,7 +115,7 @@ describe('AkisChat', () => {
     })
     const api = new ApiClient('', fetchFn)
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'build a todo')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a todo')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await screen.findByRole('alert')
 
@@ -138,10 +138,10 @@ describe('AkisChat', () => {
     })
     const api = new ApiClient('', fetchFn)
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'first q')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'first q')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await screen.findByRole('alert')
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'second q')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'second q')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await waitFor(() => expect(screen.getByText('ok now')).toBeInTheDocument())
 
@@ -161,7 +161,7 @@ describe('AkisChat', () => {
     const onUnauthorized = vi.fn()
     api.onUnauthorized = onUnauthorized
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'hi')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hi')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent(/session expired/i)
@@ -172,7 +172,7 @@ describe('AkisChat', () => {
     const reply = "Here's your spec 👇\n````akis-spec\n# Big App\nlots of detail that got cut off"
     const api = new ApiClient('', chatFetch(reply))
     render(<I18nProvider><AkisChat api={api} onBuild={() => {}} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'spec it')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'spec it')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await waitFor(() => expect(screen.getByText(/cut off before it finished/i)).toBeInTheDocument())
     expect(screen.queryByText('Build-ready spec')).toBeNull() // no Build card for a partial spec
@@ -183,7 +183,7 @@ describe('AkisChat', () => {
   it('persists the thread to localStorage so it survives a remount (build start / reload)', async () => {
     const api = new ApiClient('', chatFetch('Persisted reply.'))
     const { unmount } = render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    await userEvent.type(screen.getByLabelText('ask-akis'), 'remember this')
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'remember this')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await waitFor(() => expect(screen.getByText('Persisted reply.')).toBeInTheDocument())
 
@@ -201,7 +201,7 @@ describe('AkisChat', () => {
   it('autofocuses the composer and marks the message region/composer for a11y', async () => {
     const api = new ApiClient('', chatFetch('x'))
     const { container } = render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
-    expect(screen.getByLabelText('ask-akis')).toHaveFocus()
+    expect(screen.getByLabelText(/ask akis/i)).toHaveFocus()
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull()
     expect(container.querySelector('form')).toHaveAttribute('aria-busy', 'false')
   })

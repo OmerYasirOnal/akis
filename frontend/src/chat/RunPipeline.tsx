@@ -137,6 +137,10 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
   // a structural gate (the server re-runs real verification; spec/push gates still apply).
   const client = api ?? new ApiClient()
   const [recovering, setRecovering] = useState(false)
+  // The activity log defaults OPEN while a run is in-flight (so you WATCH each agent work,
+  // not hunt for a collapsed "raw log"), and the user can still collapse/expand it — once
+  // set, their choice sticks (`undefined` = follow the run's in-flight state).
+  const [logOpen, setLogOpen] = useState<boolean | undefined>(undefined)
   const drive = (fn: (id: string) => Promise<unknown>) => (): void => {
     const id = view.sessionId
     if (!id || recovering) return
@@ -213,9 +217,11 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
       )}
 
       {details && (
-        <details className="group rounded-xl border border-white/10 bg-white/[0.02]">
-          <summary className="cursor-pointer select-none list-none px-3 py-2 text-xs font-medium text-slate-400 transition hover:text-slate-200">
-            <span className="mr-1 inline-block transition group-open:rotate-90" aria-hidden>▸</span>
+        <details open={logOpen ?? inFlight} onToggle={e => setLogOpen((e.currentTarget as HTMLDetailsElement).open)}
+          className="group rounded-xl border border-white/10 bg-white/[0.02]">
+          <summary className="flex cursor-pointer select-none list-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-400 transition hover:text-slate-200">
+            <span className="inline-block transition group-open:rotate-90" aria-hidden>▸</span>
+            {inFlight && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#07D1AF]" aria-hidden />}
             {t('pipeline.details')}
           </summary>
           <div className="border-t border-white/10 px-3 py-3">{details}</div>

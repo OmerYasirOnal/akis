@@ -1,5 +1,14 @@
 export interface RecentBuild { id: string; idea: string; ts: number }
 
+/** A clean, single-line title from a raw idea/spec. A chat-authored build's `idea` is the
+ *  whole spec markdown (e.g. "# Minimal Todo App\n## Scope …"), so a history row would show
+ *  raw "#"/"##" noise — take the first non-empty line and strip leading heading hashes +
+ *  surrounding emphasis so the row reads as a real title. */
+export function ideaTitle(idea: string): string {
+  const first = (idea ?? '').split('\n').map(l => l.trim()).find(l => l.length > 0) ?? ''
+  return first.replace(/^#{1,6}\s*/, '').replace(/^\*+|\*+$/g, '').trim()
+}
+
 const KEY = 'akis_recent_builds'
 const MAX = 8
 

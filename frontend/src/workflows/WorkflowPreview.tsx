@@ -58,9 +58,9 @@ export function WorkflowPreview({ draft }: { draft: WorkflowConfig | WorkflowCon
         <h3 className="mb-3 text-sm font-semibold uppercase tracking-wider text-slate-300">{t('workflows.preview.summary')}</h3>
         <ul className="space-y-2">
           {draft.agents.map(a => (
-            <li key={a.role} className="flex items-center justify-between text-sm">
-              <span className="font-medium text-slate-200">{a.role}</span>
-              <span className="text-slate-400">
+            <li key={a.role} className="flex min-w-0 items-center justify-between gap-2 text-sm">
+              <span className="shrink-0 font-medium text-slate-200">{a.role}</span>
+              <span className="min-w-0 truncate text-right text-slate-400">
                 {a.model?.modelId ?? a.model?.providerId ?? t('workflows.builder.default')}
               </span>
             </li>
