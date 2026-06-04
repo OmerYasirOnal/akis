@@ -49,9 +49,11 @@ export class GeminiProvider implements LlmProvider {
     // API keeps its own defaults (backward compatible).
     const generationConfig: Record<string, unknown> = {}
     if (req.temperature !== undefined) generationConfig.temperature = req.temperature
-    // Clamp to a safe ceiling: a big agent request that Anthropic (64k) allows would exceed
-    // Gemini's output limit (~8192) and 400. Clamp so a generous request degrades, never errors.
-    if (req.maxTokens !== undefined) generationConfig.maxOutputTokens = Math.min(req.maxTokens, 8192)
+    // Clamp to a safe ceiling so a generous request degrades, never 400s. 65 536 matches the
+    // catalog's Gemini 2.5 Flash/Pro output limit — the previous 8 192 clamp silently HALVED
+    // Proto's 16 384 budget and guaranteed truncation (→ placeholder stub) on any moderate app.
+    // A model that still stops on MAX_TOKENS is recovered by chatWithContinuation upstream.
+    if (req.maxTokens !== undefined) generationConfig.maxOutputTokens = Math.min(req.maxTokens, 65536)
     if (Object.keys(generationConfig).length > 0) body.generationConfig = generationConfig
 
     const opts: PostOpts = {}

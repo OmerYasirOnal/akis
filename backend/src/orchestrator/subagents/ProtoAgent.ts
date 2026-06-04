@@ -3,6 +3,7 @@ import type { EventBus } from '../../events/bus.js'
 import type { RepoFile } from '../../di/MockGitHubAdapter.js'
 import type { ApprovedSpec } from '../../gates/specGate.js'
 import type { LlmProvider } from '../../agent/LlmProvider.js'
+import { chatWithContinuation } from '../../agent/continuation.js'
 import { nextTs } from '../../events/clock.js'
 import { parseAIJson } from './critic/json-extract.js'
 import { renderKnowledge } from './context-prompt.js'
@@ -92,13 +93,16 @@ export class ProtoAgent {
 
     let res
     try {
-      // A single non-streaming chat with an explicit, generous output budget — Proto returns the
+      // A non-streaming chat with an explicit, generous output budget — Proto returns the
       // whole app as one JSON reply that the parser below consumes in full.
       // maxTokens 16384: Proto writes the WHOLE app in one JSON reply, so a small budget truncates
       // it mid-string → unparseable JSON → a failed build (observed at both 4096 and 8192 on a
       // modern single-page app). 16384 fits a sizeable app and is well within every catalog model's
       // output limit (all Claude 4.x support ≥64k; OpenAI/Gemini providers clamp to their ceiling).
-      res = await this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: user }], maxTokens: 16384 })
+      // chatWithContinuation: if the reply STILL hits the cap (stopReason max_tokens/length/
+      // MAX_TOKENS), it auto-continues (bounded) and concatenates — a big multi-file app no
+      // longer silently degrades to the placeholder stub.
+      res = await chatWithContinuation(this.deps.provider, { system: this.base, messages: [{ role: 'user', content: user }], maxTokens: 16384 })
     } catch (err) {
       // A throwing provider must still CLOSE the event frame (failed tool_result +
       // agent_end) so the live stream never has an orphaned tool_call, then re-throw.
