@@ -74,11 +74,14 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // tab shows the auditable evidence behind the verified result.
   const [codeFiles, setCodeFiles] = useState<CodeArtifact['files'] | undefined>(undefined)
   const [testEvidence, setTestEvidence] = useState<TestEvidence | undefined>(undefined)
+  // UX honesty (B.5b): when this build EDITS a prior app (session.base set server-side), say
+  // so visibly — the user must never be surprised that agents merged over existing files.
+  const [editsBase, setEditsBase] = useState(false)
   useEffect(() => {
-    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); return }
+    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); return }
     let cancelled = false
     void api.getSession(sessionId)
-      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence) } })
+      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base) } })
       .catch(() => { /* Code/Trust tabs simply stay empty; surfaced nowhere else */ })
     return () => { cancelled = true }
   }, [sessionId, status, api])
@@ -92,11 +95,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     startingRef.current = true
     setBusy(true); setActionError(undefined); setStartingSpec(idea)
     try {
-      // Follow-up CHANGES edit the prior app (Phase B.5): when the conversation already
-      // shipped a build, the next approved spec EDITS that session's app (baseSessionId →
-      // agents see + merge over the existing files) instead of regenerating from scratch.
-      // "New build" resets sessionId, so a fresh conversation still starts from zero.
-      const baseId = sessionId && status === 'done' ? sessionId : undefined
+      // Follow-up CHANGES edit the prior app (Phase B.5): when the prior session PRODUCED
+      // CODE, the next approved spec EDITS that app (baseSessionId → agents see + merge over
+      // the existing files) instead of regenerating. The condition mirrors the backend's own
+      // guard (prior.code?.files.length — sessions.routes) via the already-fetched codeFiles,
+      // so a verify_failed/push_failed run with real code is editable too — not just 'done'.
+      // "New build" resets sessionId (and codeFiles), so a fresh conversation starts from zero.
+      const baseId = sessionId && codeFiles?.length ? sessionId : undefined
       const s = await api.startSession(idea, undefined, baseId)
       setSent(idea); setSessionId(s.id); setReopened(false); setStartingSpec(undefined)
       setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
@@ -183,6 +188,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   ) : null
   const workflowCard = sessionId ? (
     <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 shadow-[0_0_30px_rgba(124,58,237,0.08)]">
+      {/* Edit-mode disclosure (B.5b): this build MERGES over a prior app — never a surprise. */}
+      {editsBase && (
+        <div className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-400/[0.08] px-2 py-0.5 text-[11px] font-medium text-violet-200">
+          <span aria-hidden>🔁</span> {t('pipeline.editsBase')}
+        </div>
+      )}
       <RunPipeline
         view={live.view}
         onApprove={approve}

@@ -104,6 +104,72 @@ describe('ChatStudio', () => {
     expect(screen.getByText('Preview')).toBeInTheDocument()
   })
 
+  it('a follow-up approved spec EDITS the prior app: startSession carries baseSessionId once the prior session produced code', async () => {
+    const SPEC_REPLY_2 = 'Sure — here is the change 👇\n\n````akis-spec\n# QR App + Login\nAdds a login page.\n````'
+    let chatCalls = 0
+    const sessionBodies: Record<string, unknown>[] = []
+    const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) { chatCalls++; return { ok: true, status: 200, json: async () => ({ reply: chatCalls === 1 ? SPEC_REPLY : SPEC_REPLY_2 }), text: async () => '' } as unknown as Response }
+      if (path.endsWith('/sessions') && init?.method === 'POST') {
+        sessionBodies.push(JSON.parse(init.body as string) as Record<string, unknown>)
+        return { ok: true, status: 201, json: async () => ({ id: sessionBodies.length === 1 ? 's1' : 's2', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      // The codeFiles re-fetch: the prior session PRODUCED CODE (the edit condition mirrors
+      // the backend's code-presence guard, not a status gate).
+      if (path.endsWith('/sessions/s1')) return { ok: true, status: 200, json: async () => ({ id: 's1', status: 'done', code: { files: [{ filePath: 'index.html', content: '<html/>' }] }, version: 2 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/s2')) return { ok: true, status: 200, json: async () => ({ id: 's2', status: 'awaiting_spec_approval', base: { files: [{ filePath: 'index.html', content: '<html/>' }], fromSession: 's1' }, version: 1 }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    // Build #1 from the conversation (fresh — no base).
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    await waitFor(() => expect(sessionBodies.length).toBe(1))
+    expect(sessionBodies[0]).not.toHaveProperty('baseSessionId')
+
+    // Follow-up CHANGE in the same conversation → the next approved spec edits s1.
+    await userEvent.type(screen.getAllByLabelText(/ask akis/i)[0]!, 'add a login page{Enter}')
+    const approves = await screen.findAllByRole('button', { name: 'Approve & Build' })
+    await userEvent.click(approves[approves.length - 1]!)
+    await waitFor(() => expect(sessionBodies.length).toBe(2))
+    expect(sessionBodies[1]).toMatchObject({ baseSessionId: 's1' })
+    // UX honesty: the edit-mode disclosure badge renders for the new session.
+    await waitFor(() => expect(screen.getByText(/Editing the previous app/)).toBeInTheDocument())
+  })
+
+  it('a follow-up build does NOT carry baseSessionId when the prior session produced no code', async () => {
+    const SPEC_REPLY_2 = 'Second spec 👇\n\n````akis-spec\n# Other App\nDifferent.\n````'
+    let chatCalls = 0
+    const sessionBodies: Record<string, unknown>[] = []
+    const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) { chatCalls++; return { ok: true, status: 200, json: async () => ({ reply: chatCalls === 1 ? SPEC_REPLY : SPEC_REPLY_2 }), text: async () => '' } as unknown as Response }
+      if (path.endsWith('/sessions') && init?.method === 'POST') {
+        sessionBodies.push(JSON.parse(init.body as string) as Record<string, unknown>)
+        return { ok: true, status: 201, json: async () => ({ id: `s${sessionBodies.length}`, status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      // Prior session never produced code (e.g. parked at the spec gate) → no edit seed.
+      return { ok: true, status: 200, json: async () => ({ id: 's1', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    await waitFor(() => expect(sessionBodies.length).toBe(1))
+
+    await userEvent.type(screen.getAllByLabelText(/ask akis/i)[0]!, 'actually build something else{Enter}')
+    const approves = await screen.findAllByRole('button', { name: 'Approve & Build' })
+    await userEvent.click(approves[approves.length - 1]!)
+    await waitFor(() => expect(sessionBodies.length).toBe(2))
+    expect(sessionBodies[1]).not.toHaveProperty('baseSessionId')
+  })
+
   it('shows progress instead of a silent Starting button while session creation is pending', async () => {
     let resolveSession: ((r: Response) => void) | undefined
     const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
