@@ -8,7 +8,7 @@ import { useI18n } from '../i18n/I18nContext.js'
  * hands the spec to `onBuild`. The spec then flows through the UNCHANGED `startSession`
  * path → the same 4 structural gates + pipeline; this card holds no build authority.
  */
-export function SpecCard({ spec, onBuild }: { spec: string; onBuild: (spec: string) => void }) {
+export function SpecCard({ spec, onBuild, building }: { spec: string; onBuild: (spec: string) => void; building?: boolean }) {
   const { t } = useI18n()
 
   const download = (): void => {
@@ -38,9 +38,9 @@ export function SpecCard({ spec, onBuild }: { spec: string; onBuild: (spec: stri
           className="rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2 text-sm font-medium text-slate-200 hover:border-white/30">
           <span aria-hidden="true">⬇ </span>{t('spec.download')}
         </button>
-        <button type="button" onClick={() => onBuild(spec)}
-          className="rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-[0_0_20px_rgba(7,209,175,0.35)] hover:shadow-[0_0_28px_rgba(7,209,175,0.5)]">
-          <span aria-hidden="true">✓ </span>{t('spec.build')}
+        <button type="button" onClick={() => onBuild(spec)} disabled={building}
+          className="rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-[0_0_20px_rgba(7,209,175,0.35)] hover:shadow-[0_0_28px_rgba(7,209,175,0.5)] disabled:opacity-50">
+          <span aria-hidden="true">{building ? '⏳ ' : '✓ '}</span>{building ? t('spec.building') : t('spec.build')}
         </button>
       </div>
     </div>
