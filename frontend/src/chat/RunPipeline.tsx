@@ -92,6 +92,11 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
         <span className={`text-[9px] font-semibold uppercase tracking-wide ${TRUST_TINT[step.key]}`}>· {t(TRUST_ROLE[step.key])}</span>
       </div>
       <div className="min-h-[1rem] truncate text-[11px] text-slate-300" title={stat}>{stat ?? t(`pipeline.status.${step.status}`)}</div>
+      {/* Deploy is LOCKED until verification passes — make that gate visible, not just an absent
+          button: a user/investor should SEE that ship can't happen before the verifier mints. */}
+      {step.key === 'ship' && step.status === 'pending' && (
+        <div className="text-[10px] text-slate-500">🔒 {t('trust.deploy.locked')}</div>
+      )}
       {/* The generic gate action (approve / confirm). Suppressed when a push_failed recovery is
           showing, which renders its OWN labeled "retry" button below (also wired to onConfirm) —
           so there's never a duplicate Confirm. */}

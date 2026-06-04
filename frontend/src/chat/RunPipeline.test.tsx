@@ -28,6 +28,8 @@ describe('RunPipeline', () => {
     expect(screen.getByText('· Independent verifier')).toBeInTheDocument()
     expect(screen.getByText('· Human-approved')).toBeInTheDocument()
     expect(screen.getByText('· Your approval')).toBeInTheDocument()
+    // Deploy is visibly LOCKED until verification passes (not just an absent button).
+    expect(screen.getByText('🔒 Locked until verified')).toBeInTheDocument()
   })
 
   it('surfaces an Approve button on the spec step when the spec gate is awaiting', async () => {
