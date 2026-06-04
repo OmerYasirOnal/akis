@@ -256,6 +256,27 @@ describe('ProtoAgent', () => {
     expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_proto' && e.ok === false)).toBe(true)
     expect(seen.some(e => e.kind === 'agent_end' && e.agent === 'proto' && e.ok === false)).toBe(true)
   })
+
+  it('RECOVERS an output-cap truncation: max_tokens reply auto-continues and parses to REAL files (no placeholder)', async () => {
+    const spec = { title: 't', body: 'b' }
+    const session = { ...initialSession('s1', 'i'), spec, approval: approveSpec(spec) }
+    const approved = mintApprovedSpec(session)
+    // First reply hits the cap MID-STRING (the exact failure that used to ship a stub);
+    // the continuation completes it. parse() then sees the assembled, valid JSON.
+    const provider = scriptedProvider([
+      { text: '{"files":[{"filePath":"index.html","content":"<html>re', stopReason: 'max_tokens' },
+      { text: 'al</html>"}]}', stopReason: 'end_turn' },
+    ])
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const proto = new ProtoAgent({ bus, provider })
+    const out = await proto.run({ sessionId: 's1', laneId: 'main', approved })
+    expect(out.files).toEqual([{ filePath: 'index.html', content: '<html>real</html>' }])
+    expect(provider.calls.length).toBe(2)
+    // The recovered build reports HONEST success (parsed real files, not the stub).
+    expect(seen.some(e => e.kind === 'tool_result' && e.tool === 'dispatch_proto' && e.ok === true)).toBe(true)
+  })
 })
 
 describe('TraceAgent (verifier)', () => {
