@@ -21,12 +21,15 @@ export class PgSessionStore implements SessionStore {
   constructor(private db: SqlClient) {}
 
   async create(s: SessionState): Promise<void> {
+    // `base` (Phase B.5 edit-mode seed) is written ONLY here — it is set at session creation
+    // by the controlled API path and is NOT in PATCH_COLUMNS, so it is immutable thereafter.
     await this.db.query(
-      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, base, version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
       [
         s.id, s.status, s.idea, s.ownerId ?? null,
         toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken), toJson(s.testEvidence), toJson(s.passport),
+        toJson(s.base),
         s.version,
       ],
     )
@@ -129,7 +132,7 @@ function toJson(v: unknown): unknown {
  *  already parsed by `pg` into JS objects). */
 interface SessionRow {
   id: unknown; status: unknown; idea: unknown; owner_id: unknown
-  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; version: unknown
+  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; base: unknown; version: unknown
 }
 
 /**
@@ -158,6 +161,9 @@ function toSession(raw: Record<string, unknown>): SessionState {
     // ADDITIVE, NON-GATE: the signed Build Passport round-trips as plain jsonb (the Ed25519
     // signature lives INSIDE it; nothing to re-attach), so it persists on Postgres too.
     ...(r.passport != null ? { passport: r.passport as BuildPassport } : {}),
+    // ADDITIVE, NON-GATE, set-only-at-create: the Phase B.5 edit-mode seed round-trips as
+    // plain jsonb (data only — no capability), so edit-mode builds survive a Pg restart.
+    ...(r.base != null ? { base: r.base as NonNullable<SessionState['base']> } : {}),
     ...(r.approval != null ? { approval: r.approval as unknown as ApprovalToken } : {}),
     ...(r.verify_token != null ? { verifyToken: r.verify_token as unknown as VerifyToken } : {}),
   }

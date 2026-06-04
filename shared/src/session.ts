@@ -113,6 +113,14 @@ export interface SessionState {
   approval?: ApprovalToken
   code?: CodeArtifact
   /**
+   * EDIT MODE (Phase B.5): the prior app this build EDITS, seeded from an earlier session's
+   * shipped `code.files` (owner-checked at the API). Proto sees these files and returns only
+   * what it changes/adds; the orchestrator merges Proto's output OVER this base so unchanged,
+   * already-approved files survive a follow-up build instead of being regenerated or lost.
+   * Data only — carries no gate capability; every structural gate applies unchanged.
+   */
+  base?: { files: CodeArtifact['files']; fromSession: string }
+  /**
    * Gate 3: verification is the PRESENCE of a branded VerifyToken (real ≥1-test
    * pass), never a free boolean. The brand cannot be written as a literal, so the
    * store cannot be made to claim verification. Persisted, so it survives restart.

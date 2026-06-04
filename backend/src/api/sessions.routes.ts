@@ -75,7 +75,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const notFound = (reply: FastifyReply, id: string): FastifyReply =>
     reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
 
-  app.post<{ Body: { idea?: string; workflowId?: string } }>('/sessions', async (req, reply) => {
+  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string } }>('/sessions', async (req, reply) => {
     const idea = typeof req.body?.idea === 'string' ? req.body.idea.trim() : ''
     if (!idea) return reply.code(400).send({ error: 'idea required', code: 'BadRequest' })
     let orch = orchestrator
@@ -85,9 +85,19 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       if (!wf) return reply.code(404).send({ error: `workflow ${workflowId} not found`, code: 'NotFound' })
       orch = deps.makeOrchestrator(wf)
     }
+    // EDIT MODE (Phase B.5): seed the new build with a prior session's app so it is EDITED,
+    // not regenerated. Owner-scoped exactly like every other session read (404 for non-owner,
+    // so a foreign session's existence — let alone its code — is never confirmed).
+    let base: { files: { filePath: string; content: string }[]; fromSession: string } | undefined
+    const baseSessionId = req.body?.baseSessionId
+    if (typeof baseSessionId === 'string' && baseSessionId) {
+      const prior = await accessibleSession(req, baseSessionId)
+      if (!prior) return notFound(reply, baseSessionId)
+      if (prior.code?.files.length) base = { files: prior.code.files, fromSession: prior.id }
+    }
     try {
       const ownerId = deps.userIdOf?.(req)
-      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}) })
+      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(base ? { base } : {}) })
       if (orch !== orchestrator) bound.set(s.id, orch)
       return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }

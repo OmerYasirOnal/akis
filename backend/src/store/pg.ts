@@ -67,6 +67,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   verify_token  jsonb,
   test_evidence jsonb,
   passport      jsonb,
+  base          jsonb,
   version       integer NOT NULL DEFAULT 0,
   created_at    timestamptz NOT NULL DEFAULT now()
 )`
@@ -74,6 +75,10 @@ CREATE TABLE IF NOT EXISTS sessions (
 /** Idempotent migration for pre-existing sessions tables: add the additive, NON-GATE
  *  `test_evidence` jsonb column (no constraint, nullable) so an upgraded DB persists evidence. */
 export const ADD_TEST_EVIDENCE = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS test_evidence jsonb`
+
+/** Idempotent migration for pre-existing sessions tables: add the additive, NON-GATE, set-only-
+ *  at-create `base` jsonb column (Phase B.5 edit-mode seed) so an upgraded DB persists it. */
+export const ADD_BASE = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS base jsonb`
 
 /** Idempotent migration for pre-existing sessions tables: add the additive, NON-GATE
  *  `passport` jsonb column (nullable) so an upgraded DB persists the signed Build Passport. */
@@ -140,6 +145,7 @@ const MIGRATIONS: readonly string[] = [
   CREATE_SESSIONS_TABLE,
   ADD_TEST_EVIDENCE,
   ADD_PASSPORT,
+  ADD_BASE,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,
   CREATE_VECTOR_CHUNKS_TABLE,
