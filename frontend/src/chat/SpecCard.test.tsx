@@ -22,6 +22,33 @@ describe('SpecCard', () => {
     expect(onBuild).toHaveBeenCalledWith(spec)
   })
 
+  it('lets the user edit the spec before approving the workflow', async () => {
+    const onBuild = vi.fn()
+    renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Edit spec' }))
+    const editor = screen.getByLabelText('Edit spec')
+    await userEvent.clear(editor)
+    await userEvent.type(editor, '# Edited App{enter}Better body')
+    await userEvent.click(screen.getByRole('button', { name: 'Save edits' }))
+    expect(screen.getByRole('heading', { name: 'Edited App' })).toBeInTheDocument()
+
+    await userEvent.click(screen.getByRole('button', { name: 'Approve & Build' }))
+    expect(onBuild).toHaveBeenCalledWith('# Edited App\nBetter body')
+  })
+
+  it('locks the edited spec once that edited text starts the workflow', async () => {
+    const onBuild = vi.fn()
+    const { rerender } = renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Edit spec' }))
+    await userEvent.clear(screen.getByLabelText('Edit spec'))
+    await userEvent.type(screen.getByLabelText('Edit spec'), '# Edited App{enter}Better body')
+    await userEvent.click(screen.getByRole('button', { name: 'Save edits' }))
+
+    rerender(<I18nProvider><SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} startedSpec={'# Edited App\nBetter body'} /></I18nProvider>)
+    const btn = screen.getByRole('button', { name: 'Workflow started' })
+    expect(btn).toBeDisabled()
+  })
+
   it('while building: shows a disabled "Starting…" button (instant click feedback, no re-fire)', async () => {
     const onBuild = vi.fn()
     renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} building />)
@@ -32,12 +59,23 @@ describe('SpecCard', () => {
     expect(onBuild).not.toHaveBeenCalled()
   })
 
+  it('after the workflow starts: locks the build action so the same spec cannot re-fire', async () => {
+    const onBuild = vi.fn()
+    renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} started />)
+    const btn = screen.getByRole('button', { name: 'Workflow started' })
+    expect(btn).toBeDisabled()
+    await userEvent.click(btn)
+    expect(onBuild).not.toHaveBeenCalled()
+  })
+
   describe('Download .md', () => {
     let created: string[] = []
     let lastAnchor: HTMLAnchorElement | undefined
     let blobText = ''
     beforeEach(() => {
       created = []
+      lastAnchor = undefined
+      blobText = ''
       // Capture the Blob URL + the anchor click (jsdom has no real download).
       vi.stubGlobal('URL', {
         ...URL,
@@ -67,6 +105,18 @@ describe('SpecCard', () => {
       renderI18n(<SpecCard spec={'just a body, no heading'} onBuild={() => {}} />)
       await userEvent.click(screen.getByRole('button', { name: 'Download .md' }))
       expect(lastAnchor?.download).toBe('akis-spec.md')
+    })
+
+    it('downloads the saved edited spec, not the original AKIS text', async () => {
+      renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={() => {}} />)
+      await userEvent.click(screen.getByRole('button', { name: 'Edit spec' }))
+      await userEvent.clear(screen.getByLabelText('Edit spec'))
+      await userEvent.type(screen.getByLabelText('Edit spec'), '# Edited App{enter}Better body')
+      await userEvent.click(screen.getByRole('button', { name: 'Save edits' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Download .md' }))
+      expect(lastAnchor?.download).toBe('edited-app.md')
+      await Promise.resolve()
+      expect(blobText).toBe('# Edited App\nBetter body')
     })
   })
 })

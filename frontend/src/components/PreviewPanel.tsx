@@ -140,7 +140,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
             // the AKIS origin (session cookie, parent DOM). allow-scripts in an opaque
             // origin is enough to run a self-contained app. (Apps needing real same-origin
             // storage are a deferred cross-origin-preview hardening.)
-            <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-popups" />
+            <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
           ) : previewError ? (
             // A failed/unsupported boot is a RECOVERABLE failure — never a silent collapse to the
             // empty state. Show a rose card with the backend's reason as TEXT (XSS-safe, no HTML)

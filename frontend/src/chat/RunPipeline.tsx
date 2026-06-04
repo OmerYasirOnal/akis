@@ -15,6 +15,26 @@ const STEP_LABEL: Record<PipelineStepKey, StringKey> = {
 }
 const STEP_NO: Record<PipelineStepKey, string> = { spec: '①', build: '②', review: '③', verify: '④', ship: '⑤' }
 
+/** The TRUST ROLE each step plays — what makes AKIS legibly trustworthy rather than just fast.
+ *  Surfacing producer↔verifier SEPARATION (Builder vs Independent verifier) and the human gates
+ *  is the differentiator vs a generic prompt-to-app clone (capability-token gates, not undo buttons). */
+const TRUST_ROLE: Record<PipelineStepKey, StringKey> = {
+  spec: 'trust.role.spec',
+  build: 'trust.role.builder',
+  review: 'trust.role.critic',
+  verify: 'trust.role.verifier',
+  ship: 'trust.role.deploy',
+}
+/** Distinct tints so the producer (Builder, violet) and the INDEPENDENT verifier (emerald) read as
+ *  different actors at a glance — the human gates are teal. */
+const TRUST_TINT: Record<PipelineStepKey, string> = {
+  spec: 'text-[#07D1AF]/80',
+  build: 'text-violet-300/80',
+  review: 'text-amber-300/70',
+  verify: 'text-emerald-300/90',
+  ship: 'text-[#07D1AF]/80',
+}
+
 /** Translate a derivePipeline `stat` token into a localized fragment. Falls back to the raw
  *  token (e.g. a provider name like "anthropic") which has no catalogue key. */
 function statText(t: (k: StringKey) => string, stat: string | undefined): string | undefined {
@@ -67,10 +87,16 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
         <span className="truncate text-xs font-semibold text-slate-100">{t(STEP_LABEL[step.key])}</span>
         <span className={`ml-auto h-1.5 w-1.5 shrink-0 rounded-full ${v.dot}`} title={t(`pipeline.status.${step.status}`)} />
       </div>
-      <div className="flex items-baseline gap-1.5">
+      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
         <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{agentName(step.role)}</span>
+        <span className={`text-[9px] font-semibold uppercase tracking-wide ${TRUST_TINT[step.key]}`}>· {t(TRUST_ROLE[step.key])}</span>
       </div>
       <div className="min-h-[1rem] truncate text-[11px] text-slate-300" title={stat}>{stat ?? t(`pipeline.status.${step.status}`)}</div>
+      {/* Deploy is LOCKED until verification passes — make that gate visible, not just an absent
+          button: a user/investor should SEE that ship can't happen before the verifier mints. */}
+      {step.key === 'ship' && step.status === 'pending' && (
+        <div className="text-[10px] text-slate-500"><span aria-hidden>🔒</span> {t('trust.deploy.locked')}</div>
+      )}
       {/* The generic gate action (approve / confirm). Suppressed when a push_failed recovery is
           showing, which renders its OWN labeled "retry" button below (also wired to onConfirm) —
           so there's never a duplicate Confirm. */}
@@ -181,6 +207,17 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
             className="shrink-0 rounded-md border border-rose-400/40 px-2 py-0.5 text-[11px] font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-40">
             {t('run.stop')}
           </button>
+        )}
+      </div>
+
+      {/* The trust headline — states the structural moat in one line so it's legible at a glance:
+          these are guarantees enforced by construction (gates + producer/verifier seam), not copy.
+          HONESTY: in a demo run the structural gates are STILL real, but the test RESULTS are
+          simulated — say so right here, co-located with the trust copy, so "verified" can't mislead. */}
+      <div className="rounded-lg border border-[#07D1AF]/15 bg-[#07D1AF]/[0.04] px-3 py-1.5 text-[10.5px] leading-snug text-slate-400">
+        <span className="text-[#07D1AF]/80" aria-hidden>🛡</span> {t('trust.headline')}
+        {view.tests.demo && (
+          <div className="mt-1 text-amber-300/80"><span aria-hidden>⚠</span> {t('trust.headline.demo')}</div>
         )}
       </div>
 

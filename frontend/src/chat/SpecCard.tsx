@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { Markdown } from '../components/Markdown.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
@@ -8,15 +9,23 @@ import { useI18n } from '../i18n/I18nContext.js'
  * hands the spec to `onBuild`. The spec then flows through the UNCHANGED `startSession`
  * path → the same 4 structural gates + pipeline; this card holds no build authority.
  */
-export function SpecCard({ spec, onBuild, building }: { spec: string; onBuild: (spec: string) => void; building?: boolean }) {
+export function SpecCard({ spec, onBuild, building, started, startedSpec }: { spec: string; onBuild: (spec: string) => void; building?: boolean; started?: boolean; startedSpec?: string | undefined }) {
   const { t } = useI18n()
+  const [committedSpec, setCommittedSpec] = useState(spec)
+  const [draft, setDraft] = useState(spec)
+  const [editing, setEditing] = useState(false)
+  useEffect(() => { setCommittedSpec(spec); setDraft(spec); setEditing(false) }, [spec])
+  const cleanDraft = draft.trim()
+  const currentSpec = editing ? (cleanDraft || committedSpec) : committedSpec
+  const isStarted = !!started || (!!startedSpec && startedSpec.trim() === currentSpec.trim())
+  const canEdit = !building && !isStarted
 
   const download = (): void => {
-    const blob = new Blob([spec], { type: 'text/markdown;charset=utf-8' })
+    const blob = new Blob([currentSpec], { type: 'text/markdown;charset=utf-8' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = `${slugFromSpec(spec)}.md`
+    a.download = `${slugFromSpec(currentSpec)}.md`
     a.click()
     URL.revokeObjectURL(url)
   }
@@ -31,16 +40,42 @@ export function SpecCard({ spec, onBuild, building }: { spec: string; onBuild: (
         </div>
       </div>
       <div className="max-h-80 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 px-4 py-3">
-        <Markdown content={spec} />
+        {editing ? (
+          <textarea
+            aria-label={t('spec.editLabel')}
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            className="min-h-72 w-full resize-y bg-transparent text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500"
+          />
+        ) : (
+          <Markdown content={currentSpec} />
+        )}
       </div>
       <div className="mt-3 flex flex-wrap gap-2">
+        {canEdit && (editing ? (
+          <>
+            <button type="button" onClick={() => { setDraft(committedSpec); setEditing(false) }}
+              className="rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2 text-sm font-medium text-slate-200 hover:border-white/30">
+              {t('spec.cancel')}
+            </button>
+            <button type="button" onClick={() => { setCommittedSpec(cleanDraft); setDraft(cleanDraft); setEditing(false) }} disabled={!cleanDraft}
+              className="rounded-xl border border-teal-400/30 bg-teal-400/10 px-3 py-2 text-sm font-semibold text-teal-200 hover:bg-teal-400/20 disabled:opacity-40">
+              {t('spec.save')}
+            </button>
+          </>
+        ) : (
+          <button type="button" onClick={() => setEditing(true)}
+            className="rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2 text-sm font-medium text-slate-200 hover:border-white/30">
+            {t('spec.edit')}
+          </button>
+        ))}
         <button type="button" onClick={download}
           className="rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2 text-sm font-medium text-slate-200 hover:border-white/30">
           <span aria-hidden="true">⬇ </span>{t('spec.download')}
         </button>
-        <button type="button" onClick={() => onBuild(spec)} disabled={building}
+        <button type="button" onClick={() => onBuild(currentSpec)} disabled={building || isStarted || !currentSpec.trim()}
           className="rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-900 shadow-[0_0_20px_rgba(7,209,175,0.35)] hover:shadow-[0_0_28px_rgba(7,209,175,0.5)] disabled:opacity-50">
-          <span aria-hidden="true">{building ? '⏳ ' : '✓ '}</span>{building ? t('spec.building') : t('spec.build')}
+          <span aria-hidden="true">{isStarted ? '↪ ' : building ? '⏳ ' : '✓ '}</span>{isStarted ? t('spec.started') : building ? t('spec.building') : t('spec.build')}
         </button>
       </div>
     </div>
