@@ -19,6 +19,13 @@ describe('ApiClient', () => {
     expect(JSON.parse(init!.body as string)).toEqual({ idea: 'todo app' })
   })
 
+  it('startSession carries baseSessionId for a follow-up EDIT build (omitted when absent)', async () => {
+    const f = mockFetch(201, { id: 's2', status: 'awaiting_spec_approval', version: 1 })
+    const api = new ApiClient('', f)
+    await api.startSession('add a login page', undefined, 'prior-1')
+    expect(JSON.parse(f.mock.calls[0]![1]!.body as string)).toEqual({ idea: 'add a login page', baseSessionId: 'prior-1' })
+  })
+
   it('approve/run/confirm hit the right endpoints', async () => {
     const f = mockFetch(200, { id: 's1', status: 'building', version: 2 })
     const api = new ApiClient('', f)

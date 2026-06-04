@@ -19,6 +19,7 @@ export const STRINGS = {
     'chat.new': 'New build',
     // ── Run pipeline (studio redesign) ──
     'pipeline.title': 'Pipeline',
+    'pipeline.editsBase': 'Editing the previous app — changes merge over its files',
     'pipeline.step.spec': 'Spec',
     'pipeline.step.build': 'Build',
     'pipeline.step.review': 'Review',
@@ -594,6 +595,7 @@ export const STRINGS = {
     'chat.new': 'Yeni geliştirme',
     // ── Çalışma hattı (stüdyo yeniden tasarımı) ──
     'pipeline.title': 'Hat',
+    'pipeline.editsBase': 'Önceki uygulama düzenleniyor — değişiklikler dosyaların üzerine işlenir',
     'pipeline.step.spec': 'Spec',
     'pipeline.step.build': 'İnşa',
     'pipeline.step.review': 'İnceleme',
