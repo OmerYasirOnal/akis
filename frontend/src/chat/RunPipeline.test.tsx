@@ -22,6 +22,14 @@ describe('RunPipeline', () => {
     }
   })
 
+  it('makes the trust roles legible — producer (Builder) and INDEPENDENT verifier read as distinct actors', () => {
+    render(wrap(<RunPipeline view={emptyView('s1')} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByText('· Builder')).toBeInTheDocument()
+    expect(screen.getByText('· Independent verifier')).toBeInTheDocument()
+    expect(screen.getByText('· Human-approved')).toBeInTheDocument()
+    expect(screen.getByText('· Your approval')).toBeInTheDocument()
+  })
+
   it('surfaces an Approve button on the spec step when the spec gate is awaiting', async () => {
     const onApprove = vi.fn()
     const view = viewWith({ status: 'running', gates: { specApproval: { gate: 'spec_approval', state: 'awaiting' } } })

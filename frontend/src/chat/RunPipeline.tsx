@@ -15,6 +15,26 @@ const STEP_LABEL: Record<PipelineStepKey, StringKey> = {
 }
 const STEP_NO: Record<PipelineStepKey, string> = { spec: '①', build: '②', review: '③', verify: '④', ship: '⑤' }
 
+/** The TRUST ROLE each step plays — what makes AKIS legibly trustworthy rather than just fast.
+ *  Surfacing producer↔verifier SEPARATION (Builder vs Independent verifier) and the human gates
+ *  is the differentiator vs a generic prompt-to-app clone (capability-token gates, not undo buttons). */
+const TRUST_ROLE: Record<PipelineStepKey, StringKey> = {
+  spec: 'trust.role.spec',
+  build: 'trust.role.builder',
+  review: 'trust.role.critic',
+  verify: 'trust.role.verifier',
+  ship: 'trust.role.deploy',
+}
+/** Distinct tints so the producer (Builder, violet) and the INDEPENDENT verifier (emerald) read as
+ *  different actors at a glance — the human gates are teal. */
+const TRUST_TINT: Record<PipelineStepKey, string> = {
+  spec: 'text-[#07D1AF]/80',
+  build: 'text-violet-300/80',
+  review: 'text-amber-300/70',
+  verify: 'text-emerald-300/90',
+  ship: 'text-[#07D1AF]/80',
+}
+
 /** Translate a derivePipeline `stat` token into a localized fragment. Falls back to the raw
  *  token (e.g. a provider name like "anthropic") which has no catalogue key. */
 function statText(t: (k: StringKey) => string, stat: string | undefined): string | undefined {
@@ -67,8 +87,9 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
         <span className="truncate text-xs font-semibold text-slate-100">{t(STEP_LABEL[step.key])}</span>
         <span className={`ml-auto h-1.5 w-1.5 shrink-0 rounded-full ${v.dot}`} title={t(`pipeline.status.${step.status}`)} />
       </div>
-      <div className="flex items-baseline gap-1.5">
+      <div className="flex flex-wrap items-baseline gap-x-1.5 gap-y-0.5">
         <span className="text-[10px] font-medium uppercase tracking-wide text-slate-400">{agentName(step.role)}</span>
+        <span className={`text-[9px] font-semibold uppercase tracking-wide ${TRUST_TINT[step.key]}`}>· {t(TRUST_ROLE[step.key])}</span>
       </div>
       <div className="min-h-[1rem] truncate text-[11px] text-slate-300" title={stat}>{stat ?? t(`pipeline.status.${step.status}`)}</div>
       {/* The generic gate action (approve / confirm). Suppressed when a push_failed recovery is
