@@ -28,10 +28,13 @@ function renderBase(files: RepoFile[]): string {
   const listing = files.map(f => `--- ${f.filePath} ---\n${f.content}`).join('\n\n')
   return [
     '',
-    'EDIT MODE — this build MODIFIES the existing app below. Rules:',
+    'EDIT MODE — this build MODIFIES the existing app below. These rules OVERRIDE the base',
+    'instruction to "produce a COMPLETE app": here, COMPLETE means base files + your emission',
+    'merged together — the system keeps every file you do not emit. The JSON reply format is unchanged.',
     '1) Return ONLY the files you CHANGE or ADD (each with its FULL final content). Do NOT re-emit unchanged files — they are kept automatically.',
     '2) NEVER rewrite the whole app from scratch; preserve its working structure, style and behavior except where the spec asks for changes.',
     '3) Keep every emitted file consistent with the files you did not emit (imports, ids, script/css references).',
+    '4) Files cannot be DELETED by omission. If the spec requires removing a feature, edit the affected files so the feature is gone (you may leave a file empty if truly obsolete).',
     '',
     'CURRENT APP FILES:',
     listing,

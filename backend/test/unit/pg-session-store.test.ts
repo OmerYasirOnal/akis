@@ -61,6 +61,35 @@ describe('PgSessionStore', () => {
     expect(await new PgSessionStore(db).get('nope')).toBeUndefined()
   })
 
+  it('persists the edit-mode `base` on create and round-trips it through get() (Phase B.5)', async () => {
+    const base = { files: [{ filePath: 'index.html', content: '<html>v1</html>' }], fromSession: 'prior' }
+    const { db, calls } = fakeDb([
+      { match: s => s.startsWith('INSERT'), rows: () => [] },
+      { match: s => s.startsWith('SELECT'), rows: () => [dbRow({ base })] },
+    ])
+    const store = new PgSessionStore(db)
+    await store.create(baseSession({ base }))
+    const insert = calls.find(c => c.text.startsWith('INSERT'))!
+    // The INSERT carries the base column (jsonb) — it is NOT silently dropped on Postgres.
+    expect(insert.text).toMatch(/\bbase\b/)
+    expect(insert.params.some(p => p != null && JSON.stringify(p).includes('prior'))).toBe(true)
+    // …and it round-trips back to SessionState.base.
+    const got = await store.get('s1')
+    expect(got!.base).toEqual(base)
+  })
+
+  it('`base` is NOT writable via the generic update() (set-only-at-create, like the gate columns)', async () => {
+    const { db, calls } = fakeDb([
+      { match: s => s.startsWith('UPDATE'), rows: () => [dbRow({ version: 1 })] },
+    ])
+    // SessionPatch excludes `base` at the type level; assert the RUNTIME allowlist too
+    // (a polluted patch object sneaking `base` through must be ignored, not written).
+    const polluted = { status: 'building', base: { files: [], fromSession: 'evil' } } as unknown as Parameters<PgSessionStore['update']>[1]
+    await new PgSessionStore(db).update('s1', polluted, 0)
+    const upd = calls.find(c => c.text.startsWith('UPDATE'))!
+    expect(upd.text).not.toMatch(/base = /)
+  })
+
   it('update() bumps the version via optimistic UPDATE ... WHERE id AND version', async () => {
     const { db, calls } = fakeDb([
       { match: s => s.startsWith('UPDATE'), rows: () => [dbRow({ status: 'building', version: 1 })] },

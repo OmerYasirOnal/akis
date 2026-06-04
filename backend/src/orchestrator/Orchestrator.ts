@@ -214,7 +214,10 @@ export class Orchestrator {
     // EDIT MODE (Phase B.5): a session seeded with a base app EDITS it — Proto sees the
     // current files and emits only what it changes/adds; merging restores the FULL app so
     // the validator, critic and store always see the whole application (gates unchanged).
-    const baseFiles = session.base?.files
+    // On iterate, the base EVOLVES to the latest merged candidate so the critic's feedback
+    // (which describes the candidate) and the files Proto sees stay consistent. A fresh
+    // build (no base) keeps today's full-regeneration iterate semantics, byte-identical.
+    let baseFiles = session.base?.files
     for (;;) {
       const protoCtx = await this.ctx(id, `${approved.spec.title}\n${approved.spec.body}`)
       const proto = await this.s.proto.run({
@@ -265,6 +268,10 @@ export class Orchestrator {
       }
       attempt++
       feedback = review.data.summary
+      // Edit-mode only: the next attempt edits the REJECTED CANDIDATE (what the feedback
+      // describes), not the original base — otherwise Proto's view and the critic's
+      // feedback would drift apart on every iteration.
+      if (baseFiles?.length) baseFiles = candidate
       this.narrate(id, `Iterating (attempt ${attempt}) on Proto with feedback.`)
     }
 

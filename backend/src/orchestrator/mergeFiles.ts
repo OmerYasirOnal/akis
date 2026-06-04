@@ -11,6 +11,11 @@ import type { RepoFile } from '../di/MockGitHubAdapter.js'
  *
  * The merged result — the WHOLE app — is what flows to the validator, the critic, and the
  * store, so review and verification always see the full application, never a fragment.
+ *
+ * KNOWN LIMITATION (documented, by design): DELETION is impossible — an omitted base file is
+ * kept, never removed, so Proto can't destroy approved work by under-emitting. "Remove the X
+ * feature" is handled by EDITING the affected files (the edit-mode prompt says so explicitly);
+ * true file deletion would need an explicit, reviewable delete list (future work, not silent).
  */
 export function mergeFiles(base: readonly RepoFile[] | undefined, emitted: readonly RepoFile[]): RepoFile[] {
   if (!base || base.length === 0) return [...emitted]

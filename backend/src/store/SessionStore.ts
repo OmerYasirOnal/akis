@@ -6,9 +6,11 @@ import type { SessionState, ApprovalToken, VerifyToken } from '@akis/shared'
  *
  * The gate-bearing fields (`approval`, `verifyToken`) are NOT writable through
  * the generic `update` patch — they have dedicated methods, so a stray
- * `store.update({...})` cannot fabricate approval or verification.
+ * `store.update({...})` cannot fabricate approval or verification. `base` (the
+ * Phase B.5 edit-mode seed) is likewise excluded: set ONLY at session creation
+ * via the controlled API path, immutable thereafter.
  */
-export type SessionPatch = Partial<Omit<SessionState, 'approval' | 'verifyToken' | 'id' | 'version'>>
+export type SessionPatch = Partial<Omit<SessionState, 'approval' | 'verifyToken' | 'id' | 'version' | 'base'>>
 
 export interface SessionStore {
   create(s: SessionState): Promise<void>
