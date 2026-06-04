@@ -96,14 +96,33 @@ function tailForReason(tail: string | undefined): string {
   return ` — ${lines.slice(-600)}`
 }
 
-/** Real readiness probe: a 200-ish response from the loopback port. */
-const defaultProbe: Probe = port => new Promise(res => {
-  void import('node:http').then(({ get }) => {
-    const req = get({ host: '127.0.0.1', port, path: '/', timeout: 1000 }, r => { r.resume(); res((r.statusCode ?? 500) < 500) })
-    req.on('error', () => res(false))
-    req.on('timeout', () => { req.destroy(); res(false) })
+/** Phase A of the readiness probe: is anything BOUND on the port? A raw TCP connect is far
+ *  cheaper than an HTTP request and fails in microseconds while the server is still booting —
+ *  so the probe loop wastes no HTTP machinery before the process has even bound the socket. */
+const tcpOpen = (port: number): Promise<boolean> => new Promise(res => {
+  void import('node:net').then(({ connect }) => {
+    const sock = connect({ host: '127.0.0.1', port }, () => { sock.destroy(); res(true) })
+    sock.setTimeout(500, () => { sock.destroy(); res(false) })
+    // destroy() on the ERROR path too (PR #101 review): probes run in a loop across many
+    // sessions — an undestroyed errored socket leaks an FD per failed probe (EMFILE under load).
+    sock.on('error', () => { sock.destroy(); res(false) })
   }).catch(() => res(false))
 })
+
+/** Real readiness probe, TWO-PHASE (research: probe-hardening): (A) TCP connect — cheap "is it
+ *  bound yet"; only then (B) one HTTP GET `/`. ANY HTTP answer < 500 counts as ready — readiness
+ *  means "the server answers", not "the app is verified" (the boot-smoke VERIFY probes apply the
+ *  stricter <400 rule separately). */
+const defaultProbe: Probe = async port => {
+  if (!(await tcpOpen(port))) return false
+  return new Promise(res => {
+    void import('node:http').then(({ get }) => {
+      const req = get({ host: '127.0.0.1', port, path: '/', timeout: 1000 }, r => { r.resume(); res((r.statusCode ?? 500) < 500) })
+      req.on('error', () => res(false))
+      req.on('timeout', () => { req.destroy(); res(false) })
+    }).catch(() => res(false))
+  })
+}
 
 /**
  * Tracks the running preview per session: install deps (sandbox, scripts blocked) →
@@ -163,7 +182,14 @@ export class PreviewRegistry {
 
     const attempts = this.deps.probeAttempts ?? (Number(process.env.AKIS_PREVIEW_PROBE_ATTEMPTS) || 60)
     const interval = this.deps.probeIntervalMs ?? 250
-    for (let i = 0; i < attempts; i++) {
+    // Total budget keeps the attempts×interval CONTRACT (tests configure both), but the wait
+    // between probes grows exponentially (capped at 4× the base): early probes are tight so a
+    // fast Express/vite boot is detected in ~100-500ms, late ones back off so a slow `next dev`
+    // boot isn't hammered — same budget, fewer wasted cycles (research: probe-hardening).
+    const budgetMs = attempts * interval
+    const started = Date.now()
+    let delay = interval
+    for (;;) {
       if (earlyExit) {
         releasePort(port); this.procs.delete(sessionId)
         await teardown(dir).catch(() => {})
@@ -172,7 +198,9 @@ export class PreviewRegistry {
       if (await this.probe(port)) {
         return this.set({ sessionId, status: 'ready', dir, port, url: `/preview/${sessionId}/` })
       }
-      await new Promise(r => setTimeout(r, interval))
+      if (Date.now() - started >= budgetMs) break
+      await new Promise(r => setTimeout(r, Math.min(delay, budgetMs - (Date.now() - started))))
+      delay = Math.min(delay * 1.5, interval * 4)
     }
     proc.kill(); releasePort(port); this.procs.delete(sessionId)
     await teardown(dir).catch(() => {})
