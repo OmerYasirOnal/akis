@@ -237,7 +237,18 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     }
     providerName = opts.providerName ?? provider.name
   } else {
-    generateText = makeGenerateText(provider)
+    // MODEL RIGHT-SIZING (latency, task #50): the critic reviews — it doesn't author —
+    // so a workflow may bind it to a faster/cheaper model exactly like scribe/proto.
+    // Precedence: explicit criticProvider > agentModels.critic > the shared provider.
+    const criticBinding = opts.agentModels?.critic
+    const criticProvider = criticBinding
+      ? createProvider({
+          provider: criticBinding.provider,
+          ...(criticBinding.model !== undefined ? { model: criticBinding.model } : {}),
+          ...(opts.keyStore ? { keyStore: opts.keyStore } : {}),
+        })
+      : provider
+    generateText = makeGenerateText(criticProvider)
     providerName = opts.providerName ?? provider.name
   }
 

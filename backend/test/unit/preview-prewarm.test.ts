@@ -1,0 +1,99 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { EventBus } from '../../src/events/bus.js'
+import { wirePreviewPrewarm } from '../../src/api/preview.routes.js'
+import { nextTs } from '../../src/events/clock.js'
+import type { PreviewRegistry, PreviewEntry } from '../../src/preview/PreviewRegistry.js'
+import type { SessionStore } from '../../src/store/SessionStore.js'
+
+const FILES = [{ filePath: 'index.html', content: '<html>app</html>' }]
+
+function fakes(opts?: { existing?: PreviewEntry; files?: typeof FILES | [] }) {
+  const start = vi.fn(async (id: string, dir: string, type: string): Promise<PreviewEntry> => ({ sessionId: id, status: 'ready', dir, ...(type ? { type: type as NonNullable<PreviewEntry['type']> } : {}) }))
+  const registry = {
+    start,
+    get: vi.fn(() => opts?.existing),
+  } as unknown as PreviewRegistry
+  const store = {
+    get: vi.fn(async () => ({ id: 's1', code: { files: opts?.files ?? FILES } })),
+  } as unknown as SessionStore
+  return { registry, store, start }
+}
+
+const done = (sessionId: string) => ({ kind: 'done' as const, verified: true, provider: 'mock', agent: 'orchestrator' as const, laneId: 'main', sessionId, ts: nextTs() })
+
+const settle = (): Promise<void> => new Promise(r => setTimeout(r, 20))
+
+describe('wirePreviewPrewarm (ship-time boot, task #50 perceived latency)', () => {
+  // startPreviewForSession MATERIALIZES real files — isolate the workspace dir per test
+  // (tests must never touch the real ~/.akis).
+  let wsDir: string
+  let prevEnv: string | undefined
+  beforeEach(() => {
+    wsDir = mkdtempSync(join(tmpdir(), 'akis-prewarm-'))
+    prevEnv = process.env.AKIS_WORKSPACES_DIR
+    process.env.AKIS_WORKSPACES_DIR = wsDir
+  })
+  afterEach(() => {
+    if (prevEnv === undefined) delete process.env.AKIS_WORKSPACES_DIR
+    else process.env.AKIS_WORKSPACES_DIR = prevEnv
+    rmSync(wsDir, { recursive: true, force: true })
+  })
+
+  it('the done event triggers a fire-and-forget preview start for the shipped session', async () => {
+    const bus = new EventBus()
+    const { registry, store, start } = fakes()
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
+    await settle()
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(start.mock.calls[0]?.[0]).toBe('s1')
+    expect(start.mock.calls[0]?.[2]).toBe('static')
+  })
+
+  it('NON-done events never trigger a boot', async () => {
+    const bus = new EventBus()
+    const { registry, store, start } = fakes()
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main', sessionId: 's1', ts: nextTs() })
+    await settle()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('an already-running preview is NEVER replaced (the user may be interacting with it)', async () => {
+    const bus = new EventBus()
+    const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'ready', dir: '/x' } })
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
+    await settle()
+    expect(start).not.toHaveBeenCalled()
+  })
+
+  it('a session with no produced code is a silent no-op (and a throwing start cannot crash the tap)', async () => {
+    const bus = new EventBus()
+    const { registry, store, start } = fakes({ files: [] })
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
+    await settle()
+    expect(start).not.toHaveBeenCalled()
+    // throwing start: must not unhandled-reject
+    const { registry: r2, store: s2 } = fakes()
+    ;(r2.start as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('boom'))
+    const bus2 = new EventBus()
+    wirePreviewPrewarm(bus2, s2, r2)
+    bus2.emit(done('s1'))
+    await settle() // no unhandled rejection = pass
+  })
+
+  it('unsubscribe stops future prewarms', async () => {
+    const bus = new EventBus()
+    const { registry, store, start } = fakes()
+    const off = wirePreviewPrewarm(bus, store, registry)
+    off()
+    bus.emit(done('s1'))
+    await settle()
+    expect(start).not.toHaveBeenCalled()
+  })
+})

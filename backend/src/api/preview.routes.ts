@@ -3,7 +3,7 @@ import net from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import type { SessionStore } from '../store/SessionStore.js'
 import type { EventBus } from '../events/bus.js'
-import type { PreviewRegistry } from '../preview/PreviewRegistry.js'
+import type { PreviewRegistry, PreviewEntry } from '../preview/PreviewRegistry.js'
 import { detectAppType } from '../preview/AppDetector.js'
 import { materialize } from '../preview/Workspace.js'
 import { serveStatic } from '../preview/serveStatic.js'
@@ -46,6 +46,44 @@ function sanitizeResponseHeaders(headers: http.IncomingHttpHeaders, id: string, 
   return out
 }
 
+/** Materialize a session's produced code and boot it in the registry (the POST /preview
+ *  body, extracted so the ship-time PREWARM can reuse the exact same path). Returns the
+ *  entry, or undefined when there is nothing to preview. */
+export async function startPreviewForSession(
+  store: PreviewDeps['store'],
+  registry: PreviewDeps['registry'],
+  id: string,
+): Promise<PreviewEntry | undefined> {
+  const session = await store.get(id)
+  const files = session?.code?.files ?? []
+  if (files.length === 0) return undefined
+  const dir = await materialize(id, files)
+  return registry.start(id, dir, detectAppType(files))
+}
+
+/**
+ * PERCEIVED-LATENCY: pre-warm the preview the moment a session ships (the `done` event) —
+ * install+boot happen while the user is still reading the shipped card, so the first
+ * "Run app" click finds a READY entry instead of paying the whole boot. Fire-and-forget
+ * and NON-GATING (the preview carries no verify/push authority; same sandbox posture as a
+ * user-clicked Run — this only moves WHEN it starts). Skipped when a preview is already
+ * up for the session (never kill something the user is interacting with).
+ */
+export function wirePreviewPrewarm(
+  bus: { tap(fn: (e: { kind: string; sessionId: string }) => void): () => void },
+  store: PreviewDeps['store'],
+  registry: PreviewDeps['registry'],
+): () => void {
+  return bus.tap(e => {
+    if (e.kind !== 'done') return
+    const cur = registry.get(e.sessionId)
+    if (cur && (cur.status === 'ready' || cur.status === 'starting')) return
+    void startPreviewForSession(store, registry, e.sessionId).catch(() => {
+      /* best-effort: a failed prewarm just means Run pays the boot, as before */
+    })
+  })
+}
+
 /**
  * Preview lifecycle + a same-origin reverse proxy so the FE iframe can embed the
  * locally-running app at /preview/:id/* without X-Frame-Options conflicts. The
@@ -59,11 +97,8 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): 
     const id = req.params.id
     const session = await deps.store.get(id)
     if (!session) return reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
-    const files = session.code?.files ?? []
-    if (files.length === 0) return reply.code(409).send({ error: 'no produced code to preview', code: 'NoCode' })
-    const dir = await materialize(id, files)
-    const type = detectAppType(files)
-    const entry = await deps.registry.start(id, dir, type)
+    const entry = await startPreviewForSession(deps.store, deps.registry, id)
+    if (!entry) return reply.code(409).send({ error: 'no produced code to preview', code: 'NoCode' })
     return reply.send(entry)
   })
 
