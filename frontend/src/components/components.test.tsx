@@ -65,10 +65,11 @@ describe('PreviewPanel', () => {
     rerender(<I18nProvider><PreviewPanel view={{ ...emptyView('s1'), provider: 'anthropic' }} /></I18nProvider>)
     expect(screen.queryByText(/Demo preview \(mock provider\)/)).toBeNull()
   })
-  it('keeps the iframe sandbox exactly (allow-scripts allow-forms allow-popups, no allow-same-origin)', () => {
+  it('keeps the iframe sandbox isolated while allowing clipboard writes', () => {
     const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
     const { container } = renderI18n(<PreviewPanel view={view} />)
     expect(container.querySelector('iframe')?.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-popups')
+    expect(container.querySelector('iframe')?.getAttribute('allow')).toBe('clipboard-write')
   })
 
   // P1-CORE-1: a simulated (mock-runner / demo-boot) result must be flagged AT THE RESULT —

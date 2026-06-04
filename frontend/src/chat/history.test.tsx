@@ -62,7 +62,7 @@ describe('ChatStudio AKIS transcript persistence', () => {
   beforeEach(() => { window.history.replaceState({}, '', '/'); localStorage.clear() })
   afterEach(() => { window.history.replaceState({}, '', '/') })
 
-  it('surfaces the persisted conversation as a collapsible transcript once a build starts', async () => {
+  it('keeps the persisted conversation visible in chat once the workflow starts', async () => {
     // Seed a prior "Ask AKIS" conversation (as AkisChat would have persisted it).
     localStorage.setItem('akis_chat_thread', JSON.stringify([
       { role: 'assistant', content: 'Hi, I’m AKIS.' },
@@ -84,15 +84,14 @@ describe('ChatStudio AKIS transcript persistence', () => {
     render(<I18nProvider><RouterProvider><ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} /></RouterProvider></I18nProvider>)
 
     // The only way to build is to talk to AKIS: it returns a spec card → approve it. The chat
-    // unmounts, the run pipeline mounts, and the prior conversation persists as the transcript.
+    // stays mounted, and the workflow starts inside the same conversation context.
     await userEvent.type(screen.getByLabelText(/ask akis/i), 'build it{Enter}')
     await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
 
-    // The transcript header appears above the pipeline; expanding it reveals the conversation.
-    const toggle = await screen.findByRole('button', { name: /Conversation with AKIS/i })
-    await userEvent.click(toggle)
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Workflow started' })).toBeDisabled())
     await waitFor(() => expect(screen.getByText('Great — here is the plan.')).toBeInTheDocument())
     expect(screen.getAllByText('a habit tracker').length).toBeGreaterThan(0)
+    expect(screen.getByLabelText(/ask akis/i)).toBeInTheDocument()
   })
 })
 

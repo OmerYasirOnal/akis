@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent } from 'react'
+import { useState, useEffect, useRef, type FormEvent, type ReactNode } from 'react'
 import type { ApiClient } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -40,7 +40,7 @@ function dropPlaceholder(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.filter(m => !m.streaming)
 }
 
-export function AkisChat({ api, onBuild, building }: { api: ApiClient; onBuild?: (spec: string) => void; building?: boolean }) {
+export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api: ApiClient; onBuild?: (spec: string) => void; building?: boolean; builtSpec?: string; workflow?: ReactNode }) {
   const { t } = useI18n()
   const greeting = t('akis.greeting')
   const [msgs, setMsgs] = useState<ChatMsg[]>(() => {
@@ -198,6 +198,7 @@ export function AkisChat({ api, onBuild, building }: { api: ApiClient; onBuild?:
           // Suppress the "truncated" notice WHILE streaming — an open-but-not-yet-closed
           // fence is normal mid-stream, not a real truncation (avoids a flicker).
           const truncated = onBuild && !m.streaming ? hasTruncatedSpec(m.content) : false
+          const started = !!detected && builtSpec?.trim() === detected.spec.trim()
           return (
             <div key={i} className="flex items-start gap-3">
               <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
@@ -210,7 +211,7 @@ export function AkisChat({ api, onBuild, building }: { api: ApiClient; onBuild?:
                           <Markdown content={detected.intro} />
                         </div>
                       )}
-                      <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building} />
+                      <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} startedSpec={builtSpec} />
                     </>
                   )
                   : (
@@ -229,6 +230,11 @@ export function AkisChat({ api, onBuild, building }: { api: ApiClient; onBuild?:
             </div>
           )
         })}
+        {workflow && (
+          <div className="ml-11 max-w-[calc(100%-2.75rem)]">
+            {workflow}
+          </div>
+        )}
         {busy && <div className="ml-11 text-xs text-teal-300">{t('akis.thinking')}</div>}
       </div>
       <form className="flex gap-2" onSubmit={send} aria-busy={busy}>

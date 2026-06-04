@@ -5,8 +5,7 @@ import { useLiveChat } from './useLiveChat.js'
 import { ChatThread } from './ChatThread.js'
 import { RunPipeline } from './RunPipeline.js'
 import { AkisChat } from './AkisChat.js'
-import { AkisTranscript } from './AkisTranscript.js'
-import { loadThread, clearThread, type AkisMsg } from './akisThread.js'
+import { clearThread } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
@@ -31,6 +30,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const [sent, setSent] = useState('')               // the submitted idea (drives the thread)
   const [sessionId, setSessionId] = useState<string | undefined>()
   const [busy, setBusy] = useState(false)
+  const [previewOpen, setPreviewOpen] = useState(true)
+  const [startingSpec, setStartingSpec] = useState<string | undefined>()
+  const [startingElapsed, setStartingElapsed] = useState(0)
   // Synchronous re-entrancy guard for the build start: `busy` is async React state, so two
   // fast clicks on "Approve & Build" both pass a `busy` check before the re-render lands and
   // create TWO sessions (one orphaned). A ref flips synchronously, so the second click is dropped.
@@ -57,15 +59,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     })
   }, [api])
   const [actionError, setActionError] = useState<string | undefined>()
-  // The persisted "Ask AKIS" conversation that produced the build. AkisChat owns it while
-  // chatting (and persists it to localStorage); we snapshot it when a build starts so the
-  // transcript can show it above the pipeline even after the chat unmounts / a reload.
-  const [thread, setThread] = useState<AkisMsg[]>([])
   // The persisted thread is the CURRENT live conversation, so it belongs to a build STARTED
-  // from this chat (or its reload), NOT to an OLD build re-opened from History — showing it
-  // there would be a stale, unrelated transcript. `reopened` gates that out.
+  // from this chat (or its reload), NOT to an OLD build re-opened from History. `reopened`
+  // gates the live chat surface out for History sessions so stale localStorage never attaches.
   const [reopened, setReopened] = useState(false)
-  useEffect(() => { if (sessionId) setThread(loadThread()) }, [sessionId])
 
   const live = useLiveChat(sessionId, sent, api, baseUrl, makeClient)
   const status = live.view.status
@@ -93,16 +90,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const startBuild = async (v: string): Promise<void> => {
     const idea = v.trim(); if (!idea || busy || startingRef.current) return
     startingRef.current = true
-    setBusy(true); setActionError(undefined)
+    setBusy(true); setActionError(undefined); setStartingSpec(idea)
     try {
       const s = await api.startSession(idea)
-      setSent(idea); setSessionId(s.id); setReopened(false)
+      setSent(idea); setSessionId(s.id); setReopened(false); setStartingSpec(undefined)
       setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
-    } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) }
+    } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)); setStartingSpec(undefined) }
     finally { setBusy(false); startingRef.current = false }
   }
   /** Re-open a past build — useLiveChat replays /log + /events to rebuild the thread. */
-  const openSession = (b: RecentBuild): void => { setActionError(undefined); setSent(b.idea); setSessionId(b.id); setReopened(true) }
+  const openSession = (b: RecentBuild): void => { setActionError(undefined); setStartingSpec(undefined); setSent(b.idea); setSessionId(b.id); setReopened(true) }
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setActionError(undefined)
     try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }
@@ -128,9 +125,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e))
   })
   const newChat = (): void => {
-    setSessionId(undefined); setSent(''); setActionError(undefined)
+    setSessionId(undefined); setSent(''); setActionError(undefined); setStartingSpec(undefined)
     // Start a fresh conversation: drop the persisted thread so AkisChat re-seeds the greeting.
-    clearThread(); setThread([]); setReopened(false)
+    clearThread(); setReopened(false)
     // Drop a stale /?s= deep-link from the address bar so a refresh starts clean.
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
   }
@@ -151,6 +148,46 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   }, [sessionId, status, api])
 
   const canRun = !!sessionId && (status === 'done' || live.view.verified !== undefined)
+  useEffect(() => {
+    if (!startingSpec) { setStartingElapsed(0); return }
+    const startedAt = Date.now()
+    setStartingElapsed(0)
+    const timer = setInterval(() => setStartingElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000)
+    return () => clearInterval(timer)
+  }, [startingSpec])
+  const formatElapsed = (seconds: number): string => {
+    const s = Math.max(0, Math.floor(seconds))
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
+  }
+  const startingWorkflowCard = startingSpec ? (
+    <section role="status" className="rounded-2xl border border-teal-400/25 bg-teal-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(7,209,175,0.1)]">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex items-center gap-2">
+          <span className="h-2 w-2 animate-pulse rounded-full bg-[#07D1AF]" aria-hidden />
+          <span className="font-semibold text-teal-100">{t('workflow.starting.title')}</span>
+        </div>
+        <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-xs tabular-nums text-slate-300">
+          {t('workflow.starting.elapsed')} {formatElapsed(startingElapsed)}
+        </span>
+      </div>
+      <div className="mt-1 text-xs text-slate-400">{t('workflow.starting.body')}</div>
+      {startingElapsed >= 8 && <div className="mt-2 text-xs text-amber-200">{t('workflow.starting.slow')}</div>}
+    </section>
+  ) : null
+  const workflowCard = sessionId ? (
+    <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 shadow-[0_0_30px_rgba(124,58,237,0.08)]">
+      <RunPipeline
+        view={live.view}
+        onApprove={approve}
+        onConfirm={confirm}
+        busy={busy}
+        api={api}
+        details={<ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />}
+      />
+    </section>
+  ) : null
 
   // Shared frame header: the live agent roster + history access (+ New chat once a run exists).
   const header = (
@@ -165,32 +202,57 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
 
   // Height-bounded so the chat / pipeline scroll INSIDE the frame instead of growing the
   // page (stable, no jump). Fixed to the viewport on desktop; a tall min-height on small
-  // screens where the header wraps. A single full-width conversation is the entry point;
-  // once a run starts, it splits into the pipeline + the live-preview rail.
+  // screens where the header wraps. The conversation stays the primary surface: approving
+  // a spec inserts the live workflow into the same chat context, while preview lives in the rail.
   return (
     <div className="flex min-h-[32rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
       {sessionId ? (
-        <div className="grid min-h-0 flex-1 gap-6 lg:grid-cols-[1fr_24rem]">
+        <div className={`grid min-h-0 flex-1 gap-6 ${previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_24rem]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]'}`}>
           {/* Run pipeline (each agent's stage, live) */}
           <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
             {header}
-            <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-              {!reopened && <AkisTranscript messages={thread} />}
-              <RunPipeline
-                view={live.view}
-                onApprove={approve}
-                onConfirm={confirm}
-                busy={busy}
-                api={api}
-                details={<ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />}
-              />
-              {actionError && <div role="alert" className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
-            </div>
+            {!reopened ? (
+              <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 px-4 py-4">
+                {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
+                <AkisChat api={api} building={busy} builtSpec={sent} onBuild={(spec) => void startBuild(spec)} workflow={workflowCard} />
+              </div>
+            ) : (
+              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                {workflowCard}
+                {actionError && <div role="alert" className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
+              </div>
+            )}
           </section>
 
           {/* Live preview rail — the actually-running app */}
-          <aside className="min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.02] p-4 backdrop-blur-sm">
-            <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+          <aside className={`min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.02] backdrop-blur-sm ${previewOpen ? 'p-4' : 'p-2'}`}>
+            <div className={`mb-2 flex ${previewOpen ? 'justify-end' : 'justify-center'}`}>
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(v => !v)}
+                aria-label={t(previewOpen ? 'preview.collapse' : 'preview.expand')}
+                className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-slate-300 hover:bg-white/[0.08] hover:text-slate-100"
+              >
+                {previewOpen ? '›' : '‹'}
+              </button>
+            </div>
+            {previewOpen ? (
+              <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+            ) : (
+              <button
+                type="button"
+                onClick={() => setPreviewOpen(true)}
+                className="flex min-h-28 w-full flex-col items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/30 px-2 text-center text-xs text-slate-300 hover:border-teal-400/30 hover:text-teal-200"
+              >
+                <span aria-hidden>▣</span>
+                <span>{t('preview.collapsed')}</span>
+                {live.view.verified !== undefined && (
+                  <span className={live.view.verified ? 'text-emerald-300' : 'text-slate-400'}>
+                    {live.view.verified ? t('preview.verified') : t('preview.unverified')}
+                  </span>
+                )}
+              </button>
+            )}
           </aside>
         </div>
       ) : (
@@ -202,7 +264,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-3 px-4 py-4">
             {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
             <div className="min-h-0 flex-1">
-              <AkisChat api={api} building={busy} onBuild={(spec) => void startBuild(spec)} />
+              <AkisChat api={api} building={busy} onBuild={(spec) => void startBuild(spec)} workflow={startingWorkflowCard} />
             </div>
           </div>
         </section>
