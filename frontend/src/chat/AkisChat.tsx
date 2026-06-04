@@ -3,7 +3,7 @@ import type { ApiClient } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { Markdown } from '../components/Markdown.js'
-import { extractBuildSpec, hasTruncatedSpec } from './buildSpec.js'
+import { extractBuildSpec, hasTruncatedSpec, extractSuggestions } from './buildSpec.js'
 import { SpecCard } from './SpecCard.js'
 import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } from './akisThread.js'
 
@@ -143,14 +143,22 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
     } finally { setBusy(false) }
   }
 
-  const send = async (e: FormEvent): Promise<void> => {
-    e.preventDefault()
-    const text = input.trim()
+  // Send an arbitrary message (typed, or a tapped suggestion chip) — adds the user bubble and
+  // dispatches to AKIS. Shared by the composer and the suggestion chips so a chip sends directly.
+  const sendText = (raw: string): void => {
+    const text = raw.trim()
     if (!text || busy) return
     stickToBottom.current = true // a fresh send always follows to the bottom
     setMsgs(m => [...m, { role: 'user', content: text }])
+    void ask(text)
+  }
+
+  const send = async (e: FormEvent): Promise<void> => {
+    e.preventDefault()
+    if (!input.trim() || busy) return
+    const text = input
     setInput('')
-    await ask(text)
+    sendText(text)
   }
 
   // Resend the last user message (after a failure) WITHOUT re-adding a user bubble.
@@ -217,7 +225,7 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
                   : (
                     <>
                       <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
-                        <Markdown content={m.content} />
+                        <Markdown content={extractSuggestions(m.content).text} />
                       </div>
                       {truncated && (
                         <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
@@ -237,6 +245,24 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
         )}
         {busy && <div className="ml-11 text-xs text-teal-300">{t('akis.thinking')}</div>}
       </div>
+      {/* Tappable quick-reply chips parsed from AKIS's latest reply (an `akis-suggest` block):
+          the user picks one and it sends DIRECTLY — no typing. Hidden while busy/streaming. */}
+      {(() => {
+        const last = msgs[msgs.length - 1]
+        if (busy || !last || last.role !== 'assistant' || last.streaming) return null
+        const { suggestions } = extractSuggestions(last.content)
+        if (!suggestions.length) return null
+        return (
+          <div className="flex flex-wrap gap-2" aria-label={t('akis.suggestions')}>
+            {suggestions.map((s, i) => (
+              <button key={i} type="button" onClick={() => sendText(s)}
+                className="rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.06] px-3 py-1 text-xs text-teal-200 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/10">
+                {s}
+              </button>
+            ))}
+          </div>
+        )
+      })()}
       <form className="flex gap-2" onSubmit={send} aria-busy={busy}>
         <input ref={inputRef} aria-label={t('akis.ask')} value={input} onChange={e => setInput(e.target.value)} placeholder={t('akis.ask')}
           className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none" />

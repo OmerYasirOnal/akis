@@ -1,5 +1,27 @@
 import { describe, it, expect } from 'vitest'
-import { extractBuildSpec, hasTruncatedSpec } from './buildSpec.js'
+import { extractBuildSpec, hasTruncatedSpec, extractSuggestions } from './buildSpec.js'
+
+describe('extractSuggestions', () => {
+  it('returns no suggestions and the original text when there is no block', () => {
+    const r = extractSuggestions('Just a normal reply.')
+    expect(r.suggestions).toEqual([])
+    expect(r.text).toBe('Just a normal reply.')
+  })
+  it('parses bulleted suggestions and strips the block from the text', () => {
+    const msg = 'Any tweaks?\n```akis-suggest\n- Yes, build it\n- Change the colors\n```'
+    const r = extractSuggestions(msg)
+    expect(r.suggestions).toEqual(['Yes, build it', 'Change the colors'])
+    expect(r.text).toBe('Any tweaks?')
+  })
+  it('caps at 4 suggestions and drops blank lines', () => {
+    const msg = '```akis-suggest\n- a\n\n- b\n- c\n- d\n- e\n```'
+    expect(extractSuggestions(msg).suggestions).toEqual(['a', 'b', 'c', 'd'])
+  })
+  it('is tolerant of a non-string input', () => {
+    // @ts-expect-error testing runtime tolerance
+    expect(extractSuggestions(null).suggestions).toEqual([])
+  })
+})
 
 describe('extractBuildSpec', () => {
   it('returns null when there is no akis-spec block', () => {

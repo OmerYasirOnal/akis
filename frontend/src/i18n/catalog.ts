@@ -125,6 +125,7 @@ export const STRINGS = {
     'akis.thinking': 'AKIS is thinking…',
     'akis.ask': 'Ask AKIS anything…',
     'akis.send': 'Ask',
+    'akis.suggestions': 'Suggested replies',
     // ── Chat resilience: distinct error rows, retry, honest empties, truncated spec ──
     'akis.error.label': 'Message failed',
     'akis.error.retry': 'Retry',
@@ -694,6 +695,7 @@ export const STRINGS = {
     'akis.thinking': 'AKIS düşünüyor…',
     'akis.ask': 'AKIS’e bir şey sor…',
     'akis.send': 'Sor',
+    'akis.suggestions': 'Önerilen yanıtlar',
     // ── Sohbet dayanıklılığı: ayrı hata satırları, yeniden dene, dürüst boş yanıt, kesilmiş spec ──
     'akis.error.label': 'Mesaj başarısız',
     'akis.error.retry': 'Yeniden dene',

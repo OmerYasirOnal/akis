@@ -46,6 +46,29 @@ export function extractBuildSpec(message: string): BuildSpec | null {
   return { intro, spec }
 }
 
+// Quick-reply SUGGESTIONS: AKIS may end a reply with a fenced `akis-suggest` block, one short
+// suggestion per line (optionally bulleted), which the UI turns into tappable chips. Same
+// backtick-count-aware, indent-tolerant fencing as akis-spec so the seam is consistent.
+const SUGGEST_BLOCK = /(^|\n)[ ]{0,3}(`{3,})akis-suggest(?:[ \t][^\n]*)?\r?\n([\s\S]*?)\r?\n[ ]{0,3}\2`*[ \t]*(?:\r?\n|$)/
+
+/**
+ * Pull tappable quick-reply suggestions out of an `akis-suggest` block and return them along
+ * with the message text STRIPPED of that block (so the raw marker never renders). Tolerant: no
+ * block → empty list + the original text. Caps at 4 short suggestions; blank lines dropped.
+ */
+export function extractSuggestions(message: string): { suggestions: string[]; text: string } {
+  if (typeof message !== 'string') return { suggestions: [], text: typeof message === 'string' ? message : '' }
+  const m = SUGGEST_BLOCK.exec(message)
+  if (!m) return { suggestions: [], text: message }
+  const suggestions = (m[3] ?? '')
+    .split('\n')
+    .map(l => l.replace(/^[ \t]*[-*•][ \t]+/, '').trim())
+    .filter(Boolean)
+    .slice(0, 4)
+  const text = (message.slice(0, m.index) + message.slice(m.index + m[0].length)).trim()
+  return { suggestions, text }
+}
+
 // An OPENING akis-spec fence with NO required closing fence after it — same opener shape as
 // SPEC_BLOCK but without the matching close. Anchored to a line so an inner ```code fence
 // (a different info string) is never mistaken for the opener.

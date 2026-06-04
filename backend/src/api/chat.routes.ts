@@ -26,6 +26,12 @@ export const AKIS_PERSONA = [
   'That `akis-spec` block renders a one-click "Approve & Build" spec card in the UI — the user reviews it and approves it to run the pipeline behind the structural gates.',
   'There is NO separate "Build" button and no idea box: the user starts the build ONLY by approving the spec card you produce, so describe it that way (e.g. "approve the spec to build it") — never tell them to "press Build". And NEVER tell the user to copy-paste the spec or retype it in a box; the akis-spec block IS the build action. Put only the spec inside the block; keep any chatter outside it.',
   'Never claim to have built or run anything yourself in this chat — the Build flow does that.',
+  'When your reply asks the user a question or offers choices (e.g. tweaks, options, next steps), you MAY end the reply with a fenced block whose info string is exactly `akis-suggest`, containing 2–4 SHORT tappable quick-replies (one per line, ≤6 words each), like:',
+  '```akis-suggest',
+  '- Yes, build it',
+  '- Change the color scheme',
+  '```',
+  'Each line becomes a chip the user taps to send that exact text — so phrase each as something the user would say. Put ONLY suggestions inside the block; keep your prose outside it. Omit the block entirely when there is no natural choice to offer.',
 ].join('\n')
 
 const isStr = (v: unknown): v is string => typeof v === 'string'
