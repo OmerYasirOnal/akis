@@ -141,6 +141,37 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
 }
 
 /**
+ * The TRUST LEDGER — the three structural token states turned into visible PROOF, not copy:
+ * ApprovedSpec, the fail-closed VerifyToken, and ApprovedPush. Derived purely from the view, so
+ * it is an honest attestation of which structural gates have actually cleared THIS run (and, in a
+ * demo run, that the VerifyToken stands on a simulated result). This is the moat, made legible.
+ */
+function TrustLedger({ view, t }: { view: SessionView; t: (k: StringKey) => string }) {
+  const specOk = view.gates.specApproval?.state === 'satisfied'
+  const verifyOk = view.tests.ran && view.tests.passed
+  const deployOk = view.gates.pushConfirm?.state === 'satisfied' || view.status === 'done'
+  const items: { key: string; label: StringKey; ok: boolean; simulated: boolean }[] = [
+    { key: 'spec', label: 'trust.ledger.spec', ok: specOk, simulated: false },
+    { key: 'verify', label: 'trust.ledger.verify', ok: verifyOk, simulated: verifyOk && !!view.tests.demo },
+    { key: 'deploy', label: 'trust.ledger.deploy', ok: deployOk, simulated: false },
+  ]
+  return (
+    <div className="flex flex-wrap items-center gap-1.5" aria-label={t('trust.ledger.title')}>
+      <span className="text-[9px] font-semibold uppercase tracking-[0.18em] text-slate-500">{t('trust.ledger.title')}</span>
+      {items.map(it => (
+        <span key={it.key}
+          className={`rounded-md border px-2 py-0.5 text-[10px] font-medium ${it.ok ? 'border-emerald-400/30 bg-emerald-400/[0.07] text-emerald-200' : 'border-white/10 bg-white/[0.02] text-slate-500'}`}>
+          <span aria-hidden>{it.ok ? '✓' : '◻'}</span> {t(it.label)}
+          {it.simulated
+            ? <span className="text-amber-300/80"> · {t('trust.ledger.simulated')}</span>
+            : it.ok ? null : <span className="opacity-70"> · {t('trust.ledger.pending')}</span>}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/**
  * The compact, scannable run pipeline that headlines the redesigned run view. Renders the
  * 5 fixed AKIS stages (Spec → Build → Review → Verify → Ship) derived purely from the
  * SessionView, a one-line summary once there's something to summarise, and surfaces the
@@ -220,6 +251,9 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
           <div className="mt-1 text-amber-300/80"><span aria-hidden>⚠</span> {t('trust.headline.demo')}</div>
         )}
       </div>
+
+      {/* The trust ledger: which structural tokens have actually cleared this run (proof, not copy). */}
+      <TrustLedger view={view} t={t} />
 
       {/* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run)
           so the live view stops pulsing forever; the resumable stream re-syncs via Last-Event-ID. */}
