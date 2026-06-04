@@ -51,7 +51,9 @@ export async function chatWithContinuation(
   let text = res.text ?? ''
   // Real cost across ALL rounds — returning only the last round's usage would under-report
   // (a truncated 16k round + a 3k continue is 19k out, not 3k) and corrupt billing/quota math.
-  const usage = res.usage ? { ...res.usage } : undefined
+  // LAZY init (final-review fix): a provider may omit usage on SOME rounds (Gemini can) — a
+  // missing FIRST round must not silently drop every later round's tokens.
+  let usage: { inTokens: number; outTokens: number } | undefined = res.usage ? { ...res.usage } : undefined
   let rounds = 0
   while (res.stopReason !== undefined && TRUNCATED.has(res.stopReason) && rounds < maxContinues) {
     rounds++
@@ -64,7 +66,10 @@ export async function chatWithContinuation(
       ],
     })
     text = joinContinuation(text, res.text ?? '')
-    if (res.usage && usage) { usage.inTokens += res.usage.inTokens; usage.outTokens += res.usage.outTokens }
+    if (res.usage) {
+      if (usage) { usage.inTokens += res.usage.inTokens; usage.outTokens += res.usage.outTokens }
+      else usage = { ...res.usage }
+    }
   }
   return { ...res, text, ...(usage ? { usage } : {}) }
 }

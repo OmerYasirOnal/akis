@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { GeminiProvider } from '../../src/agent/providers/GeminiProvider.js'
-import { AuthError } from '../../src/agent/providers/http.js'
+import { AuthError, ProviderHttpError } from '../../src/agent/providers/http.js'
 
 const body = {
   candidates: [{ content: { parts: [{ text: 'hi' }, { functionCall: { name: 'do', args: { x: 1 } } }] } }],
@@ -87,6 +87,6 @@ describe('GeminiProvider', () => {
   it('does NOT map a 400 INVALID_ARGUMENT to AuthError (request-shape bug stays visible)', async () => {
     const fetchFn = (async () => new Response(JSON.stringify({ error: { status: 'INVALID_ARGUMENT', message: 'bad contents' } }), { status: 400, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch
     const p = new GeminiProvider({ apiKey: 'AIza-good', model: 'm', fetchFn })
-    await expect(p.chat({ system: 's', messages: [] })).rejects.not.toBeInstanceOf(AuthError)
+    await expect(p.chat({ system: 's', messages: [] })).rejects.toBeInstanceOf(ProviderHttpError)
   })
 })
