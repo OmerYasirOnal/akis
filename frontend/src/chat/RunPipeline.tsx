@@ -30,6 +30,7 @@ function statText(t: (k: StringKey) => string, stat: string | undefined): string
     'writing code': 'pipeline.stat.writingCode', 'code written': 'pipeline.stat.codeWritten',
     'build failed': 'pipeline.stat.buildFailed', 'reviewing': 'pipeline.stat.reviewing',
     'review clean': 'pipeline.stat.reviewClean', 'critical finding': 'pipeline.stat.criticalFinding',
+    'critical proceeded': 'pipeline.stat.criticalProceeded',
     'running tests': 'pipeline.stat.runningTests', 'verify failed': 'pipeline.stat.verifyFailed',
     'ready to ship': 'pipeline.stat.readyToShip', 'finishing': 'pipeline.stat.finishing',
     'shipped': 'pipeline.stat.shipped', 'run failed': 'pipeline.stat.runFailed',
@@ -46,6 +47,9 @@ const NODE: Record<PipelineStatus, { ring: string; dot: string; num: string }> =
   done: { ring: 'border-emerald-400/30 bg-emerald-400/[0.06]', dot: 'bg-emerald-400', num: 'text-emerald-300' },
   awaiting: { ring: 'border-amber-400/50 bg-amber-400/[0.08] shadow-[0_0_22px_rgba(251,191,36,0.18)]', dot: 'bg-amber-300 animate-pulse', num: 'text-amber-300' },
   failed: { ring: 'border-rose-400/40 bg-rose-400/[0.07]', dot: 'bg-rose-400', num: 'text-rose-300' },
+  // CAUTION = proceeded past a critical finding: amber like 'awaiting' but a STATIC dot (no pulse)
+  // — it's a settled, non-blocking warning on a build that already shipped, not a pending action.
+  caution: { ring: 'border-amber-400/40 bg-amber-400/[0.07]', dot: 'bg-amber-300', num: 'text-amber-300' },
 }
 
 function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry, busy }: {
@@ -209,6 +213,7 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
             .replace('✓ Verified', `✓ ${t('pipeline.summary.verified')}`)
             .replace('✗ Not verified', `✗ ${t('pipeline.summary.notVerified')}`)
             .replace('✗ Run failed', `✗ ${t('pipeline.summary.runFailed')}`)
+            .replace('critical finding', t('pipeline.stat.criticalFinding'))
             .replace('review clean', t('pipeline.summary.reviewClean'))
             .replace('shipped', t('pipeline.summary.shipped'))
             .replace(/(\d+) tests/, `$1 ${t('pipeline.stat.tests')}`)

@@ -4,7 +4,6 @@ import type { ChatResult, LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
 import { parseAIJson } from './critic/json-extract.js'
 import { renderKnowledge } from './context-prompt.js'
-import { chatWithLiveNotes } from './streamNotes.js'
 import type { KnowledgePort } from '../../knowledge/KnowledgePort.js'
 import { buildAdvisoryTools } from '../../agent/tools/advisoryTools.js'
 import { callWithTools } from '../../agent/tools/toolLoop.js'
@@ -138,9 +137,9 @@ export class ScribeAgent {
 
     if (!this.deps.ragEnabled || !this.deps.knowledge) {
       // RAG OFF — single-shot dispatch (no tools advertised). `this.base` is SCRIBE_SYSTEM
-      // unless the DI layer injected a skill-composed prompt. Stream live notes so the spec
-      // visibly forms (same result as chat()).
-      return chatWithLiveNotes(this.deps, { system: this.base, messages: [{ role: 'user', content: userMsg }] }, { agent: 'scribe', laneId, sessionId })
+      // unless the DI layer injected a skill-composed prompt. A single non-streaming chat with an
+      // explicit output budget so a full spec never truncates mid-JSON.
+      return this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: userMsg }], maxTokens: 8192 })
     }
 
     // RAG ON — reuse the advisory choke point + bounded loop. The registry holds
