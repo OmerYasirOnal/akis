@@ -64,6 +64,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // from this chat (or its reload), NOT to an OLD build re-opened from History. `reopened`
   // gates the live chat surface out for History sessions so stale localStorage never attaches.
   const [reopened, setReopened] = useState(false)
+  // Stale deep-link recovery: a session that NO LONGER EXISTS server-side (restart wiped the
+  // in-memory store, DB loss, or external deletion) makes GET /sessions/:id return 404. We flag
+  // it so the chat can offer an HONEST recovery card ("Start new build") instead of hanging on a
+  // frozen view. ONLY a 404 sets this — transient network/500 errors stay silent (today's
+  // behavior) so a blip never distracts the user with a false "session gone" claim.
+  const [sessionGone, setSessionGone] = useState(false)
 
   const live = useLiveChat(sessionId, sent, api, baseUrl, makeClient)
   const status = live.view.status
@@ -79,13 +85,22 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // so visibly — the user must never be surprised that agents merged over existing files.
   const [editsBase, setEditsBase] = useState(false)
   useEffect(() => {
-    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); return }
+    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); return }
     let cancelled = false
     void api.getSession(sessionId)
-      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base) } })
-      .catch(() => { /* Code/Trust tabs simply stay empty; surfaced nowhere else */ })
+      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setSessionGone(false) } })
+      .catch(e => {
+        if (cancelled) return
+        // A 404 means the session is genuinely GONE (server restart wiped the in-memory store,
+        // DB loss, external deletion) → offer the honest recovery card. Any OTHER error (network,
+        // 500) keeps today's silent behavior: Code/Trust tabs stay empty, no false "gone" claim.
+        if (ApiError.is(e) && e.status === 404) setSessionGone(true)
+      })
     return () => { cancelled = true }
-  }, [sessionId, status, api])
+    // live.view.connectionGone in the deps (Opus review M1): the LIVE frozen-tab case — a
+    // silent server restart emits no status change, so the 404 probe must re-run when the
+    // stream exhausts its reconnects; that probe is what flips the honest gone-card on.
+  }, [sessionId, status, api, live.view.connectionGone])
 
   // The single build path: the chat-authored spec becomes a session via the UNCHANGED
   // startSession → the same 4 structural gates + pipeline + History. The ONLY caller is the
@@ -141,6 +156,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e))
   })
   const newChat = (): void => {
+    // Clear the stale-session flag FIRST so the gone-card condition (sessionGone && sessionId)
+    // transitions cleanly from true→false in the SAME render React batches — no flicker of both
+    // a fresh chat AND the gone-card before the next getSession effect run.
+    setSessionGone(false)
     setSessionId(undefined); setSent(''); setActionError(undefined); setStartingSpec(undefined)
     // Start a fresh conversation: drop the persisted thread so AkisChat re-seeds the greeting.
     clearThread(); setReopened(false)
@@ -177,6 +196,22 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     const sec = s % 60
     return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
   }
+  // Honest recovery for a DELETED session (getSession 404): instead of a frozen view, a compact
+  // amber card says the session is gone and offers a one-click "Start new build" (reuses newChat).
+  // role="alert" so it's announced; gated by sessionId so an idle chat never shows it.
+  const staleSessionCard = sessionGone && sessionId ? (
+    <section role="alert" className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(251,191,36,0.1)]">
+      <div className="flex flex-col gap-2">
+        <div className="font-semibold text-slate-100">{t('session.gone.hint')}</div>
+        <button
+          onClick={newChat}
+          className="w-fit rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1.5 text-sm font-semibold text-slate-900 shadow-[0_0_14px_rgba(251,191,36,0.3)] hover:shadow-[0_0_16px_rgba(251,191,36,0.4)] disabled:opacity-40"
+        >
+          {t('session.gone.action')}
+        </button>
+      </div>
+    </section>
+  ) : null
   const startingWorkflowCard = startingSpec ? (
     <section role="status" className="rounded-2xl border border-teal-400/25 bg-teal-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(7,209,175,0.1)]">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -193,7 +228,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     </section>
   ) : null
   const workflowCard = sessionId ? (
-    <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 shadow-[0_0_30px_rgba(124,58,237,0.08)]">
+    // FRAMELESS by design (user feedback): the run is part of THE SAME conversation — no
+    // bordered sub-panel, no chat-in-chat. A subtle divider marks the transition instead.
+    <section className="border-t border-white/5 pt-3">
       {/* Edit-mode disclosure (B.5b): this build MERGES over a prior app — never a surprise. */}
       {editsBase && (
         <div className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-400/[0.08] px-2 py-0.5 text-[11px] font-medium text-violet-200">
@@ -206,6 +243,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         onConfirm={confirm}
         busy={busy}
         api={api}
+        sessionGone={sessionGone}
         details={<ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />}
       />
     </section>
@@ -236,11 +274,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
             {!reopened ? (
               <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 px-4 py-4">
                 {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
-                <AkisChat api={api} building={busy} builtSpec={sent} onBuild={(spec) => void startBuild(spec)} workflow={workflowCard} />
+                {/* Stale deep-link recovery takes VISUAL precedence above the chat/pipeline: a
+                    deleted session's honest path is "Start new build", not the frozen pipeline. */}
+                {staleSessionCard}
+                <AkisChat api={api} building={busy} builtSpec={sent} onBuild={(spec) => void startBuild(spec)} workflow={sessionGone ? undefined : workflowCard} />
               </div>
             ) : (
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-                {workflowCard}
+                {/* Opus review M2: a History-opened session can be gone too — same honest card. */}
+                {staleSessionCard}
+                {!sessionGone && workflowCard}
                 {actionError && <div role="alert" className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
               </div>
             )}

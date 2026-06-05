@@ -35,6 +35,27 @@ export class EventBus {
   private seqs = new Map<string, number>()
   constructor(private readonly cap = 200) {}
 
+  /** Dev persistence seam: dump every session's retained buffer + seq head as plain JSON.
+   *  Buffers are already per-session capped, so a snapshot is bounded by design. */
+  snapshot(): { seqs: Record<string, number>; buffers: Record<string, SeqEvent[]> } {
+    return {
+      seqs: Object.fromEntries(this.seqs),
+      buffers: Object.fromEntries([...this.buffers.entries()].map(([k, v]) => [k, v.map(e => ({ ...e }))])),
+    }
+  }
+  /** Boot-time hydrate from a snapshot (tolerant: malformed shapes are dropped). Restores
+   *  seq heads so resumed SSE/Last-Event-ID semantics stay correct across a dev restart. */
+  hydrate(data: { seqs?: Record<string, number>; buffers?: Record<string, SeqEvent[]> }): void {
+    if (data.seqs && typeof data.seqs === 'object') {
+      this.seqs = new Map(Object.entries(data.seqs).filter(([, v]) => typeof v === 'number'))
+    }
+    if (data.buffers && typeof data.buffers === 'object') {
+      this.buffers = new Map(Object.entries(data.buffers)
+        .filter(([, v]) => Array.isArray(v))
+        .map(([k, v]) => [k, v.filter(e => !!e && typeof e.seq === 'number' && !!e.event).slice(-this.cap)]))
+    }
+  }
+
   subscribe(sessionId: string, fn: Listener): () => void {
     const set = this.listeners.get(sessionId) ?? new Set()
     set.add(fn); this.listeners.set(sessionId, set)

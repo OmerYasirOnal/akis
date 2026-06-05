@@ -4,7 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { ApiClient } from '../api/client.js'
 import { AkisChat } from './AkisChat.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
-import { loadThread } from './akisThread.js'
+import { loadThread, saveThread } from './akisThread.js'
 
 beforeEach(() => localStorage.clear())
 
@@ -12,6 +12,25 @@ beforeEach(() => localStorage.clear())
 function chatFetch(reply: string) {
   return vi.fn(async (path: string) => {
     if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply }) } as unknown as Response
+    return { ok: false, status: 404, json: async () => ({}) } as unknown as Response
+  })
+}
+
+const frame = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
+
+/** A fetch double whose /api/chat/stream body streams the given SSE chunks (one-shot). */
+function streamFetch(chunks: string[]) {
+  return vi.fn(async (path: string) => {
+    if (path.endsWith('/api/chat/stream')) {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const enc = new TextEncoder()
+          for (const c of chunks) controller.enqueue(enc.encode(c))
+          controller.close()
+        },
+      })
+      return { ok: true, status: 200, body, json: async () => ({}) } as unknown as Response
+    }
     return { ok: false, status: 404, json: async () => ({}) } as unknown as Response
   })
 }
@@ -204,5 +223,88 @@ describe('AkisChat', () => {
     expect(screen.getByLabelText(/ask akis/i)).toHaveFocus()
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull()
     expect(container.querySelector('form')).toHaveAttribute('aria-busy', 'false')
+  })
+})
+
+// ── Streaming text smoothing (useSmoothText) ──
+// The reveal is governed by the smoothing hook. With prefers-reduced-motion mocked ON, the
+// hook sets text instantly (deterministic) — perfect for asserting the END STATE without
+// racing rAF. We also assert that the streamed message FINALIZES into a completed bubble and
+// that spec detection runs on the FULL accumulated content (never the animated slice).
+describe('AkisChat — streaming text smoothing', () => {
+  beforeEach(() => {
+    // Reduced-motion ON → useSmoothText mirrors the full text immediately. This keeps the
+    // assertions deterministic (no rAF timing races) while still exercising the hook path.
+    window.matchMedia = vi.fn((query: string) => ({
+      matches: query === '(prefers-reduced-motion: reduce)',
+      media: query, onchange: null,
+      addEventListener: vi.fn(), removeEventListener: vi.fn(),
+      addListener: vi.fn(), removeListener: vi.fn(), dispatchEvent: vi.fn(),
+    })) as unknown as typeof window.matchMedia
+  })
+
+  it('finalizes a streamed reply into a completed bubble showing the full text', async () => {
+    const fetchFn = streamFetch([
+      frame('delta', { text: 'Smoothly ' }),
+      frame('delta', { text: 'revealed ' }),
+      frame('delta', { text: 'reply.' }),
+      frame('done', { reply: 'Smoothly revealed reply.' }),
+    ])
+    const api = new ApiClient('', fetchFn)
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hi')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    // After finalize(), the streaming placeholder is gone and a completed bubble shows the full text.
+    await waitFor(() => expect(screen.getByText('Smoothly revealed reply.')).toBeInTheDocument())
+    // The completed message is persisted with NO streaming flag (finalize added a clean one).
+    expect(loadThread().some(m => m.role === 'assistant' && m.content === 'Smoothly revealed reply.')).toBe(true)
+  })
+
+  it('detects a spec on the FULL accumulated content even while the reply animates', async () => {
+    const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
+    const fetchFn = streamFetch([
+      frame('delta', { text: "Here's a spec 👇\n```akis-spec\n# TODO App\n" }),
+      frame('delta', { text: 'A list.\n```' }),
+      frame('done', { reply }),
+    ])
+    const api = new ApiClient('', fetchFn)
+    const onBuild = vi.fn()
+    render(<I18nProvider><AkisChat api={api} onBuild={onBuild} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'spec it')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    // Spec detection runs on m.content (full text), so the SpecCard + intro appear, and Approve
+    // hands the EXACT spec to onBuild — proving extraction never used the animated slice.
+    await waitFor(() => expect(screen.getByText('Build-ready spec')).toBeInTheDocument())
+    expect(screen.getByText("Here's a spec 👇")).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'Approve & Build' }))
+    expect(onBuild).toHaveBeenCalledWith('# TODO App\nA list.')
+  })
+
+  it('renders a completed/history message with full text instantly (no animation gating)', async () => {
+    // Seed a completed (non-streaming) assistant message via the real persistence, then mount.
+    saveThread([
+      { role: 'user', content: 'earlier question' },
+      { role: 'assistant', content: 'A fully completed answer from history.' },
+    ])
+    const api = new ApiClient('', chatFetch('unused'))
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    // No streaming flag on a history message → it shows the full text immediately on first render.
+    expect(screen.getByText('A fully completed answer from history.')).toBeInTheDocument()
+  })
+
+  it('shows the full reply (reduced-motion path) without dropping suggestion chips', async () => {
+    const reply = "Pick one:\n```akis-suggest\n- Build a TODO app\n- Build a poll\n```"
+    const fetchFn = streamFetch([frame('done', { reply })])
+    const api = new ApiClient('', fetchFn)
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'options?')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    // The intro renders (animated text == full under reduced motion) and the suggestion block is
+    // stripped from prose AND surfaced as chips — extraction ran on the full content, not the slice.
+    await waitFor(() => expect(screen.getByText('Pick one:')).toBeInTheDocument())
+    expect(screen.getByRole('button', { name: 'Build a TODO app' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Build a poll' })).toBeInTheDocument()
+    // The raw fence marker must never render as prose.
+    expect(screen.queryByText(/akis-suggest/)).toBeNull()
   })
 })
