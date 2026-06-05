@@ -28,6 +28,10 @@ export interface McpSessionPoolOptions {
   factory: McpTransportFactory
   /** Idle teardown grace (ms) after the last release. Default 60_000. */
   idleMs?: number
+  /** Per-transport bound on closeAll()'s transport.close() (ms). Default 5_000. A wedged
+   *  client.close() on ONE transport must not block the others or the caller — each close is
+   *  raced against this timeout so closeAll() always settles. */
+  closeTimeoutMs?: number
   /** Injectable clock (tests). Default Date.now. */
   nowMs?: () => number
   /** Injectable timer (tests). Default setTimeout; must return a handle with no host coupling. */
@@ -51,12 +55,14 @@ const defaultSetTimer = (cb: () => void, ms: number): { cancel: () => void } => 
 export class McpSessionPool {
   private readonly factory: McpTransportFactory
   private readonly idleMs: number
+  private readonly closeTimeoutMs: number
   private readonly setTimer: (cb: () => void, ms: number) => { cancel: () => void }
   private readonly entries = new Map<string, Entry>()
 
   constructor(opts: McpSessionPoolOptions) {
     this.factory = opts.factory
     this.idleMs = opts.idleMs ?? 60_000
+    this.closeTimeoutMs = opts.closeTimeoutMs ?? 5_000
     this.setTimer = opts.setTimer ?? defaultSetTimer
     // nowMs is reserved for future TTL policy; not needed for refcount/idle semantics.
     void opts.nowMs
@@ -125,8 +131,11 @@ export class McpSessionPool {
   }
 
   /**
-   * Close EVERY live transport (graceful shutdown). Idempotent + best-effort: a hung docker-kill
-   * cannot block the caller (each close is fire-and-forget-awaited with errors swallowed).
+   * Close EVERY live transport (graceful shutdown). Idempotent + best-effort: a HANGING
+   * transport.close() (the SDK client.close() flush has no per-call timeout) cannot block the
+   * caller NOR the other transports — each close is raced against closeTimeoutMs, and errors are
+   * swallowed (finding #8). On a per-transport timeout we move on (the transport's own close()
+   * still runs killChild() FIRST/in-parallel via its bounded race, so the docker child is reaped).
    */
   async closeAll(): Promise<void> {
     const entries = [...this.entries.values()]
@@ -137,10 +146,18 @@ export class McpSessionPool {
           e.idleTimer.cancel()
           e.idleTimer = undefined
         }
+        let timer: { cancel: () => void } | undefined
         try {
-          await e.transport.close()
+          // A wedged close on ONE transport must not stall the parallel teardown of the rest, nor
+          // the caller. Race each close against the per-transport bound; the loser is abandoned.
+          await Promise.race([
+            e.transport.close().catch(() => {}),
+            new Promise<void>(resolve => { timer = this.setTimer(resolve, this.closeTimeoutMs) }),
+          ])
         } catch {
           /* best-effort */
+        } finally {
+          timer?.cancel()
         }
       }),
     )

@@ -22,25 +22,46 @@
  * merge_pull_request, create_branch, fork_repository, update_issue, …) appears here, so
  * it can never register — this is structural, not conditional.
  */
-export const GITHUB_READONLY_TOOLS: ReadonlySet<string> = Object.freeze(
-  new Set<string>([
-    // ── Repository / code reads (structurally read-only, single-purpose) ──
-    'get_file_contents',
-    'search_code',
-    'search_repositories',
-    'list_commits',
-    'get_commit',
-    'list_branches',
-    'list_tags',
-    // ── Pull-request / issue list + search reads (structurally read-only) ──
-    'list_pull_requests',
-    'list_issues',
-    'search_issues',
-    // ── Consolidated read dispatchers (read-only ALSO relies on GITHUB_READ_ONLY=1) ──
-    'issue_read',
-    'pull_request_read',
-  ]),
-) as ReadonlySet<string>
+/**
+ * Build a genuinely tamper-proof read-only Set. NOTE: `Object.freeze(new Set(...))` does NOT
+ * make a Set's CONTENTS immutable — `add`/`delete`/`clear` are prototype methods that mutate
+ * internal slots, so a frozen Set can still be widened via `.add('push_files')`. For a
+ * GATE-SAFETY core that is exactly the hole we must close: any code holding a reference could
+ * otherwise smuggle a write tool onto the live allow-list. So we neutralize the mutators on the
+ * instance (they throw) AND freeze the object — the `ReadonlySet` type plus this runtime lock
+ * mean the set is immutable in fact, not just by convention.
+ */
+function frozenReadOnlySet(names: readonly string[]): ReadonlySet<string> {
+  const set = new Set<string>(names)
+  const deny = (op: string) => (): never => {
+    throw new TypeError(`GITHUB_READONLY_TOOLS is immutable: cannot ${op}() the read-only allow-list`)
+  }
+  // Override the three mutators on THIS instance so they throw before touching internal slots.
+  Object.defineProperties(set, {
+    add: { value: deny('add'), writable: false, configurable: false },
+    delete: { value: deny('delete'), writable: false, configurable: false },
+    clear: { value: deny('clear'), writable: false, configurable: false },
+  })
+  return Object.freeze(set) as ReadonlySet<string>
+}
+
+export const GITHUB_READONLY_TOOLS: ReadonlySet<string> = frozenReadOnlySet([
+  // ── Repository / code reads (structurally read-only, single-purpose) ──
+  'get_file_contents',
+  'search_code',
+  'search_repositories',
+  'list_commits',
+  'get_commit',
+  'list_branches',
+  'list_tags',
+  // ── Pull-request / issue list + search reads (structurally read-only) ──
+  'list_pull_requests',
+  'list_issues',
+  'search_issues',
+  // ── Consolidated read dispatchers (read-only ALSO relies on GITHUB_READ_ONLY=1) ──
+  'issue_read',
+  'pull_request_read',
+])
 
 /** True iff `name` is on the positive read-only allow-list. The single predicate the
  *  bridge uses to admit a server-advertised tool. */

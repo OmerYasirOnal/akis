@@ -2,7 +2,10 @@ import { defineConfig } from 'vitest/config'
 
 export default defineConfig({
   test: {
-    include: ['test/**/*.test.ts'],
+    // The bulk of the suite lives under test/, but SP1's github-MCP modules colocate their
+    // unit tests next to the source under src/agent/mcp/ (the module + its FAKE-transport test
+    // ship together). Both globs are additive — existing test/** discovery is untouched.
+    include: ['test/**/*.test.ts', 'src/**/*.test.ts'],
     environment: 'node',
     // CAP the worker pool: the integration tests spawn real servers/child processes, and a
     // worker that still holds an open handle lingers after the run — uncapped (one fork per

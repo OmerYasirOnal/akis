@@ -193,6 +193,13 @@ export interface BuildServicesOptions {
    *  the session owner's own connected repo. Absent ⇒ `githubFor` stays undefined and the
    *  shared env/mock adapter is used exactly as today. */
   connections?: GitHubConnectionStore
+  /** SP1: an INJECTED shared GitHub-MCP transport pool (finding #10). When the MCP-enabled guard
+   *  holds AND this is provided, buildServices REUSES it instead of minting a fresh one — so a
+   *  per-workflow orchestrator does NOT spin up a second, untracked pool whose docker children can
+   *  never be torn down. server.ts builds ONE pool and injects it into BOTH buildServices calls, so
+   *  a single closeAll() at shutdown covers every orchestrator. Absent ⇒ a pool is constructed
+   *  internally (the standalone/test path), unchanged. Ignored when the MCP guard is off. */
+  mcpPool?: McpSessionPool
   /** Ed25519 signer for the Build Passport. ADDITIVE — when present, a verified build signs
    *  a durable passport over the already-minted VerifyToken facts. Absent ⇒ no passport
    *  (default boot unchanged). The PRIVATE key is held only on the signer (never logged/returned). */
@@ -231,10 +238,13 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   // mirroring buildUserAdapter's `if(!token) return undefined`, so an anonymous/unconnected owner
   // leaves the Scribe path byte-identical to today.
   const mcpEnabled = !!(opts.connections && opts.env && opts.env.NODE_ENV !== 'test')
+  // REUSE an injected shared pool when given (finding #10) so a per-workflow orchestrator does NOT
+  // build a second, untracked pool that can never be closed; otherwise construct one (standalone path).
   const mcpPool: McpSessionPool | undefined = mcpEnabled
-    ? new McpSessionPool({
-        factory: ({ token }): McpTransport => new StdioDockerTransport({ token }),
-      })
+    ? (opts.mcpPool ??
+        new McpSessionPool({
+          factory: ({ token }): McpTransport => new StdioDockerTransport({ token }),
+        }))
     : undefined
   const githubMcpFor: ((ownerId: string) => { pool: McpSessionPool; ownerId: string; token: string } | undefined) | undefined =
     mcpPool

@@ -6,6 +6,22 @@ import { GITHUB_READONLY_TOOLS, isReadOnlyTool } from './readOnlyAllowlist.js'
  *  first-party advisory tool (e.g. retrieve_knowledge) in the registry. */
 const NS = 'github_'
 
+/** Max chars of a single github tool result fed back into the LLM loop (finding #11). The RAG
+ *  path (retrieve_knowledge) is naturally bounded to ~6 short chunks; a github read like
+ *  get_file_contents returns a WHOLE file (a large/minified/lockfile asset) which would otherwise
+ *  flood the model context and spike token cost/quota (#125). We cap here at the bridge so EVERY
+ *  github_ tool inherits the bound, then append a clear truncation marker so the model knows the
+ *  payload was cut (it can narrow its next read). 16k chars ≈ a few k tokens — generous for
+ *  grounding, far below a context blow-out. */
+const MAX_RESULT_CHARS = 16_000
+
+/** Cap a tool-result string to the budget, appending an explicit, model-readable truncation
+ *  marker when it overflows. Pure + exported-free (kept local to the bridge). */
+function boundResult(text: string): string {
+  if (text.length <= MAX_RESULT_CHARS) return text
+  return `${text.slice(0, MAX_RESULT_CHARS)}\n…[truncated: github tool output exceeded ${MAX_RESULT_CHARS} chars]`
+}
+
 /** A non-secret diagnostic sink (names/counts only — NEVER the token). Defaults to console.warn. */
 export type McpDiagnostic = (msg: string) => void
 
@@ -67,8 +83,9 @@ function bridgeTool(transport: McpTransport, info: McpToolInfo): RegisteredTool 
     handler: async (args: unknown): Promise<string> => {
       try {
         const res = await transport.callTool(info.name, args)
-        if (res.isError) return `Error: github tool '${info.name}' returned an error: ${res.text}`
-        return res.text
+        if (res.isError) return `Error: github tool '${info.name}' returned an error: ${boundResult(res.text)}`
+        // BOUND the payload (finding #11): a single large-file read must not flood the LLM context.
+        return boundResult(res.text)
       } catch (e) {
         return `Error calling github tool '${info.name}': ${e instanceof Error ? e.message : String(e)}`
       }
