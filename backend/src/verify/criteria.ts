@@ -42,6 +42,9 @@ const INPUT_VERB = /\b(types?|typing|enters?|fills?|writes?)\b/i
 /** A quote immediately preceded by a data noun (`task "X"`, `note "X"`) names a DYNAMIC
  *  data item the user created — same impossible-probe class as typed input. */
 const DATA_NOUN = /\b(tasks?|notes?|todos?|items?|entr(?:y|ies)|görev(?:i|ler)?|not(?:u|lar)?)\s*$/i
+/** A quote offered as one branch of an or-alternation (`icon or "Sil" button`) — the spec
+ *  allows EITHER, so asserting one branch is not a faithful mechanical reduction. */
+const OR_BEFORE = /\b(or|veya|ya da)\s*$/i
 /** An explicit URL path (e.g. `/about`, `/api/todos`). The first segment char must be
  *  alphanumeric so a bare `/`, a `//`-comment marker, or stray slash-runs never parse as a
  *  "path" (PR #94 review). Trailing punctuation is trimmed below. */
@@ -83,10 +86,11 @@ export function deriveChecks(spec: SpecArtifact | undefined): Check[] {
 /**
  * The first quoted literal that plausibly names STATIC page chrome (a button label, a
  * heading, fixed copy) — assertable against the SERVED body. Quotes that name what the
- * user TYPES (an INPUT_VERB step) or a dynamic data item (DATA_NOUN right before the
- * quote) are rejected: they describe runtime state a static fetch can never contain, so
- * deriving a probe from them mis-claims "not verified" on a healthy app. Rejection only
- * falls through to the NEXT derivable signal (path → render → skipped) — never to a pass.
+ * user TYPES (an INPUT_VERB step), a dynamic data item (DATA_NOUN right before the quote),
+ * or one branch of an or-alternation (OR_BEFORE) are rejected: those describe runtime
+ * state or an either/or the served body need not contain, so deriving a probe from them
+ * mis-claims "not verified" on a healthy app. Rejection only falls through to the NEXT
+ * derivable signal (path → render → skipped) — never to a pass, so the gate is not relaxed.
  */
 function staticLiteral(steps: string[]): string | undefined {
   for (const step of steps) {
@@ -95,6 +99,7 @@ function staticLiteral(steps: string[]): string | undefined {
     for (const m of step.matchAll(QUOTED)) {
       const before = step.slice(0, m.index)
       if (DATA_NOUN.test(before)) continue // `task "X"` — dynamic data, not chrome
+      if (OR_BEFORE.test(before)) continue // `icon or "X"` — an alternative, not an assertion
       if (m[1]) return m[1]
     }
   }
