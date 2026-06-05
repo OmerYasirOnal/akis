@@ -61,7 +61,7 @@ export function AnalyticsPage({ api }: { api: ApiClient }) {
         </div>
       ) : (
         <>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-5">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5">
             <Stat label={t('analytics.sessions')} value={data?.sessions ?? '—'} accent />
             <Stat label={t('analytics.done')} value={data?.done ?? '—'} />
             <Stat label={t('analytics.verified')} value={data?.verifiedRuns ?? '—'} />

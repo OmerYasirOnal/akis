@@ -38,18 +38,28 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
     bySeq.current = new Map()
     lostRef.current = false
     goneRef.current = false
+    let rafId: number | undefined
     const refold = (): void => {
       if (cancelled) return
       const ordered = [...bySeq.current.entries()].sort((a, b) => a[0] - b[0]).map(([, e]) => e)
       const view = foldSessionView(sessionId, ordered)
       setState({ messages: foldChat(idea, ordered), view: { ...view, ...(lostRef.current ? { connectionLost: true } : {}), ...(goneRef.current ? { connectionGone: true } : {}) } })
     }
+    // High-frequency event path coalescer: a fast build streams ~100 ephemeral notes/sec, and
+    // folding the WHOLE log per event (O(n) sort+fold each → O(n²) over the run) plus a full
+    // setState/re-render per token was the studio's jank source. Batch bursts into ONE fold+render
+    // per animation frame. Transport-state changes (reset/error/give-up) still refold IMMEDIATELY
+    // so the reconnecting/stopped banners stay responsive.
+    const scheduleRefold = (): void => {
+      if (cancelled || rafId !== undefined) return
+      rafId = requestAnimationFrame(() => { rafId = undefined; refold() })
+    }
     const connect = (): void => {
       client = (makeClient ?? (() => new EventStreamClient()))()
       client.connect(`${baseUrl}/sessions/${sessionId}/events`, {
         // A delivered event means the stream is live again → clear the reconnecting flag + reset
         // the backoff. The event is keyed by seq, so a resumed/replayed event is deduped.
-        onEvent: (e, seq) => { attempts = 0; lostRef.current = false; goneRef.current = false; bySeq.current.set(seq, e); refold() },
+        onEvent: (e, seq) => { attempts = 0; lostRef.current = false; goneRef.current = false; bySeq.current.set(seq, e); scheduleRefold() },
         onReset: () => {
           lostRef.current = false; bySeq.current = new Map()
           // The /log re-sync must not fail SILENTLY (audit gap): one retry after 2s; if that
@@ -79,7 +89,7 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
     }
     connect()
     refold() // render the user-idea bubble immediately, before the first event arrives
-    return () => { cancelled = true; if (timer) clearTimeout(timer); client?.close() }
+    return () => { cancelled = true; if (timer) clearTimeout(timer); if (rafId !== undefined) cancelAnimationFrame(rafId); client?.close() }
   }, [sessionId, idea, api, baseUrl, makeClient])
 
   return state

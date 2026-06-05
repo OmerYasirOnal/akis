@@ -95,7 +95,9 @@ describe('useLiveChat — SSE-drop reconnecting overlay', () => {
       // A delivered event afterwards clears BOTH (the stream genuinely came back).
       const last = created[created.length - 1]
       if (last) {
-        act(() => { last.msg(E('narration', { text: 'hi', ts: 1 }), 1) })
+        // onEvent now coalesces via requestAnimationFrame — advance the (faked) timer so the
+        // batched refold flushes before asserting the flag cleared.
+        act(() => { last.msg(E('narration', { text: 'hi', ts: 1 }), 1); vi.advanceTimersByTime(20) })
         expect(hook.result.current.view.connectionGone).not.toBe(true)
       }
     } finally {

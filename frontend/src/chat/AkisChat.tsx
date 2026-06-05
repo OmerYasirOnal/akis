@@ -77,7 +77,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
   return (
     <div className="flex items-start gap-3">
       <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
-      <div className="min-w-0 max-w-[80%] space-y-3">
+      <div className="min-w-0 max-w-[90%] space-y-3 sm:max-w-[80%]">
         {detected
           ? (
             <>
@@ -322,7 +322,7 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
           if (m.role === 'user') {
             return (
               <div key={i} className="flex justify-end">
-                <div className="max-w-[80%] break-words rounded-2xl rounded-br-sm bg-gradient-to-br from-[#07D1AF]/90 to-violet-500/90 px-4 py-2 text-slate-950">{m.content}</div>
+                <div className="max-w-[90%] break-words rounded-2xl rounded-br-sm bg-gradient-to-br from-[#07D1AF]/90 to-violet-500/90 px-4 py-2 text-slate-950 sm:max-w-[80%]">{m.content}</div>
               </div>
             )
           }

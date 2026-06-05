@@ -50,7 +50,7 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
         </span>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[10rem_1fr] gap-2 overflow-hidden rounded-xl border border-white/10 bg-black/50">
+      <div className="grid min-h-0 flex-1 grid-cols-[minmax(11rem,22%)_1fr] gap-2 overflow-hidden rounded-xl border border-white/10 bg-black/50 lg:grid-cols-[minmax(13rem,26%)_1fr]">
         {/* File list */}
         <ul className="min-h-0 overflow-y-auto border-r border-white/10 py-1" aria-label={t('code.title')}>
           {sorted.map((f, i) => {
