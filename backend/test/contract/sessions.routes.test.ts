@@ -59,6 +59,25 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     expect(done.json().status).toBe('done')
   })
 
+  it('P0-1: a spec-seeded POST /sessions opens already spec-approved (building) with NO second approve, and runs to done', async () => {
+    const { app } = makeApp({ passing: true })
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const created = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: seed.body, spec: seed } })).json()
+    // The chat-approved seed satisfied Gate 1 server-side: the session is ALREADY building.
+    expect(created.status).toBe('building')
+    // No /approve click — the human approved once at the chat SpecCard. Run goes straight through.
+    expect((await app.inject({ method: 'POST', url: `/sessions/${created.id}/run` })).statusCode).toBe(200)
+    const done = await app.inject({ method: 'POST', url: `/sessions/${created.id}/confirm` })
+    expect(done.statusCode).toBe(200)
+    expect(done.json().status).toBe('done')
+  })
+
+  it('P0-1: a malformed spec seed (missing body) -> 400 (a build never proceeds on a half spec)', async () => {
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo', spec: { title: 'Only a title' } } })
+    expect(res.statusCode).toBe(400)
+  })
+
   it('Gate 1 NOT bypassable via HTTP: run before approve -> 409', async () => {
     const { app } = makeApp()
     const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()

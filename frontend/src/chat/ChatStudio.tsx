@@ -3,18 +3,29 @@ import type { StringKey } from '../i18n/catalog.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { useLiveChat } from './useLiveChat.js'
-import { ChatThread } from './ChatThread.js'
 import { RunPipeline } from './RunPipeline.js'
+import { specSeedFromMarkdown } from './buildSpec.js'
 import { AkisChat } from './AkisChat.js'
 import { clearThread } from './akisThread.js'
-import { loadRecentBuilds, recordRecentBuild, type RecentBuild } from './recentBuilds.js'
+import { loadRecentBuilds, recordRecentBuild, ideaTitle, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { TrustReportCard } from '../components/TrustReportCard.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
-import type { CodeArtifact, TestEvidence } from '@akis/shared'
+import type { CodeArtifact, TestEvidence, SessionStatus } from '@akis/shared'
+
+/** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
+ *  done/failed/cancelled are final, and verify_failed/push_failed are parked-but-finished
+ *  (the user can iterate with a follow-up message rather than be stuck). Any OTHER status is a
+ *  live, in-flight run → the live cockpit. */
+const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+  'done', 'failed', 'cancelled', 'verify_failed', 'push_failed',
+])
+function isTerminalStatus(s: SessionStatus | undefined): boolean {
+  return s !== undefined && TERMINAL_STATUSES.has(s)
+}
 
 /**
  * The AKIS chat studio. There is ONE way to start a build: by TALKING to AKIS. The
@@ -63,8 +74,15 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // localStorage list (loaded above) if the request fails.
   useEffect(() => {
     void api.listMySessions().then(list => {
-      if (list.length) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0 })))
-      // Resolve the /?s= deep-link: open that build (with its idea, for the user bubble).
+      // Carry status + verified (P1-7) so the History menu shows the same minimal signal the
+      // History page does (title + localized status + verified mark), newest-first (the API
+      // returns newest-first; ts:0 keeps that order stable).
+      if (list.length) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0, status: s.status, verified: s.verified })))
+      // Resolve the /?s= deep-link: open that build (with its idea, for the user bubble). P1-4:
+      // it routes through the SAME status-driven mode as the HistoryMenu door (mode = a function of
+      // the session STATUS, not which door opened it). We do NOT clear the persisted thread here
+      // (unlike the explicit HistoryMenu open): a deep-link is also how a REFRESH of the active
+      // build resumes (syncUrl keeps ?s= current), and that thread legitimately belongs to it.
       const id = deepLinkId.current
       if (id) {
         deepLinkId.current = undefined
@@ -78,10 +96,6 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     })
   }, [api])
   const [actionError, setActionError] = useState<string | undefined>()
-  // The persisted thread is the CURRENT live conversation, so it belongs to a build STARTED
-  // from this chat (or its reload), NOT to an OLD build re-opened from History. `reopened`
-  // gates the live chat surface out for History sessions so stale localStorage never attaches.
-  const [reopened, setReopened] = useState(false)
   // Stale deep-link recovery: a session that NO LONGER EXISTS server-side (restart wiped the
   // in-memory store, DB loss, or external deletion) makes GET /sessions/:id return 404. We flag
   // it so the chat can offer an HONEST recovery card ("Start new build") instead of hanging on a
@@ -99,14 +113,18 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // tab shows the auditable evidence behind the verified result.
   const [codeFiles, setCodeFiles] = useState<CodeArtifact['files'] | undefined>(undefined)
   const [testEvidence, setTestEvidence] = useState<TestEvidence | undefined>(undefined)
+  // The AUTHORITATIVE backend SessionStatus (richer than the SSE-derived view.status — it carries
+  // awaiting_*/verify_failed/push_failed). One reopen RULE (P1-4) reads it: a terminal status is
+  // interactive (view + iterate), a non-terminal one is the live cockpit — regardless of door.
+  const [backendStatus, setBackendStatus] = useState<SessionStatus | undefined>(undefined)
   // UX honesty (B.5b): when this build EDITS a prior app (session.base set server-side), say
   // so visibly — the user must never be surprised that agents merged over existing files.
   const [editsBase, setEditsBase] = useState(false)
   useEffect(() => {
-    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); return }
+    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); return }
     let cancelled = false
     void api.getSession(sessionId)
-      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setSessionGone(false) } })
+      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setSessionGone(false) } })
       .catch(e => {
         if (cancelled) return
         // A 404 means the session is genuinely GONE (server restart wiped the in-memory store,
@@ -140,15 +158,29 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // so a verify_failed/push_failed run with real code is editable too — not just 'done'.
       // "New build" resets sessionId (and codeFiles), so a fresh conversation starts from zero.
       const baseId = sessionId && codeFiles?.length ? sessionId : undefined
-      const s = await api.startSession(idea, undefined, baseId)
-      setSent(idea); setSessionId(s.id); setReopened(false); setStartingSpec(undefined)
+      // P0-1: the chat-approved spec is AUTHORITATIVE — `idea` here IS the spec text the SpecCard
+      // rendered + the human approved. Pass it as the spec seed so the backend uses it as-is and
+      // auto-satisfies Gate 1 (still minted server-side via the approvalAuthority); the pipeline
+      // then opens already at spec-approved with NO second 'Approve spec' click. The single
+      // human spec-approval moment is the SpecCard's "Approve & Build".
+      const s = await api.startSession(idea, undefined, baseId, specSeedFromMarkdown(idea))
+      setSent(idea); setSessionId(s.id); setStartingSpec(undefined)
       syncUrl(s.id) // keep the ?s= deep-link current (audit gap: a refresh mid-FOLLOW-UP reopened the prior session)
       setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
     } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)); setStartingSpec(undefined) }
     finally { setBusy(false); startingRef.current = false }
   }
-  /** Re-open a past build — useLiveChat replays /log + /events to rebuild the thread. */
-  const openSession = (b: RecentBuild): void => { setActionError(undefined); setStartingSpec(undefined); setSent(b.idea); setSessionId(b.id); setReopened(true); syncUrl(b.id) }
+  /** Re-open a past build (BOTH History doors route here — HistoryMenu directly, the /?s= deep-link
+   *  via the mount effect). useLiveChat replays /log + /events to rebuild the run; the inline
+   *  pipeline + composer render in ONE conversation surface (P0-3). The single reopen RULE (P1-4)
+   *  is status-driven, NOT door-driven: a terminal run is interactive (view + iterate), a
+   *  non-terminal one is the live cockpit. We drop the prior conversation's persisted thread so a
+   *  reopened build never inherits an UNRELATED chat — AkisChat re-seeds a clean greeting and the
+   *  composer is ready for a follow-up that EDITS this app (the base-merge start path). */
+  const openSession = (b: RecentBuild): void => {
+    setActionError(undefined); setStartingSpec(undefined); clearThread()
+    setSent(b.idea); setSessionId(b.id); setBackendStatus(undefined); syncUrl(b.id)
+  }
   const act = async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setActionError(undefined)
     try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }
@@ -174,13 +206,21 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e))
   })
   const newChat = (): void => {
+    // P1-6: 'New build' on a NON-TERMINAL run must STOP that run, not orphan it. We cancel the
+    // backend pipeline (api.cancel → Orchestrator.cancel, which only sets 'cancelled' and NEVER
+    // mints a token — strictly gate-SAFER) BEFORE clearing local state, so leaving a live build
+    // doesn't leave it running headless. Fire-and-forget: a 409 from an already-terminal run is
+    // swallowed (nothing to stop). A terminal session needs no cancel.
+    if (sessionId && !isTerminalStatus(backendStatus)) {
+      void api.cancelRun(sessionId).catch(() => { /* already terminal / transient — nothing to stop */ })
+    }
     // Clear the stale-session flag FIRST so the gone-card condition (sessionGone && sessionId)
     // transitions cleanly from true→false in the SAME render React batches — no flicker of both
     // a fresh chat AND the gone-card before the next getSession effect run.
     setSessionGone(false)
-    setSessionId(undefined); setSent(''); setActionError(undefined); setStartingSpec(undefined)
+    setSessionId(undefined); setSent(''); setActionError(undefined); setStartingSpec(undefined); setBackendStatus(undefined)
     // Start a fresh conversation: drop the persisted thread so AkisChat re-seeds the greeting.
-    clearThread(); setReopened(false)
+    clearThread()
     // Drop a stale /?s= deep-link from the address bar so a refresh starts clean.
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
   }
@@ -236,12 +276,20 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // FRAMELESS by design (user feedback): the run is part of THE SAME conversation — no
     // bordered sub-panel, no chat-in-chat. A subtle divider marks the transition instead.
     <section className="border-t border-white/5 pt-3">
+      {/* The build's title (the idea/spec's first line) — so a REOPENED run shows WHAT it is in
+          the one conversation surface, where the nested ChatThread idea-bubble used to (P0-2/P0-3). */}
+      {ideaTitle(sent) && (
+        <div className="mb-2 truncate text-sm font-semibold text-slate-100" title={sent}>{ideaTitle(sent)}</div>
+      )}
       {/* Edit-mode disclosure (B.5b): this build MERGES over a prior app — never a surprise. */}
       {editsBase && (
         <div className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-400/[0.08] px-2 py-0.5 text-[11px] font-medium text-violet-200">
           <span aria-hidden>🔁</span> {t('pipeline.editsBase')}
         </div>
       )}
+      {/* P0-2: NO nested 'Live agent activity' ChatThread (chat-in-chat). The canonical run
+          representation is the inline pipeline strip (5 step nodes + AgentRoster + summary line)
+          below — one conversation, not a second one nested inside it. */}
       <RunPipeline
         view={live.view}
         onApprove={approve}
@@ -249,7 +297,6 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         busy={busy}
         api={api}
         sessionGone={sessionGone}
-        details={<ChatThread messages={live.messages} onApprove={approve} onConfirm={confirm} busy={busy} />}
       />
     </section>
   ) : null
@@ -273,25 +320,21 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     <div className="flex min-h-[32rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
       {sessionId ? (
         <div className={`grid min-h-0 flex-1 gap-6 ${previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_24rem]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]'}`}>
-          {/* Run pipeline (each agent's stage, live) */}
+          {/* P0-3: ONE render + ONE scroll. Live AND reopened render the run the SAME way — the
+              inline pipeline (workflowCard) inside the SINGLE AkisChat conversation surface, which
+              owns the only vertical scroll. No separate reopened overflow panel, no stacked scroll
+              containers. P1-5: the composer is ALWAYS present, so a reopened TERMINAL build can be
+              iterated with a follow-up (which EDITS the prior app via the base-merge start path),
+              not just abandoned for a 'New build'. */}
           <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
             {header}
-            {!reopened ? (
-              <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 px-4 py-4">
-                {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
-                {/* Stale deep-link recovery takes VISUAL precedence above the chat/pipeline: a
-                    deleted session's honest path is "Start new build", not the frozen pipeline. */}
-                {staleSessionCard}
-                <AkisChat api={api} building={busy} builtSpec={sent} onBuild={(spec) => void startBuild(spec)} workflow={sessionGone ? undefined : workflowCard} />
-              </div>
-            ) : (
-              <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-                {/* Opus review M2: a History-opened session can be gone too — same honest card. */}
-                {staleSessionCard}
-                {!sessionGone && workflowCard}
-                {actionError && <div role="alert" className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
-              </div>
-            )}
+            <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 px-4 py-4">
+              {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
+              {/* Stale deep-link recovery takes VISUAL precedence above the chat/pipeline: a
+                  deleted session's honest path is "Start new build", not the frozen pipeline. */}
+              {staleSessionCard}
+              <AkisChat api={api} building={busy} builtSpec={sent} onBuild={(spec) => void startBuild(spec)} workflow={sessionGone ? undefined : workflowCard} />
+            </div>
           </section>
 
           {/* Live preview rail — the actually-running app */}

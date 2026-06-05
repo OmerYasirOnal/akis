@@ -1,5 +1,26 @@
 import { describe, it, expect } from 'vitest'
-import { extractBuildSpec, hasTruncatedSpec, extractSuggestions } from './buildSpec.js'
+import { extractBuildSpec, hasTruncatedSpec, extractSuggestions, specSeedFromMarkdown } from './buildSpec.js'
+
+describe('specSeedFromMarkdown (P0-1 chat-approved spec seed)', () => {
+  it('takes the first markdown heading as the title and keeps the full text as the body', () => {
+    const md = '# Minimal Todo App\n\n## Scope\nAdd, list, complete todos.'
+    const seed = specSeedFromMarkdown(md)
+    expect(seed.title).toBe('Minimal Todo App')
+    expect(seed.body).toBe(md) // the whole approved spec — nothing dropped
+  })
+  it('falls back to the first non-empty line, then a generic label', () => {
+    expect(specSeedFromMarkdown('Just a plain line\nmore').title).toBe('Just a plain line')
+    expect(specSeedFromMarkdown('   ').title).toBe('Untitled spec')
+    expect(specSeedFromMarkdown('').title).toBe('Untitled spec')
+  })
+  it('strips leading heading hashes and surrounding emphasis from the title', () => {
+    expect(specSeedFromMarkdown('### **Voting App**\nbody').title).toBe('Voting App')
+  })
+  it('caps an overlong title (never an unbounded body in the title slot)', () => {
+    const long = '# ' + 'x'.repeat(500)
+    expect(specSeedFromMarkdown(long).title.length).toBeLessThanOrEqual(200)
+  })
+})
 
 describe('extractSuggestions', () => {
   it('returns no suggestions and the original text when there is no block', () => {
