@@ -1,5 +1,7 @@
 # Dependencies
-node_modules/
+# NOTE: no trailing slash — also ignores a node_modules SYMLINK (a file), not just the directory
+# (a worktree shares deps via `ln -s …/node_modules`; the trailing-slash form let those get committed).
+node_modules
 .pnpm-store/
 
 # Build output
