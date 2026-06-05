@@ -185,7 +185,7 @@ function TrustLedger({ view, t }: { view: SessionView; t: (k: StringKey) => stri
  * wired to the same onApprove/onConfirm the verbose thread uses. The verbose chronological
  * log lives below this in a collapsed <details> (rendered by ChatStudio).
  */
-export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: {
+export function RunPipeline({ view, onApprove, onConfirm, busy, details, api, sessionGone = false }: {
   view: SessionView
   onApprove: () => void
   onConfirm: () => void
@@ -195,6 +195,10 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
   /** REST client used to drive the recovery actions (resolve/retry). Same-origin default
    *  (prod). A caller can inject a baseUrl-bound client; tests inject a fake. */
   api?: ApiClient
+  /** True when GET /sessions/:id returned 404 — the session is genuinely GONE (not a transient
+   *  transport drop). ChatStudio shows the honest "Start new build" recovery card above, so the
+   *  transport banners below are suppressed: a deleted session's SSE 404 is not a reconnect story. */
+  sessionGone?: boolean
 }) {
   const { t } = useI18n()
   const steps = derivePipeline(view)
@@ -258,14 +262,17 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
       <TrustLedger view={view} t={t} />
 
       {/* TERMINAL transport state: reconnects exhausted — honest "stopped + Reload" (audit gap:
-          the transient banner used to pulse forever after give-up). */}
-      {view.connectionGone ? (
+          the transient banner used to pulse forever after give-up). SUPPRESSED when the session
+          is genuinely GONE (getSession 404): the honest recovery is the gone-card's "Start new
+          build" above, not a "Reload" that would just hit the same 404. A deleted session's SSE
+          404 is not a transport reconnect story. */}
+      {view.connectionGone && !sessionGone ? (
         <div role="alert" className="flex items-center gap-2 rounded-xl border border-rose-400/25 bg-rose-400/[0.06] px-3 py-1.5 text-[11px] text-rose-200/90">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-300" aria-hidden />
           {t('live.connectionGone')}
           <button onClick={() => window.location.reload()} className="ml-auto shrink-0 rounded border border-rose-300/30 px-2 py-0.5 text-[11px] text-rose-100 hover:bg-rose-400/10">{t('live.reload')}</button>
         </div>
-      ) : view.connectionLost && (
+      ) : view.connectionLost && !sessionGone && (
         /* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run);
            the resumable stream re-syncs via Last-Event-ID. */
         <div role="status" className="flex items-center gap-2 rounded-xl border border-amber-400/20 bg-amber-400/[0.05] px-3 py-1.5 text-[11px] text-amber-200/90">

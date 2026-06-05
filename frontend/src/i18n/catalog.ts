@@ -71,6 +71,12 @@ export const STRINGS = {
     // GATED push (Gate 4 still mints from the VerifyToken) — a retry affordance, not a bypass.
     'recovery.push.hint': 'The build is verified, but pushing it failed. Retry the push — it still requires the verified push approval (the push gate is never bypassed).',
     'recovery.push.retry': 'Push failed — retry',
+    // Stale deep-link recovery: a session that NO LONGER EXISTS (server restart wiped the
+    // in-memory store, DB loss, or external deletion) makes GET /sessions/:id return 404. The
+    // honest recovery is to start a NEW build — not to hang on a frozen view. Distinct from the
+    // transient connectionGone banner (that is transport-only; this is the session being gone).
+    'session.gone.hint': 'This session no longer exists (the server may have restarted). Start a new build to continue.',
+    'session.gone.action': 'Start new build',
     // Run control: STOP/CANCEL an in-flight run — a clean terminal abandon (never a gate bypass:
     // cancel only stops the run; it never marks it verified or ships it).
     'run.stop': 'Stop run',
@@ -659,6 +665,12 @@ export const STRINGS = {
     // KAPILI push'u yeniden çalıştırır (Gate 4 yine VerifyToken'dan üretir) — atlatma değil.
     'recovery.push.hint': 'İnşa doğrulandı, ancak push başarısız oldu. Push\'u yeniden dene — yine doğrulanmış push onayını gerektirir (push kapısı asla atlanmaz).',
     'recovery.push.retry': 'Push başarısız — yeniden dene',
+    // Eskimiş derin bağlantı kurtarma: ARTIK MEVCUT OLMAYAN bir oturum (sunucu yeniden başlaması
+    // bellek deposunu sildi, DB kaybı ya da dış silme) GET /sessions/:id'in 404 dönmesine yol açar.
+    // Dürüst kurtarma, donmuş bir görünümde takılmak değil YENİ bir geliştirme başlatmaktır. Geçici
+    // connectionGone bandından farklıdır (o yalnızca aktarım; bu, oturumun kendisinin gitmiş olması).
+    'session.gone.hint': 'Bu oturum artık mevcut değil (sunucu yeniden başlamış olabilir). Devam etmek için yeni bir geliştirme başlatın.',
+    'session.gone.action': 'Yeni geliştirme başlat',
     // Çalışma denetimi: yürüyen bir çalışmayı DURDUR/İPTAL ET — temiz, kalıcı bir vazgeçiş (asla
     // kapı atlatma değil: iptal yalnızca çalışmayı durdurur; asla doğrulamaz veya yayınlamaz).
     'run.stop': 'Çalışmayı durdur',
