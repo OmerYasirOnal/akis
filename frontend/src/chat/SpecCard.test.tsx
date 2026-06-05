@@ -68,6 +68,29 @@ describe('SpecCard', () => {
     expect(onBuild).not.toHaveBeenCalled()
   })
 
+  describe('Copy spec', () => {
+    it('copies the current spec text to the clipboard', async () => {
+      const writeText = vi.fn(() => Promise.resolve())
+      Object.assign(navigator, { clipboard: { writeText } })
+      const spec = '# TODO App\nbody'
+      renderI18n(<SpecCard spec={spec} onBuild={() => {}} />)
+      await userEvent.click(screen.getByRole('button', { name: 'Copy spec' }))
+      expect(writeText).toHaveBeenCalledWith(spec)
+    })
+
+    it('copies the EDITED spec after a save (not the original)', async () => {
+      const writeText = vi.fn(() => Promise.resolve())
+      Object.assign(navigator, { clipboard: { writeText } })
+      renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={() => {}} />)
+      await userEvent.click(screen.getByRole('button', { name: 'Edit spec' }))
+      await userEvent.clear(screen.getByLabelText('Edit spec'))
+      await userEvent.type(screen.getByLabelText('Edit spec'), '# Edited App{enter}Better body')
+      await userEvent.click(screen.getByRole('button', { name: 'Save edits' }))
+      await userEvent.click(screen.getByRole('button', { name: 'Copy spec' }))
+      expect(writeText).toHaveBeenCalledWith('# Edited App\nBetter body')
+    })
+  })
+
   describe('Download .md', () => {
     let created: string[] = []
     let lastAnchor: HTMLAnchorElement | undefined

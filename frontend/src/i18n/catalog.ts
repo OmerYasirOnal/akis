@@ -181,6 +181,9 @@ export const STRINGS = {
     'spec.card.title': 'Build-ready spec',
     'spec.card.hint': 'Review it, then approve to run the full agent pipeline.',
     'spec.download': 'Download .md',
+    // ── Copy affordances (shared CopyButton; success state reuses report.copied) ──
+    'copy.spec': 'Copy spec',
+    'copy.reply': 'Copy reply',
     'spec.edit': 'Edit spec',
     'spec.editLabel': 'Edit spec',
     'spec.save': 'Save edits',
@@ -227,6 +230,8 @@ export const STRINGS = {
     'code.files': 'files',
     'code.empty': 'No code yet — files appear here once the agents finish writing the app.',
     'code.lines': 'lines',
+    'copy.file': 'Copy file',
+    'copy.codeBlock': 'Copy code',
     // ── Build history (studio redesign) ──
     'history.title': 'Build history',
     'history.sub': 'Every app you’ve built with AKIS — open one to revisit its run and preview.',
@@ -288,6 +293,7 @@ export const STRINGS = {
     'trust.critic.findings': 'findings',
     'trust.critic.critical': 'Critical finding',
     'trust.critic.iteration': 'iteration',
+    'copy.evidence': 'Copy evidence',
     'nav.dashboard': 'Studio',
     'nav.analytics': 'Analytics',
     'nav.settings': 'Settings',
@@ -801,6 +807,9 @@ export const STRINGS = {
     'spec.card.title': 'İnşaya hazır spec',
     'spec.card.hint': 'Gözden geçir, sonra onayla — tüm ajan hattını çalıştırır.',
     'spec.download': '.md indir',
+    // ── Kopyalama eylemleri (paylaşılan CopyButton; başarı durumu report.copied'i kullanır) ──
+    'copy.spec': "Spec'i kopyala",
+    'copy.reply': 'Yanıtı kopyala',
     'spec.edit': 'Spec’i düzenle',
     'spec.editLabel': 'Spec’i düzenle',
     'spec.save': 'Düzenlemeyi kaydet',
@@ -847,6 +856,8 @@ export const STRINGS = {
     'code.files': 'dosya',
     'code.empty': 'Henüz kod yok — ajanlar uygulamayı yazmayı bitirince dosyalar burada görünür.',
     'code.lines': 'satır',
+    'copy.file': 'Dosyayı kopyala',
+    'copy.codeBlock': 'Kodu kopyala',
     // P1-CORE-1: çalıştırma başına "bu sonuç simüle edildi" rozeti — verify gate kartında ve
     // canlı önizlemede, çalıştırmanın verify/preview olayı `demo:true` taşıdığında gösterilir.
     'result.demo.badge': 'DEMO · doğrulama simüle edildi',
@@ -912,6 +923,7 @@ export const STRINGS = {
     'trust.critic.findings': 'bulgu',
     'trust.critic.critical': 'Kritik bulgu',
     'trust.critic.iteration': 'tur',
+    'copy.evidence': 'Kanıtı kopyala',
     'nav.dashboard': 'Stüdyo',
     'nav.analytics': 'Analitik',
     'nav.settings': 'Ayarlar',

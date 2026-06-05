@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { CodeArtifact } from '@akis/shared'
 import { useI18n } from '../i18n/I18nContext.js'
+import { CopyButton } from './CopyButton.js'
 
 type CodeFile = CodeArtifact['files'][number]
 
@@ -76,7 +77,11 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
         <div className="flex min-h-0 flex-col overflow-hidden">
           <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-2.5 py-1">
             <span className="truncate text-[11px] text-slate-400">{active?.filePath}</span>
-            <span className="shrink-0 pl-2 text-[10px] text-slate-600">{lines.length} {t('code.lines')}</span>
+            <div className="flex shrink-0 items-center gap-2 pl-2">
+              <span className="text-[10px] text-slate-600">{lines.length} {t('code.lines')}</span>
+              {/* `active &&` guards noUncheckedIndexedAccess (active is CodeFile | undefined). */}
+              {active && <CopyButton text={active.content} label={t('copy.file')} className="text-[10px]" />}
+            </div>
           </div>
           <div className="flex min-h-0 flex-1 overflow-auto font-mono text-xs leading-5">
             <ol data-testid="code-gutter" aria-hidden className="shrink-0 select-none border-r border-white/10 px-2 py-2 text-right text-slate-600">
