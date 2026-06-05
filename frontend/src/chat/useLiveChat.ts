@@ -16,8 +16,14 @@ const MAX_RECONNECT = 6
  * (chronological) and the aggregated SessionView (for the side rail + gate state).
  * Events are keyed by transport seq → idempotent across replay/reconnect; on a
  * `reset` it re-syncs from GET /sessions/:id/log (F2-AC12).
+ *
+ * `terminal` (multi-run anchored transcript): a run-block whose run is already OVER
+ * (a non-active, terminal run in the spine) must NOT hold a live SSE subscription open —
+ * only the ACTIVE run stays live (perf mitigation: N run-blocks ≠ N forever-live streams).
+ * For a terminal run it does a single one-shot GET /sessions/:id/log, folds ONCE, and stops:
+ * no EventSource, no rAF coalescer, no reconnect/give-up — a static, replayed transcript.
  */
-export function useLiveChat(sessionId: string | undefined, idea: string, api: ApiClient, baseUrl = '', makeClient?: () => EventStreamClient): LiveChat {
+export function useLiveChat(sessionId: string | undefined, idea: string, api: ApiClient, baseUrl = '', makeClient?: () => EventStreamClient, terminal = false): LiveChat {
   const [state, setState] = useState<LiveChat>({ messages: [], view: emptyView(sessionId ?? '') })
   const bySeq = useRef<Map<number, AkisEvent>>(new Map())
   // TRANSPORT state, overlaid onto the folded view (so foldSessionView stays pure): the SSE
@@ -29,7 +35,29 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
   // (the audit's frozen-view gap: the old subtle banner span pulsed forever).
   const goneRef = useRef(false)
 
+  // TERMINAL run (static transcript): fold the persisted /log ONCE and stop. No EventSource is
+  // opened, so an older/reopened run never multiplies live subscriptions nor flickers — it reads
+  // as a settled block. Re-runs only if the session id (or its terminal-ness) changes.
   useEffect(() => {
+    if (!terminal) return
+    if (!sessionId) { setState({ messages: [], view: emptyView('') }); return }
+    let cancelled = false
+    bySeq.current = new Map(); lostRef.current = false; goneRef.current = false
+    void api.getSessionLog(sessionId)
+      .then(log => {
+        if (cancelled) return
+        for (const { seq, event } of log) bySeq.current.set(seq, event)
+        const ordered = [...bySeq.current.entries()].sort((a, b) => a[0] - b[0]).map(([, e]) => e)
+        setState({ messages: foldChat(idea, ordered), view: foldSessionView(sessionId, ordered) })
+      })
+      // A gone session (404) folds to the empty view; the run-block's own getSession-404 probe
+      // is what surfaces the honest "session gone" card, so this just leaves a clean empty block.
+      .catch(() => { if (!cancelled) setState({ messages: [], view: emptyView(sessionId) }) })
+    return () => { cancelled = true }
+  }, [terminal, sessionId, idea, api])
+
+  useEffect(() => {
+    if (terminal) return
     if (!sessionId) { setState({ messages: [], view: emptyView('') }); return }
     let cancelled = false
     let attempts = 0
@@ -90,7 +118,7 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
     connect()
     refold() // render the user-idea bubble immediately, before the first event arrives
     return () => { cancelled = true; if (timer) clearTimeout(timer); if (rafId !== undefined) cancelAnimationFrame(rafId); client?.close() }
-  }, [sessionId, idea, api, baseUrl, makeClient])
+  }, [terminal, sessionId, idea, api, baseUrl, makeClient])
 
   return state
 }

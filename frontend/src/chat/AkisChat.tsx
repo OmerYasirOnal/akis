@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo, type FormEvent, type ReactNode } from 'react'
+import { useState, useEffect, useRef, useMemo, memo, type FormEvent, type ReactNode } from 'react'
 import type { ApiClient, ProviderInfo, ChatOverrides, UsageInfo } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -11,7 +11,10 @@ import { useSmoothText } from './useSmoothText.js'
 import { ModelChip, type Effort } from './ModelChip.js'
 import { ModelPicker, type ModelSelection } from './ModelPicker.js'
 import { loadModelPref, saveModelPref, type ModelPref } from './modelPref.js'
-import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } from './akisThread.js'
+import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, type AkisMsg, type ThreadNode } from './akisThread.js'
+import { RunBlock } from './RunBlock.js'
+import type { EventStreamClient } from '../live/EventStreamClient.js'
+import type { SessionView } from '../live/types.js'
 
 /**
  * A free-form conversation WITH AKIS, shown before a build starts. AKIS opens with a
@@ -40,10 +43,24 @@ import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } fro
 /** The in-flight streaming placeholder carries a transient `streaming` flag — UI-only,
  *  never persisted to localStorage nor replayed as history (stripped before both). */
 type ChatMsg = AkisMsg & { streaming?: boolean }
+/** A node in the chronological SPINE the chat renders: a chat message (possibly the live
+ *  streaming placeholder) OR a run marker that mounts a RunBlock IN PLACE at its slot. */
+type ThreadEntry = ChatMsg | ThreadNode
 
-/** Drop the live streaming placeholder (used on finalize + on a stream failure). */
-function dropPlaceholder(msgs: ChatMsg[]): ChatMsg[] {
-  return msgs.filter(m => !m.streaming)
+/** True for the live streaming placeholder (only an assistant chat message ever carries it). */
+function isStreaming(n: ThreadEntry): boolean {
+  return isMsg(n) && (n as ChatMsg).streaming === true
+}
+
+/** Drop the live streaming placeholder (used on finalize + on a stream failure). Run markers
+ *  and completed messages are untouched. */
+function dropPlaceholder(nodes: ThreadEntry[]): ThreadEntry[] {
+  return nodes.filter(n => !isStreaming(n))
+}
+
+/** Strip the transient `streaming` flag for persistence/history — run markers pass through. */
+function forStorage(nodes: readonly ThreadEntry[]): ThreadNode[] {
+  return dropPlaceholder([...nodes]).map(n => (isRun(n) ? n : { role: (n as ChatMsg).role, content: (n as ChatMsg).content }))
 }
 
 /**
@@ -52,14 +69,17 @@ function dropPlaceholder(msgs: ChatMsg[]): ChatMsg[] {
  * the FULL accumulated `content` (spec/suggestion detection must see the authoritative text);
  * only the visible reply text is animated, and only while it's the actively streaming message.
  */
-const AssistantMessage = memo(function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: {
+const AssistantMessage = memo(function AssistantMessage({ content, streaming, onBuild, building, isSpecStarted }: {
   content: string
   streaming: boolean
   // Explicit `| undefined` (not `?`) so the call site can forward AkisChat's own optional
   // props straight through under exactOptionalPropertyTypes (which distinguishes absent vs undefined).
   onBuild: ((spec: string) => void) | undefined
   building: boolean | undefined
-  builtSpec: string | undefined
+  /** PER-SPEC started: true iff a run node in the spine ORIGINATED from THIS spec text. Anchoring
+   *  on the run markers (not one global builtSpec) means an OLD spec card in the multi-run thread
+   *  never mislabels — each card reflects whether ITS build was actually started. */
+  isSpecStarted: (spec: string) => boolean
 }): ReactNode {
   const { t } = useI18n()
   // A build-ready spec is detected only when onBuild is wired (the studio flow). Detection
@@ -68,7 +88,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
   // Suppress the "truncated" notice WHILE streaming — an open-but-not-yet-closed fence is
   // normal mid-stream, not a real truncation (avoids a flicker).
   const truncated = onBuild && !streaming ? hasTruncatedSpec(content) : false
-  const started = !!detected && builtSpec?.trim() === detected.spec.trim()
+  const started = !!detected && isSpecStarted(detected.spec)
   // Strip the suggestion block off the FULL text first (extraction is authoritative), then
   // SMOOTH-reveal that clean reply while streaming. Completed/history bubbles show it instantly.
   const { text: stripped } = extractSuggestions(content)
@@ -86,7 +106,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
                   <Markdown content={detected.intro} />
                 </div>
               )}
-              <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} startedSpec={builtSpec} />
+              <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} />
             </>
           )
           : (
@@ -114,10 +134,41 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
   )
 })
 
-export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api: ApiClient; onBuild?: (spec: string) => void; building?: boolean; builtSpec?: string; workflow?: ReactNode }) {
+export function AkisChat({
+  api, onBuild, building, starting,
+  activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView,
+  baseUrl = '', makeClient,
+}: {
+  api: ApiClient
+  /** The Chat-to-Build seam (the ONLY build entry). May return the new session id (sync or async)
+   *  so the chat can append the inline run marker IN PLACE; returning void keeps standalone callers
+   *  (and the akis-chat tests) working — no run marker is appended then. */
+  onBuild?: (spec: string) => void | string | undefined | Promise<string | undefined | void>
+  building?: boolean
+  /** A transient "Workflow is starting…" card rendered at the tail WHILE a session is being
+   *  created (after Approve, before its run marker appears). NOT the run itself — that is an
+   *  inline RunBlock at the run marker's slot. */
+  starting?: ReactNode
+  /** The latest run's session id — the ACTIVE run. Its RunBlock stays live (others fold once);
+   *  it reports its view up via onActiveView and shows the Stop control. */
+  activeSessionId?: string
+  /** BUILD-AWARE CHAT (SACRED, separate from chatOverrides): the active run's session id when it
+   *  produced code, forwarded as the trailing sessionId arg to the chat calls so the persona gets a
+   *  read-only, owner-scoped, contents-free snapshot. NEVER reaches onBuild/startSession. */
+  buildContextSessionId?: string
+  /** GATE-SAFE bare callbacks to the existing gated routes (mint nothing). Used by every run-block. */
+  onApprove?: () => void
+  onConfirm?: () => void
+  /** Honest recovery for a 404'd (gone) session inside a run-block (reuses the studio's reset). */
+  onNewBuild?: () => void
+  /** The ACTIVE run reports its folded view up so the studio rail/header track it. */
+  onActiveView?: (view: SessionView) => void
+  baseUrl?: string
+  makeClient?: () => EventStreamClient
+}) {
   const { t } = useI18n()
   const greeting = t('akis.greeting')
-  const [msgs, setMsgs] = useState<ChatMsg[]>(() => {
+  const [nodes, setNodes] = useState<ThreadEntry[]>(() => {
     const saved = loadThread()
     return saved.length ? saved : [{ role: 'assistant', content: greeting }]
   })
@@ -141,10 +192,10 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true) // false once the user scrolls up (auto-scroll guard)
 
-  // Persist the whole thread on every change so it survives a build start + reload.
-  // Strip the transient streaming placeholder/flag so a reload never restores a
-  // half-streamed "in-flight" bubble (the flag is UI-only state).
-  useEffect(() => { saveThread(dropPlaceholder(msgs).map(({ role, content }) => ({ role, content }))) }, [msgs])
+  // Persist the WHOLE spine on every change so it survives a build start + reload: chat messages
+  // AND run markers serialize to the same key. Strip the transient streaming placeholder/flag so a
+  // reload never restores a half-streamed "in-flight" bubble (the flag is UI-only state).
+  useEffect(() => { saveThread(forStorage(nodes)) }, [nodes])
 
   // Autofocus the composer on mount so the user can start typing immediately.
   useEffect(() => { inputRef.current?.focus() }, [])
@@ -178,7 +229,31 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   useEffect(() => {
     const el = scrollRef.current
     if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
-  }, [msgs, busy])
+  }, [nodes, busy])
+
+  // The set of spec texts that ALREADY started a build — derived from the run markers in the spine
+  // (each run marker's `idea` is the exact spec text passed to startBuild). PER-spec started state:
+  // an older SpecCard in a multi-run thread reads "started" only if ITS spec spawned a run.
+  const startedSpecs = useMemo(() => {
+    const s = new Set<string>()
+    for (const n of nodes) if (isRun(n)) s.add(n.idea.trim())
+    return s
+  }, [nodes])
+  const isSpecStarted = (spec: string): boolean => startedSpecs.has(spec.trim())
+
+  // Append a run marker at the TAIL (the array slot where the SpecCard was approved) so the build
+  // renders INLINE, below the chat turns that preceded it — chronology is structural, no timestamp.
+  const appendRun = (sessionId: string, idea: string): void => {
+    stickToBottom.current = true
+    setNodes(ns => [...ns, { role: 'run', sessionId, idea: idea.trim() }])
+  }
+
+  // The Chat-to-Build seam: hand the approved spec to the studio's startBuild (the ONLY mint path),
+  // and on a started session append its run marker IN PLACE. SACRED: only the spec string crosses
+  // here — chat-only model overrides never reach this build call.
+  const handleBuild = onBuild
+    ? (spec: string): void => { void Promise.resolve(onBuild(spec)).then(id => { if (typeof id === 'string' && id) appendRun(id, spec) }) }
+    : undefined
 
   const onScroll = (): void => {
     const el = scrollRef.current
@@ -213,7 +288,7 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   // empty. Drops the placeholder entirely when `reply` is empty so no blank bubble lingers.
   const finalize = (reply: string): void => {
     const clean = (reply ?? '').trim()
-    setMsgs(m => {
+    setNodes(m => {
       const next = dropPlaceholder(m)
       return clean
         ? [...next, { role: 'assistant', content: clean }]
@@ -244,27 +319,33 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
     if (busy) return
     lastUser.current = text
     setBusy(true)
-    const history = historyForApi(msgs, greeting)
+    const history = historyForApi(nodes as ThreadNode[], greeting)
+    // BUILD-AWARE CHAT (SACRED): a non-empty trailing sessionId tells the server to append a
+    // read-only, owner-scoped, contents-free build snapshot to the persona. SEPARATE from the
+    // chat-only model overrides (which keep their own positional arg) — they never collide.
+    const ctxId = buildContextSessionId
     try {
       // Open a placeholder; each delta appends to its content (live incremental render).
-      setMsgs(m => [...m, { role: 'assistant', content: '', streaming: true }])
+      setNodes(m => [...m, { role: 'assistant', content: '', streaming: true }])
       const onDelta = (delta: string): void => {
         if (!delta) return
-        setMsgs(m => {
-          const i = m.findIndex(x => x.streaming)
+        setNodes(m => {
+          const i = m.findIndex(x => isStreaming(x))
           if (i === -1) return m
           const next = [...m]
-          next[i] = { ...next[i]!, content: next[i]!.content + delta }
+          const cur = next[i] as ChatMsg
+          next[i] = { ...cur, content: cur.content + delta }
           return next
         })
       }
-      // CHAT-ONLY overrides (see chatOverrides above): never forwarded to a build.
-      const { reply } = await api.chatWithAkisStream(text, history, onDelta, chatOverrides())
+      // CHAT-ONLY overrides (see chatOverrides above): never forwarded to a build. The trailing
+      // sessionId (build-aware context) is a SEPARATE positional arg, so it never collides with them.
+      const { reply } = await api.chatWithAkisStream(text, history, onDelta, chatOverrides(), ctxId)
       finalize(reply)
     } catch (streamErr) {
       // Streaming failed (provider lacks it, a mid-stream drop, or an SSE `error` frame):
       // drop the partial placeholder and degrade to the proven non-stream await path.
-      setMsgs(m => dropPlaceholder(m))
+      setNodes(m => dropPlaceholder(m))
       // A 401 already routed to login (ApiClient fired onUnauthorized) — don't replay the
       // non-stream call (it would just 401 again); show the brief notice row directly.
       // A 429 (QuotaExceeded) is also FINAL: the stream path already threw a typed
@@ -272,17 +353,18 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
       // falling into the else branch that RE-CALLS the non-stream /api/chat — that second request
       // would just 429 again (a redundant blocked call). Short-circuit removes it.
       if (ApiError.is(streamErr) && (streamErr.status === 401 || streamErr.status === 429)) {
-        setMsgs(m => [...m, { role: 'error', content: errorText(streamErr) }])
+        setNodes(m => [...m, { role: 'error', content: errorText(streamErr) }])
       } else {
         try {
-          // Fallback non-stream call also carries the CHAT-ONLY overrides (never a build).
-          const { reply } = await api.chatWithAkis(text, history, chatOverrides())
+          // Fallback non-stream call carries the CHAT-ONLY overrides (never a build) + the same
+          // build-aware sessionId so the fallback path is equally session-aware.
+          const { reply } = await api.chatWithAkis(text, history, chatOverrides(), ctxId)
           const clean = (reply ?? '').trim()
-          setMsgs(m => clean
+          setNodes(m => clean
             ? [...m, { role: 'assistant', content: clean }]
             : [...m, { role: 'error', content: t('akis.error.empty') }])
         } catch (err) {
-          setMsgs(m => [...m, { role: 'error', content: errorText(err) }])
+          setNodes(m => [...m, { role: 'error', content: errorText(err) }])
         }
       }
     } finally { setBusy(false) }
@@ -294,7 +376,7 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
     const text = raw.trim()
     if (!text || busy) return
     stickToBottom.current = true // a fresh send always follows to the bottom
-    setMsgs(m => [...m, { role: 'user', content: text }])
+    setNodes(m => [...m, { role: 'user', content: text }])
     void ask(text)
   }
 
@@ -310,15 +392,38 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   const retry = (): void => {
     if (busy || lastUser.current === undefined) return
     stickToBottom.current = true
-    // Drop trailing error rows so a successful retry doesn't leave a stale failure behind.
-    setMsgs(m => { const c = [...m]; while (c.length && c[c.length - 1]!.role === 'error') c.pop(); return c })
+    // Drop trailing error rows so a successful retry doesn't leave a stale failure behind (a run
+    // marker is never an error row, so the loop stops at it).
+    setNodes(m => { const c = [...m]; while (c.length) { const last = c[c.length - 1]!; if (isMsg(last) && last.role === 'error') c.pop(); else break } return c })
     void ask(lastUser.current)
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div ref={scrollRef} onScroll={onScroll} aria-live="polite" aria-atomic="false" aria-relevant="additions" className="flex-1 space-y-3 overflow-y-auto">
-        {msgs.map((m, i) => {
+        {nodes.map((m, i) => {
+          // A RUN MARKER renders its build INLINE at this exact slot (the single composition seam):
+          // its own RunBlock mounts a per-run useLiveChat, the compact pipeline-strip header, and
+          // the chronological agent bubbles. Only the ACTIVE run stays live; older runs fold once.
+          if (isRun(m)) {
+            const isActive = m.sessionId === activeSessionId
+            return (
+              <RunBlock
+                key={m.sessionId}
+                sessionId={m.sessionId}
+                idea={m.idea}
+                terminal={!isActive}
+                active={isActive}
+                api={api}
+                onApprove={onApprove ?? (() => {})}
+                onConfirm={onConfirm ?? (() => {})}
+                onNewBuild={onNewBuild ?? (() => {})}
+                baseUrl={baseUrl}
+                {...(makeClient ? { makeClient } : {})}
+                {...(isActive && onActiveView ? { onView: onActiveView } : {})}
+              />
+            )
+          }
           if (m.role === 'user') {
             return (
               <div key={i} className="flex justify-end">
@@ -327,7 +432,7 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
             )
           }
           if (m.role === 'error') {
-            const isLast = i === msgs.length - 1
+            const isLast = i === nodes.length - 1
             return (
               <div key={i} role="alert" className="flex items-start gap-3">
                 <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-rose-400/40 bg-rose-500/15 text-[11px] font-black text-rose-300" aria-hidden="true">!</div>
@@ -351,16 +456,18 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
             <AssistantMessage
               key={i}
               content={m.content}
-              streaming={!!m.streaming}
-              onBuild={onBuild}
+              streaming={isStreaming(m)}
+              onBuild={handleBuild}
               building={building}
-              builtSpec={builtSpec}
+              isSpecStarted={isSpecStarted}
             />
           )
         })}
-        {workflow && (
+        {/* The transient "Workflow is starting…" card (after Approve, before the run marker lands).
+            The build ITSELF is an inline RunBlock at its run-marker slot — NOT a trailing injection. */}
+        {starting && (
           <div className="ml-11 max-w-[calc(100%-2.75rem)]">
-            {workflow}
+            {starting}
           </div>
         )}
         {busy && <div className="ml-11 text-xs text-teal-300">{t('akis.thinking')}</div>}
@@ -368,8 +475,10 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
       {/* Tappable quick-reply chips parsed from AKIS's latest reply (an `akis-suggest` block):
           the user picks one and it sends DIRECTLY — no typing. Hidden while busy/streaming. */}
       {(() => {
-        const last = msgs[msgs.length - 1]
-        if (busy || !last || last.role !== 'assistant' || last.streaming) return null
+        // The chips come from the LATEST assistant chat reply — skip a trailing run marker so a
+        // build never hides the suggestions of the reply that produced it.
+        const last = nodes[nodes.length - 1]
+        if (busy || !last || isRun(last) || last.role !== 'assistant' || isStreaming(last)) return null
         const { suggestions } = extractSuggestions(last.content)
         if (!suggestions.length) return null
         return (

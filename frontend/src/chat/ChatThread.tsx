@@ -1,12 +1,11 @@
-import type { ChatMessage } from './chatModel.js'
+import type { ChatMessage, UserMsg, AgentMsg, GateMsg, VerifyMsg, CodeReviewMsg, PreviewMsg, ErrorMsg, DoneMsg } from './chatModel.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
-import { Markdown } from '../components/Markdown.js'
 
 /** Friendly, localized labels for the raw agent tool names — so the activity reads as clean
  *  steps ("Kod yazılıyor…") instead of dev slugs ("dispatch_proto"). Unknown tools fall back
- *  to their raw name (never blank). */
-const TOOL_LABEL: Record<string, StringKey> = {
+ *  to their raw name (never blank). Exported so RunBlock can localize tool lines identically. */
+export const TOOL_LABEL: Record<string, StringKey> = {
   dispatch_scribe: 'chat.tool.dispatch_scribe',
   dispatch_proto: 'chat.tool.dispatch_proto',
   run_tests: 'chat.tool.run_tests',
@@ -23,148 +22,175 @@ const ROLE_TINT: Record<string, string> = {
 const AKIS_NAME: Record<string, string> = { orchestrator: 'AKIS', scribe: 'Scribe', proto: 'Proto', trace: 'Trace', critic: 'Critic' }
 const dot = (ok?: boolean, done?: boolean): string => ok === false ? 'bg-rose-400' : done ? 'bg-emerald-400' : 'bg-teal-400 animate-pulse'
 
-function Avatar({ role }: { role: string }) {
+/** The role-tinted agent monogram. Exported so RunBlock renders the same avatar inline. */
+export function Avatar({ role }: { role: string }) {
   return <div className={`grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br text-[10px] font-bold ${ROLE_TINT[role] ?? 'from-slate-500/30 to-slate-500/5 text-slate-300'}`}>{(AKIS_NAME[role] ?? role).slice(0, 2)}</div>
+}
+
+// ── Per-kind bubble sub-renderers ────────────────────────────────────────────────────────────
+// Each renders ONE folded bubble. Exported individually so RunBlock can mount them inline below
+// the pipeline-strip header without re-implementing the markup (no strip-vs-bubble duplication).
+// They take only the message they render (+ gate handlers for the one interactive card), so they
+// stay pure and composable. `narration` is intentionally NOT a renderer — see NarrationBubble.
+
+/** A plain short chat ask. (The long/markdown seed-spec is now an ordinary spine bubble rendered
+ *  by AkisChat, not here — this renderer is only the friendly gradient bubble.) */
+export function UserBubble({ m }: { m: UserMsg }) {
+  return (
+    <div className="flex justify-end">
+      <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-gradient-to-br from-teal-500/90 to-violet-500/90 px-4 py-2 text-slate-950">{m.text}</div>
+    </div>
+  )
+}
+
+/** Orchestrator narration is free-text (and English), which would break the fully-Turkish, clean
+ *  step view — so it is SUPPRESSED. The localized structured cards + the pipeline convey the flow.
+ *  Kept as an explicit (always-null) renderer so the suppression decision is documented, not lost. */
+export function NarrationBubble(): null {
+  return null
+}
+
+export function AgentBubble({ m }: { m: AgentMsg }) {
+  const { t } = useI18n()
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role={m.agent} />
+      <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-3">
+        <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-100">
+          <span title={t(`roster.status.${m.ok === false ? 'failed' : m.done ? 'done' : 'working'}`)} className={`h-2 w-2 rounded-full ${dot(m.ok, m.done)}`} />{AKIS_NAME[m.agent] ?? m.agent}
+          {!m.done && <span className="text-xs font-normal text-teal-300">{t('chat.working')}</span>}
+        </div>
+        {m.tools.map((tl, i) => {
+          const key = TOOL_LABEL[tl.tool]
+          return (
+            <div key={i} className="ml-1 text-xs text-slate-400">
+              <span className="text-violet-300">{key ? t(key) : tl.tool}</span>{tl.ok === undefined ? ' …' : tl.ok ? ' ✓' : ' ✗'}
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+export function GateBubble({ m, onApprove, onConfirm, busy }: { m: GateMsg; onApprove: () => void; onConfirm: () => void; busy?: boolean }) {
+  const { t } = useI18n()
+  const isSpec = m.gate === 'spec_approval'
+  const tone = m.state === 'satisfied' ? 'text-emerald-300' : m.state === 'rejected' ? 'text-rose-300' : 'text-amber-300'
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="orchestrator" />
+      <div className="w-full max-w-[80%] rounded-2xl rounded-tl-sm border border-teal-400/20 bg-teal-400/[0.04] px-4 py-3">
+        <div className="text-xs uppercase tracking-widest text-slate-500">{t('chat.gate.label')} · {t(`chat.gate.${m.gate}`)}</div>
+        <div className={`mb-2 text-sm ${tone}`}>{t(`gate.state.${m.state}`)}</div>
+        {m.state === 'awaiting' && (
+          <button onClick={isSpec ? onApprove : onConfirm} disabled={busy}
+            className="rounded bg-teal-500/90 px-3 py-1 text-sm font-medium text-slate-900 disabled:opacity-40">
+            {t(isSpec ? 'chat.approve' : 'chat.confirm')}
+          </button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+export function VerifyBubble({ m }: { m: VerifyMsg }) {
+  const { t } = useI18n()
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="trace" />
+      <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${m.passed ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200' : 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'}`}>
+        {m.passed ? `✓ ${t('chat.verified')}` : `✗ ${t('chat.notVerified')}`} · {m.testsRun} {t('chat.tests')}
+      </div>
+    </div>
+  )
+}
+
+/** READ-ONLY status card — the critic's automatic verdict, NOT a human gate (no button). */
+export function CodeReviewBubble({ m }: { m: CodeReviewMsg }) {
+  const { t } = useI18n()
+  const tone = m.critical
+    ? 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'
+    : m.approved
+      ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200'
+      : 'border-amber-400/30 bg-amber-400/[0.06] text-amber-200'
+  const verdict = m.critical ? t('chat.codeReview.critical') : m.approved ? t('chat.codeReview.approved') : t('chat.codeReview.rejected')
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="critic" />
+      <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${tone}`}>
+        <span className="text-xs uppercase tracking-widest opacity-70">{t('chat.codeReview.label')}</span>
+        {' · '}{verdict}
+        {' · '}{m.findings} {t('chat.codeReview.findings')}
+        {m.iteration > 1 ? <> · {t('chat.codeReview.iteration')} {m.iteration}</> : null}
+      </div>
+    </div>
+  )
+}
+
+export function PreviewBubble({ m }: { m: PreviewMsg }) {
+  const { t } = useI18n()
+  // A recoverable boot FAILURE shows as a rose card with its reason — never collapsed to
+  // a misleading "starting…" (text-only, XSS-safe). Otherwise the usual ready/starting card.
+  return m.error ? (
+    <div className="flex items-start gap-3">
+      <Avatar role="orchestrator" />
+      <div className="rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-300">
+        {t(m.error.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed')}
+        {m.error.reason ? <> · <span className="break-all text-rose-200/90">{m.error.reason}</span></> : null}
+      </div>
+    </div>
+  ) : (
+    <div className="flex items-start gap-3">
+      <Avatar role="orchestrator" />
+      <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-200">
+        {m.ready ? t('chat.preview.ready') : t('chat.preview.starting')}{m.url ? <> · <span className="break-all text-teal-300">{m.url}</span></> : null}
+      </div>
+    </div>
+  )
+}
+
+export function ErrorBubble({ m }: { m: ErrorMsg }) {
+  return <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{m.text}</div>
+}
+
+export function DoneBubble({ m }: { m: DoneMsg }) {
+  const { t } = useI18n()
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="orchestrator" />
+      <div className="rounded-2xl rounded-tl-sm border border-emerald-400/30 bg-gradient-to-br from-emerald-400/15 to-teal-400/10 px-4 py-2 text-sm text-emerald-200">
+        🚀 {t('chat.shipped')}{m.verified ? ` · ${t('chat.verified').toLowerCase()}` : ''}{m.provider ? ` · ${m.provider}` : ''}
+      </div>
+    </div>
+  )
+}
+
+/** Render ONE folded bubble by kind — the shared dispatcher reused by both ChatThread (below)
+ *  and RunBlock (inline). Narration is suppressed (returns null). */
+export function ChatBubble({ m, onApprove, onConfirm, busy }: { m: ChatMessage; onApprove: () => void; onConfirm: () => void; busy?: boolean }) {
+  switch (m.kind) {
+    case 'user': return <UserBubble m={m} />
+    case 'narration': return <NarrationBubble />
+    case 'agent': return <AgentBubble m={m} />
+    case 'gate': return <GateBubble m={m} onApprove={onApprove} onConfirm={onConfirm} {...(busy !== undefined ? { busy } : {})} />
+    case 'verify': return <VerifyBubble m={m} />
+    case 'code_review': return <CodeReviewBubble m={m} />
+    case 'preview': return <PreviewBubble m={m} />
+    case 'error': return <ErrorBubble m={m} />
+    case 'done': return <DoneBubble m={m} />
+    default: return null
+  }
 }
 
 interface Props { messages: ChatMessage[]; onApprove: () => void; onConfirm: () => void; busy?: boolean }
 
 export function ChatThread({ messages, onApprove, onConfirm, busy }: Props) {
-  const { t } = useI18n()
   return (
     <div className="flex flex-col gap-4">
-      {messages.map(m => {
-        switch (m.kind) {
-          case 'user': {
-            // A short chat ask keeps the friendly gradient bubble. A long, multi-line / markdown-y
-            // seed (the promoted spec that started the build) would otherwise be a giant garish wall
-            // of raw "# ## **" — render THAT as a contained, FORMATTED, scrollable spec card so it's
-            // readable and never dominates the activity. Markdown is the single XSS-safe renderer.
-            const isSpec = m.text.length > 180 || m.text.includes('\n')
-            return isSpec ? (
-              <div key={m.id} className="flex justify-end">
-                <div className="w-full max-w-[88%] overflow-hidden rounded-2xl rounded-br-sm border border-teal-400/25 bg-gradient-to-br from-teal-500/[0.07] to-violet-500/[0.07]">
-                  <div className="flex items-center gap-1.5 border-b border-white/10 px-4 py-1.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-teal-200/80">
-                    <span className="h-1.5 w-1.5 rounded-full bg-teal-300" aria-hidden />{t('chat.seedSpec')}
-                  </div>
-                  <div className="max-h-64 overflow-y-auto px-4 py-2.5">
-                    <Markdown content={m.text} />
-                  </div>
-                </div>
-              </div>
-            ) : (
-              <div key={m.id} className="flex justify-end">
-                <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-gradient-to-br from-teal-500/90 to-violet-500/90 px-4 py-2 text-slate-950">{m.text}</div>
-              </div>
-            )
-          }
-          case 'narration':
-            // Suppressed: orchestrator narration is free-text (and English), which would break the
-            // fully-Turkish, clean step view. The localized structured cards (agent steps, gate,
-            // review, verify, done) + the pipeline convey the flow.
-            return null
-          case 'agent':
-            return (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role={m.agent} />
-                <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-3">
-                  <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-100">
-                    <span title={t(`roster.status.${m.ok === false ? 'failed' : m.done ? 'done' : 'working'}`)} className={`h-2 w-2 rounded-full ${dot(m.ok, m.done)}`} />{AKIS_NAME[m.agent] ?? m.agent}
-                    {!m.done && <span className="text-xs font-normal text-teal-300">{t('chat.working')}</span>}
-                  </div>
-                  {m.tools.map((tl, i) => {
-                    const key = TOOL_LABEL[tl.tool]
-                    return (
-                      <div key={i} className="ml-1 text-xs text-slate-400">
-                        <span className="text-violet-300">{key ? t(key) : tl.tool}</span>{tl.ok === undefined ? ' …' : tl.ok ? ' ✓' : ' ✗'}
-                      </div>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          case 'gate': {
-            const isSpec = m.gate === 'spec_approval'
-            const tone = m.state === 'satisfied' ? 'text-emerald-300' : m.state === 'rejected' ? 'text-rose-300' : 'text-amber-300'
-            return (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role="orchestrator" />
-                <div className="w-full max-w-[80%] rounded-2xl rounded-tl-sm border border-teal-400/20 bg-teal-400/[0.04] px-4 py-3">
-                  <div className="text-xs uppercase tracking-widest text-slate-500">{t('chat.gate.label')} · {t(`chat.gate.${m.gate}`)}</div>
-                  <div className={`mb-2 text-sm ${tone}`}>{t(`gate.state.${m.state}`)}</div>
-                  {m.state === 'awaiting' && (
-                    <button onClick={isSpec ? onApprove : onConfirm} disabled={busy}
-                      className="rounded bg-teal-500/90 px-3 py-1 text-sm font-medium text-slate-900 disabled:opacity-40">
-                      {t(isSpec ? 'chat.approve' : 'chat.confirm')}
-                    </button>
-                  )}
-                </div>
-              </div>
-            )
-          }
-          case 'verify':
-            return (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role="trace" />
-                <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${m.passed ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200' : 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'}`}>
-                  {m.passed ? `✓ ${t('chat.verified')}` : `✗ ${t('chat.notVerified')}`} · {m.testsRun} {t('chat.tests')}
-                </div>
-              </div>
-            )
-          case 'code_review': {
-            // READ-ONLY status card — the critic's automatic verdict, NOT a human gate (no button).
-            const tone = m.critical
-              ? 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'
-              : m.approved
-                ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200'
-                : 'border-amber-400/30 bg-amber-400/[0.06] text-amber-200'
-            const verdict = m.critical ? t('chat.codeReview.critical') : m.approved ? t('chat.codeReview.approved') : t('chat.codeReview.rejected')
-            return (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role="critic" />
-                <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${tone}`}>
-                  <span className="text-xs uppercase tracking-widest opacity-70">{t('chat.codeReview.label')}</span>
-                  {' · '}{verdict}
-                  {' · '}{m.findings} {t('chat.codeReview.findings')}
-                  {m.iteration > 1 ? <> · {t('chat.codeReview.iteration')} {m.iteration}</> : null}
-                </div>
-              </div>
-            )
-          }
-          case 'preview':
-            // A recoverable boot FAILURE shows as a rose card with its reason — never collapsed to
-            // a misleading "starting…" (text-only, XSS-safe). Otherwise the usual ready/starting card.
-            return m.error ? (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role="orchestrator" />
-                <div className="rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-300">
-                  {t(m.error.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed')}
-                  {m.error.reason ? <> · <span className="break-all text-rose-200/90">{m.error.reason}</span></> : null}
-                </div>
-              </div>
-            ) : (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role="orchestrator" />
-                <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-200">
-                  {m.ready ? t('chat.preview.ready') : t('chat.preview.starting')}{m.url ? <> · <span className="break-all text-teal-300">{m.url}</span></> : null}
-                </div>
-              </div>
-            )
-          case 'error':
-            return <div key={m.id} className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{m.text}</div>
-          case 'done':
-            return (
-              <div key={m.id} className="flex items-start gap-3">
-                <Avatar role="orchestrator" />
-                <div className="rounded-2xl rounded-tl-sm border border-emerald-400/30 bg-gradient-to-br from-emerald-400/15 to-teal-400/10 px-4 py-2 text-sm text-emerald-200">
-                  🚀 {t('chat.shipped')}{m.verified ? ` · ${t('chat.verified').toLowerCase()}` : ''}{m.provider ? ` · ${m.provider}` : ''}
-                </div>
-              </div>
-            )
-          default:
-            return null
-        }
-      })}
+      {messages.map(m => (
+        <ChatBubble key={m.id} m={m} onApprove={onApprove} onConfirm={onConfirm} {...(busy !== undefined ? { busy } : {})} />
+      ))}
     </div>
   )
 }
