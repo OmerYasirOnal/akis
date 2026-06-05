@@ -9,8 +9,10 @@ export interface ModelChipProps {
   /** Model DISPLAY label (e.g. "Claude Sonnet 4.6"). */
   model: string
   effort: Effort
-  /** Serving mode from /health — surfaces a DEMO badge so fake-verification is never hidden. */
-  mode: 'live' | 'demo'
+  /** Badge state: /health's live|demo, 'nokey' when the SELECTED provider has no key
+   *  (per-selection honesty — the badge reflects what THIS request will do), or null when
+   *  /health failed (neutral: badge omitted, the chip itself never hides — Opus review M2). */
+  mode: 'live' | 'demo' | 'nokey' | null
   onClick?: () => void
 }
 
@@ -25,7 +27,6 @@ export function ModelChip({ provider, model, effort, mode, onClick }: ModelChipP
   // Effort label key is a known fixed set — cast the template key to StringKey (the catalog
   // has all three `chat.picker.effort.{fast,balanced,deep}` entries in both locales).
   const effortLabel = t(`chat.picker.effort.${effort}` as StringKey)
-  const demo = mode === 'demo'
   return (
     <button
       type="button"
@@ -40,14 +41,16 @@ export function ModelChip({ provider, model, effort, mode, onClick }: ModelChipP
       <span className="truncate">{model}</span>
       <span className="text-teal-400/60" aria-hidden="true">·</span>
       <span className="shrink-0">{effortLabel}</span>
-      <span
-        className={
-          'ml-1 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold tracking-wide ' +
-          (demo ? 'bg-amber-400/20 text-amber-200' : 'bg-emerald-400/20 text-emerald-200')
-        }
-      >
-        {demo ? t('chat.chip.demo') : t('chat.chip.live')}
-      </span>
+      {mode !== null && (
+        <span
+          className={
+            'ml-1 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold tracking-wide ' +
+            (mode === 'live' ? 'bg-emerald-400/20 text-emerald-200' : 'bg-amber-400/20 text-amber-200')
+          }
+        >
+          {mode === 'live' ? t('chat.chip.live') : mode === 'demo' ? t('chat.chip.demo') : t('chat.chip.nokey')}
+        </span>
+      )}
     </button>
   )
 }

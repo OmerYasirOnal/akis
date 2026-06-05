@@ -71,7 +71,17 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
             <div className="space-y-4">
               {providers.map(p => (
                 <div key={p.id}>
-                  <div className="mb-2 text-sm font-semibold text-slate-200">{p.label}</div>
+                  <div className="mb-2 flex items-center gap-2 text-sm font-semibold text-slate-200">
+                    {p.label}
+                    {/* Opus review M1: an unconfigured provider must be VISIBLY unavailable —
+                        offering choices that silently 400 (NoKey) is the opposite of "neyle
+                        çalışıyoruz görünsün". Disabled + localized hint instead of a dead end. */}
+                    {p.available === false && (
+                      <span className="rounded-full bg-amber-400/15 px-2 py-0.5 text-[10px] font-medium text-amber-200/90">
+                        {t('chat.picker.noKey')}
+                      </span>
+                    )}
+                  </div>
                   <div className="space-y-1.5">
                     {p.models.map(m => {
                       const checked = provider === p.id && model === m.id
@@ -79,8 +89,10 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
                         <label
                           key={m.id}
                           className={
-                            'flex cursor-pointer items-center gap-3 rounded-lg border px-3 py-2 text-sm transition ' +
-                            (checked ? 'border-[#07D1AF]/60 bg-[#07D1AF]/[0.08]' : 'border-white/10 hover:border-white/25')
+                            'flex items-center gap-3 rounded-lg border px-3 py-2 text-sm transition ' +
+                            (p.available === false
+                              ? 'cursor-not-allowed border-white/5 opacity-45'
+                              : checked ? 'cursor-pointer border-[#07D1AF]/60 bg-[#07D1AF]/[0.08]' : 'cursor-pointer border-white/10 hover:border-white/25')
                           }
                         >
                           <input
@@ -91,6 +103,7 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
                             // text below doesn't pollute the radio's accessible name.
                             aria-label={m.label}
                             checked={checked}
+                            disabled={p.available === false}
                             onChange={() => { setProvider(p.id); setModel(m.id) }}
                             className="accent-[#07D1AF]"
                           />

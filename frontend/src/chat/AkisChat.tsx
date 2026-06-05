@@ -70,7 +70,7 @@ function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: 
   // Strip the suggestion block off the FULL text first (extraction is authoritative), then
   // SMOOTH-reveal that clean reply while streaming. Completed/history bubbles show it instantly.
   const { text: stripped } = extractSuggestions(content)
-  const smoothed = useSmoothText(stripped)
+  const smoothed = useSmoothText(stripped, streaming)
   const displayed = streaming ? smoothed : stripped
   return (
     <div className="flex items-start gap-3">
@@ -173,9 +173,13 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   const errorText = (err: unknown): string =>
     ApiError.is(err) && err.status === 401
       ? t('akis.error.unauthorized')
-      : ApiError.is(err)
-        ? `(${err.code ?? 'error'}) ${err.message}`
-        : t('akis.error.network')
+      // Opus review: NoKey must be a localized, actionable sentence — never the raw
+      // English "(NoKey) No API key for provider x" on a user-facing error row.
+      : ApiError.is(err) && err.code === 'NoKey'
+        ? t('akis.error.noKey')
+        : ApiError.is(err)
+          ? `(${err.code ?? 'error'}) ${err.message}`
+          : t('akis.error.network')
 
   // Finalize a streamed turn: replace the live placeholder with the authoritative full
   // reply (so spec detection runs on the trusted text), or an error row if it came back
@@ -198,7 +202,9 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   const chatOverrides = (): ChatOverrides => ({
     ...(modelPref.provider ? { provider: modelPref.provider } : {}),
     ...(modelPref.model ? { model: modelPref.model } : {}),
-    effort: modelPref.effort,
+    // 'balanced' is the server default — omit it so the default request body stays
+    // BYTE-identical to the pre-picker wire shape (Opus review).
+    ...(modelPref.effort !== 'balanced' ? { effort: modelPref.effort } : {}),
   })
 
   // Send `text` to AKIS, STREAMING the reply into a live placeholder that updates as
@@ -347,17 +353,20 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
         )
       })()}
       {/* Visibility chip: show WHICH model + effort + mode is active near the composer.
-          Hidden until the provider catalog AND mode have loaded (best-effort fetches). */}
+          Opus review M2: NOT hostage to /health — the chip renders once the provider catalog
+          loads; a failed health probe only degrades the badge (neutral), never hides the
+          picker's sole entry point. Badge honesty: a key-less SELECTION shows "anahtar yok"
+          (amber) regardless of the global mode — the badge reflects what THIS request will do. */}
       {(() => {
         const active = providers.find(p => p.id === modelPref.provider)
-        if (!active || mode === null) return null
-        const modelLabel = active.models.find(m => m.id === modelPref.model)?.label ?? modelPref.model ?? t('chat.provider.akisDefault')
+        if (!active) return null
+        const modelLabel = active.models.find(m => m.id === modelPref.model)?.label ?? modelPref.model
         return (
           <ModelChip
             provider={active.label}
             model={modelLabel}
             effort={modelPref.effort}
-            mode={mode}
+            mode={active.available === false ? 'nokey' : mode}
             onClick={() => setPickerOpen(true)}
           />
         )

@@ -173,6 +173,9 @@ export const STRINGS = {
     'chat.chip.label': 'Active model — tap to change',
     'chat.chip.live': 'LIVE',
     'chat.chip.demo': 'DEMO',
+    'chat.chip.nokey': 'NO KEY',
+    'chat.picker.noKey': 'no API key — add one in Settings',
+    'akis.error.noKey': 'The selected provider has no API key configured. Add one in Settings → Providers, or switch the model from the chip below.',
     'chat.provider.akisDefault': 'AKIS default',
     // ── Chat-to-Build: AKIS-authored spec card ──
     'spec.card.title': 'Build-ready spec',
@@ -781,6 +784,9 @@ export const STRINGS = {
     'chat.chip.label': 'Etkin model — değiştirmek için dokun',
     'chat.chip.live': 'CANLI',
     'chat.chip.demo': 'DEMO',
+    'chat.chip.nokey': 'ANAHTAR YOK',
+    'chat.picker.noKey': 'API anahtarı yok — Ayarlar’dan ekleyin',
+    'akis.error.noKey': 'Seçili sağlayıcının API anahtarı yapılandırılmamış. Ayarlar → Sağlayıcılar’dan ekleyin ya da aşağıdaki çipten modeli değiştirin.',
     'chat.provider.akisDefault': 'AKIS varsayılanı',
     // ── Sohbetten-İnşaya: AKIS’in yazdığı spec kartı ──
     'spec.card.title': 'İnşaya hazır spec',

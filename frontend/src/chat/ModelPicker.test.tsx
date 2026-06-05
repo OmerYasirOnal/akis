@@ -83,11 +83,24 @@ describe('ModelPicker', () => {
     expect(onClose).toHaveBeenCalled()
   })
 
-  it('switches provider+model together when picking a model under a different provider', async () => {
+  it('an UNCONFIGURED provider (available:false) is visibly disabled — no dead-end selection (Opus review M1)', async () => {
     const { onSelect } = renderPicker()
+    // The openai fixture has no key: its radios are disabled and the no-key hint shows.
+    expect(screen.getByRole('radio', { name: 'GPT-4.1 mini' })).toBeDisabled()
+    expect(screen.getByText('no API key — add one in Settings')).toBeInTheDocument()
+    // Clicking it selects NOTHING (Apply keeps the original anthropic selection).
     await userEvent.click(screen.getByRole('radio', { name: 'GPT-4.1 mini' }))
     await userEvent.click(screen.getByRole('button', { name: 'Apply' }))
-    expect(onSelect).toHaveBeenCalledWith({ provider: 'openai', model: 'gpt-4.1-mini', effort: 'balanced' })
+    expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ provider: 'anthropic' }))
+  })
+
+  it('switches provider+model together when picking a model under a different AVAILABLE provider', async () => {
+    const { onSelect } = renderPicker()
+    // Sonnet lives under the same (available) anthropic group in the fixture; switching to it
+    // proves the provider+model travel together through Apply.
+    await userEvent.click(screen.getByRole('radio', { name: 'Claude Sonnet 4.6' }))
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(onSelect).toHaveBeenCalledWith({ provider: 'anthropic', model: 'claude-sonnet-4-6', effort: 'balanced' })
   })
 })
 

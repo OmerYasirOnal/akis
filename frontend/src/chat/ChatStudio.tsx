@@ -97,7 +97,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         if (ApiError.is(e) && e.status === 404) setSessionGone(true)
       })
     return () => { cancelled = true }
-  }, [sessionId, status, api])
+    // live.view.connectionGone in the deps (Opus review M1): the LIVE frozen-tab case — a
+    // silent server restart emits no status change, so the 404 probe must re-run when the
+    // stream exhausts its reconnects; that probe is what flips the honest gone-card on.
+  }, [sessionId, status, api, live.view.connectionGone])
 
   // The single build path: the chat-authored spec becomes a session via the UNCHANGED
   // startSession → the same 4 structural gates + pipeline + History. The ONLY caller is the
@@ -274,11 +277,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
                 {/* Stale deep-link recovery takes VISUAL precedence above the chat/pipeline: a
                     deleted session's honest path is "Start new build", not the frozen pipeline. */}
                 {staleSessionCard}
-                <AkisChat api={api} building={busy} builtSpec={sent} onBuild={(spec) => void startBuild(spec)} workflow={workflowCard} />
+                <AkisChat api={api} building={busy} builtSpec={sent} onBuild={(spec) => void startBuild(spec)} workflow={sessionGone ? undefined : workflowCard} />
               </div>
             ) : (
               <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-                {workflowCard}
+                {/* Opus review M2: a History-opened session can be gone too — same honest card. */}
+                {staleSessionCard}
+                {!sessionGone && workflowCard}
                 {actionError && <div role="alert" className="mt-3 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
               </div>
             )}

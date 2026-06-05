@@ -25,7 +25,7 @@ import { useEffect, useRef, useState } from 'react'
  * @param targetText the full accumulated text to reveal
  * @returns the displayed slice (== targetText once caught up, or immediately if reduced-motion)
  */
-export function useSmoothText(targetText: string): string {
+export function useSmoothText(targetText: string, active = true): string {
   // Detect prefers-reduced-motion ONCE, defensively. A throw or a missing matchMedia must
   // not break the chat — fail open (animate) rather than fail closed (freeze the reveal).
   const reduceMotion = useRef<boolean | undefined>(undefined)
@@ -46,8 +46,10 @@ export function useSmoothText(targetText: string): string {
   const [, forceRender] = useState(0)
 
   useEffect(() => {
-    // Reduced motion: reveal everything immediately, no animation, no rAF scheduled.
-    if (reduceMotion.current) {
+    // Inactive (a completed/history bubble) or reduced motion: reveal everything immediately,
+    // no rAF scheduled — a restored long thread must not burn frames animating text nobody
+    // sees animated (Opus review: the hook used to drain 0→len on every mount).
+    if (!active || reduceMotion.current) {
       shownRef.current = targetText.length
       forceRender(n => n + 1)
       return
@@ -80,7 +82,7 @@ export function useSmoothText(targetText: string): string {
     // Cancel any in-flight frame on unmount / before the next effect run — this is what
     // prevents a post-unmount forceRender (stale-closure / "update on unmounted component").
     return () => { if (handle !== undefined) cancelAnimationFrame(handle) }
-  }, [targetText])
+  }, [targetText, active])
 
   // Slice is bounded by both ends: never past the target, never negative.
   return targetText.slice(0, shownRef.current)

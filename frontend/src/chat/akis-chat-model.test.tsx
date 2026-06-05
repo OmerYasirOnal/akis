@@ -117,8 +117,9 @@ describe('AkisChat — model picker (chat-only visibility + selection)', () => {
     const body = JSON.parse(String(chatCall[1]?.body)) as Record<string, unknown>
     expect(body).not.toHaveProperty('provider')
     expect(body).not.toHaveProperty('model')
-    // Effort is always present (it always maps to a budget); balanced is the default.
-    expect(body.effort).toBe('balanced')
+    // BYTE-IDENTICAL default body (Opus review): 'balanced' is the server default, so the
+    // wire shape carries NO effort field at all when the user never changed it.
+    expect(body).not.toHaveProperty('effort')
   })
 
   it('SACRED: builds (onBuild → startSession) NEVER receive {provider, model, effort}', async () => {
