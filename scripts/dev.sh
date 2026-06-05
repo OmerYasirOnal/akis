@@ -6,9 +6,9 @@
 #
 #   Real keys from a .env:   AKIS_ENV_FILE=/path/to/.env ./scripts/dev.sh
 #       sources that .env (AI_PROVIDER + AI_API_KEY + AI_MODEL, or ANTHROPIC_API_KEY)
-#       and runs on the REAL provider. AKIS_DEMO_VERIFY=1 (default) lets a run reach
-#       done+preview without real browsers (real LLM output, demo verify); set
-#       AKIS_REAL_TESTS=1 for real Playwright+Cucumber verification (browsers needed).
+#       and runs FULLY REAL by default: real provider + REAL verification (the boot-smoke
+#       verifier actually boots the produced app and probes it over HTTP — no browsers
+#       needed). Set AKIS_DEMO_VERIFY=1 explicitly to fake verification (demo only).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
@@ -22,7 +22,13 @@ if [ -z "${AI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENAI_API_KEY:-}${OPENROUTER_AP
   export AKIS_ALLOW_MOCK="${AKIS_ALLOW_MOCK:-1}"
 fi
 export AKIS_RAG="${AKIS_RAG:-1}"
-export AKIS_DEMO_VERIFY="${AKIS_DEMO_VERIFY:-1}"   # complete the loop without real browsers
+# REAL BY DEFAULT (owner decision 2026-06-05: "artık mock olmasın"): with a real key,
+# verification is the REAL boot-smoke (boots the app, probes it). Demo-verify is an
+# EXPLICIT opt-in only — never a silent default.
+if [ -z "${AKIS_ALLOW_MOCK:-}" ]; then
+  export AKIS_REAL_TESTS="${AKIS_REAL_TESTS:-1}"
+fi
+export AKIS_DEMO_VERIFY="${AKIS_DEMO_VERIFY:-}" 
 export NODE_ENV="${NODE_ENV:-development}"          # never 'test' (that forces the mock)
 export PORT="${PORT:-3000}"
 
@@ -36,7 +42,7 @@ if [ -n "${PUBLIC_BASE_URL:-}" ]; then
   echo "→ note: PUBLIC_BASE_URL set → serving the frontend on '$FE_HOST' to match the CSRF origin"
 fi
 
-echo "→ backend  http://127.0.0.1:$PORT   (mock=${AKIS_ALLOW_MOCK:-off}, rag=$AKIS_RAG, demo-verify=$AKIS_DEMO_VERIFY)"
+echo "→ backend  http://127.0.0.1:$PORT   (mock=${AKIS_ALLOW_MOCK:-off}, rag=$AKIS_RAG, real-tests=${AKIS_REAL_TESTS:-off}, demo-verify=${AKIS_DEMO_VERIFY:-off})"
 echo "→ frontend http://$FE_HOST:5173   (OPEN THIS; proxies /sessions,/api,/preview,/auth → backend)"
 pnpm -C "$ROOT/backend" dev & BACK=$!
 pnpm -C "$ROOT/frontend" dev --host "$FE_HOST" --port 5173 & FRONT=$!
