@@ -34,7 +34,14 @@ function boundName(s: string): string {
 /** Mentions of the home page rendering/loading/showing → a render probe against `/`. */
 const RENDER = /\b(renders?|loads?|displays?|shows?|opens?|appears?)\b/i
 /** A double- or single-quoted literal the rendered body should contain. */
-const QUOTED = /["“”']([^"“”']{1,80})["“”']/
+const QUOTED = /["“”']([^"“”']{1,80})["“”']/g
+/** A step where the user TYPES the literal — that text is INPUT, not page chrome: a
+ *  client-rendered app injects it via JS, so the SERVED body can never contain it and a
+ *  bodyContains probe would be an impossible claim (the live "missing literal" failure). */
+const INPUT_VERB = /\b(types?|typing|enters?|fills?|writes?)\b/i
+/** A quote immediately preceded by a data noun (`task "X"`, `note "X"`) names a DYNAMIC
+ *  data item the user created — same impossible-probe class as typed input. */
+const DATA_NOUN = /\b(tasks?|notes?|todos?|items?|entr(?:y|ies)|görev(?:i|ler)?|not(?:u|lar)?)\s*$/i
 /** An explicit URL path (e.g. `/about`, `/api/todos`). The first segment char must be
  *  alphanumeric so a bare `/`, a `//`-comment marker, or stray slash-runs never parse as a
  *  "path" (PR #94 review). Trailing punctuation is trimmed below. */
@@ -61,8 +68,8 @@ export function deriveChecks(spec: SpecArtifact | undefined): Check[] {
     const text = sc.steps.join(' ')
     const name = boundName(sc.name || text)
 
-    const quoted = QUOTED.exec(text)
-    if (quoted?.[1]) return { kind: 'bodyContains', name, path: '/', literal: quoted[1] }
+    const literal = staticLiteral(sc.steps)
+    if (literal) return { kind: 'bodyContains', name, path: '/', literal }
 
     const path = explicitPath(text)
     if (path) return { kind: 'pathStatus', name, path }
@@ -71,6 +78,27 @@ export function deriveChecks(spec: SpecArtifact | undefined): Check[] {
 
     return { kind: 'skipped', name, reason: 'no mechanical check derivable' }
   })
+}
+
+/**
+ * The first quoted literal that plausibly names STATIC page chrome (a button label, a
+ * heading, fixed copy) — assertable against the SERVED body. Quotes that name what the
+ * user TYPES (an INPUT_VERB step) or a dynamic data item (DATA_NOUN right before the
+ * quote) are rejected: they describe runtime state a static fetch can never contain, so
+ * deriving a probe from them mis-claims "not verified" on a healthy app. Rejection only
+ * falls through to the NEXT derivable signal (path → render → skipped) — never to a pass.
+ */
+function staticLiteral(steps: string[]): string | undefined {
+  for (const step of steps) {
+    if (INPUT_VERB.test(step)) continue // typed text — input, not chrome
+    QUOTED.lastIndex = 0
+    for (const m of step.matchAll(QUOTED)) {
+      const before = step.slice(0, m.index)
+      if (DATA_NOUN.test(before)) continue // `task "X"` — dynamic data, not chrome
+      if (m[1]) return m[1]
+    }
+  }
+  return undefined
 }
 
 /** Extract the first explicit URL path, trimming trailing sentence punctuation (e.g. `/about.`
