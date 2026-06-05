@@ -185,7 +185,7 @@ function TrustLedger({ view, t }: { view: SessionView; t: (k: StringKey) => stri
  * wired to the same onApprove/onConfirm the verbose thread uses. The verbose chronological
  * log lives below this in a collapsed <details> (rendered by ChatStudio).
  */
-export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: {
+export function RunPipeline({ view, onApprove, onConfirm, busy, details, api, sessionGone = false }: {
   view: SessionView
   onApprove: () => void
   onConfirm: () => void
@@ -195,6 +195,10 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
   /** REST client used to drive the recovery actions (resolve/retry). Same-origin default
    *  (prod). A caller can inject a baseUrl-bound client; tests inject a fake. */
   api?: ApiClient
+  /** True when GET /sessions/:id returned 404 — the session is genuinely GONE (not a transient
+   *  transport drop). ChatStudio shows the honest "Start new build" recovery card above, so the
+   *  transport banners below are suppressed: a deleted session's SSE 404 is not a reconnect story. */
+  sessionGone?: boolean
 }) {
   const { t } = useI18n()
   const steps = derivePipeline(view)
@@ -236,9 +240,16 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{t('pipeline.title')}</div>
-        {/* Stop/Cancel: a clean terminal ABANDON of an in-flight run — never a gate bypass. */}
+      {/* NO panel title (user feedback: the run flows in the SAME chat, not a sub-window).
+          The trust headline doubles as the section opener; Stop rides on its right edge.
+          Stop/Cancel stays a clean terminal ABANDON of an in-flight run — never a gate bypass. */}
+      <div className="flex items-start gap-2">
+        <div className="flex-1 rounded-lg border border-[#07D1AF]/15 bg-[#07D1AF]/[0.04] px-3 py-1.5 text-[10.5px] leading-snug text-slate-400">
+          <span className="text-[#07D1AF]/80" aria-hidden>🛡</span> {t('trust.headline')}
+          {view.tests.demo && (
+            <div className="mt-1 text-amber-300/80"><span aria-hidden>⚠</span> {t('trust.headline.demo')}</div>
+          )}
+        </div>
         {inFlight && (
           <button onClick={onCancel} disabled={recovering} aria-label={t('run.stop')}
             className="shrink-0 rounded-md border border-rose-400/40 px-2 py-0.5 text-[11px] font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-40">
@@ -247,29 +258,21 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
         )}
       </div>
 
-      {/* The trust headline — states the structural moat in one line so it's legible at a glance:
-          these are guarantees enforced by construction (gates + producer/verifier seam), not copy.
-          HONESTY: in a demo run the structural gates are STILL real, but the test RESULTS are
-          simulated — say so right here, co-located with the trust copy, so "verified" can't mislead. */}
-      <div className="rounded-lg border border-[#07D1AF]/15 bg-[#07D1AF]/[0.04] px-3 py-1.5 text-[10.5px] leading-snug text-slate-400">
-        <span className="text-[#07D1AF]/80" aria-hidden>🛡</span> {t('trust.headline')}
-        {view.tests.demo && (
-          <div className="mt-1 text-amber-300/80"><span aria-hidden>⚠</span> {t('trust.headline.demo')}</div>
-        )}
-      </div>
-
       {/* The trust ledger: which structural tokens have actually cleared this run (proof, not copy). */}
       <TrustLedger view={view} t={t} />
 
       {/* TERMINAL transport state: reconnects exhausted — honest "stopped + Reload" (audit gap:
-          the transient banner used to pulse forever after give-up). */}
-      {view.connectionGone ? (
+          the transient banner used to pulse forever after give-up). SUPPRESSED when the session
+          is genuinely GONE (getSession 404): the honest recovery is the gone-card's "Start new
+          build" above, not a "Reload" that would just hit the same 404. A deleted session's SSE
+          404 is not a transport reconnect story. */}
+      {view.connectionGone && !sessionGone ? (
         <div role="alert" className="flex items-center gap-2 rounded-xl border border-rose-400/25 bg-rose-400/[0.06] px-3 py-1.5 text-[11px] text-rose-200/90">
           <span className="h-1.5 w-1.5 rounded-full bg-rose-300" aria-hidden />
           {t('live.connectionGone')}
           <button onClick={() => window.location.reload()} className="ml-auto shrink-0 rounded border border-rose-300/30 px-2 py-0.5 text-[11px] text-rose-100 hover:bg-rose-400/10">{t('live.reload')}</button>
         </div>
-      ) : view.connectionLost && (
+      ) : view.connectionLost && !sessionGone && (
         /* SSE dropped: a subtle, NON-terminal "reconnecting" banner (distinct from a failed run);
            the resumable stream re-syncs via Last-Event-ID. */
         <div role="status" className="flex items-center gap-2 rounded-xl border border-amber-400/20 bg-amber-400/[0.05] px-3 py-1.5 text-[11px] text-amber-200/90">

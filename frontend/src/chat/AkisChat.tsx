@@ -1,10 +1,14 @@
 import { useState, useEffect, useRef, type FormEvent, type ReactNode } from 'react'
-import type { ApiClient } from '../api/client.js'
+import type { ApiClient, ProviderInfo, ChatOverrides } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { Markdown } from '../components/Markdown.js'
 import { extractBuildSpec, hasTruncatedSpec, extractSuggestions } from './buildSpec.js'
 import { SpecCard } from './SpecCard.js'
+import { useSmoothText } from './useSmoothText.js'
+import { ModelChip, type Effort } from './ModelChip.js'
+import { ModelPicker, type ModelSelection } from './ModelPicker.js'
+import { loadModelPref, saveModelPref, type ModelPref } from './modelPref.js'
 import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } from './akisThread.js'
 
 /**
@@ -40,6 +44,66 @@ function dropPlaceholder(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.filter(m => !m.streaming)
 }
 
+/**
+ * One assistant bubble. A component (not inline JSX in the map) so `useSmoothText` sits at a
+ * stable hook position regardless of how the thread grows/shrinks. Every extraction runs on
+ * the FULL accumulated `content` (spec/suggestion detection must see the authoritative text);
+ * only the visible reply text is animated, and only while it's the actively streaming message.
+ */
+function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: {
+  content: string
+  streaming: boolean
+  // Explicit `| undefined` (not `?`) so the call site can forward AkisChat's own optional
+  // props straight through under exactOptionalPropertyTypes (which distinguishes absent vs undefined).
+  onBuild: ((spec: string) => void) | undefined
+  building: boolean | undefined
+  builtSpec: string | undefined
+}): ReactNode {
+  const { t } = useI18n()
+  // A build-ready spec is detected only when onBuild is wired (the studio flow). Detection
+  // runs on the ACCUMULATED text, so the SpecCard appears the instant the fence closes mid-stream.
+  const detected = onBuild ? extractBuildSpec(content) : null
+  // Suppress the "truncated" notice WHILE streaming — an open-but-not-yet-closed fence is
+  // normal mid-stream, not a real truncation (avoids a flicker).
+  const truncated = onBuild && !streaming ? hasTruncatedSpec(content) : false
+  const started = !!detected && builtSpec?.trim() === detected.spec.trim()
+  // Strip the suggestion block off the FULL text first (extraction is authoritative), then
+  // SMOOTH-reveal that clean reply while streaming. Completed/history bubbles show it instantly.
+  const { text: stripped } = extractSuggestions(content)
+  const smoothed = useSmoothText(stripped, streaming)
+  const displayed = streaming ? smoothed : stripped
+  return (
+    <div className="flex items-start gap-3">
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
+      <div className="min-w-0 max-w-[80%] space-y-3">
+        {detected
+          ? (
+            <>
+              {detected.intro && (
+                <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+                  <Markdown content={detected.intro} />
+                </div>
+              )}
+              <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} startedSpec={builtSpec} />
+            </>
+          )
+          : (
+            <>
+              <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+                <Markdown content={displayed} />
+              </div>
+              {truncated && (
+                <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
+                  {t('akis.spec.truncated')}
+                </div>
+              )}
+            </>
+          )}
+      </div>
+    </div>
+  )
+}
+
 export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api: ApiClient; onBuild?: (spec: string) => void; building?: boolean; builtSpec?: string; workflow?: ReactNode }) {
   const { t } = useI18n()
   const greeting = t('akis.greeting')
@@ -49,6 +113,15 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   })
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  // ── Model picker (CHAT-ONLY visibility + selection) ──
+  // The user's saved provider/model/effort preference (safe-parsed from localStorage).
+  const [modelPref, setModelPref] = useState<ModelPref>(() => loadModelPref())
+  // The provider catalog + serving mode, fetched ONCE on mount (mode is session-global, so
+  // it is cached here and the chip reads it without refetching per render). Both degrade
+  // gracefully: a failed fetch just hides the chip (the chat itself is unaffected).
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [mode, setMode] = useState<'live' | 'demo' | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
   // The last user message we tried to send — drives Retry (resends it, untouched).
   const lastUser = useRef<string | undefined>(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -62,6 +135,28 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
 
   // Autofocus the composer on mount so the user can start typing immediately.
   useEffect(() => { inputRef.current?.focus() }, [])
+
+  // Fetch the provider catalog + serving mode ONCE on mount (mode is session-global, cached).
+  // Both are best-effort: any failure (offline, route absent in a test) just leaves the chip
+  // hidden — the conversation never depends on them. If the saved pref has no provider yet,
+  // SEED it from the first provider's defaultModel so the chip shows a concrete model.
+  useEffect(() => {
+    let alive = true
+    void api.listProviders()
+      .then(raw => {
+        if (!alive) return
+        // Defensive: only ever trust an actual array (a misbehaving mock/route could return
+        // a non-array, and `first.id` on undefined would crash the whole chat).
+        const list = Array.isArray(raw) ? raw : []
+        setProviders(list)
+        const first = list[0]
+        if (!first) return
+        setModelPref(prev => (prev.provider ? prev : { ...prev, provider: first.id, model: first.defaultModel }))
+      })
+      .catch(() => {/* chip simply stays hidden */})
+    void api.health().then(h => { if (alive && (h?.mode === 'live' || h?.mode === 'demo')) setMode(h.mode) }).catch(() => {/* mode badge omitted */})
+    return () => { alive = false }
+  }, [api])
 
   // Auto-scroll to the latest message/card — UNLESS the user scrolled up to read history.
   useEffect(() => {
@@ -78,9 +173,13 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   const errorText = (err: unknown): string =>
     ApiError.is(err) && err.status === 401
       ? t('akis.error.unauthorized')
-      : ApiError.is(err)
-        ? `(${err.code ?? 'error'}) ${err.message}`
-        : t('akis.error.network')
+      // Opus review: NoKey must be a localized, actionable sentence — never the raw
+      // English "(NoKey) No API key for provider x" on a user-facing error row.
+      : ApiError.is(err) && err.code === 'NoKey'
+        ? t('akis.error.noKey')
+        : ApiError.is(err)
+          ? `(${err.code ?? 'error'}) ${err.message}`
+          : t('akis.error.network')
 
   // Finalize a streamed turn: replace the live placeholder with the authoritative full
   // reply (so spec detection runs on the trusted text), or an error row if it came back
@@ -94,6 +193,19 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
         : [...next, { role: 'error', content: t('akis.error.empty') }]
     })
   }
+
+  // The CHAT-ONLY model-picker overrides for a chat request. WARNING (SACRED): these are
+  // chat-only. They ride ONLY on api.chatWithAkis[Stream] below. They MUST NEVER be passed
+  // to onBuild()/startSession() or any build/workflow call — builds keep their workflow
+  // bindings, and leaking {provider, model, effort} into a build would corrupt that contract.
+  // Empty provider/model mean "AKIS default", so the body omits them (byte-identical request).
+  const chatOverrides = (): ChatOverrides => ({
+    ...(modelPref.provider ? { provider: modelPref.provider } : {}),
+    ...(modelPref.model ? { model: modelPref.model } : {}),
+    // 'balanced' is the server default — omit it so the default request body stays
+    // BYTE-identical to the pre-picker wire shape (Opus review).
+    ...(modelPref.effort !== 'balanced' ? { effort: modelPref.effort } : {}),
+  })
 
   // Send `text` to AKIS, STREAMING the reply into a live placeholder that updates as
   // deltas arrive. On any stream failure, fall back to the non-stream await path; only
@@ -119,7 +231,8 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
           return next
         })
       }
-      const { reply } = await api.chatWithAkisStream(text, history, onDelta)
+      // CHAT-ONLY overrides (see chatOverrides above): never forwarded to a build.
+      const { reply } = await api.chatWithAkisStream(text, history, onDelta, chatOverrides())
       finalize(reply)
     } catch (streamErr) {
       // Streaming failed (provider lacks it, a mid-stream drop, or an SSE `error` frame):
@@ -131,7 +244,8 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
         setMsgs(m => [...m, { role: 'error', content: errorText(streamErr) }])
       } else {
         try {
-          const { reply } = await api.chatWithAkis(text, history)
+          // Fallback non-stream call also carries the CHAT-ONLY overrides (never a build).
+          const { reply } = await api.chatWithAkis(text, history, chatOverrides())
           const clean = (reply ?? '').trim()
           setMsgs(m => clean
             ? [...m, { role: 'assistant', content: clean }]
@@ -199,43 +313,18 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
               </div>
             )
           }
-          // A build-ready spec is detected only when onBuild is wired (the studio flow).
-          // Spec detection runs on the ACCUMULATED placeholder text, so the SpecCard appears
-          // the instant the akis-spec fence closes mid-stream.
-          const detected = onBuild ? extractBuildSpec(m.content) : null
-          // Suppress the "truncated" notice WHILE streaming — an open-but-not-yet-closed
-          // fence is normal mid-stream, not a real truncation (avoids a flicker).
-          const truncated = onBuild && !m.streaming ? hasTruncatedSpec(m.content) : false
-          const started = !!detected && builtSpec?.trim() === detected.spec.trim()
+          // Assistant bubble in its own component so the smoothing hook lives at a STABLE
+          // position (one hook per message instance, never inside the map callback — that
+          // would violate the Rules of Hooks as the thread grows/shrinks).
           return (
-            <div key={i} className="flex items-start gap-3">
-              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
-              <div className="min-w-0 max-w-[80%] space-y-3">
-                {detected
-                  ? (
-                    <>
-                      {detected.intro && (
-                        <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
-                          <Markdown content={detected.intro} />
-                        </div>
-                      )}
-                      <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} startedSpec={builtSpec} />
-                    </>
-                  )
-                  : (
-                    <>
-                      <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
-                        <Markdown content={extractSuggestions(m.content).text} />
-                      </div>
-                      {truncated && (
-                        <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
-                          {t('akis.spec.truncated')}
-                        </div>
-                      )}
-                    </>
-                  )}
-              </div>
-            </div>
+            <AssistantMessage
+              key={i}
+              content={m.content}
+              streaming={!!m.streaming}
+              onBuild={onBuild}
+              building={building}
+              builtSpec={builtSpec}
+            />
           )
         })}
         {workflow && (
@@ -263,6 +352,37 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
           </div>
         )
       })()}
+      {/* Visibility chip: show WHICH model + effort + mode is active near the composer.
+          Opus review M2: NOT hostage to /health — the chip renders once the provider catalog
+          loads; a failed health probe only degrades the badge (neutral), never hides the
+          picker's sole entry point. Badge honesty: a key-less SELECTION shows "anahtar yok"
+          (amber) regardless of the global mode — the badge reflects what THIS request will do. */}
+      {(() => {
+        const active = providers.find(p => p.id === modelPref.provider)
+        if (!active) return null
+        const modelLabel = active.models.find(m => m.id === modelPref.model)?.label ?? modelPref.model
+        return (
+          <ModelChip
+            provider={active.label}
+            model={modelLabel}
+            effort={modelPref.effort}
+            mode={active.available === false ? 'nokey' : mode}
+            onClick={() => setPickerOpen(true)}
+          />
+        )
+      })()}
+      {pickerOpen && providers.length > 0 && (
+        <ModelPicker
+          providers={providers}
+          selected={modelPref as ModelSelection}
+          onSelect={(sel: ModelSelection) => {
+            const next: ModelPref = { provider: sel.provider, model: sel.model, effort: sel.effort as Effort }
+            setModelPref(next)
+            saveModelPref(next)
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
       <form className="flex gap-2" onSubmit={send} aria-busy={busy}>
         <input ref={inputRef} aria-label={t('akis.ask')} value={input} onChange={e => setInput(e.target.value)} placeholder={t('akis.ask')}
           className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none" />

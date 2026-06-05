@@ -71,6 +71,12 @@ export const STRINGS = {
     // GATED push (Gate 4 still mints from the VerifyToken) — a retry affordance, not a bypass.
     'recovery.push.hint': 'The build is verified, but pushing it failed. Retry the push — it still requires the verified push approval (the push gate is never bypassed).',
     'recovery.push.retry': 'Push failed — retry',
+    // Stale deep-link recovery: a session that NO LONGER EXISTS (server restart wiped the
+    // in-memory store, DB loss, or external deletion) makes GET /sessions/:id return 404. The
+    // honest recovery is to start a NEW build — not to hang on a frozen view. Distinct from the
+    // transient connectionGone banner (that is transport-only; this is the session being gone).
+    'session.gone.hint': 'This session no longer exists (the server may have restarted). Start a new build to continue.',
+    'session.gone.action': 'Start new build',
     // Run control: STOP/CANCEL an in-flight run — a clean terminal abandon (never a gate bypass:
     // cancel only stops the run; it never marks it verified or ships it).
     'run.stop': 'Stop run',
@@ -149,6 +155,28 @@ export const STRINGS = {
     'akis.transcript.title': 'Conversation with AKIS',
     'akis.transcript.show': 'Show conversation',
     'akis.transcript.hide': 'Hide conversation',
+    // ── Model picker + visibility chip (chat-only; builds keep workflow bindings) ──
+    'chat.picker.title': 'Choose model & effort',
+    'chat.picker.subtitle': 'Applies to this conversation only — builds keep their workflow models.',
+    'chat.picker.providersTitle': 'Provider & model',
+    'chat.picker.recommended': 'recommended',
+    'chat.picker.apply': 'Apply',
+    'chat.picker.cancel': 'Cancel',
+    'chat.picker.close': 'Close',
+    'chat.picker.effort.title': 'Effort level',
+    'chat.picker.effort.fast': 'Fast',
+    'chat.picker.effort.balanced': 'Balanced',
+    'chat.picker.effort.deep': 'Deep',
+    'chat.picker.effort.fast.hint': 'Cheaper, shorter replies',
+    'chat.picker.effort.balanced.hint': 'A good default for most chats',
+    'chat.picker.effort.deep.hint': 'Longer, more thorough; slower',
+    'chat.chip.label': 'Active model — tap to change',
+    'chat.chip.live': 'LIVE',
+    'chat.chip.demo': 'DEMO',
+    'chat.chip.nokey': 'NO KEY',
+    'chat.picker.noKey': 'no API key — add one in Settings',
+    'akis.error.noKey': 'The selected provider has no API key configured. Add one in Settings → Providers, or switch the model from the chip below.',
+    'chat.provider.akisDefault': 'AKIS default',
     // ── Chat-to-Build: AKIS-authored spec card ──
     'spec.card.title': 'Build-ready spec',
     'spec.card.hint': 'Review it, then approve to run the full agent pipeline.',
@@ -659,6 +687,12 @@ export const STRINGS = {
     // KAPILI push'u yeniden çalıştırır (Gate 4 yine VerifyToken'dan üretir) — atlatma değil.
     'recovery.push.hint': 'İnşa doğrulandı, ancak push başarısız oldu. Push\'u yeniden dene — yine doğrulanmış push onayını gerektirir (push kapısı asla atlanmaz).',
     'recovery.push.retry': 'Push başarısız — yeniden dene',
+    // Eskimiş derin bağlantı kurtarma: ARTIK MEVCUT OLMAYAN bir oturum (sunucu yeniden başlaması
+    // bellek deposunu sildi, DB kaybı ya da dış silme) GET /sessions/:id'in 404 dönmesine yol açar.
+    // Dürüst kurtarma, donmuş bir görünümde takılmak değil YENİ bir geliştirme başlatmaktır. Geçici
+    // connectionGone bandından farklıdır (o yalnızca aktarım; bu, oturumun kendisinin gitmiş olması).
+    'session.gone.hint': 'Bu oturum artık mevcut değil (sunucu yeniden başlamış olabilir). Devam etmek için yeni bir geliştirme başlatın.',
+    'session.gone.action': 'Yeni geliştirme başlat',
     // Çalışma denetimi: yürüyen bir çalışmayı DURDUR/İPTAL ET — temiz, kalıcı bir vazgeçiş (asla
     // kapı atlatma değil: iptal yalnızca çalışmayı durdurur; asla doğrulamaz veya yayınlamaz).
     'run.stop': 'Çalışmayı durdur',
@@ -732,6 +766,28 @@ export const STRINGS = {
     'akis.transcript.title': 'AKIS ile konuşma',
     'akis.transcript.show': 'Konuşmayı göster',
     'akis.transcript.hide': 'Konuşmayı gizle',
+    // ── Model seçici + görünürlük çipi (yalnızca sohbet; derlemeler iş akışı bağlamalarını korur) ──
+    'chat.picker.title': 'Model ve çaba seç',
+    'chat.picker.subtitle': 'Yalnızca bu konuşmaya uygulanır — derlemeler kendi iş akışı modellerini korur.',
+    'chat.picker.providersTitle': 'Sağlayıcı ve model',
+    'chat.picker.recommended': 'önerilen',
+    'chat.picker.apply': 'Uygula',
+    'chat.picker.cancel': 'Vazgeç',
+    'chat.picker.close': 'Kapat',
+    'chat.picker.effort.title': 'Çaba seviyesi',
+    'chat.picker.effort.fast': 'Hızlı',
+    'chat.picker.effort.balanced': 'Dengeli',
+    'chat.picker.effort.deep': 'Derin',
+    'chat.picker.effort.fast.hint': 'Daha ucuz, daha kısa yanıtlar',
+    'chat.picker.effort.balanced.hint': 'Çoğu sohbet için önerilir',
+    'chat.picker.effort.deep.hint': 'Daha uzun, daha kapsamlı; daha yavaş',
+    'chat.chip.label': 'Etkin model — değiştirmek için dokun',
+    'chat.chip.live': 'CANLI',
+    'chat.chip.demo': 'DEMO',
+    'chat.chip.nokey': 'ANAHTAR YOK',
+    'chat.picker.noKey': 'API anahtarı yok — Ayarlar’dan ekleyin',
+    'akis.error.noKey': 'Seçili sağlayıcının API anahtarı yapılandırılmamış. Ayarlar → Sağlayıcılar’dan ekleyin ya da aşağıdaki çipten modeli değiştirin.',
+    'chat.provider.akisDefault': 'AKIS varsayılanı',
     // ── Sohbetten-İnşaya: AKIS’in yazdığı spec kartı ──
     'spec.card.title': 'İnşaya hazır spec',
     'spec.card.hint': 'Gözden geçir, sonra onayla — tüm ajan hattını çalıştırır.',

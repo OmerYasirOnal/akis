@@ -40,4 +40,11 @@ export class MockSessionStore implements SessionStore {
     // Map preserves insertion order; reverse for newest-first.
     return [...this.map.values()].filter(s => s.ownerId === ownerId).reverse().map(s => ({ ...s }))
   }
+
+  /** Dev persistence seam (mirrors UserStore): dump every session for a file snapshot. */
+  snapshot(): SessionState[] { return [...this.map.values()].map(s => ({ ...s })) }
+  /** Replace the in-memory state from a snapshot (boot-time hydrate; insertion order kept). */
+  hydrate(sessions: SessionState[]): void {
+    this.map = new Map(sessions.map(s => [s.id, { ...s }]))
+  }
 }
