@@ -193,7 +193,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     </section>
   ) : null
   const workflowCard = sessionId ? (
-    <section className="rounded-2xl border border-white/10 bg-slate-950/40 p-3 shadow-[0_0_30px_rgba(124,58,237,0.08)]">
+    // FRAMELESS by design (user feedback): the run is part of THE SAME conversation — no
+    // bordered sub-panel, no chat-in-chat. A subtle divider marks the transition instead.
+    <section className="border-t border-white/5 pt-3">
       {/* Edit-mode disclosure (B.5b): this build MERGES over a prior app — never a surprise. */}
       {editsBase && (
         <div className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-400/[0.08] px-2 py-0.5 text-[11px] font-medium text-violet-200">

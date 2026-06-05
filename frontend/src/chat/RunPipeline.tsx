@@ -236,25 +236,21 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api }: 
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-center justify-between gap-3">
-        <div className="text-[10px] font-semibold uppercase tracking-[0.2em] text-slate-500">{t('pipeline.title')}</div>
-        {/* Stop/Cancel: a clean terminal ABANDON of an in-flight run — never a gate bypass. */}
+      {/* NO panel title (user feedback: the run flows in the SAME chat, not a sub-window).
+          The trust headline doubles as the section opener; Stop rides on its right edge.
+          Stop/Cancel stays a clean terminal ABANDON of an in-flight run — never a gate bypass. */}
+      <div className="flex items-start gap-2">
+        <div className="flex-1 rounded-lg border border-[#07D1AF]/15 bg-[#07D1AF]/[0.04] px-3 py-1.5 text-[10.5px] leading-snug text-slate-400">
+          <span className="text-[#07D1AF]/80" aria-hidden>🛡</span> {t('trust.headline')}
+          {view.tests.demo && (
+            <div className="mt-1 text-amber-300/80"><span aria-hidden>⚠</span> {t('trust.headline.demo')}</div>
+          )}
+        </div>
         {inFlight && (
           <button onClick={onCancel} disabled={recovering} aria-label={t('run.stop')}
             className="shrink-0 rounded-md border border-rose-400/40 px-2 py-0.5 text-[11px] font-semibold text-rose-200 transition hover:bg-rose-400/10 disabled:opacity-40">
             {t('run.stop')}
           </button>
-        )}
-      </div>
-
-      {/* The trust headline — states the structural moat in one line so it's legible at a glance:
-          these are guarantees enforced by construction (gates + producer/verifier seam), not copy.
-          HONESTY: in a demo run the structural gates are STILL real, but the test RESULTS are
-          simulated — say so right here, co-located with the trust copy, so "verified" can't mislead. */}
-      <div className="rounded-lg border border-[#07D1AF]/15 bg-[#07D1AF]/[0.04] px-3 py-1.5 text-[10.5px] leading-snug text-slate-400">
-        <span className="text-[#07D1AF]/80" aria-hidden>🛡</span> {t('trust.headline')}
-        {view.tests.demo && (
-          <div className="mt-1 text-amber-300/80"><span aria-hidden>⚠</span> {t('trust.headline.demo')}</div>
         )}
       </div>
 
