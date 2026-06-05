@@ -37,10 +37,10 @@ const RENDER = /\b(renders?|loads?|displays?|shows?|opens?|appears?)\b/i
 const QUOTED = /["“”']([^"“”']{1,80})["“”']/g
 /** A step where the user TYPES the literal — that text is INPUT, not page chrome: a
  *  client-rendered app injects it via JS, so the SERVED body can never contain it and a
- *  bodyContains probe would be an impossible claim (the live "missing literal" class). */
+ *  bodyContains probe would be an impossible claim (the live "missing literal" failure). */
 const INPUT_VERB = /\b(types?|typing|enters?|fills?|writes?)\b/i
 /** A quote immediately preceded by a data noun (`task "X"`, `note "X"`) names a DYNAMIC
- *  data item the user created — the same impossible-probe class as typed input. */
+ *  data item the user created — same impossible-probe class as typed input. */
 const DATA_NOUN = /\b(tasks?|notes?|todos?|items?|entr(?:y|ies)|görev(?:i|ler)?|not(?:u|lar)?)\s*$/i
 /** A quote offered as one branch of an or-alternation (`icon or "Sil" button`) — the spec
  *  allows EITHER, so asserting one branch is not a faithful mechanical reduction. */
@@ -89,9 +89,8 @@ export function deriveChecks(spec: SpecArtifact | undefined): Check[] {
  * user TYPES (an INPUT_VERB step), a dynamic data item (DATA_NOUN right before the quote),
  * or one branch of an or-alternation (OR_BEFORE) are rejected: those describe runtime
  * state or an either/or the served body need not contain, so deriving a probe from them
- * mis-claims "not verified" on a healthy app (live failure class, session cf2258).
- * Rejection only falls through to the NEXT derivable signal (path → render → skipped) —
- * never to a pass, so the fail-closed gate is not relaxed.
+ * mis-claims "not verified" on a healthy app. Rejection only falls through to the NEXT
+ * derivable signal (path → render → skipped) — never to a pass, so the gate is not relaxed.
  */
 function staticLiteral(steps: string[]): string | undefined {
   for (const step of steps) {
