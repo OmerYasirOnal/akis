@@ -48,7 +48,10 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
       }
       case 'agent_end': {
         const step = openStep.get(e.laneId)
-        if (step) { step.done = true; step.ok = e.ok }
+        // ADDITIVE: carry the agent's honest cost metrics if present. An OLD event (no
+        // metrics) leaves step.metrics undefined — today's behavior. This single line makes
+        // BOTH live AND history (replayed /log) carry metrics, since both fold through here.
+        if (step) { step.done = true; step.ok = e.ok; if (e.metrics) step.metrics = e.metrics }
         openStep.delete(e.laneId)
         break
       }

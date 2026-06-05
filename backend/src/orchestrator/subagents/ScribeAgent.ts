@@ -2,6 +2,7 @@ import type { SpecArtifact, SharedContext } from '@akis/shared'
 import type { EventBus } from '../../events/bus.js'
 import type { ChatResult, LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
+import { buildAgentMetrics } from '../../agent/metrics.js'
 import { parseAIJson } from './critic/json-extract.js'
 import { renderKnowledge } from './context-prompt.js'
 import type { KnowledgePort } from '../../knowledge/KnowledgePort.js'
@@ -89,25 +90,34 @@ export class ScribeAgent {
 
   async run(input: ScribeInput): Promise<ScribeOutcome> {
     const { sessionId, laneId } = input
+    // Real wall-clock start (Date.now, NOT event.ts which is a deterministic counter) +
+    // a local tool-call counter threaded through compose so RAG-on retrieve_knowledge
+    // uses are counted too (they emit inside compose's onTool callback).
+    const startedAt = Date.now()
+    let toolCalls = 0
     this.deps.bus.emit({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId, sessionId, ts: nextTs() })
 
     if (this.deps.needsClarification) {
       const questions = ['Who is the primary user?', 'What is the single most important feature?']
-      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+      // No LLM call on the clarify branch → usage absent ("—"), but real time is reported.
+      const metrics = buildAgentMetrics(undefined, startedAt, toolCalls)
+      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, ...(metrics ? { metrics } : {}), agent: 'scribe', laneId, sessionId, ts: nextTs() })
       return { type: 'clarify', questions }
     }
 
     this.deps.bus.emit({ kind: 'tool_call', tool: 'dispatch_scribe', args: { idea: input.idea }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+    toolCalls++
 
     let res: ChatResult
     try {
-      res = await this.compose(input)
+      res = await this.compose(input, () => { toolCalls++ })
     } catch (err) {
       // A throwing provider (auth/network/model error) must still CLOSE the event
       // frame: emit a failed tool_result + agent_end so the live stream never has
       // an orphaned tool_call, then re-throw (the orchestrator fails the session).
       this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_scribe', ok: false, result: { error: errMsg(err) }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
-      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: false, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+      const metrics = buildAgentMetrics(undefined, startedAt, toolCalls)
+      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: false, ...(metrics ? { metrics } : {}), agent: 'scribe', laneId, sessionId, ts: nextTs() })
       throw err
     }
 
@@ -120,7 +130,13 @@ export class ScribeAgent {
       result: outcome.type === 'spec' ? { title: outcome.spec.title, parsed } : { clarify: outcome.questions.length, parsed },
       agent: 'scribe', laneId, sessionId, ts: nextTs(),
     })
-    this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, agent: 'scribe', laneId, sessionId, ts: nextTs() })
+    // HONEST metrics: res.usage is exact on the RAG-off single chat() (the default). On the
+    // RAG-on tool-loop path callWithTools returns ONLY the LAST round's ChatResult — usage is
+    // NOT summed across tool-loop turns (unlike chatWithContinuation) — so a multi-turn RAG-on
+    // Scribe reports an HONEST LOWER BOUND, not a fabrication. The {0,0}→absent rule (mock
+    // provider) is applied in buildAgentMetrics, so a keyless demo renders "—", never "0 tok".
+    const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls)
+    this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, ...(metrics ? { metrics } : {}), agent: 'scribe', laneId, sessionId, ts: nextTs() })
     return outcome
   }
 
@@ -132,7 +148,7 @@ export class ScribeAgent {
    * model can pull grounding on demand. Each tool use is narrated as a real
    * tool_call/tool_result on the bus.
    */
-  private async compose(input: ScribeInput): Promise<ChatResult> {
+  private async compose(input: ScribeInput, onToolCount: () => void): Promise<ChatResult> {
     const { sessionId, laneId } = input
     const userMsg = input.idea + renderKnowledge(input.ctx)
 
@@ -159,6 +175,8 @@ export class ScribeAgent {
           // Surface each retrieve_knowledge use as a real tool_call/tool_result so
           // the live UI shows the grounding steps. ok=true: a tool result string is
           // always returned (errors degrade to an error string, never a throw).
+          // Count it for the agent's toolCalls metric (else RAG-on under-reports).
+          onToolCount()
           this.deps.bus.emit({ kind: 'tool_call', tool: 'retrieve_knowledge', args: call.args, agent: 'scribe', laneId, sessionId, ts: nextTs() })
           this.deps.bus.emit({ kind: 'tool_result', tool: 'retrieve_knowledge', ok: true, result: { chars: result.length }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
         },

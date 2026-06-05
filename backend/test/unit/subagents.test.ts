@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, afterEach, vi } from 'vitest'
 import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
 import { ScribeAgent, SCRIBE_SYSTEM } from '../../src/orchestrator/subagents/ScribeAgent.js'
 import { ProtoAgent, PROTO_SYSTEM } from '../../src/orchestrator/subagents/ProtoAgent.js'
@@ -8,7 +8,7 @@ import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../../src/gates/specGate.js'
 import { EventBus } from '../../src/events/bus.js'
 import { initialSession } from '@akis/shared'
-import type { AkisEvent, KnowledgeChunk } from '@akis/shared'
+import type { AkisEvent, KnowledgeChunk, AgentMetrics } from '@akis/shared'
 import { approveSpec } from '../helpers/tokens.js'
 import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 import type { KnowledgePort, RetrieveQuery } from '../../src/knowledge/KnowledgePort.js'
@@ -394,5 +394,94 @@ describe('skill injection into the system prompt (P3-AGENT-1)', () => {
     await proto.run({ sessionId: 's1', laneId: 'main', approved: APPROVED })
     expect(provider.calls[0]!.system).toBe(composed)
     expect(provider.calls[0]!.system).toContain('PROTO SKILL BODY')
+  })
+})
+
+// Per-agent cost metrics ride on the agent_end event (additive, optional). The HONESTY rule:
+// a provider that reports no REAL token usage (undefined OR {0,0}) renders "—", never a
+// fabricated/zero count. durationMs + toolCalls are always real (Date.now stubbed here).
+describe('agent metrics on agent_end (observability)', () => {
+  afterEach(() => vi.restoreAllMocks())
+
+  /** Find the single agent_end event for a role and return its metrics (or undefined). */
+  function endMetrics(seen: AkisEvent[], role: string): AgentMetrics | undefined {
+    const e = seen.find(ev => ev.kind === 'agent_end' && ev.agent === role)
+    return e && e.kind === 'agent_end' ? e.metrics : undefined
+  }
+
+  const APPROVED = (() => {
+    const spec = { title: 't', body: 'b' }
+    const session = { ...initialSession('s1', 'i'), spec, approval: approveSpec(spec) }
+    return mintApprovedSpec(session)
+  })()
+
+  it('Scribe agent_end carries metrics (usage + durationMs + toolCalls) when the provider reports NON-ZERO usage', async () => {
+    vi.spyOn(Date, 'now').mockReturnValueOnce(1_000).mockReturnValue(1_250) // start, then end
+    const provider = scriptedProvider([{ text: '{"kind":"spec","title":"T","body":"# T"}', usage: { inTokens: 90, outTokens: 40 } }])
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const scribe = new ScribeAgent({ bus, provider })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'todo' })
+    expect(endMetrics(seen, 'scribe')).toEqual({ usage: { inTokens: 90, outTokens: 40 }, durationMs: 250, toolCalls: 1 })
+  })
+
+  it('a MockProvider-backed agent_end shows ABSENT usage (no usage key), NOT {0,0} (the headline honesty fix)', async () => {
+    // MockProvider returns usage:{0,0} on every branch — the default keyless/demo + test path.
+    // The builder collapses {0,0}→absent so the FE renders "—", never a fabricated "0 tok".
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const scribe = new ScribeAgent({ bus, provider: new MockProvider() })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'todo app' })
+    const m = endMetrics(seen, 'scribe')
+    expect(m).toBeDefined()
+    expect(m && 'usage' in m).toBe(false)   // NO zero-usage block surfaced
+    expect(m?.toolCalls).toBe(1)
+    expect(typeof m?.durationMs).toBe('number')
+  })
+
+  it('Proto agent_end carries the continuation-accumulated usage + toolCalls:1', async () => {
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const provider = scriptedProvider([{ text: '{"files":[{"filePath":"index.html","content":"<x>"}]}', usage: { inTokens: 200, outTokens: 1500 } }])
+    const proto = new ProtoAgent({ bus, provider })
+    await proto.run({ sessionId: 's1', laneId: 'main', approved: APPROVED })
+    const m = endMetrics(seen, 'proto')
+    expect(m?.usage).toEqual({ inTokens: 200, outTokens: 1500 })
+    expect(m?.toolCalls).toBe(1)
+  })
+
+  it('Trace agent_end OMITS usage (LLM-free) but keeps durationMs + toolCalls (run_tests=1)', async () => {
+    vi.spyOn(Date, 'now').mockReturnValueOnce(5_000).mockReturnValue(5_042)
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const trace = new TraceAgent({ bus, verifier: resolveVerifier({ kind: 'mock', cfg: { testsRun: 2, passed: true } }) })
+    await trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
+    const m = endMetrics(seen, 'trace')
+    expect(m).toBeDefined()
+    expect(m && 'usage' in m).toBe(false)
+    expect(m?.toolCalls).toBe(1)
+    expect(m?.durationMs).toBe(42)
+  })
+
+  it('Scribe clarify branch (no LLM call) reports time-only metrics (usage absent, toolCalls:0)', async () => {
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const scribe = new ScribeAgent({ bus, provider: new MockProvider(), needsClarification: true })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'thing' })
+    const m = endMetrics(seen, 'scribe')
+    expect(m && 'usage' in m).toBe(false)
+    expect(m?.toolCalls).toBe(0) // no dispatch on the clarify branch
+  })
+
+  it('REGRESSION: an agent_end WITHOUT metrics still satisfies the event type and folds (wire compat)', () => {
+    // Construct the OLD shape (no metrics) — it must type-check, guarding additive wire-compat.
+    const old: AkisEvent = { kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId: 'main', sessionId: 's1', ts: 0 }
+    expect(old.kind).toBe('agent_end')
+    if (old.kind === 'agent_end') expect(old.metrics).toBeUndefined()
   })
 })

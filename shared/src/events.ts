@@ -7,6 +7,26 @@ export interface BaseEvent {
   ts: number              // backend-stamped at emit time
 }
 
+/**
+ * HONEST per-agent activation cost (observability only — never a gate input, never logged
+ * as a secret; token COUNTS are not secrets). Carried on the agent_end event so a reopened
+ * session restores it for free via the existing /log → foldSessionView replay.
+ *
+ * `usage` is ABSENT (omitted) whenever the provider did not report a REAL measurement — an
+ * LLM-free agent (Trace runs the verifier, no model call) OR a provider that reports a
+ * zero-token usage block (the default MockProvider returns {0,0} on every branch). Absent
+ * usage renders an honest "—" in the UI, never an invented or zero-as-if-measured count.
+ * `durationMs` and `toolCalls` are ALWAYS real (locally measured / counted on the bus).
+ *
+ * NOTE: this is UNRELATED to test_stats.durationMs (the test-run wall time) below —
+ * AgentMetrics.durationMs is the agent ACTIVATION wall time. Same name, different meaning.
+ */
+export interface AgentMetrics {
+  usage?: { inTokens: number; outTokens: number }
+  durationMs?: number
+  toolCalls?: number
+}
+
 export type AkisEvent =
   // `cancelled` is a clean, user-requested TERMINAL abandon (Orchestrator.cancel) — NOT a
   // failure and NOT a ship. It lets the live view stop driving an in-flight run without
@@ -14,7 +34,9 @@ export type AkisEvent =
   | (BaseEvent & { kind: 'session'; status: 'started' | 'failed' | 'done' | 'cancelled' })
   | (BaseEvent & { kind: 'text'; text: string; ephemeral?: boolean })   // ephemeral=true → shown live but NOT ingested into RAG (free-form/untrusted narration)
   | (BaseEvent & { kind: 'agent_start'; role: Role })
-  | (BaseEvent & { kind: 'agent_end'; role: Role; ok: boolean })
+  // `metrics` is ADDITIVE + OPTIONAL: an OLD agent_end (no metrics) folds exactly as before
+  // (byte-identical wire fallback). Pure observability — never on a gate path, never a secret.
+  | (BaseEvent & { kind: 'agent_end'; role: Role; ok: boolean; metrics?: AgentMetrics })
   | (BaseEvent & { kind: 'tool_call'; tool: ToolName; args: unknown })
   | (BaseEvent & { kind: 'tool_result'; tool: ToolName; ok: boolean; result?: unknown })
   | (BaseEvent & { kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: 'awaiting' | 'satisfied' | 'rejected' })

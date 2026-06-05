@@ -198,4 +198,25 @@ describe('RunPipeline', () => {
     rerender(wrap(<RunPipeline view={cancelled} onApprove={() => {}} onConfirm={() => {}} api={new ApiClient()} />))
     expect(screen.queryByRole('button', { name: 'Stop run' })).not.toBeInTheDocument()
   })
+
+  // ── Per-agent cost badges: present usage shows tokens; absent/zero usage shows time only. ──
+  it('renders the metrics badge from a synthetic step log (tokens + time)', () => {
+    const view = viewWith({ status: 'running' }, [
+      { agent: 'proto', done: true, ok: true, tools: [], notes: [], metrics: { usage: { inTokens: 8000, outTokens: 4345 }, durationMs: 42_000, toolCalls: 1 } },
+    ])
+    render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} />))
+    // "12.3k tok · 1 tool · 42s" rides on the build step card.
+    expect(screen.getByText(/12\.3k tok · 1 tool · 42s/)).toBeInTheDocument()
+  })
+
+  it('absent/zero usage renders time only, NEVER a fabricated 0 tok number', () => {
+    // Trace (LLM-free) carries durationMs + toolCalls but NO usage — the badge shows time, never "0 tok".
+    const view: SessionView = {
+      ...viewWith({ status: 'running' }),
+      lanes: [{ laneId: 'verify', steps: [{ agent: 'trace', done: true, ok: true, tools: [], notes: [], metrics: { durationMs: 5_000, toolCalls: 1 } }] }],
+    }
+    const { container } = render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByText(/1 tool · 5s/)).toBeInTheDocument()
+    expect(container.textContent).not.toContain('0 tok')
+  })
 })

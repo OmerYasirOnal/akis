@@ -215,4 +215,39 @@ describe('foldSessionView (pure live view-model)', () => {
     ])
     expect(v.status).toBe('cancelled')
   })
+
+  // ── Per-agent cost metrics ride on agent_end and fold onto the step (live AND history). ──
+  it('folds agent_end metrics onto the step (live)', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', metrics: { usage: { inTokens: 200, outTokens: 1500 }, durationMs: 4_000, toolCalls: 1 } }),
+    ])
+    const step = v.lanes.find(l => l.laneId === 'main')!.steps[0]!
+    expect(step.metrics).toEqual({ usage: { inTokens: 200, outTokens: 1500 }, durationMs: 4_000, toolCalls: 1 })
+  })
+
+  it('an agent_end WITHOUT metrics leaves step.metrics undefined (back-compat)', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'agent_start', role: 'scribe', agent: 'scribe' }),
+      ev({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe' }),
+    ])
+    expect(v.lanes[0]!.steps[0]!.metrics).toBeUndefined()
+  })
+
+  it('reproduces metrics from a REPLAYED log (history badges restored for free, no extra code)', () => {
+    // Exactly the events /log replays: a usage-absent Trace + a present-usage Proto. Folding
+    // them rebuilds step.metrics, so a reopened session shows the same badges with no plumbing.
+    const replayed: AkisEvent[] = [
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { usage: { inTokens: 50, outTokens: 70 }, durationMs: 3_000, toolCalls: 1 } }),
+      ev({ kind: 'agent_start', role: 'trace', agent: 'trace', laneId: 'verify' }),
+      ev({ kind: 'agent_end', role: 'trace', ok: true, agent: 'trace', laneId: 'verify', metrics: { durationMs: 900, toolCalls: 1 } }),
+    ]
+    const v = foldSessionView('s1', replayed)
+    const proto = v.lanes.find(l => l.laneId === 'main')!.steps[0]!
+    const trace = v.lanes.find(l => l.laneId === 'verify')!.steps[0]!
+    expect(proto.metrics?.usage).toEqual({ inTokens: 50, outTokens: 70 })
+    expect(trace.metrics && 'usage' in trace.metrics).toBe(false) // usage absent → "—"
+    expect(trace.metrics?.durationMs).toBe(900)
+  })
 })
