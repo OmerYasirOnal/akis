@@ -76,6 +76,15 @@ export const STRINGS = {
     'run.stop': 'Stop run',
     // SSE drop: a non-terminal "reconnecting" banner so a dropped stream stops pulsing forever.
     'live.reconnecting': 'Connection lost — reconnecting…',
+    // Client-facing trust report (exportable artifact; the GTM plan's first commercial item).
+    'report.title': 'Trust report',
+    'report.hint': 'A client-ready summary of what was approved, what ran, and what was proven — honest about simulated runs.',
+    'report.loading': 'Building the report…',
+    'report.error': 'Could not load the report.',
+    'report.retry': 'Retry',
+    'report.copy': 'Copy Markdown',
+    'report.copied': 'Copied ✓',
+    'report.download': 'Download .md',
     // TERMINAL: reconnects exhausted — live updates stopped; a reload re-syncs from /log.
     'live.connectionGone': 'Connection lost — live updates stopped. Reload to re-sync.',
     'live.reload': 'Reload',
@@ -655,6 +664,15 @@ export const STRINGS = {
     'run.stop': 'Çalışmayı durdur',
     // SSE kopması: kalıcı olmayan bir "yeniden bağlanılıyor" bandı, böylece kopan akış sonsuza dek atmaz.
     'live.reconnecting': 'Bağlantı koptu — yeniden bağlanılıyor…',
+    // Müşteriye dönük güven raporu (dışa aktarılabilir artefakt).
+    'report.title': 'Güven raporu',
+    'report.hint': 'Neyin onaylandığını, neyin koştuğunu ve neyin kanıtlandığını özetleyen, müşteriye gönderilebilir rapor — simüle koşularda bunu açıkça söyler.',
+    'report.loading': 'Rapor hazırlanıyor…',
+    'report.error': 'Rapor yüklenemedi.',
+    'report.retry': 'Yeniden dene',
+    'report.copy': 'Markdown kopyala',
+    'report.copied': 'Kopyalandı ✓',
+    'report.download': '.md indir',
     // TERMİNAL: yeniden bağlanma hakları bitti — canlı güncellemeler durdu; yenileme /log'dan eşitler.
     'live.connectionGone': 'Bağlantı koptu — canlı güncellemeler durdu. Yeniden eşitlemek için sayfayı yenileyin.',
     'live.reload': 'Yenile',

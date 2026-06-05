@@ -6,6 +6,7 @@ import type { SeqEvent } from '../events/bus.js'
 import type { WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { sseEvent, sseControl, sseComment } from './sse.js'
 import { verifyPassport } from '../verify/passport.js'
+import { buildTrustReport, renderTrustReportMarkdown } from '../report/trustReport.js'
 
 export interface SessionsDeps {
   orchestrator: Orchestrator
@@ -194,6 +195,26 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     // `truncated` = the buffer already evicted head events (a >cap-event session), so
     // this log is a tail, not the full history — the client can surface that honestly.
     return reply.send({ events, head: services.bus.head(id), truncated: dropped })
+  })
+
+  // CLIENT-FACING TRUST REPORT (GTM §8's first commercial build item): a pure PROJECTION of
+  // the facts this session already earned through the gates — structured JSON by default,
+  // a self-contained Markdown artifact with ?format=md (what an agency sends a client).
+  // Owner-scoped like /log; grants nothing (verified can only mirror REAL evidence, and a
+  // simulated/demo run is loudly labeled SIMULATED).
+  app.get<{ Params: { id: string }; Querystring: { format?: string } }>('/sessions/:id/report', async (req, reply) => {
+    const id = req.params.id
+    const s = await accessibleSession(req, id)
+    if (!s) return notFound(reply, id)
+    const { events } = services.bus.replaySince(id, 0)
+    const report = buildTrustReport(s, events)
+    if (req.query.format === 'md') {
+      return reply
+        .type('text/markdown; charset=utf-8')
+        .header('content-disposition', `attachment; filename="trust-report-${id}.md"`)
+        .send(renderTrustReportMarkdown(report))
+    }
+    return reply.send(report)
   })
 
   // Resumable SSE stream (CF1 + CF5 / F2-AC12).
