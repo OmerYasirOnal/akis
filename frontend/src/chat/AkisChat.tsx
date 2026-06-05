@@ -3,6 +3,7 @@ import type { ApiClient, ProviderInfo, ChatOverrides } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { Markdown } from '../components/Markdown.js'
+import { CopyButton } from '../components/CopyButton.js'
 import { extractBuildSpec, hasTruncatedSpec, extractSuggestions } from './buildSpec.js'
 import { SpecCard } from './SpecCard.js'
 import { useSmoothText } from './useSmoothText.js'
@@ -89,8 +90,16 @@ function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: 
           )
           : (
             <>
-              <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+              {/* `group relative` anchors a hover/focus-revealed Copy on the plain reply. It is
+                  NOT rendered while streaming (would copy a half-stream) nor when empty; once
+                  present it stays in the DOM via opacity so it's RTL-findable + keyboard-reachable.
+                  Copies `stripped` (the visible reply, suggestion block already removed). */}
+              <div className="group relative rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 pr-10 text-slate-200">
                 <Markdown content={displayed} />
+                {!streaming && stripped.trim() && (
+                  <CopyButton text={stripped} label={t('copy.reply')}
+                    className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
+                )}
               </div>
               {truncated && (
                 <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">

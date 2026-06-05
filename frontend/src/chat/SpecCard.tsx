@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Markdown } from '../components/Markdown.js'
+import { CopyButton } from '../components/CopyButton.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -69,6 +70,9 @@ export function SpecCard({ spec, onBuild, building, started, startedSpec }: { sp
             {t('spec.edit')}
           </button>
         ))}
+        {/* Copy the current spec text (edited or committed). Sits BEFORE Download, which is unchanged. */}
+        <CopyButton text={currentSpec} label={t('copy.spec')}
+          className="rounded-xl border-white/15 bg-white/[0.04] px-3 py-2 text-sm font-medium text-slate-200 hover:border-white/30" />
         <button type="button" onClick={download}
           className="rounded-xl border border-white/15 bg-white/[0.04] px-3 py-2 text-sm font-medium text-slate-200 hover:border-white/30">
           <span aria-hidden="true">⬇ </span>{t('spec.download')}

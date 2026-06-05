@@ -3,6 +3,7 @@ import type { EventBus } from '../../events/bus.js'
 import type { RepoFile } from '../../di/MockGitHubAdapter.js'
 import type { Verifier } from '../../verify/verifier.js'
 import { nextTs } from '../../events/clock.js'
+import { buildAgentMetrics } from '../../agent/metrics.js'
 
 export interface TraceInput {
   sessionId: string
@@ -41,8 +42,13 @@ export class TraceAgent {
 
   async run(input: TraceInput): Promise<TraceResult> {
     const { sessionId, laneId } = input
+    // Real wall-clock start (Date.now, not the event counter). Trace runs the verifier,
+    // NOT an LLM (the canonical "time present, usage absent" badge), so usage is omitted.
+    const startedAt = Date.now()
+    let toolCalls = 0
     this.deps.bus.emit({ kind: 'agent_start', role: 'trace', agent: 'trace', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'tool_call', tool: 'run_tests', args: { files: input.files.length }, agent: 'trace', laneId, sessionId, ts: nextTs() })
+    toolCalls++
 
     // ADDITIVE: capture the structured evidence the verifier reports via the side
     // channel. The token below is the UNCHANGED gate truth — minting reads only the
@@ -56,7 +62,9 @@ export class TraceAgent {
     // the token above is the unchanged source of truth. Spread it so a live run emits a
     // byte-identical verify event with NO `demo` field (never `demo:false` noise).
     this.deps.bus.emit({ kind: 'verify', testsRun: token?.testsRun ?? 0, passed: token !== null, ...(this.deps.verifier.demo ? { demo: true } : {}), agent: 'trace', laneId, sessionId, ts: nextTs() })
-    this.deps.bus.emit({ kind: 'agent_end', role: 'trace', ok: token !== null, agent: 'trace', laneId, sessionId, ts: nextTs() })
+    // Trace makes NO LLM call → usage absent ("—" in the UI), but real durationMs + toolCalls.
+    const metrics = buildAgentMetrics(undefined, startedAt, toolCalls)
+    this.deps.bus.emit({ kind: 'agent_end', role: 'trace', ok: token !== null, metrics, agent: 'trace', laneId, sessionId, ts: nextTs() })
     // The SAME demo source as the verify event, but stamped onto the PERSISTED evidence —
     // the event lives in a capped ring buffer and can be evicted on long sessions; the
     // evidence survives, so a simulated run stays labeled forever (review #113).

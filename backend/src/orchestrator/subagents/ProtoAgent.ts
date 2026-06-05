@@ -5,6 +5,7 @@ import type { ApprovedSpec } from '../../gates/specGate.js'
 import type { LlmProvider } from '../../agent/LlmProvider.js'
 import { chatWithContinuation } from '../../agent/continuation.js'
 import { nextTs } from '../../events/clock.js'
+import { buildAgentMetrics } from '../../agent/metrics.js'
 import { parseAIJson } from './critic/json-extract.js'
 import { renderKnowledge } from './context-prompt.js'
 
@@ -81,8 +82,13 @@ export class ProtoAgent {
 
   async run(input: ProtoInput): Promise<{ files: RepoFile[] }> {
     const { sessionId, laneId } = input
+    // Real wall-clock start (Date.now, not the event counter) + tool-call count
+    // (Proto's single dispatch_proto = 1).
+    const startedAt = Date.now()
+    let toolCalls = 0
     this.deps.bus.emit({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'tool_call', tool: 'dispatch_proto', args: { spec: input.approved.spec.title, feedback: input.feedback ?? null }, agent: 'proto', laneId, sessionId, ts: nextTs() })
+    toolCalls++
 
     const user = [
       `SPEC: ${input.approved.spec.title}`,
@@ -108,7 +114,8 @@ export class ProtoAgent {
       // A throwing provider must still CLOSE the event frame (failed tool_result +
       // agent_end) so the live stream never has an orphaned tool_call, then re-throw.
       this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_proto', ok: false, result: { error: errMsg(err) }, agent: 'proto', laneId, sessionId, ts: nextTs() })
-      this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: false, agent: 'proto', laneId, sessionId, ts: nextTs() })
+      const metrics = buildAgentMetrics(undefined, startedAt, toolCalls)
+      this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: false, metrics, agent: 'proto', laneId, sessionId, ts: nextTs() })
       throw err
     }
 
@@ -117,7 +124,11 @@ export class ProtoAgent {
     // `ok` reflects whether the LLM output parsed into real files — the placeholder
     // fallback is a DEGRADED result, so the event must not claim success.
     this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_proto', ok: parsed, result: { files: files.length, parsed }, agent: 'proto', laneId, sessionId, ts: nextTs() })
-    this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: parsed, agent: 'proto', laneId, sessionId, ts: nextTs() })
+    // res.usage is the continuation-ACCUMULATED multi-round total (chatWithContinuation sums
+    // across rounds), so this is the real cost of the whole app generation. {0,0}→absent (mock)
+    // is handled in buildAgentMetrics.
+    const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls)
+    this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: parsed, metrics, agent: 'proto', laneId, sessionId, ts: nextTs() })
     return { files }
   }
 

@@ -5,6 +5,7 @@ import type { StringKey } from '../i18n/catalog.js'
 import { agentName } from '../agents/names.js'
 import { ApiClient } from '../api/client.js'
 import { derivePipeline, summarizePipeline, type PipelineStep, type PipelineStatus, type PipelineStepKey } from './pipeline.js'
+import { metricsBadge } from './metricsFormat.js'
 
 const STEP_LABEL: Record<PipelineStepKey, StringKey> = {
   spec: 'pipeline.step.spec',
@@ -80,6 +81,9 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
 }) {
   const v = NODE[step.status]
   const stat = statText(t, step.stat)
+  // HONEST per-agent cost badge ("12.3k tok · 1 tool · 42s"). Absent usage (Trace, mock {0,0})
+  // omits the tok segment; no metrics yet → nothing shows. Never wraps/breaks the card.
+  const badge = step.metrics ? metricsBadge(t, step.metrics) : undefined
   return (
     <div className={`relative flex min-w-0 flex-1 flex-col gap-1.5 rounded-xl border px-3 py-2.5 transition ${v.ring}`}>
       <div className="flex items-center gap-2">
@@ -92,6 +96,9 @@ function StepNode({ step, t, onApprove, onConfirm, onProceed, onAbandon, onRetry
         <span className={`text-[9px] font-semibold uppercase tracking-wide ${TRUST_TINT[step.key]}`}>· {t(TRUST_ROLE[step.key])}</span>
       </div>
       <div className="min-h-[1rem] truncate text-[11px] text-slate-300" title={stat}>{stat ?? t(`pipeline.status.${step.status}`)}</div>
+      {badge && (
+        <div className="truncate text-[10px] tabular-nums text-[#07D1AF]/60" title={badge}>{badge}</div>
+      )}
       {/* Deploy is LOCKED until verification passes — make that gate visible, not just an absent
           button: a user/investor should SEE that ship can't happen before the verifier mints. */}
       {step.key === 'ship' && step.status === 'pending' && (

@@ -234,4 +234,39 @@ describe('derivePipeline', () => {
       [{ agent: 'critic', done: true, ok: true, tools: [], notes: [] }])
     expect(step(view, 'review').recovery).toBeUndefined()
   })
+
+  // ── Per-agent metrics attach from the latest agent_end carried on the SessionView lanes. ──
+  it('attaches per-role metrics from the latest agent_end in view.lanes', () => {
+    const view = viewWith({ status: 'running' }, [
+      { agent: 'scribe', done: true, ok: true, tools: [], notes: [], metrics: { usage: { inTokens: 100, outTokens: 50 }, durationMs: 2_000, toolCalls: 1 } },
+      { agent: 'proto', done: true, ok: true, tools: [], notes: [], metrics: { usage: { inTokens: 200, outTokens: 1500 }, durationMs: 5_000, toolCalls: 1 } },
+    ])
+    expect(step(view, 'spec').metrics).toEqual({ usage: { inTokens: 100, outTokens: 50 }, durationMs: 2_000, toolCalls: 1 })
+    expect(step(view, 'build').metrics?.usage).toEqual({ inTokens: 200, outTokens: 1500 })
+    // critic/orchestrator emit no agent_end → no metrics (no badge).
+    expect(step(view, 'review').metrics).toBeUndefined()
+    expect(step(view, 'ship').metrics).toBeUndefined()
+  })
+
+  it('Trace metrics attach to the verify step from the verify lane (scans ALL lanes)', () => {
+    const view: SessionView = {
+      ...viewWith({ status: 'running' }),
+      lanes: [
+        { laneId: 'main', steps: [{ agent: 'proto', done: true, ok: true, tools: [], notes: [], metrics: { usage: { inTokens: 10, outTokens: 10 }, durationMs: 1_000, toolCalls: 1 } }] },
+        { laneId: 'verify', steps: [{ agent: 'trace', done: true, ok: true, tools: [], notes: [], metrics: { durationMs: 900, toolCalls: 1 } }] },
+      ],
+    }
+    const verify = step(view, 'verify')
+    expect(verify.metrics?.durationMs).toBe(900)
+    expect(verify.metrics && 'usage' in verify.metrics).toBe(false) // usage absent → "—"
+  })
+
+  it('a clarify-only Scribe attaches TIME-ONLY metrics (usage absent) to the spec step', () => {
+    const view = viewWith({ status: 'running' }, [
+      { agent: 'scribe', done: true, ok: true, tools: [], notes: [], metrics: { durationMs: 500, toolCalls: 0 } },
+    ])
+    const spec = step(view, 'spec')
+    expect(spec.metrics?.durationMs).toBe(500)
+    expect(spec.metrics && 'usage' in spec.metrics).toBe(false)
+  })
 })

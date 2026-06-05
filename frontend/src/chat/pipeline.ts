@@ -1,4 +1,4 @@
-import type { Role } from '@akis/shared'
+import type { Role, AgentMetrics } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
 import { presenceOf } from '../components/AgentRoster.js'
 
@@ -37,6 +37,27 @@ export interface PipelineStep {
   action?: PipelineAction
   /** When the run parked in a recoverable (non-gate) state, the recovery to surface. */
   recovery?: PipelineRecovery
+  /** HONEST per-agent cost metrics (token usage/duration/tool-call count) for this stage's
+   *  agent, from the latest agent_end that carried them. Undefined when the agent emitted no
+   *  agent_end (critic/orchestrator) or none yet — no badge shows. */
+  metrics?: AgentMetrics
+}
+
+/**
+ * The LATEST per-agent metrics for a role, scanned from the SAME source presenceOf reads:
+ * SessionView.lanes[].steps[].metrics (set by the viewModel agent_end fold). Scans ALL lanes
+ * (Trace's StepNode lives on the 'verify' lane, not 'main') for the last StepNode whose
+ * agent===role that HAS metrics. Pure. NOTE: metrics are NOT on the derived PipelineStep[]
+ * (that's computed after) — they must be read from the lanes here.
+ */
+function metricsFor(view: SessionView, role: Role): AgentMetrics | undefined {
+  let found: AgentMetrics | undefined
+  for (const lane of view.lanes) {
+    for (const step of lane.steps) {
+      if (step.agent === role && step.metrics) found = step.metrics
+    }
+  }
+  return found
 }
 
 const ORDER: { key: PipelineStepKey; role: Role }[] = [
@@ -148,7 +169,10 @@ export function derivePipeline(view: SessionView): PipelineStep[] {
         break
     }
 
-    return { key, role, status, ...(stat !== undefined ? { stat } : {}), ...(action !== undefined ? { action } : {}), ...(recovery !== undefined ? { recovery } : {}) }
+    // The latest honest metrics for this stage's agent (undefined → no badge). critic/
+    // orchestrator emit no agent_end today, so metricsFor returns undefined for them.
+    const m = metricsFor(view, role)
+    return { key, role, status, ...(stat !== undefined ? { stat } : {}), ...(action !== undefined ? { action } : {}), ...(recovery !== undefined ? { recovery } : {}), ...(m ? { metrics: m } : {}) }
   })
 }
 

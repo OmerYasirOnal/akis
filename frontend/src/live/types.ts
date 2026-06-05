@@ -1,4 +1,4 @@
-import type { AkisEvent, Role, GateState } from '@akis/shared'
+import type { AkisEvent, Role, GateState, AgentMetrics } from '@akis/shared'
 
 /** An event with its per-session transport seq (the resumable cursor). The FE keys
  *  events by seq so replays/reconnects/resets dedup — never lost or duplicated. */
@@ -22,6 +22,9 @@ export interface StepNode {
   ok?: boolean        // set on agent_end
   tools: ToolStep[]
   notes: string[]     // `text` narration attributed to this agent
+  /** HONEST per-agent cost (token usage/duration/tool-call count), carried on the agent_end
+   *  event. Undefined while pending/active or on an OLD event (no metrics) — back-compat. */
+  metrics?: AgentMetrics
 }
 
 export interface AgentLane {
