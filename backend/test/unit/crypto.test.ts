@@ -48,4 +48,11 @@ describe('crypto', () => {
     expect(a.cipherText).not.toBe(b.cipherText)
     expect(Buffer.from(a.iv, 'base64').length).toBe(12)
   })
+
+  it('AAD scope boundary: a github-conn ciphertext can NEVER decrypt under the default ai-key scope (and vice versa) — the #119 cross-store replay rationale', () => {
+    const ghCipher = encryptSecret('ghp_secret_token', 'github', MASTER, 'v1', 'akis:github-conn:u1')
+    expect(() => decryptSecret(ghCipher, 'github', MASTER)).toThrow() // default scope must reject it
+    const aiCipher = encryptSecret('sk-ant-key', 'anthropic', MASTER)
+    expect(() => decryptSecret(aiCipher, 'anthropic', MASTER, 'akis:github-conn:u1')).toThrow() // symmetric direction
+  })
 })
