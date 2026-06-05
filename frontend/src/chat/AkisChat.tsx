@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, type FormEvent, type ReactNode } from 'react'
+import { useState, useEffect, useRef, memo, type FormEvent, type ReactNode } from 'react'
 import type { ApiClient, ProviderInfo, ChatOverrides } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -51,7 +51,7 @@ function dropPlaceholder(msgs: ChatMsg[]): ChatMsg[] {
  * the FULL accumulated `content` (spec/suggestion detection must see the authoritative text);
  * only the visible reply text is animated, and only while it's the actively streaming message.
  */
-function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: {
+const AssistantMessage = memo(function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: {
   content: string
   streaming: boolean
   // Explicit `| undefined` (not `?`) so the call site can forward AkisChat's own optional
@@ -111,7 +111,7 @@ function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: 
       </div>
     </div>
   )
-}
+})
 
 export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api: ApiClient; onBuild?: (spec: string) => void; building?: boolean; builtSpec?: string; workflow?: ReactNode }) {
   const { t } = useI18n()

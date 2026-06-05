@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useState, type ReactNode, memo } from 'react'
 import type { SessionView } from '../live/types.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
@@ -192,7 +192,7 @@ function TrustLedger({ view, t }: { view: SessionView; t: (k: StringKey) => stri
  * wired to the same onApprove/onConfirm the verbose thread uses. The verbose chronological
  * log lives below this in a collapsed <details> (rendered by ChatStudio).
  */
-export function RunPipeline({ view, onApprove, onConfirm, busy, details, api, sessionGone = false }: {
+export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfirm, busy, details, api, sessionGone = false }: {
   view: SessionView
   onApprove: () => void
   onConfirm: () => void
@@ -329,4 +329,4 @@ export function RunPipeline({ view, onApprove, onConfirm, busy, details, api, se
       )}
     </div>
   )
-}
+})
