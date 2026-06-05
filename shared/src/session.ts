@@ -96,6 +96,11 @@ export interface TestEvidence {
   scenarios: ScenarioEvidence[]
   /** Structured failure report — present only when the run did NOT pass. */
   failure?: TestFailureReport
+  /** TRUE when the verifier ran a SIMULATED (mock/demo) runner. DURABLE honesty marker:
+   *  the verify event's `demo` annotation lives in a CAPPED ring buffer and can be evicted
+   *  on long sessions — this field persists with the evidence so a simulated run can never
+   *  be presented as verified (review #113). Absent (never `false`) for real runs. */
+  demo?: boolean
 }
 
 export interface SessionState {

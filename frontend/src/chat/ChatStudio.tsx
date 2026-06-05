@@ -10,6 +10,7 @@ import { loadRecentBuilds, recordRecentBuild, type RecentBuild } from './recentB
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
+import { TrustReportCard } from '../components/TrustReportCard.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { CodeArtifact, TestEvidence } from '@akis/shared'
@@ -258,7 +259,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
               </button>
             </div>
             {previewOpen ? (
-              <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+              <>
+                {sessionId && status === 'done' && <TrustReportCard sessionId={sessionId} api={api} />}
+                <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+              </>
             ) : (
               <button
                 type="button"
