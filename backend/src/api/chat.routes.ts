@@ -1,8 +1,10 @@
-import type { FastifyInstance } from 'fastify'
+import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { LlmProvider } from '../agent/LlmProvider.js'
 import { sseControl } from './sse.js'
 import { CATALOG, type ProviderId } from '../agent/providers/catalog.js'
 import { createProvider, ProviderConfigError, type KeyLookup } from '../agent/providers/createProvider.js'
+import type { UsageStorePort } from '../usage/UsageStore.js'
+import { checkQuota, ANON_OWNER, type QuotaPolicy } from '../usage/quota.js'
 
 /**
  * AKIS's conversational persona — the orchestrator talking to the user directly.
@@ -102,6 +104,14 @@ export interface ChatDeps {
   provider: LlmProvider
   env?: Record<string, string | undefined>
   keyStore?: KeyLookup
+  /** Per-user token-quota PRE-CHECK + accounting (multi-tenant safety). When usage + quota are
+   *  injected, each chat turn is gated (429 BEFORE the provider call) and its REAL token spend is
+   *  accumulated AFTER a successful turn — the SOLE chat-accounting path (chat never emits
+   *  agent_end, so no overlap with the bus tap). `ownerOf` resolves the authenticated user
+   *  (undefined ⇒ anonymous → the shared __anon__ bucket). Absent ⇒ no check (byte-identical). */
+  usage?: UsageStorePort
+  quota?: QuotaPolicy
+  ownerOf?: (req: FastifyRequest) => Promise<string | undefined>
 }
 
 /** A typed 4xx the route catches and maps to a clean reply.code(status).send({error,code}). */
@@ -186,6 +196,25 @@ function assembleMessages(message: string, rawHistoryInput: unknown): ChatMsg[] 
  * uses the stream and falls back to /api/chat on any stream error / unsupported provider.
  */
 export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
+  // Per-turn quota PRE-CHECK shared by both routes. Returns the owner key to charge AFTER a
+  // successful turn (so the caller accumulates the real spend), or a {blocked} signal carrying
+  // the 429 resetAt. When usage/quota are not injected, it never blocks and never charges.
+  const quotaGate = async (req: FastifyRequest): Promise<{ blocked: true; resetAt: string } | { blocked: false; ownerKey: string }> => {
+    const ownerId = deps.ownerOf ? await deps.ownerOf(req) : undefined
+    if (deps.usage && deps.quota) {
+      const decision = await checkQuota(deps.usage, deps.quota, ownerId)
+      if (!decision.allowed) return { blocked: true, resetAt: decision.resetAt }
+    }
+    return { blocked: false, ownerKey: ownerId ?? ANON_OWNER }
+  }
+  // Accumulate a turn's REAL spend (the SOLE chat-accounting path; {0,0}/absent ⇒ no add). Fire-
+  // and-forget: a store error is best-effort observability and must never break the reply.
+  const chargeUsage = (ownerKey: string, usage: { inTokens: number; outTokens: number } | undefined): void => {
+    if (!deps.usage || !usage) return
+    const tok = usage.inTokens + usage.outTokens
+    if (tok > 0) void Promise.resolve(deps.usage.add(ownerKey, tok)).catch(() => { /* best-effort */ })
+  }
+
   app.post<{ Body: { message?: unknown; history?: unknown; provider?: unknown; model?: unknown; effort?: unknown } }>('/api/chat', async (req, reply) => {
     const message = isStr(req.body?.message) ? req.body.message.trim() : ''
     if (!message) return reply.code(400).send({ error: 'message required', code: 'BadRequest' })
@@ -193,6 +222,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
     const model = isStr(req.body?.model) ? req.body.model.trim() || undefined : undefined
     const effort = isStr(req.body?.effort) ? req.body.effort.trim() || undefined : undefined
     const messages = assembleMessages(message, req.body?.history)
+    // Per-user token-quota PRE-CHECK — BEFORE resolving/calling any provider (SACRED: a blocked
+    // turn never reaches the model). No-op when usage/quota aren't injected (byte-identical).
+    const gate = await quotaGate(req)
+    if (gate.blocked) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: gate.resetAt })
     // Resolve the per-request provider FIRST so a bad provider/model/key is a clean 4xx (400
     // BadRequest / 400 NoKey) — never a 502. Absent overrides → deps.provider, byte-identical.
     let resolved: LlmProvider
@@ -204,6 +237,8 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
     }
     try {
       const res = await resolved.chat({ system: AKIS_PERSONA, messages, maxTokens: mapEffortToTokens(effort) })
+      // Account the turn's REAL spend (the sole chat path; {0,0}/absent adds nothing).
+      chargeUsage(gate.ownerKey, res.usage)
       // Return the reply verbatim (trimmed). An empty reply is surfaced HONESTLY as '' so the
       // UI can show a real "empty reply" notice — never disguised as a friendly '…' answer.
       return reply.send({ reply: (res.text ?? '').trim() })
@@ -222,6 +257,12 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
     const model = isStr(req.body?.model) ? req.body.model.trim() || undefined : undefined
     const effort = isStr(req.body?.effort) ? req.body.effort.trim() || undefined : undefined
     const messages = assembleMessages(message, req.body?.history)
+    // Per-user token-quota PRE-CHECK — BEFORE reply.hijack() (after hijack only SSE frames can be
+    // written, so a 429 would be impossible). Mirrors the existing pre-hijack 4xx for a bad
+    // provider/model below: a blocked turn returns a clean JSON 429 (the FE renders it directly,
+    // no redundant non-stream fallback). No-op when usage/quota aren't injected (byte-identical).
+    const gate = await quotaGate(req)
+    if (gate.blocked) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: gate.resetAt })
     // Resolve the per-request provider BEFORE hijacking the socket — a bad provider/model/key
     // must surface as a clean JSON 4xx (the FE then falls back to /api/chat); after reply.hijack()
     // only SSE frames can be written, so a 400 here would be impossible.
@@ -266,6 +307,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
         res = await resolvedProvider.chat(chatReq)
         onDelta((res.text ?? ''))
       }
+      // Account the turn's REAL spend (sole chat path; {0,0}/absent adds nothing). Even when the
+      // client dropped (aborted) the tokens were still spent, so charge regardless.
+      chargeUsage(gate.ownerKey, res.usage)
       // Prefer the assembled stream text; fall back to the result text (single-shot path).
       const finalReply = (full || res.text || '').trim()
       safeWrite(sseControl('done', { reply: finalReply }))

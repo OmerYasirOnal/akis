@@ -71,6 +71,14 @@ describe('ApiClient', () => {
     expect(f.mock.calls[0]![0]).toBe('http://host:3000/sessions')
   })
 
+  it('usage() GETs /api/usage and returns UsageInfo', async () => {
+    const f = mockFetch(200, { usedTokens: 250, budget: 1000, remaining: 750, resetAt: '2026-07-01T00:00:00.000Z' })
+    const api = new ApiClient('', f)
+    const u = await api.usage()
+    expect(f.mock.calls[0]![0]).toBe('/api/usage')
+    expect(u).toEqual({ usedTokens: 250, budget: 1000, remaining: 750, resetAt: '2026-07-01T00:00:00.000Z' })
+  })
+
   it('fires onUnauthorized once on a 401 and still rejects with a typed ApiError(401)', async () => {
     const f = mockFetch(401, { error: 'Unauthorized', code: 'Unauthorized' })
     const onUnauthorized = vi.fn()

@@ -91,6 +91,20 @@ describe('PreviewRegistry lifecycle', () => {
     expect(launch).not.toHaveBeenCalled()
   })
 
+  it('runningCount() reflects live child procs (0 for static; increments per launched proc; drops on stop)', async () => {
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch: () => fakeProc(), probe: async () => true })
+    expect(reg.runningCount()).toBe(0)
+    await reg.start('s1', '/ws/s1', 'vite')
+    expect(reg.runningCount()).toBe(1)
+    await reg.start('s2', '/ws/s2', 'vite')
+    expect(reg.runningCount()).toBe(2)
+    // A static app has NO proc — it does not count as a live preview.
+    await reg.start('s3', '/ws/s3', 'static')
+    expect(reg.runningCount()).toBe(2)
+    await reg.stop('s1')
+    expect(reg.runningCount()).toBe(1)
+  })
+
   it('fails and kills the proc when readiness never comes', async () => {
     const proc = fakeProc()
     const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch: () => proc, probe: async () => false, probeAttempts: 2, probeIntervalMs: 1 })

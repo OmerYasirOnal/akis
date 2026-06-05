@@ -176,6 +176,13 @@ export const STRINGS = {
     'chat.chip.nokey': 'NO KEY',
     'chat.picker.noKey': 'no API key — add one in Settings',
     'akis.error.noKey': 'The selected provider has no API key configured. Add one in Settings → Providers, or switch the model from the chip below.',
+    // ── Per-user token quota (multi-tenant safety) ──
+    'akis.error.quota': 'You’ve reached your token quota for this period.',
+    'usage.label': 'Tokens',
+    'usage.unlimited': 'unlimited',
+    'usage.remaining': 'left',
+    'usage.resets': 'Resets',
+    'usage.exceeded': 'Quota reached',
     'chat.provider.akisDefault': 'AKIS default',
     // ── Chat-to-Build: AKIS-authored spec card ──
     'spec.card.title': 'Build-ready spec',
@@ -833,6 +840,13 @@ export const STRINGS = {
     'chat.chip.nokey': 'ANAHTAR YOK',
     'chat.picker.noKey': 'API anahtarı yok — Ayarlar’dan ekleyin',
     'akis.error.noKey': 'Seçili sağlayıcının API anahtarı yapılandırılmamış. Ayarlar → Sağlayıcılar’dan ekleyin ya da aşağıdaki çipten modeli değiştirin.',
+    // ── Kullanıcı başına token kotası (çok kiracılı güvenlik) ──
+    'akis.error.quota': 'Bu dönem için token kotana ulaştın.',
+    'usage.label': 'Token',
+    'usage.unlimited': 'sınırsız',
+    'usage.remaining': 'kaldı',
+    'usage.resets': 'Sıfırlanma',
+    'usage.exceeded': 'Kota doldu',
     'chat.provider.akisDefault': 'AKIS varsayılanı',
     // ── Sohbetten-İnşaya: AKIS’in yazdığı spec kartı ──
     'spec.card.title': 'İnşaya hazır spec',
