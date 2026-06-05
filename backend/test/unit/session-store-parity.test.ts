@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import type { SessionState, ApprovalToken, VerifyToken } from '@akis/shared'
+import type { SessionState, ApprovalToken, VerifyToken, PublishRecord } from '@akis/shared'
 import { isVerified } from '@akis/shared'
 import type { SessionStore } from '../../src/store/SessionStore.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
@@ -26,8 +26,8 @@ function fakeSessionsTable(): SqlClient {
       const sql = text.trim()
       if (sql.startsWith('INSERT INTO sessions')) {
         // params are positional in the column list order used by PgSessionStore.create.
-        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, base, version] = params
-        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, base, version }
+        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, base, version] = params
+        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, base, version }
         rows.set(id as string, r)
         order.push(id as string)
         return { rows: [] }
@@ -52,7 +52,7 @@ function fakeSessionsTable(): SqlClient {
         if (!cur || cur.version !== expected) return { rows: [] } // optimistic miss
         const next: Record<string, unknown> = { ...cur, version: (cur.version as number) + 1 }
         // apply whichever known columns this UPDATE set (by placeholder index).
-        for (const col of ['status', 'idea', 'owner_id', 'spec', 'code', 'approval', 'verify_token', 'test_evidence', 'passport']) {
+        for (const col of ['status', 'idea', 'owner_id', 'spec', 'code', 'approval', 'verify_token', 'test_evidence', 'passport', 'publish']) {
           const i = num(sql, col)
           if (i >= 1) next[col] = params[i - 1]
         }
@@ -151,6 +151,30 @@ function paritySuite(name: string, make: () => SessionStore) {
       const got = await store.get('s1')
       expect(got?.passport).toEqual(passport) // survives on the Pg backend, not just Mock (the fix-first finding)
       // passport is NON-GATE: writing it never sets a gate token.
+      expect(isVerified(got!)).toBe(false)
+      expect(got?.approval).toBeUndefined()
+    })
+
+    it('persists ADDITIVE publish on the NORMAL update path and round-trips it via get() (durable on Pg too)', async () => {
+      const store = make()
+      await store.create(seed())
+      // A realistic PublishRecord: a successful-but-unreachable deploy (the OCI port-closed case),
+      // which is EXACTLY the output the FE PublishButton must read back to show the live URL +
+      // honest reachability. On Pg this was previously dropped entirely (the fix-first finding).
+      const publish: PublishRecord = {
+        url: 'http://141.147.25.123:8080',
+        at: '2026-06-05T00:00:00.000Z',
+        ok: true,
+        reachable: false,
+        appType: 'node-service',
+        logTail: ['deploy ok', 'probe: connection refused (port not open)'],
+      }
+      const next = await store.update('s1', { publish }, 0)
+      expect(next.version).toBe(1)
+      expect(next.publish).toEqual(publish) // returned by the write itself
+      const got = await store.get('s1')
+      expect(got?.publish).toEqual(publish) // survives on the Pg backend, not just Mock
+      // publish is NON-GATE: writing it never sets a gate token nor changes status off the patch.
       expect(isVerified(got!)).toBe(false)
       expect(got?.approval).toBeUndefined()
     })

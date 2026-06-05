@@ -48,6 +48,17 @@ describe('runMigrations', () => {
     expect(texts.some(t => /ALTER TABLE users ADD COLUMN IF NOT EXISTS external_id/.test(t))).toBe(true)
   })
 
+  it('runs the idempotent publish ALTER for pre-existing sessions tables (additive, NON-GATE field)', async () => {
+    // `publish` is an additive, non-gate field; an upgraded sessions table that pre-dates it must
+    // get the column via ADD COLUMN IF NOT EXISTS, else a successful publish is silently dropped on
+    // Postgres and the FE PublishButton never surfaces the live URL / honest failure reason.
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    expect(texts.some(t => /ALTER TABLE sessions ADD COLUMN IF NOT EXISTS publish jsonb/.test(t))).toBe(true)
+    // the fresh-table DDL must also carry the column so new DBs match upgraded ones.
+    expect(texts.join('\n')).toMatch(/CREATE TABLE IF NOT EXISTS sessions[\s\S]*publish\s+jsonb/)
+  })
+
   it('enforces external_id uniqueness via a dedicated index (so upgraded DBs match fresh ones)', async () => {
     // A fresh DB gets `external_id text UNIQUE` inline, but the ADD COLUMN migration that
     // upgrades a pre-existing users table adds NO constraint — without a dedicated unique

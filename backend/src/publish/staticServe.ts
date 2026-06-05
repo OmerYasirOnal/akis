@@ -32,7 +32,7 @@ const TYPES = {
 // the sibling-prefix hole that a bare startsWith(root) left open.
 const inRoot = p => p === rootNorm || p.startsWith(rootPrefix)
 
-createServer(async (req, res) => {
+const server = createServer(async (req, res) => {
   try {
     // Resolve under root; reject any traversal that escapes it. normalize() the REQUEST path FIRST
     // so a leading '..' is collapsed/anchored BEFORE the join (a '/../x' request normalizes to '/x'),
@@ -56,5 +56,12 @@ createServer(async (req, res) => {
       res.end(body)
     } catch { res.writeHead(404); res.end('not found') }
   }
-}).listen(port, '0.0.0.0', () => console.log('static-serve on ' + port))
+})
+// A LISTEN failure (e.g. EADDRINUSE because a prior static-serve still holds the port on a
+// re-publish) MUST exit NON-ZERO with a clear message — without this the 'error' event is unhandled,
+// which crashes the process as an uncaught exception that the launcher's '; true' silently masks,
+// leaving the OLD server serving STALE files while the deploy looks successful. A logged exit(1)
+// makes the failure visible in static.log and lets the Publisher's started-pid check catch it.
+server.on('error', e => { console.error('static-serve failed to start: ' + (e && e.message ? e.message : e)); process.exit(1) })
+server.listen(port, '0.0.0.0', () => console.log('static-serve on ' + port))
 `

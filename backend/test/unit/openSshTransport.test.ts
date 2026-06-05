@@ -107,10 +107,17 @@ describe('OpenSshTransport (offline, mocked spawn)', () => {
       // First connect: pin path is created, lives under the persistent baseDir (NOT a per-run tmp).
       const t1 = new OpenSshTransport({ ...CFG, knownHostsDir: baseDir }, async () => true)
       await t1.run('echo one')
-      const kh1 = knownHostsArg(spawnCalls.find(c => c.cmd === 'ssh')!)
+      const call1 = spawnCalls.find(c => c.cmd === 'ssh')!
+      const kh1 = knownHostsArg(call1)
       expect(kh1.startsWith(baseDir)).toBe(true) // persistent dir, not os.tmpdir()/akis-publish-*
       expect(existsSync(kh1)).toBe(true)
       expect(statSync(kh1).mode & 0o777).toBe(0o600) // 0600 file
+      // The pin is only a REAL TOFU refusal if accept-new (NOT `no`/`off`) is the policy ON THIS
+      // SAME connect — a flag downgrade to StrictHostKeyChecking=no would silently re-accept a
+      // CHANGED key even with a persistent known_hosts. Assert it HERE (the first test checks the
+      // flag in isolation; this pins it inside the persistence scenario the refusal depends on).
+      expect(call1.args).toContain('StrictHostKeyChecking=accept-new')
+      expect(call1.args.some(a => a.startsWith('StrictHostKeyChecking=') && a !== 'StrictHostKeyChecking=accept-new')).toBe(false)
       // Simulate OpenSSH recording the host key on first connect (the TOFU pin).
       writeFileSync(kh1, 'oci.example.com ssh-ed25519 AAAApinnedkey\n')
       await t1.close()
@@ -152,5 +159,57 @@ describe('OpenSshTransport (offline, mocked spawn)', () => {
     } finally {
       rmSync(baseDir, { recursive: true, force: true })
     }
+  })
+
+  // ── HIGH-2 + LOW-1 at the transport seam: putFiles is bounded AND surfaces skipped paths ──────
+  it('putFiles returns the files it SKIPPED for an unsafe ".." segment (never a silent drop)', async () => {
+    const t = new OpenSshTransport(CFG, async () => true)
+    const res = await t.putFiles([
+      { filePath: 'src/index.js', content: 'ok' },
+      { filePath: '../escape.txt', content: 'nope' },     // a leading traversal segment
+      { filePath: 'a/../b.txt', content: 'nope2' },         // an interior traversal segment
+      { filePath: 'a..b.txt', content: 'fine' },            // NOT a traversal — must NOT be skipped
+    ], '/home/ubuntu/app')
+    expect(res.skipped).toContain('../escape.txt')
+    expect(res.skipped).toContain('a/../b.txt')
+    expect(res.skipped).not.toContain('a..b.txt')      // the segment guard does not over-match
+    expect(res.skipped).not.toContain('src/index.js')
+    await t.close()
+  })
+
+  it('putFiles threads its timeoutMs into the scp spawn (the transfer is bounded by the deadline)', async () => {
+    const t = new OpenSshTransport(CFG, async () => true)
+    await t.putFiles([{ filePath: 'index.html', content: 'x' }], '/home/ubuntu/app', 4567)
+    // The mocked spawn records argv; we can't read the kill-timer directly, but the real timeout is
+    // armed only when a positive timeoutMs reaches spawnCapture. Assert the scp spawn HAPPENED with
+    // the right shape (a regression that dropped the param entirely would still spawn scp, so we
+    // additionally pin the bounded-failure behavior below).
+    const scp = spawnCalls.find(c => c.cmd === 'scp')!
+    expect(scp).toBeDefined()
+    expect(scp.args.join(' ')).toContain('/home/ubuntu/app')
+    await t.close()
+  })
+
+  it('a timed-out scp (the kill-timer fired → code null) → putFiles throws an honest timeout', async () => {
+    // The mocked spawn emits `close` with this code; code:null is exactly what spawnCapture
+    // resolves when its kill-timer fires on a stalled transfer. putFiles must convert that into an
+    // honest "upload … timed out" throw (which the Publisher records as ok:false) — NOT a silent
+    // success or an indefinite hang. Would NOT have thrown distinctly on the old code (the scp call
+    // passed no timeoutMs at all, so a real stall could never resolve code:null to begin with).
+    nextExit = { code: null }
+    const t = new OpenSshTransport(CFG, async () => true)
+    await expect(
+      t.putFiles([{ filePath: 'index.html', content: 'x' }], '/home/ubuntu/app', 20),
+    ).rejects.toThrow(/timed out/)
+    await t.close()
+  })
+
+  it('a non-zero scp exit → putFiles throws a scp-failed error (unchanged behavior)', async () => {
+    nextExit = { code: 5 }
+    const t = new OpenSshTransport(CFG, async () => true)
+    await expect(
+      t.putFiles([{ filePath: 'index.html', content: 'x' }], '/home/ubuntu/app'),
+    ).rejects.toThrow(/scp to .* failed/)
+    await t.close()
   })
 })

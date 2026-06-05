@@ -41,6 +41,8 @@ import { registerPublishRoutes } from './publish.routes.js'
 import { JsonFilePublishProfileStore, PublishProfileMemoryStore, type PublishProfileStore } from '../keys/PublishProfileStore.js'
 import { OpenSshTransport } from '../publish/SshTransport.js'
 import { publish as runPublish } from '../publish/Publisher.js'
+import { isUrlSafeToProbe } from '../publish/validate.js'
+import { lookup as dnsLookup } from 'node:dns/promises'
 import type { SessionPublisher } from './sessions.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore.js'
@@ -559,6 +561,15 @@ function makeRealPublisher(): SessionPublisher {
   // deploy is the OCI security-list/host-firewall case — recorded honestly so "ok but blank page"
   // is never a silent false success. Any error/timeout ⇒ not reachable (fail-closed signal).
   const urlProbe = async (url: string, timeoutMs: number): Promise<boolean> => {
+    // DEFENSE-IN-DEPTH SSRF guard: resolve the host and refuse to fetch an internal/loopback/
+    // RFC1918/metadata target — even one a public-looking hostname REBINDS to (validHost can't
+    // see DNS). Honors AKIS_PUBLISH_ALLOW_INTERNAL=1 (the single-user/loopback self-host story).
+    // Fail-closed: an unsafe target records reachable:false exactly like an unreachable one.
+    const safe = await isUrlSafeToProbe(url, async host => {
+      const records = await dnsLookup(host, { all: true })
+      return records.map(r => r.address)
+    })
+    if (!safe) return false
     const ctrl = new AbortController()
     const timer = setTimeout(() => ctrl.abort(), timeoutMs)
     try {

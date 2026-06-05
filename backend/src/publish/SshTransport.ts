@@ -29,12 +29,21 @@ export interface SshRunOpts {
   timeoutMs?: number
 }
 
+export interface PutFilesResult {
+  /** Relative paths that were SKIPPED for safety (e.g. an unsafe '..' path). Empty in the common
+   *  case. The Publisher surfaces a SCRUBBED note in logTail so a partial upload is never silent. */
+  skipped: string[]
+}
+
 export interface SshTransport {
   /** Run a remote command. `cmd` is a single remote shell command string (the caller is
    *  responsible for having validated/escaped every interpolated component). */
   run(cmd: string, opts?: SshRunOpts): Promise<SshExecResult>
-  /** Upload files to `targetDir` on the remote (paths are relative to targetDir). */
-  putFiles(files: { filePath: string; content: string }[], targetDir: string): Promise<void>
+  /** Upload files to `targetDir` on the remote (paths are relative to targetDir). `timeoutMs`
+   *  bounds the WHOLE transfer (threaded from the publish deadline) so a stalled upload after the
+   *  TCP handshake yields an honest failure instead of hanging the worker. Returns which (if any)
+   *  files were skipped for safety so the caller can surface a scrubbed note. */
+  putFiles(files: { filePath: string; content: string }[], targetDir: string, timeoutMs?: number): Promise<PutFilesResult>
   /** Release any resources (temp key dir, connections). Idempotent. */
   close(): Promise<void>
 }
@@ -169,7 +178,7 @@ export class OpenSshTransport implements SshTransport {
     return spawnCapture('ssh', args, opts?.timeoutMs)
   }
 
-  async putFiles(files: { filePath: string; content: string }[], targetDir: string): Promise<void> {
+  async putFiles(files: { filePath: string; content: string }[], targetDir: string, timeoutMs?: number): Promise<PutFilesResult> {
     if (!(await this.commandOnPath('scp'))) throw new SshBinaryMissingError('scp')
     const { keyPath, knownHostsPath } = this.ensureKey()
     // Stage the files in a local 0700 dir, preserving their relative paths, then scp -r the whole
@@ -178,25 +187,34 @@ export class OpenSshTransport implements SshTransport {
     const dir = this.perRunDir!
     const stageRoot = join(dir, 'stage')
     mkdirSync(stageRoot, { recursive: true, mode: 0o700 })
+    const skipped: string[] = []
     for (const f of files) {
       // f.filePath is an app-internal relative path (e.g. 'src/index.js'); join keeps it inside
       // stageRoot. We do NOT trust it blindly for the remote — but the REMOTE side receives it via
       // scp -r into targetDir, and targetDir was validated. A '..' in an agent-produced path is
       // contained by writing under stageRoot (a '..' would escape — guard below).
       const rel = f.filePath.replace(/^\.?\//, '')
-      if (rel.includes('..')) continue // never stage a traversal path
+      // A path SEGMENT of exactly '..' would climb out of stageRoot — reject ONLY that (a substring
+      // test like rel.includes('..') would also drop a legitimately-named file such as 'a..b.txt').
+      // Skipped files are RETURNED so the caller can surface a scrubbed note (never a silent drop).
+      if (rel.split(/[\\/]/).includes('..')) { skipped.push(rel); continue }
       const dest = join(stageRoot, rel)
       mkdirSync(join(dest, '..'), { recursive: true })
       writeFileSync(dest, f.content)
     }
     // scp -r stageRoot/* → user@host:targetDir. We scp the CONTENTS (the trailing '/.') so files
-    // land directly under targetDir, not under a nested 'stage' dir.
+    // land directly under targetDir, not under a nested 'stage' dir. timeoutMs bounds the WHOLE
+    // transfer (threaded from the publish deadline) — a post-handshake network stall is exactly the
+    // failure the deadline exists to contain (ConnectTimeout only bounds the TCP/handshake).
     const args = [
       ...this.sshBaseArgs(keyPath, knownHostsPath),
       '-r', '--', `${stageRoot}/.`, `${this.cfg.user}@${this.cfg.host}:${targetDir}`,
     ]
-    const res = await spawnCapture('scp', args)
+    const res = await spawnCapture('scp', args, timeoutMs)
+    // code === null ⇒ the kill timer fired (stalled transfer) — an honest failure, not a hang.
+    if (res.code === null) throw new Error(`upload to ${targetDir} timed out`)
     if (res.code !== 0) throw new Error(`scp to ${targetDir} failed (code ${res.code})`)
+    return { skipped }
   }
 
   async close(): Promise<void> {

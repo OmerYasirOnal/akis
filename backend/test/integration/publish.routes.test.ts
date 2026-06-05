@@ -54,6 +54,21 @@ describe('publish profile routes', () => {
     expect((await bad({ sshPrivateKey: 'not a pem' })).statusCode).toBe(400)
   })
 
+  it('PUT rejects an internal/loopback/metadata host or publicUrl with 400 (SSRF guard)', async () => {
+    // These pass the OLD shape-only validators (valid hostname/IP, valid http URL) — the route
+    // accepted them before the SSRF blocklist. Pinning 400 here would FAIL on the pre-fix code.
+    const { f } = app({ userId: 'u1' }); live = f
+    const bad = (over: Record<string, unknown>) => f.inject({ method: 'PUT', url: '/publish/profile', payload: { ...GOOD, ...over } })
+    expect((await bad({ host: '169.254.169.254' })).statusCode).toBe(400) // cloud metadata
+    expect((await bad({ host: '127.0.0.1' })).statusCode).toBe(400)
+    expect((await bad({ host: 'localhost' })).statusCode).toBe(400)
+    expect((await bad({ host: '10.0.0.5' })).statusCode).toBe(400) // RFC1918
+    expect((await bad({ host: '192.168.1.10' })).statusCode).toBe(400)
+    expect((await bad({ host: 'metadata.google.internal' })).statusCode).toBe(400)
+    expect((await bad({ publicUrl: 'http://169.254.169.254/latest/meta-data/' })).statusCode).toBe(400)
+    expect((await bad({ publicUrl: 'http://127.0.0.1:9200/_cat/indices' })).statusCode).toBe(400)
+  })
+
   it('PUT then GET round-trips the status — NEVER the key', async () => {
     const { f, profiles } = app({ userId: 'u1' }); live = f
     const put = await f.inject({ method: 'PUT', url: '/publish/profile', payload: GOOD })

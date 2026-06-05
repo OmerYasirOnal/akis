@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactElement } from 'react'
 import { PublishDestination } from './PublishDestination.js'
@@ -99,5 +99,69 @@ describe('PublishButton (on a done session)', () => {
     await userEvent.click(btn)
     await screen.findByText('Publish failed.')
     expect(screen.getByText(/node not found on the instance/i)).toBeInTheDocument()
+  })
+
+  // PINS finding #1: a completed publish outcome (live URL) must survive a tab-switch/refresh —
+  // i.e. a fresh mount with NO click. Without seeding `record` from initialRecord this shows a
+  // blank, re-deploy-required panel. WOULD FAIL on the old code (record started undefined).
+  it('seeds the persisted live URL from initialRecord on mount (no click) — survives remount', async () => {
+    const api = fakeApi({ publishStatus: async () => ({ configured: true, present: true }) })
+    renderI18n(<PublishButton sessionId="s1" api={api} initialRecord={okRecord} />)
+    // The live link appears WITHOUT ever clicking Publish — recovered from the persisted record.
+    const link = await screen.findByRole('link', { name: 'http://oci.example.com:8080' })
+    expect(link).toHaveAttribute('href', 'http://oci.example.com:8080')
+  })
+
+  // PINS finding #2: navigating away DURING the long deploy must not setState on the unmounted
+  // component. The cleanup flips a `cancelled` flag so the in-flight run's resolution path is gated
+  // (`if (!cancelled) setRecord(...)`). We detect that gating by injecting a tripwire ON the resolved
+  // record: a getter that throws if the resolved record is ever *read* (which only happens if the
+  // ungated setRecord renders it). On the OLD code (no cleanup guard) the late setRecord runs and
+  // React renders the record → the getter fires → React surfaces it via console.error. With the
+  // guard, the resolution is dropped and the tripwire never reads. WOULD FAIL on the old code.
+  it('drops the in-flight deploy result after unmount mid-deploy (cancelled guard)', async () => {
+    let resolvePublish!: (s: SessionState) => void
+    const api = fakeApi({
+      publishStatus: async () => ({ configured: true, present: true }),
+      publish: () => new Promise<SessionState>(res => { resolvePublish = res }),
+    })
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let recordReadAfterUnmount = false
+    let unmounted = false
+    // A SessionState whose `.publish` getter records any read — a read can only happen if the
+    // post-resolution render path (setRecord → render) actually ran on the unmounted instance.
+    const tripwire = { status: 'done', get publish(): PublishRecord { if (unmounted) recordReadAfterUnmount = true; return okRecord } } as SessionState
+    const view = renderI18n(<PublishButton sessionId="s1" api={api} />)
+    const btn = await screen.findByRole('button', { name: 'Publish' })
+    await waitFor(() => expect(btn).not.toBeDisabled())
+    await userEvent.click(btn) // deploy in flight (publish promise pending)
+    unmounted = true
+    await act(async () => {
+      view.unmount()                 // navigate away / refresh mid-deploy → cleanup flips cancelled
+      resolvePublish(tripwire)       // late resolution
+      await Promise.resolve()
+    })
+    // Guard held: the resolved record was never read → setRecord(s.publish) was gated out.
+    expect(recordReadAfterUnmount).toBe(false)
+    // And no unmounted-setState error was logged either.
+    expect(errSpy).not.toHaveBeenCalledWith(expect.stringContaining('unmounted'))
+    errSpy.mockRestore()
+  })
+
+  // PINS finding #3: a synchronous double-fire (two clicks before the disable re-render lands) must
+  // fire the SSH deploy ONCE. The publish promise is held pending so `busy` hasn't disabled the
+  // button between the two clicks. WOULD FAIL on the old code (no runningRef; both clicks call run).
+  it('two fast clicks fire publish only once (runningRef double-fire guard)', async () => {
+    let pending = 0
+    const publish = vi.fn(() => { pending++; return new Promise<SessionState>(() => { /* never resolves */ }) })
+    const api = fakeApi({ publishStatus: async () => ({ configured: true, present: true }), publish: publish as unknown as ApiClient['publish'] })
+    renderI18n(<PublishButton sessionId="s1" api={api} />)
+    const btn = await screen.findByRole('button', { name: 'Publish' })
+    await waitFor(() => expect(btn).not.toBeDisabled())
+    // Two clicks in the SAME act → no re-render lands between them, so `busy` hasn't disabled the
+    // button; only the synchronous runningRef guard can stop the second from entering run().
+    act(() => { btn.click(); btn.click() })
+    expect(publish).toHaveBeenCalledTimes(1)
+    expect(pending).toBe(1)
   })
 })

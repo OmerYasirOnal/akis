@@ -203,6 +203,18 @@ verification. A failed deploy leaves the build `done` and records an honest
 - **NOT required:** rsync (AKIS falls back to `scp`), nginx, systemd-root, Docker, or any
   AKIS-specific agent. The only software AKIS needs on the box is the SSH daemon + node.
 
+**SSRF guard — internal targets are blocked by default.** After deploy AKIS issues a
+server-side reachability GET to the target URL (the probe above). So the publish **Host** /
+**Public URL** must be a *public* address: by default AKIS **rejects** internal/loopback targets
+— `127.0.0.0/8`, `::1`, the cloud-metadata + link-local range `169.254.0.0/16` (incl.
+`169.254.169.254`), RFC1918 (`10/8`, `172.16/12`, `192.168/16`), unique-local IPv6, and obvious
+internal names (`localhost`, `*.internal`, `*.local`). This is enforced both when you save the
+profile (a `400 BadHost` / `400 BadPublicUrl`) **and** again, with a DNS re-resolve, right before
+the probe (so a public-looking hostname that *resolves* to a private IP is still refused). A
+public IP such as the OCI free-tier instance validates normally. If you genuinely run AKIS
+single-user and *want* a loopback/LAN target (the documented self-host posture), set
+`AKIS_PUBLISH_ALLOW_INTERNAL=1` to opt back in.
+
 **On the AKIS host (one-time):** the Docker runtime image already includes
 `openssh-client`. A **from-source** AKIS host needs `ssh`/`scp` on `PATH`. And
 `AI_KEY_ENCRYPTION_KEY` must be set so the SSH key can be encrypted at rest — AKIS
@@ -222,8 +234,10 @@ verification. A failed deploy leaves the build `done` and records an honest
   overwrites the target dir in place (no rollbacks/versioning yet).
 
 Optional env: `AKIS_PUBLISH_STORE_PATH` (where the encrypted profiles persist; default
-`~/.config/akis/publish-profiles.json`) and `AKIS_PUBLISH_DEADLINE_MS` (the total deploy
-deadline; default 120000 — a slow box records `ok:false` rather than hanging).
+`~/.config/akis/publish-profiles.json`), `AKIS_PUBLISH_DEADLINE_MS` (the total deploy
+deadline; default 120000 — a slow box records `ok:false` rather than hanging), and
+`AKIS_PUBLISH_ALLOW_INTERNAL=1` (the SSRF escape hatch above — opt back in to loopback/LAN
+publish targets for a genuinely single-user host; unset by default = internal targets refused).
 
 ---
 
@@ -247,6 +261,7 @@ optional and flows through from your shell / `.env`. Full descriptions live in
 | `AKIS_GITHUB_PUSH_TOKEN` + `AKIS_GITHUB_PUSH_REPO` | pass-through | **Opt-in real GitHub PR push.** Both set → a verified build's `confirmPush` opens/updates a real PR (branch + commit + PR via the REST API) on `owner/name`; either blank → the in-memory mock (default). The token (fine-grained PAT, Contents + Pull requests write, or a GitHub App token) is sent as a Bearer credential and is **never logged/returned**. Still gated by `ApprovedPush`; always mock under `NODE_ENV=test`. |
 | `AKIS_PUBLISH_STORE_PATH` | `~/.config/akis/publish-profiles.json` | Where per-user **publish destinations** (the encrypted SSH key + host/dir/port for "publish to your own server") persist, `0600`. Set in the UI, not env. Needs `AI_KEY_ENCRYPTION_KEY` to store the key (AKIS refuses otherwise). In-memory under `NODE_ENV=test`. |
 | `AKIS_PUBLISH_DEADLINE_MS` | `120000` | Total deploy deadline for a publish-to-your-own-server action. On timeout AKIS records an honest `{ok:false}` and returns — it never hangs the worker. |
+| `AKIS_PUBLISH_ALLOW_INTERNAL` | unset (refuse) | **SSRF escape hatch.** Unset → AKIS refuses internal/loopback/RFC1918/`169.254`-metadata publish targets (validated at save **and** re-resolved before the server-side reachability probe). Set `1` to allow loopback/LAN targets on a genuinely single-user host (the documented self-host posture). A public IP (e.g. the OCI instance) is unaffected either way. |
 
 To change the published port without touching the container's internal port:
 

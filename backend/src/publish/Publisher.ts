@@ -136,6 +136,24 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
       log.push(`node not found on the instance for user ${profile.sshUser} — install Node and retry`)
       return { ok: false, url, at, appType, logTail: log.value() }
     }
+    // 5b. NODE-VERSION preflight. The verified fullstack shape uses node:sqlite/DatabaseSync, which
+    //     is a builtin only since Node 22.5 (DatabaseSync stabilized at 22.13). On a Node-20 box (the
+    //     documented OCI target) `node .` throws ERR_UNKNOWN_BUILTIN_MODULE at module load and the
+    //     run.sh until-loop tight-restarts forever — the port never binds. Without this check the
+    //     deploy returns ok:true and the only signal is a urlProbe miss, which is then MISdiagnosed
+    //     as a firewall problem ("open the inbound port") — a flatly wrong cause. We parse the
+    //     version, ALWAYS record it in logTail (so the version is never invisible), and when the app
+    //     needs node:sqlite we hard-fail honestly naming the REAL cause.
+    const detectedNode = parseNodeVersion(nodeCheck.stdout)
+    if (detectedNode) log.push(`detected node ${detectedNode.raw} on the instance`)
+    if (filesUseNodeSqlite(input.files)) {
+      // node:sqlite/DatabaseSync needs >=22.13 (we require the STABLE floor, not the 22.5 preview).
+      if (!detectedNode || !atLeast(detectedNode, { major: 22, minor: 13 })) {
+        const have = detectedNode ? `node ${detectedNode.raw}` : 'an unparseable node version'
+        log.push(`this app uses node:sqlite (DatabaseSync) which needs Node >=22.13, but the instance has ${have} — upgrade Node on the box to >=22.13 and retry`)
+        return { ok: false, url, at, appType, logTail: log.value() }
+      }
+    }
 
     // 6. mkdir -p targetDir + assert it is writable (a probe write we immediately remove).
     const mk = await runStep(
@@ -148,12 +166,29 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
       return { ok: false, url, at, appType, logTail: log.value() }
     }
 
-    // 7. Push the app files.
-    await transport.putFiles(input.files, targetDir)
+    // 6b. STALE-FILE cleanup on re-publish. scp -r is an additive MERGE — it overwrites matching
+    //     paths and adds new ones but NEVER deletes files removed in the new build, so a deleted/
+    //     renamed file (esp. an orphaned static page/bundle) keeps being served. We clear the prior
+    //     payload BEFORE the upload so the deploy is idempotent w.r.t. removals — matching the doc's
+    //     "overwrites the target dir in place". We PRESERVE runtime state we own (app.db so a
+    //     fullstack app keeps its data; pids so the kill step still works; logs for diagnostics).
+    const clean = await runStep(
+      `find "${targetDir}" -mindepth 1 -maxdepth 1 ` +
+        `! -name 'app.db' ! -name 'app.db-*' ` +     // sqlite db + its WAL/SHM/journal sidecars
+        `! -name '*.pid' ! -name '*.log' ` +          // run.pid/app.pid + run.log/app.log/static.log
+        `-exec rm -rf {} + ; true`,
+      'clear stale files',
+    )
+    if (!clean) return { ok: false, url, at, appType, logTail: log.value() }
+
+    // 7. Push the app files (timeoutMs threaded from the deadline so a stalled transfer fails
+    //    honestly instead of hanging the worker — ConnectTimeout only bounds the handshake).
+    const pushed = await transport.putFiles(input.files, targetDir, stepTimeout())
+    noteSkipped(log, pushed.skipped)
 
     if (appType === 'static') {
       // Ship the vendored static server alongside the files; start it bound to 0.0.0.0.
-      await transport.putFiles([{ filePath: 'static-serve.mjs', content: STATIC_SERVE_MJS }], targetDir)
+      await transport.putFiles([{ filePath: 'static-serve.mjs', content: STATIC_SERVE_MJS }], targetDir, stepTimeout())
       const start = await runStep(
         // cd FIRST (relative reads resolve under targetDir), start detached, record pids.
         `cd "${targetDir}" && nohup node static-serve.mjs ${appPort} "${targetDir}" >static.log 2>&1 & echo $! >app.pid; true`,
@@ -201,12 +236,41 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
         '  sleep 2',
         'done',
       ].join('\n')
-      await transport.putFiles([{ filePath: 'run.sh', content: runSh }], targetDir)
+      await transport.putFiles([{ filePath: 'run.sh', content: runSh }], targetDir, stepTimeout())
       const start = await runStep(
         `cd "${targetDir}" && chmod +x run.sh && nohup bash run.sh >run.log 2>&1 & echo $! >run.pid; true`,
         'start node service',
       )
       if (!start) return { ok: false, url, at, appType, logTail: log.value() }
+    }
+
+    // 7c. VERIFY the start actually took. The detached launchers end in `; true`, so runStep ALWAYS
+    //     sees code 0 — a genuine start failure (EADDRINUSE on a re-publish, an instant crash) is
+    //     invisible to the Publisher otherwise. After a short settle we assert the recorded pid is
+    //     still alive (`kill -0`) AND the port is bound (a listener on appPort). The static path is
+    //     the one that does NOT self-heal (no until-loop), so this is its only failure signal. We
+    //     check the run-supervisor pid for node-service (run.pid) and the server pid for static
+    //     (app.pid). A dead pid + an unbound port ⇒ honest ok:false naming the likely cause.
+    const startedPidFile = appType === 'static' ? 'app.pid' : 'run.pid'
+    const liveness = await runStep(
+      `sleep 1; ` +
+        `cd "${targetDir}" 2>/dev/null || true; ` +
+        `alive=__DEAD__; [ -f "${startedPidFile}" ] && kill -0 "$(cat "${startedPidFile}" 2>/dev/null)" 2>/dev/null && alive=__ALIVE__; ` +
+        // Port-bound probe: prefer a /dev/tcp connect (bash builtin, no extra binary). A successful
+        // connect to 127.0.0.1:appPort means SOMETHING is listening.
+        `bound=__UNBOUND__; (exec 3<>/dev/tcp/127.0.0.1/${appPort}) 2>/dev/null && { bound=__BOUND__; exec 3>&- 3<&-; }; ` +
+        `echo "$alive $bound"`,
+      'verify start',
+    )
+    if (!liveness) return { ok: false, url, at, appType, logTail: log.value() }
+    const started = liveness.stdout.includes('__ALIVE__') || liveness.stdout.includes('__BOUND__')
+    if (!started) {
+      log.push(
+        appType === 'static'
+          ? `the static server did not stay up and ${appPort} is not bound — likely the port is already in use by a prior server (see static.log on the box)`
+          : `the node service did not stay up and ${appPort} is not bound — check app.log on the box (a crash-on-start, e.g. a missing dependency or an incompatible Node)`,
+      )
+      return { ok: false, url, at, appType, logTail: log.value() }
     }
 
     // 8. Probe the URL FROM AKIS. reachable:false on a successful deploy is the OCI security-list/
@@ -234,6 +298,45 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
     // 9. Always release the transport (temp key dir cleanup) even on throw/timeout.
     await transport.close().catch(() => {})
   }
+}
+
+/** A parsed semver-ish node version (only major/minor matter for our floor checks). */
+interface NodeVersion { major: number; minor: number; raw: string }
+
+/** Parse the `node --version` output (e.g. "v22.13.1" or "v20.19.1\n"). Returns undefined when the
+ *  output carries no recognizable version (so the caller treats it as "unknown / can't confirm"). */
+function parseNodeVersion(stdout: string): NodeVersion | undefined {
+  const m = stdout.match(/v?(\d+)\.(\d+)\.(\d+)/)
+  if (!m) return undefined
+  const major = Number(m[1])
+  const minor = Number(m[2])
+  if (!Number.isFinite(major) || !Number.isFinite(minor)) return undefined
+  return { major, minor, raw: `v${m[1]}.${m[2]}.${m[3]}` }
+}
+
+/** Whether `have` is at least `floor` (major then minor). */
+function atLeast(have: NodeVersion, floor: { major: number; minor: number }): boolean {
+  if (have.major !== floor.major) return have.major > floor.major
+  return have.minor >= floor.minor
+}
+
+/** Whether ANY produced file imports/requires node:sqlite (DatabaseSync) — a builtin only since
+ *  Node 22.5 (stable at 22.13). Matched on the bare specifier so both `require('node:sqlite')` and
+ *  `import … from 'node:sqlite'` are caught; we only scan code-ish files (skip package.json/json). */
+function filesUseNodeSqlite(files: RepoFile[]): boolean {
+  for (const f of files) {
+    const rel = f.filePath.replace(/^\.?\//, '')
+    if (rel.endsWith('.json')) continue
+    if (f.content.includes('node:sqlite')) return true
+  }
+  return false
+}
+
+/** Surface a SCRUBBED note for any file the transport skipped (an unsafe '..' path) so a partial
+ *  upload is never silent. We never echo the raw path (it could be hostile); we report the count. */
+function noteSkipped(log: BoundedLog, skipped: string[]): void {
+  if (skipped.length === 0) return
+  log.push(`skipped ${skipped.length} file(s) with an unsafe path (contains '..') — they were NOT uploaded`)
 }
 
 /** Whether the produced package.json declares any runtime dependencies (so an install is needed).

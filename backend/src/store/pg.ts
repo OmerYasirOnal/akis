@@ -72,6 +72,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   verify_token  jsonb,
   test_evidence jsonb,
   passport      jsonb,
+  publish       jsonb,
   base          jsonb,
   version       integer NOT NULL DEFAULT 0,
   created_at    timestamptz NOT NULL DEFAULT now()
@@ -88,6 +89,11 @@ export const ADD_BASE = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS base json
 /** Idempotent migration for pre-existing sessions tables: add the additive, NON-GATE
  *  `passport` jsonb column (nullable) so an upgraded DB persists the signed Build Passport. */
 export const ADD_PASSPORT = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS passport jsonb`
+
+/** Idempotent migration for pre-existing sessions tables: add the additive, NON-GATE `publish`
+ *  jsonb column (nullable) so an upgraded DB persists the last publish-to-your-own-server attempt
+ *  (live URL / honest failure reason) — without it the field is silently dropped on Postgres. */
+export const ADD_PUBLISH = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS publish jsonb`
 
 /** Newest-first per-owner history listing (listByOwner) is the hot read path. */
 export const CREATE_SESSIONS_OWNER_INDEX = `CREATE INDEX IF NOT EXISTS sessions_owner_id_idx ON sessions (owner_id, created_at DESC)`
@@ -167,6 +173,7 @@ const MIGRATIONS: readonly string[] = [
   CREATE_SESSIONS_TABLE,
   ADD_TEST_EVIDENCE,
   ADD_PASSPORT,
+  ADD_PUBLISH,
   ADD_BASE,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,
