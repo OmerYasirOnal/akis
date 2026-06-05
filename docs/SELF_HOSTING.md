@@ -158,6 +158,75 @@ Enterprise). See [`backend/.env.example`](../backend/.env.example).
 
 ---
 
+### Publish to your own server (OCI free-tier) (optional)
+
+After a build reaches **`done`** (it passed the push gate), the owner can deploy that
+session's produced files to **their own server** — e.g. an Oracle Cloud free-tier
+instance — and get a live URL. This is a **POST-`done`, fully OPTIONAL, NON-GATING**
+action: exactly like the GitHub PR push, it can never gate, block, or fake
+verification. A failed deploy leaves the build `done` and records an honest
+`{ok:false}` report; it never moves the session status.
+
+**Configure it entirely from the UI** — *Settings → Publish destination*:
+
+- **Host** — the instance hostname/IP, reachable over SSH from where AKIS runs.
+- **SSH user** — the login user (`ubuntu` on Ubuntu, `opc` on Oracle Linux).
+- **SSH private key** — a PEM private key for that user. It is **encrypted at rest**
+  (AES-256-GCM under `akis:publish:<uid>`, the same KeyStore pattern as provider keys
+  and GitHub connections), used only over SSH via a transient `0600` temp file under a
+  `0700` per-run dir, **never shown again, never logged, never returned** (the card
+  shows only a SHA-256 fingerprint).
+- **Target directory** — an absolute, writable path under the login user's home
+  (e.g. `/home/ubuntu/app`). AKIS `mkdir -p`s it and probes writability.
+- **App port** — the port the app listens on. **Must be 1025–65535** (a non-root login
+  user cannot bind ≤1024).
+- **Public URL** (optional) — shown instead of `http://host:port` (e.g. your own domain).
+
+**On the instance (one-time, minimal prep):**
+
+- **Node.js on the login user's `PATH`** — required for BOTH node-service/fullstack apps
+  AND the static fallback (the vendored `static-serve.mjs` runs via `node`). AKIS
+  preflights `node`/`npm` over SSH and reports an honest failure if absent.
+- **Open the inbound port.** The OCI free-tier **VCN security list** *and* the host
+  firewall usually **block inbound ports by default** — so `http://host:appPort` can be
+  unreachable even on a successful deploy. Add an ingress rule to the VCN security list
+  AND open it in the host firewall:
+  ```bash
+  # Oracle Linux (firewalld)
+  sudo firewall-cmd --add-port=8080/tcp --permanent && sudo firewall-cmd --reload
+  # OCI Ubuntu (default-DROP iptables)
+  sudo iptables -I INPUT -p tcp --dport 8080 -j ACCEPT
+  ```
+  AKIS **probes the URL after deploy** and records `reachable:false` honestly, so an
+  `ok:true` deploy with a blocked port shows a clear "open the port" caution instead of a
+  silent blank page.
+- **NOT required:** rsync (AKIS falls back to `scp`), nginx, systemd-root, Docker, or any
+  AKIS-specific agent. The only software AKIS needs on the box is the SSH daemon + node.
+
+**On the AKIS host (one-time):** the Docker runtime image already includes
+`openssh-client`. A **from-source** AKIS host needs `ssh`/`scp` on `PATH`. And
+`AI_KEY_ENCRYPTION_KEY` must be set so the SSH key can be encrypted at rest — AKIS
+**refuses to store** the key otherwise.
+
+**Limitations (v1):**
+
+- **Host-key trust is TOFU** (`StrictHostKeyChecking=accept-new`): the *first* connect to
+  a host is **not** MITM-authenticated (a *changed* key afterwards is refused). Host-key
+  fingerprint pinning is a documented follow-up.
+- **Crash-survives, reboot-does-not.** A node-service is supervised by a small `run.sh`
+  `until`-loop (restart-on-crash with a back-off `sleep`); it does **not** survive a box
+  reboot (systemd-user units are deferred).
+- Only **`static`** and **`node-service`/fullstack** apps publish in v1; `vite`/`next`
+  return `ok:false` (they need a build step + a host we don't provision yet).
+- One app per profile (a single `appPort`); the deploy **stops the prior app first** then
+  overwrites the target dir in place (no rollbacks/versioning yet).
+
+Optional env: `AKIS_PUBLISH_STORE_PATH` (where the encrypted profiles persist; default
+`~/.config/akis/publish-profiles.json`) and `AKIS_PUBLISH_DEADLINE_MS` (the total deploy
+deadline; default 120000 — a slow box records `ok:false` rather than hanging).
+
+---
+
 ## Environment reference
 
 The compose file sets the self-host essentials for you; everything else is
@@ -176,6 +245,8 @@ optional and flows through from your shell / `.env`. Full descriptions live in
 | `PUBLIC_BASE_URL` | pass-through              | Browser-facing origin for OAuth + cross-site cookies, e.g. `http://localhost:3000`. |
 | `ANTHROPIC_API_KEY` (or another provider key) | pass-through | Enables real builds and auto-disables the mock. Absent → keyless mock demo. |
 | `AKIS_GITHUB_PUSH_TOKEN` + `AKIS_GITHUB_PUSH_REPO` | pass-through | **Opt-in real GitHub PR push.** Both set → a verified build's `confirmPush` opens/updates a real PR (branch + commit + PR via the REST API) on `owner/name`; either blank → the in-memory mock (default). The token (fine-grained PAT, Contents + Pull requests write, or a GitHub App token) is sent as a Bearer credential and is **never logged/returned**. Still gated by `ApprovedPush`; always mock under `NODE_ENV=test`. |
+| `AKIS_PUBLISH_STORE_PATH` | `~/.config/akis/publish-profiles.json` | Where per-user **publish destinations** (the encrypted SSH key + host/dir/port for "publish to your own server") persist, `0600`. Set in the UI, not env. Needs `AI_KEY_ENCRYPTION_KEY` to store the key (AKIS refuses otherwise). In-memory under `NODE_ENV=test`. |
+| `AKIS_PUBLISH_DEADLINE_MS` | `120000` | Total deploy deadline for a publish-to-your-own-server action. On timeout AKIS records an honest `{ok:false}` and returns — it never hangs the worker. |
 
 To change the published port without touching the container's internal port:
 

@@ -1,14 +1,28 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { type WorkflowConfig, type SessionState, isVerified } from '@akis/shared'
+import { type WorkflowConfig, type SessionState, type PublishRecord, isVerified } from '@akis/shared'
 import type { Orchestrator } from '../orchestrator/Orchestrator.js'
 import type { OrchestratorServices } from '../di/services.js'
 import type { SeqEvent } from '../events/bus.js'
 import type { WorkflowStorePort } from '../workflow/WorkflowStore.js'
+import type { PublishProfileStore, PublishProfile } from '../keys/PublishProfileStore.js'
+import { WrongStatusError } from '../orchestrator/Orchestrator.js'
 import { sseEvent, sseControl, sseComment } from './sse.js'
 import { verifyPassport } from '../verify/passport.js'
 import { buildTrustReport, renderTrustReportMarkdown } from '../report/trustReport.js'
 import type { UsageStorePort } from '../usage/UsageStore.js'
 import { checkQuota, type QuotaPolicy } from '../usage/quota.js'
+
+/** The publish seam the route calls — a function producing a PublishRecord from a session's files
+ *  + the owner's decrypted profile. Real OpenSshTransport-backed in prod (wired in server.ts);
+ *  an injected fake in tests. ADDITIVE + NON-GATING: the route persists the returned record via
+ *  the GENERIC store.update patch (NOT a gate method) and NEVER moves the session status. */
+export type SessionPublisher = (args: { files: { filePath: string; content: string }[]; profile: PublishProfile }) => Promise<PublishRecord>
+
+/** Raised when the owner has no USABLE publish profile (none stored, or undecryptable — a rotated
+ *  master reads as no-profile, fail-closed). Mapped to 409 via CONFLICT_ERRORS, like a gate refusal. */
+export class NoPublishProfileError extends Error {
+  constructor() { super('no publish destination configured (set one in Settings)'); this.name = 'NoPublishProfileError' }
+}
 
 export interface SessionsDeps {
   orchestrator: Orchestrator
@@ -27,6 +41,12 @@ export interface SessionsDeps {
    *  pre-check; an already-running session is never read or aborted. */
   usage?: UsageStorePort
   quota?: QuotaPolicy
+  /** Per-user publish destination store (the encrypted SSH key + host/dir/port). Present ⇒ the
+   *  POST /sessions/:id/publish action is enabled. Absent ⇒ publish is 409 NoPublishProfile. */
+  publishProfiles?: PublishProfileStore
+  /** The publish seam (deploy to the owner's own server). Present ALONGSIDE publishProfiles ⇒
+   *  publish works; absent ⇒ the action is unavailable. NON-GATING (see SessionPublisher). */
+  publisher?: SessionPublisher
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -43,6 +63,10 @@ const CONFLICT_ERRORS = new Set([
   'WrongStatusError',
   'AlreadyPushedError',
   'CriticFailedError',
+  // Publish (non-gating): no usable publish destination → 409, exactly like a gate refusal maps
+  // (reporting the precondition is observability; nothing was published). Publish itself NEVER
+  // gates/blocks/mints — see the POST /sessions/:id/publish handler.
+  'NoPublishProfileError',
 ])
 
 function sendError(reply: FastifyReply, err: unknown): FastifyReply {
@@ -211,6 +235,41 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   // Retry a verify_failed run: re-enters the verify step and RE-RUNS REAL verification
   // (mint still needs a genuine ≥1-test pass — no bypass).
   app.post<{ Params: { id: string } }>('/sessions/:id/retry', action(id => orchestratorFor(id).retryVerification(id)))
+
+  // ── Publish to your own server (OCI free-tier) — POST-`done`, OPTIONAL, NON-GATING ──
+  // SACRED: publish can never gate, block, or fake verification. It runs ONLY from `done` (the
+  // session already passed the push gate); it deploys the session's produced files to the owner's
+  // OWN server over SSH and PATCHES a `publish` record via the GENERIC store.update path (NOT a
+  // gate method) — the session status is NEVER moved. A deploy FAILURE is an honest 200 report
+  // ({ok:false, scrubbed logTail}) that LEAVES status `done`; only a genuine programming error
+  // bubbles to sendError. Owner-scoped via accessibleSession (404 non-owner/unknown — which is
+  // ALSO what stops uid B from probing whether uid A has a profile).
+  app.post<{ Params: { id: string } }>('/sessions/:id/publish', async (req, reply) => {
+    const id = req.params.id
+    const s = await accessibleSession(req, id)
+    if (!s) return notFound(reply, id)
+    // Publish is unavailable when the store/seam isn't wired (e.g. test boot without it).
+    if (!deps.publishProfiles || !deps.publisher) {
+      return reply.code(409).send({ error: 'publish is not configured on this server', code: 'NoPublishProfileError' })
+    }
+    try {
+      // 409 — only a `done` session may publish (it already passed the push gate). The same
+      // WrongStatusError the orchestrator uses, mapped to 409 verbatim via CONFLICT_ERRORS.
+      if (s.status !== 'done') throw new WrongStatusError('publish', s.status)
+      const ownerId = await deps.userIdOf?.(req)
+      // A USABLE profile is required (decryptable — a rotated master reads as no-profile,
+      // fail-closed, mirroring GitHubConnectionStore.status). Resolve under the OWNER's id.
+      const profile = ownerId ? deps.publishProfiles.getProfile(ownerId) : undefined
+      if (!profile) throw new NoPublishProfileError()
+      const files = s.code?.files ?? []
+      // Deploy. The publisher returns an honest PublishRecord; expected failures DO NOT throw.
+      const record = await deps.publisher({ files, profile })
+      // Persist the record on the GENERIC patch path — additive + non-gate (exactly like
+      // testEvidence/passport). Status is untouched: a failed publish leaves the build `done`.
+      const updated = await services.store.update(id, { publish: record }, s.version)
+      return reply.send(updated)
+    } catch (err) { return sendError(reply, err) }
+  })
 
   // Batch event log: the retained {seq,event}[] for a session. The FE fetches this on
   // an SSE `reset` to rebuild its live view from the authoritative history (the SSE

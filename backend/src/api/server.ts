@@ -37,6 +37,11 @@ import { resolveQuotaPolicy } from '../usage/quota.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { registerGitHubConnectRoutes } from './githubConnect.routes.js'
+import { registerPublishRoutes } from './publish.routes.js'
+import { JsonFilePublishProfileStore, PublishProfileMemoryStore, type PublishProfileStore } from '../keys/PublishProfileStore.js'
+import { OpenSshTransport } from '../publish/SshTransport.js'
+import { publish as runPublish } from '../publish/Publisher.js'
+import type { SessionPublisher } from './sessions.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels, workflowToAgentSkills, workflowCustomAgents } from '../workflow/resolve.js'
@@ -66,6 +71,15 @@ export interface ServerDeps {
    *  exactly like keyStore) and threaded here; tests/host-injection get an in-memory default
    *  in buildServer. Holds each user's ENCRYPTED GitHub token + their target repo. */
   connections?: GitHubConnectionStore
+  /** Per-user publish-destination store (the encrypted SSH key + host/dir/port for "publish to
+   *  your own server"). Built in start() (where the master key is in scope, exactly like
+   *  connections); tests/host-injection get an in-memory default in buildServer. */
+  publishProfiles?: PublishProfileStore
+  /** The publish seam (deploy a `done` build to the owner's own server over SSH). Injectable so
+   *  tests pass a fake (no real SSH/network); start() wires the real OpenSshTransport-backed one.
+   *  Absent ⇒ buildServer wires the real one when a publishProfiles store is present (prod), or a
+   *  no-op-disabled seam under tests. NON-GATING (see SessionPublisher). */
+  publisher?: SessionPublisher
   env?: Record<string, string | undefined>
   /** Test/host injection of the orchestrator stack. Built from defaults if omitted. */
   services?: OrchestratorServices
@@ -158,6 +172,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // BOTH buildServices calls so the per-owner push override (`githubFor`) is wired identically
   // on the default orchestrator AND every per-workflow orchestrator.
   const connections: GitHubConnectionStore = deps.connections ?? new GitHubConnectionMemoryStore()
+
+  // Per-user publish destination store (the encrypted SSH key + host/dir/port). start() builds the
+  // encrypted JsonFile store (master in scope); tests/host-injection get an in-memory default here.
+  const publishProfiles: PublishProfileStore = deps.publishProfiles ?? new PublishProfileMemoryStore()
+  // The publish seam. Injected fake in tests; else the real OpenSshTransport-backed deploy. NEVER
+  // under NODE_ENV=test (no real ssh ever spawns in tests) — there it stays the injected one, or
+  // undefined (publish then responds 409, gracefully). The real publisher owns its OWN total
+  // deadline so a slow box can never hang the Fastify worker.
+  const publisher: SessionPublisher | undefined =
+    deps.publisher ?? (env0.NODE_ENV !== 'test' ? makeRealPublisher() : undefined)
 
   // Build Passport signer (the durable, third-party-verifiable proof of a verified build).
   // From AKIS_PASSPORT_PRIVATE_KEY when configured (Ed25519 PKCS#8 PEM); otherwise a clearly
@@ -404,7 +428,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(await buildOpsBlock(stats, previewRegistry, deps.dbPing)),
   }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env, requireAuth: hasSession })
-  registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator, userIdOf, usage: usageStore, quota })
+  registerSessionRoutes(app, {
+    orchestrator, services, workflowStore, makeOrchestrator, userIdOf,
+    // Per-user token QUOTA (multi-tenant): usage ledger + policy threaded so run-start
+    // enforcement points fail-closed when over budget (byte-identical when budget 0).
+    usage: usageStore, quota,
+    // Publish (POST-`done`, optional, NON-GATING): the action is enabled only when BOTH the
+    // profile store AND the publish seam are wired. Absent ⇒ POST /sessions/:id/publish 409s.
+    publishProfiles,
+    ...(publisher ? { publisher } : {}),
+  })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   // Ship-time preview PREWARM (perceived latency): boot the preview on the `done` event so
   // the first "Run app" click finds it READY. Non-gating, fire-and-forget, kill switch:
@@ -426,6 +459,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // (revocation-aware) so only the authenticated owner reaches their own connection. The
   // connect token is stored in `connections` (encrypted) — NEVER as a session credential.
   registerGitHubConnectRoutes(app, { connections, secret: authSecret, cookie, env, userIdOf })
+  // Per-user publish destination (set/status/delete the SSH key + host/dir/port). Reuses the SAME
+  // userIdOf closure (revocation-aware) so only the authenticated owner reaches their own profile.
+  // The SSH key is stored encrypted in `publishProfiles` — NEVER returned/logged.
+  registerPublishRoutes(app, { profiles: publishProfiles, userIdOf })
   registerAnalyticsRoutes(app, { stats })
   // Per-user usage indicator (GET /api/usage; 401 when unauthenticated, mirroring /sessions/mine).
   registerUsageRoutes(app, { usage: usageStore, quota, requireOwner: userIdOf })
@@ -508,6 +545,40 @@ export function loadOrCreateDevSecret(file = join(homedir(), '.akis', 'dev-secre
 export function resolveListenHost(env: Record<string, string | undefined>): string {
   const host = env.HOST
   return host && host.length > 0 ? host : '127.0.0.1'
+}
+
+/**
+ * The REAL publish seam: deploy a `done` build to the owner's own server via the OpenSshTransport
+ * (system ssh/scp — no native deps) under a TOTAL deadline. NEVER constructed under NODE_ENV=test
+ * (no real ssh ever spawns in tests). The deploy is OPTIONAL + NON-GATING — `runPublish` returns an
+ * honest PublishRecord; expected failures never throw. The SSH key reaches OpenSSH only via a 0600
+ * temp file (never argv) and the transport cleans it up in close() + a process-exit hook.
+ */
+function makeRealPublisher(): SessionPublisher {
+  // A bounded URL-reachability probe FROM AKIS (a single GET). reachable:false on a successful
+  // deploy is the OCI security-list/host-firewall case — recorded honestly so "ok but blank page"
+  // is never a silent false success. Any error/timeout ⇒ not reachable (fail-closed signal).
+  const urlProbe = async (url: string, timeoutMs: number): Promise<boolean> => {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+    try {
+      const res = await fetch(url, { signal: ctrl.signal, redirect: 'manual' })
+      return res.status < 500
+    } catch {
+      return false
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+  return ({ files, profile }) => runPublish({
+    files,
+    profile,
+    transportFactory: cfg => new OpenSshTransport(cfg),
+    urlProbe,
+    // A generous-but-bounded total deadline (npm install on a small box can take tens of seconds),
+    // but never unbounded — a slow box records ok:false rather than hanging the worker.
+    deadlineMs: Number(process.env.AKIS_PUBLISH_DEADLINE_MS) || 120_000,
+  })
 }
 
 /**
@@ -650,6 +721,13 @@ export async function start(): Promise<void> {
   const connections: GitHubConnectionStore = process.env.NODE_ENV !== 'test'
     ? new JsonFileGitHubConnectionStore(connectionsFile, master)
     : new GitHubConnectionMemoryStore()
+  // Per-user publish destination store, built HERE (master in scope, exactly like connections).
+  // Same .config/akis dir; 0600 encrypted at rest under akis:publish:<uid>. Under NODE_ENV=test,
+  // the in-memory store (no test writes the real .config/akis).
+  const publishFile = process.env.AKIS_PUBLISH_STORE_PATH ?? join(homedir(), '.config', 'akis', 'publish-profiles.json')
+  const publishProfiles: PublishProfileStore = process.env.NODE_ENV !== 'test'
+    ? new JsonFilePublishProfileStore(publishFile, master)
+    : new PublishProfileMemoryStore()
   // The active embedding dimension (mirrors selectEmbeddingProvider: keyless/test → 256 local;
   // an OpenAI key → the catalog model's dim) sizes the guarded real pgvector(N) column so it
   // matches what is actually stored. Reads env + the SAME KeyStore the embedder consults.
@@ -693,6 +771,7 @@ export async function start(): Promise<void> {
   const app = buildServer({
     keyStore,
     connections,
+    publishProfiles,
     persistence: pg ? 'postgres' : 'memory',
     ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, usage: pg.usageStore, vectorStore: pg.vectorStore, bm25: pg.bm25 } : {}),
     ...(dbPing ? { dbPing } : {}),

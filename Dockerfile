@@ -50,7 +50,12 @@ WORKDIR /app
 # preview/keystore writes under the home dir never hit EACCES. tini reaps the
 # child processes AKIS spawns for previews/real-tests (avoids zombies, forwards
 # signals so the process group is cleanly SIGKILLed on stop).
-RUN apk add --no-cache tini
+#
+# openssh-client: the "publish to your own server" feature shells out to the system
+# `ssh`/`scp` (no native `ssh2` dep — keeps the clean pnpm/Alpine story). RUNTIME stage
+# only (the builder never spawns ssh). The spawned ssh runs as the non-root `node` user,
+# writing the transient 0600 key into a 0700 per-run dir under os.tmpdir() (writable by node).
+RUN apk add --no-cache tini openssh-client
 
 COPY --from=builder --chown=node:node /app/node_modules          ./node_modules
 COPY --from=builder --chown=node:node /app/package.json          ./package.json

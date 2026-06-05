@@ -12,6 +12,7 @@ import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { TrustReportCard } from '../components/TrustReportCard.js'
+import { PublishButton } from '../components/PublishButton.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { CodeArtifact, TestEvidence, SessionStatus } from '@akis/shared'
@@ -355,6 +356,8 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
             {previewOpen ? (
               <>
                 {sessionId && status === 'done' && <TrustReportCard sessionId={sessionId} api={api} />}
+                {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING. */}
+                {sessionId && status === 'done' && <PublishButton sessionId={sessionId} api={api} />}
                 <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
               </>
             ) : (
