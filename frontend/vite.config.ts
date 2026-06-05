@@ -13,6 +13,10 @@ export default defineConfig({
       '/preview': { target: 'http://127.0.0.1:3000', ws: true },
       '/auth': 'http://127.0.0.1:3000',
       '/oauth': 'http://127.0.0.1:3000', '/health': 'http://127.0.0.1:3000',
+      // Publish destination (Settings → deploy-to-your-own-server). Without this the dev FE's
+      // /publish/profile fetch falls through to the SPA fallback (HTML), which the page used to
+      // misread as "encryption not configured".
+      '/publish': 'http://127.0.0.1:3000',
     },
   },
   test: {

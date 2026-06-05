@@ -22,7 +22,9 @@ export function PublishDestination({ api }: { api: ApiClient }) {
   const [appPort, setAppPort] = useState('')
   const [publicUrl, setPublicUrl] = useState('')
 
-  const load = (): void => { void api.publishStatus().then(setStatus).catch(() => setStatus({ configured: false, present: false })) }
+  // A FAILED status fetch is NOT the same as "encryption not configured" — keep status undefined
+  // and surface the real error so a proxy/network problem never masquerades as a server-config one.
+  const load = (): void => { void api.publishStatus().then(s => { setErr(undefined); setStatus(s) }).catch((e: unknown) => { setStatus(undefined); setErr(String(e)) }) }
   useEffect(load, [api])
 
   const save = async (): Promise<void> => {

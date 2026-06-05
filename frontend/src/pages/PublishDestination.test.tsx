@@ -28,6 +28,14 @@ describe('PublishDestination (Settings card)', () => {
     expect(screen.queryByLabelText('Host')).not.toBeInTheDocument()
   })
 
+  it('status-fetch FAILURE → shows the real error, NOT the not-configured banner', async () => {
+    // A dev-proxy gap / network error must never masquerade as "encryption not configured" —
+    // that message sends the operator to fix a server env that is actually fine.
+    renderI18n(<PublishDestination api={fakeApi({ publishStatus: async () => { throw new Error('502 bad gateway') } })} />)
+    await screen.findByText(/502 bad gateway/i)
+    expect(screen.queryByText(/encryption is not configured/i)).not.toBeInTheDocument()
+  })
+
   it('no profile → renders the form including a WRITE-ONLY key field (never seeded)', async () => {
     renderI18n(<PublishDestination api={fakeApi()} />)
     const key = await screen.findByLabelText('SSH private key')
