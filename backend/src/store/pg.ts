@@ -141,6 +141,22 @@ CREATE TABLE IF NOT EXISTS vector_chunks (
 export const CREATE_VECTOR_CHUNKS_TENANT_INDEX =
   `CREATE INDEX IF NOT EXISTS vector_chunks_tenant_idx ON vector_chunks (user_id, session_id)`
 
+/**
+ * Idempotent DDL for the `user_usage` table — the SHARED per-user token-usage ledger behind the
+ * per-user quota (multi-tenant safety). `owner_id` PRIMARY KEY powers the UPSERT in PgUsageStore.
+ * `used_tokens`/`period_tokens` are `bigint` because lifetime token counts exceed int4 (and
+ * node-pg returns bigint as a STRING — PgUsageStore coerces with Number(...)). `window_start`
+ * tracks the current budget period (rolled lazily by the UPSERT cutoff). Token COUNTS are not
+ * secrets, so no encryption — just numbers, like AgentMetrics.
+ */
+export const CREATE_USER_USAGE_TABLE = `
+CREATE TABLE IF NOT EXISTS user_usage (
+  owner_id      text PRIMARY KEY,
+  used_tokens   bigint NOT NULL DEFAULT 0,
+  period_tokens bigint NOT NULL DEFAULT 0,
+  window_start  timestamptz NOT NULL DEFAULT now()
+)`
+
 /** Every migration statement, in apply order. CREATE TABLE IF NOT EXISTS + idempotent
  *  ALTERs, so running this repeatedly (e.g. on every boot) is safe. */
 const MIGRATIONS: readonly string[] = [
@@ -156,6 +172,7 @@ const MIGRATIONS: readonly string[] = [
   CREATE_WORKFLOWS_TABLE,
   CREATE_VECTOR_CHUNKS_TABLE,
   CREATE_VECTOR_CHUNKS_TENANT_INDEX,
+  CREATE_USER_USAGE_TABLE,
 ]
 
 /**

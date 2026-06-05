@@ -31,7 +31,13 @@ export type AkisEvent =
   // `cancelled` is a clean, user-requested TERMINAL abandon (Orchestrator.cancel) — NOT a
   // failure and NOT a ship. It lets the live view stop driving an in-flight run without
   // ever touching a gate (cancel never verifies/pushes; see Orchestrator.cancel).
-  | (BaseEvent & { kind: 'session'; status: 'started' | 'failed' | 'done' | 'cancelled' })
+  // `ownerId` is ADDITIVE + OPTIONAL, set ONLY on the `started` emit (Orchestrator.start has
+  // input.ownerId in scope). It is PURE OBSERVABILITY — never a gate input, never a secret (it
+  // is the same user id already on SessionState.ownerId), folding exactly like AgentMetrics: an
+  // OLD `session` event with no ownerId is byte-identical. It exists so the UsageCollector tap can
+  // map sessionId→ownerId SYNCHRONOUSLY (no async store.get inside the sync tap, which would race
+  // with cancel) and attribute per-agent token usage to the owning user for the per-user quota.
+  | (BaseEvent & { kind: 'session'; status: 'started' | 'failed' | 'done' | 'cancelled'; ownerId?: string })
   | (BaseEvent & { kind: 'text'; text: string; ephemeral?: boolean })   // ephemeral=true → shown live but NOT ingested into RAG (free-form/untrusted narration)
   | (BaseEvent & { kind: 'agent_start'; role: Role })
   // `metrics` is ADDITIVE + OPTIONAL: an OLD agent_end (no metrics) folds exactly as before

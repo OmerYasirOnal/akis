@@ -27,6 +27,13 @@ import type { Mailer } from '../mail/Mailer.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
 import { registerChatRoutes } from './chat.routes.js'
+import { registerUsageRoutes } from './usage.routes.js'
+import { registerOpsRoutes, buildOpsBlock } from './ops.routes.js'
+import { UsageStore, type UsageStorePort } from '../usage/UsageStore.js'
+import { JsonFileUsageStore } from '../usage/JsonFileUsageStore.js'
+import { createPgUsageStoreWithClient } from '../usage/PgUsageStore.js'
+import { UsageCollector } from '../usage/UsageCollector.js'
+import { resolveQuotaPolicy } from '../usage/quota.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { registerGitHubConnectRoutes } from './githubConnect.routes.js'
@@ -92,6 +99,14 @@ export interface ServerDeps {
    *  in-memory fallback otherwise looks identical to a healthy durable boot). Defaults
    *  to 'memory'; start() sets 'postgres' when the durable stores are wired. */
   persistence?: 'postgres' | 'memory'
+  /** Per-user token-usage ledger (in-memory by default; a PgUsageStore when DATABASE_URL is
+   *  set; a dev JSON file otherwise). Injectable for tests (pre-seed over budget to assert the
+   *  fail-closed 429). The quota POLICY itself is resolved from env (AKIS_USER_TOKEN_BUDGET). */
+  usage?: UsageStorePort
+  /** Bounded DB reachability probe for /health + /api/ops (built in start() from the pool with a
+   *  500ms Promise.race timeout). Absent ⇒ db:'off'. Injectable so a test forces the degraded
+   *  path WITHOUT a real DB. */
+  dbPing?: () => Promise<boolean>
 }
 
 const defaultSkillsDir = (): string =>
@@ -352,6 +367,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const stats = new StatsCollector()
   stats.attach(services.bus)
 
+  // Per-user token QUOTA (multi-tenant safety). The policy is env-driven; budget 0 (default)
+  // ⇒ unlimited, so single-operator dev is BYTE-UNCHANGED (checkQuota returns allowed with NO
+  // store read). The usage LEDGER mirrors the userStore selection: injected (Pg in start()) >
+  // the dev JSON file > pure in-memory (test). A single UsageCollector tap accumulates per-agent
+  // token spend onto the owning user (chat usage is accounted off-bus by the chat route).
+  const quota = resolveQuotaPolicy(env)
+  const usageStore: UsageStorePort = deps.usage
+    ?? (env.NODE_ENV !== 'production' && !isTestEnv ? new JsonFileUsageStore(quota.periodMs) : new UsageStore({ periodMs: quota.periodMs }))
+  new UsageCollector(usageStore).attach(services.bus)
+
   const cookie = cookieConfigFromEnv(env)
   // A valid-session guard reused to protect provider-key writes.
   // ASYNC since token revocation: userIdFromRequest now compares the JWT's tv claim to the
@@ -367,10 +392,19 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // /health surfaces the active serving mode so a demo (fake-verification) boot is never
   // hidden: `mode: 'demo'` means the mock provider and/or mock verification is active and
   // "verified" output is NOT from real tests; `mode: 'live'` is the fail-closed default.
-  // `ok` stays true (the server is healthy) — the FE reads `mode` to surface the badge.
-  app.get('/health', async () => ({ ok: true, persistence: deps.persistence ?? 'memory', mode: demo.mode }))
+  // `ok` stays true (the HTTP server is healthy) — the FE reads `mode` to surface the badge.
+  // ADDITIVE operational signals (no secrets — only counts/uptime/memory) give the operator a
+  // view of load/health: uptime, memory, active sessions, live previews, and DB reachability.
+  // db:'degraded' after boot keeps ok:true (the server itself is up; boot already fail-closes
+  // when persistenceRequired and the pool is unreachable). dbPing absent ⇒ db:'off' (no DATABASE_URL).
+  app.get('/health', async () => ({
+    ok: true,
+    persistence: deps.persistence ?? 'memory',
+    mode: demo.mode,
+    ...(await buildOpsBlock(stats, previewRegistry, deps.dbPing)),
+  }))
   void registerProviderRoutes(app, { keyStore: deps.keyStore, env, requireAuth: hasSession })
-  registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator, userIdOf })
+  registerSessionRoutes(app, { orchestrator, services, workflowStore, makeOrchestrator, userIdOf, usage: usageStore, quota })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   // Ship-time preview PREWARM (perceived latency): boot the preview on the `done` event so
   // the first "Run app" click finds it READY. Non-gating, fire-and-forget, kill switch:
@@ -393,10 +427,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // connect token is stored in `connections` (encrypted) — NEVER as a session credential.
   registerGitHubConnectRoutes(app, { connections, secret: authSecret, cookie, env, userIdOf })
   registerAnalyticsRoutes(app, { stats })
+  // Per-user usage indicator (GET /api/usage; 401 when unauthenticated, mirroring /sessions/mine).
+  registerUsageRoutes(app, { usage: usageStore, quota, requireOwner: userIdOf })
+  // Operator ops view (GET /api/ops; authenticated via hasSession) — the richer StatsCollector
+  // snapshot + the operational block (uptime/memory/activeSessions/livePreviews/db).
+  registerOpsRoutes(app, { stats, previewRegistry, requireAuth: hasSession, ...(deps.dbPing ? { dbPing: deps.dbPing } : {}) })
   // Thread env + keyStore so the chat route can resolve a DIFFERENT provider/model PER
   // REQUEST (the model picker), fail-closed like createProvider. Absent any override every
   // chat turn uses services.provider unchanged. CHAT-ONLY: builds keep their workflow bindings.
-  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}) })
+  // usage/quota/ownerOf add the per-user token gate + off-bus chat accounting (byte-identical
+  // when budget 0). ownerOf reuses the revocation-aware userIdOf.
+  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ownerOf: userIdOf })
   // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
   // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
   // them the route is never registered (404) and there is no behavior change when RAG off.
@@ -532,6 +573,10 @@ interface PgStores {
   userStore: UserStorePort
   sessionStore: SessionStore
   workflowStore: WorkflowStorePort
+  /** The durable, cross-replica per-user token-usage ledger (the in-memory UsageStore is
+   *  per-process; the PgUsageStore UPSERT is the shared source of truth). Created on the SAME
+   *  shared pool; the `user_usage` table is created by the shared runMigrations. */
+  usageStore: UsageStorePort
   /** The durable RAG corpus, hydrated from the table so a restart re-loads the existing
    *  corpus instead of re-indexing from scratch. */
   vectorStore: PgVectorStore
@@ -552,7 +597,7 @@ interface PgStores {
  * upgrade is best-effort and silently keeps the portable `double precision[]` column where the
  * pgvector extension is unavailable, so this never blocks boot.
  */
-async function buildPgStores(connectionString: string, embeddingDim: number): Promise<PgStores | undefined> {
+async function buildPgStores(connectionString: string, embeddingDim: number, usagePeriodMs: number): Promise<PgStores | undefined> {
   try {
     const pool = await createPgPool(connectionString)
     await runMigrations(pool)
@@ -580,6 +625,7 @@ async function buildPgStores(connectionString: string, embeddingDim: number): Pr
       userStore: createPgUserStoreWithClient(pool),
       sessionStore: new PgSessionStore(pool),
       workflowStore: new PgWorkflowStore(pool),
+      usageStore: createPgUsageStoreWithClient(pool, usagePeriodMs),
       vectorStore,
       bm25,
       pool,
@@ -608,9 +654,12 @@ export async function start(): Promise<void> {
   // an OpenAI key → the catalog model's dim) sizes the guarded real pgvector(N) column so it
   // matches what is actually stored. Reads env + the SAME KeyStore the embedder consults.
   const embeddingDim = activeEmbeddingDim({ env: process.env as Record<string, string | undefined>, keyStore })
+  // The usage-window length sizes the durable PgUsageStore's roll cutoff (the quota POLICY is
+  // re-resolved inside buildServer too; here we only need the period for the Pg ledger).
+  const usagePeriodMs = resolveQuotaPolicy(process.env as Record<string, string | undefined>).periodMs
   // Durable stores when DATABASE_URL is configured; else in-memory (dev/self-host). One
-  // shared pool migrated once backs all three; on failure buildPgStores returns undefined.
-  const pg = process.env.DATABASE_URL ? await buildPgStores(process.env.DATABASE_URL, embeddingDim) : undefined
+  // shared pool migrated once backs all of them; on failure buildPgStores returns undefined.
+  const pg = process.env.DATABASE_URL ? await buildPgStores(process.env.DATABASE_URL, embeddingDim, usagePeriodMs) : undefined
   // Fail CLOSED in production: if persistence was explicitly requested (DATABASE_URL set)
   // but the DB is unreachable, refuse to boot rather than silently run on in-memory stores
   // and lose data on the next restart. The dev/self-host fallback (no NODE_ENV=production)
@@ -626,11 +675,27 @@ export async function start(): Promise<void> {
   // teardown). Idempotent + strictly scoped to the workspaces root; best-effort so a
   // stuck dir never blocks boot.
   try { await reclaimWorkspaces() } catch (e) { console.error('preview: workspace reclaim failed:', (e as Error).message) } // eslint-disable-line no-console
+  // Bounded DB reachability probe for /health + /api/ops: a cheap `SELECT 1` raced against a
+  // 500ms timer so a hot, possibly-unauthenticated probe never blocks on a wedged pool. Only
+  // when a pool exists; absent ⇒ db:'off'. ok stays true on a degraded result (the HTTP server
+  // is up; boot already fail-closed when persistenceRequired).
+  const dbPing = pg
+    ? async (): Promise<boolean> => {
+        try {
+          await Promise.race([
+            pg.pool.query('SELECT 1'),
+            new Promise<never>((_, rej) => setTimeout(() => rej(new Error('db ping timeout')), 500)),
+          ])
+          return true
+        } catch { return false }
+      }
+    : undefined
   const app = buildServer({
     keyStore,
     connections,
     persistence: pg ? 'postgres' : 'memory',
-    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, vectorStore: pg.vectorStore, bm25: pg.bm25 } : {}),
+    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, usage: pg.usageStore, vectorStore: pg.vectorStore, bm25: pg.bm25 } : {}),
+    ...(dbPing ? { dbPing } : {}),
   })
   const port = Number(process.env.PORT ?? 3000)
   const host = resolveListenHost(process.env)

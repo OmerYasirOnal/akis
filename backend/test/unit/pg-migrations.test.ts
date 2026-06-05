@@ -32,6 +32,16 @@ describe('runMigrations', () => {
     expect(all).toMatch(/CREATE INDEX IF NOT EXISTS \w+ ON vector_chunks/i)
   })
 
+  it('creates the user_usage table for the per-user token quota (ADD pattern; idempotent re-run)', async () => {
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    await runMigrations(db) // idempotent: a second boot re-runs the same IF NOT EXISTS DDL
+    const all = texts.join('\n')
+    expect(all).toMatch(/CREATE TABLE IF NOT EXISTS user_usage/)
+    expect(all).toMatch(/owner_id\s+text PRIMARY KEY/) // the UPSERT key
+    expect(all).toMatch(/used_tokens\s+bigint/)        // bigint: lifetime counts exceed int4
+  })
+
   it('runs the idempotent external_id ALTER for pre-existing user tables', async () => {
     const { db, texts } = recordingDb()
     await runMigrations(db)

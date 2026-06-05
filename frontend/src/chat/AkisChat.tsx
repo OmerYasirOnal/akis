@@ -1,11 +1,12 @@
 import { useState, useEffect, useRef, memo, type FormEvent, type ReactNode } from 'react'
-import type { ApiClient, ProviderInfo, ChatOverrides } from '../api/client.js'
+import type { ApiClient, ProviderInfo, ChatOverrides, UsageInfo } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { Markdown } from '../components/Markdown.js'
 import { CopyButton } from '../components/CopyButton.js'
 import { extractBuildSpec, hasTruncatedSpec, extractSuggestions } from './buildSpec.js'
 import { SpecCard } from './SpecCard.js'
+import { UsageMeter } from './UsageMeter.js'
 import { useSmoothText } from './useSmoothText.js'
 import { ModelChip, type Effort } from './ModelChip.js'
 import { ModelPicker, type ModelSelection } from './ModelPicker.js'
@@ -130,6 +131,9 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   // gracefully: a failed fetch just hides the chip (the chat itself is unaffected).
   const [providers, setProviders] = useState<ProviderInfo[]>([])
   const [mode, setMode] = useState<'live' | 'demo' | null>(null)
+  // The caller's token usage vs. budget (fetched alongside health). null = hidden (401/unlimited
+  // or a failed fetch) — the meter is pure observability, never blocks the chat.
+  const [usage, setUsage] = useState<UsageInfo | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
   // The last user message we tried to send — drives Retry (resends it, untouched).
   const lastUser = useRef<string | undefined>(undefined)
@@ -164,6 +168,9 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
       })
       .catch(() => {/* chip simply stays hidden */})
     void api.health().then(h => { if (alive && (h?.mode === 'live' || h?.mode === 'demo')) setMode(h.mode) }).catch(() => {/* mode badge omitted */})
+    // Per-user token-usage meter: best-effort. A 401 (anonymous) or unlimited deployment just
+    // hides it (UsageMeter returns null) — the chat never depends on it.
+    void api.usage().then(u => { if (alive) setUsage(u) }).catch(() => {/* meter hidden */})
     return () => { alive = false }
   }, [api])
 
@@ -182,13 +189,24 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   const errorText = (err: unknown): string =>
     ApiError.is(err) && err.status === 401
       ? t('akis.error.unauthorized')
-      // Opus review: NoKey must be a localized, actionable sentence — never the raw
-      // English "(NoKey) No API key for provider x" on a user-facing error row.
-      : ApiError.is(err) && err.code === 'NoKey'
-        ? t('akis.error.noKey')
-        : ApiError.is(err)
-          ? `(${err.code ?? 'error'}) ${err.message}`
-          : t('akis.error.network')
+      // Quota exceeded (429): a localized, honest "you hit your token quota" sentence — never a
+      // faked reply. Append the reset date when known (from the fetched usage state) so the user
+      // knows when it frees up. The server fail-closed BEFORE the model; this is the surfacing.
+      : ApiError.is(err) && (err.status === 429 || err.code === 'QuotaExceeded')
+        ? quotaErrorText()
+        // Opus review: NoKey must be a localized, actionable sentence — never the raw
+        // English "(NoKey) No API key for provider x" on a user-facing error row.
+        : ApiError.is(err) && err.code === 'NoKey'
+          ? t('akis.error.noKey')
+          : ApiError.is(err)
+            ? `(${err.code ?? 'error'}) ${err.message}`
+            : t('akis.error.network')
+
+  // The quota row: the localized sentence + the reset date when the usage state knows it.
+  const quotaErrorText = (): string => {
+    const base = t('akis.error.quota')
+    return usage?.resetAt ? `${base} ${t('usage.resets')}: ${new Date(usage.resetAt).toLocaleString()}` : base
+  }
 
   // Finalize a streamed turn: replace the live placeholder with the authoritative full
   // reply (so spec detection runs on the trusted text), or an error row if it came back
@@ -249,7 +267,11 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
       setMsgs(m => dropPlaceholder(m))
       // A 401 already routed to login (ApiClient fired onUnauthorized) — don't replay the
       // non-stream call (it would just 401 again); show the brief notice row directly.
-      if (ApiError.is(streamErr) && streamErr.status === 401) {
+      // A 429 (QuotaExceeded) is also FINAL: the stream path already threw a typed
+      // ApiError(429,'QuotaExceeded') from the pre-hijack JSON, so render it directly rather than
+      // falling into the else branch that RE-CALLS the non-stream /api/chat — that second request
+      // would just 429 again (a redundant blocked call). Short-circuit removes it.
+      if (ApiError.is(streamErr) && (streamErr.status === 401 || streamErr.status === 429)) {
         setMsgs(m => [...m, { role: 'error', content: errorText(streamErr) }])
       } else {
         try {
@@ -366,20 +388,26 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
           loads; a failed health probe only degrades the badge (neutral), never hides the
           picker's sole entry point. Badge honesty: a key-less SELECTION shows "anahtar yok"
           (amber) regardless of the global mode — the badge reflects what THIS request will do. */}
-      {(() => {
-        const active = providers.find(p => p.id === modelPref.provider)
-        if (!active) return null
-        const modelLabel = active.models.find(m => m.id === modelPref.model)?.label ?? modelPref.model
-        return (
-          <ModelChip
-            provider={active.label}
-            model={modelLabel}
-            effort={modelPref.effort}
-            mode={active.available === false ? 'nokey' : mode}
-            onClick={() => setPickerOpen(true)}
-          />
-        )
-      })()}
+      {/* The model chip + the per-user token meter sit together near the composer. The meter is
+          pure observability (hidden on 401/unlimited via UsageMeter's own null) and never gates
+          the chat. */}
+      <div className="flex flex-wrap items-center gap-2">
+        {(() => {
+          const active = providers.find(p => p.id === modelPref.provider)
+          if (!active) return null
+          const modelLabel = active.models.find(m => m.id === modelPref.model)?.label ?? modelPref.model
+          return (
+            <ModelChip
+              provider={active.label}
+              model={modelLabel}
+              effort={modelPref.effort}
+              mode={active.available === false ? 'nokey' : mode}
+              onClick={() => setPickerOpen(true)}
+            />
+          )
+        })()}
+        <UsageMeter usage={usage} />
+      </div>
       {pickerOpen && providers.length > 0 && (
         <ModelPicker
           providers={providers}

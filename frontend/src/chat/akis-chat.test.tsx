@@ -187,6 +187,38 @@ describe('AkisChat', () => {
     expect(onUnauthorized).toHaveBeenCalledTimes(1) // ApiClient fired the global handler
   })
 
+  it('renders a 429 QuotaExceeded chat error as the localized quota row (not a faked reply)', async () => {
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/chat')) return { ok: false, status: 429, json: async () => ({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: '2026-07-01T00:00:00.000Z' }) } as unknown as Response
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a lot')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/token quota/i) // the localized quota sentence
+    expect(alert).toHaveTextContent('Message failed') // a real error row, not an AK bubble
+  })
+
+  it('a stream-path 429 renders the quota row WITHOUT a redundant non-stream /api/chat call', async () => {
+    // The stream endpoint pre-hijack-429s; the client throws ApiError(429,'QuotaExceeded'). The
+    // catch must short-circuit (like 401) and NOT re-call /api/chat (a second blocked request).
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 429, json: async () => ({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: '2026-07-01T00:00:00.000Z' }) } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: 'should NOT be called' }) } as unknown as Response
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'go')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent(/token quota/i)
+    // The non-stream /api/chat fallback must NOT have fired (the 429 short-circuit removes it).
+    expect(fetchFn.mock.calls.filter(c => String(c[0]).endsWith('/api/chat'))).toHaveLength(0)
+  })
+
   it('shows a truncated-spec notice when an akis-spec fence opened but never closed', async () => {
     const reply = "Here's your spec 👇\n````akis-spec\n# Big App\nlots of detail that got cut off"
     const api = new ApiClient('', chatFetch(reply))

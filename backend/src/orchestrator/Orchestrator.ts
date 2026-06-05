@@ -140,7 +140,10 @@ export class Orchestrator {
     // F1-AC17: subscribe the ingestion sink AS the session starts, before any event
     // is emitted, so zero-touch ingestion misses nothing (RAG flag on → sink present).
     this.s.ingestionSink?.subscribeSession(id)
-    this.s.bus.emit({ kind: 'session', status: 'started', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+    // Stamp the owner ONLY on the started emit (ADDITIVE/observability) so the usage tap can
+    // attribute this run's token spend to the owning user — never a gate input. Cancel/fail
+    // emits stay unchanged (the tap maps on started and prunes on terminal).
+    this.s.bus.emit({ kind: 'session', status: 'started', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs(), ...(input.ownerId ? { ownerId: input.ownerId } : {}) })
     this.narrate(id, `Planning: ${input.idea}`)
 
     // P0-1: an AUTHORITATIVE chat-approved spec seed short-circuits the spec stage entirely.
