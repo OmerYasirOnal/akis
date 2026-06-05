@@ -4,6 +4,7 @@ import { buildServer } from '../../src/api/server.js'
 import { registerChatRoutes } from '../../src/api/chat.routes.js'
 import { JsonFileKeyStore } from '../../src/keys/KeyStore.js'
 import { UsageStore } from '../../src/usage/UsageStore.js'
+import { ANON_OWNER } from '../../src/usage/quota.js'
 import type { Orchestrator } from '../../src/orchestrator/Orchestrator.js'
 import type { LlmProvider, ChatRequest, ChatResult } from '../../src/agent/LlmProvider.js'
 import { mkdtempSync, rmSync } from 'node:fs'
@@ -59,6 +60,18 @@ describe('POST /sessions — per-user quota (build start)', () => {
     const app = buildServer({ keyStore: keyStore(), env: { AUTH_JWT_SECRET: 'q-secret' } }) // no budget
     const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'anon app' } })
     expect(res.statusCode).toBe(201)
+  })
+
+  it('an exhausted __anon__ ledger ⇒ anonymous build is refused 429 (the shared anon bucket gates builds, not just chat)', async () => {
+    // Multi-tenant safety: an unauthenticated build is governed by the shared __anon__ row, so
+    // anonymous build spend (now metered by the UsageCollector) can trip the same 429 chat does.
+    const usage = new UsageStore({ periodMs: MONTH })
+    const app = buildServer({ keyStore: keyStore(), usage, env: { AUTH_JWT_SECRET: 'q-secret', AKIS_USER_TOKEN_BUDGET: '100' } })
+    await usage.add(ANON_OWNER, 200) // the shared anon bucket is over the 100-token budget
+    // No cookie ⇒ ownerId undefined ⇒ checkQuota keys against ANON_OWNER ⇒ refused.
+    const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'anon app' } })
+    expect(res.statusCode).toBe(429)
+    expect(res.json()).toMatchObject({ code: 'QuotaExceeded' })
   })
 
   it('an in-flight run is NEVER interrupted: enforcement is start-only', async () => {
