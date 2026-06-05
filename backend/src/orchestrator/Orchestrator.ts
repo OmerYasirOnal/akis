@@ -192,7 +192,15 @@ export class Orchestrator {
     await this.runAdvisory(id, 'pre_scribe', `Research before drafting a spec for: ${input.idea}`)
 
     const scribeCtx = await this.ctx(id, input.idea)
-    const scribeOut = await this.s.scribe.run({ sessionId: id, laneId: 'main', idea: input.idea, ctx: scribeCtx })
+    // SP1 (TIGHTEN/ADDITIVE): resolve per-owner READ-ONLY GitHub-MCP wiring just-in-time, exactly
+    // like the githubFor pattern (confirmPush). githubMcpFor returns {pool,ownerId,token} ONLY when
+    // a non-empty token resolves for the owner — anonymous sessions (no ownerId) or owners without
+    // a connection ⇒ undefined ⇒ the Scribe path is byte-identical to today (no Docker spawn).
+    const githubMcp = input.ownerId ? this.s.githubMcpFor?.(input.ownerId) : undefined
+    const scribeOut = await this.s.scribe.run({
+      sessionId: id, laneId: 'main', idea: input.idea, ctx: scribeCtx,
+      ...(githubMcp ? { githubMcp } : {}),
+    })
     if (scribeOut.type === 'clarify') {
       this.narrate(id, `Scribe needs clarification: ${scribeOut.questions.join(' ')}`)
       return await this.s.store.update(id, { status: 'composing' }, session.version)

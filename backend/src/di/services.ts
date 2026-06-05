@@ -4,6 +4,9 @@ import { MockGitHubAdapter, type GitHubAdapter } from './MockGitHubAdapter.js'
 import { selectGitHubAdapter, parseOwnerRepo } from './selectGitHubAdapter.js'
 import { RealGitHubAdapter } from './RealGitHubAdapter.js'
 import type { GitHubConnectionStore } from '../keys/GitHubConnectionStore.js'
+import { McpSessionPool } from '../agent/mcp/McpSessionPool.js'
+import { StdioDockerTransport } from '../agent/mcp/StdioDockerTransport.js'
+import type { McpTransport } from '../agent/mcp/McpTransport.js'
 import { DeterministicValidator } from '../validator/DeterministicValidator.js'
 import { CriticAgent } from '../orchestrator/subagents/critic/CriticAgent.js'
 import { ScribeAgent } from '../orchestrator/subagents/ScribeAgent.js'
@@ -45,6 +48,14 @@ export interface OrchestratorServices {
    *  ⇒ today's behavior byte-for-byte. It only changes WHICH already-gated adapter is used,
    *  never whether/how a push is authorized. */
   githubFor?: (ownerId: string) => GitHubAdapter | undefined
+  /** SP1 READ-ONLY GitHub-via-MCP: the per-session transport pool (process-reuse). Surfaced
+   *  ONLY when a connections store + env are wired AND NODE_ENV!=='test'. The graceful-shutdown
+   *  path closeAll()s it so per-session Docker children are torn down. Absent ⇒ no MCP wiring. */
+  mcpPool?: McpSessionPool
+  /** SP1: resolve per-owner READ-ONLY GitHub-MCP wiring just-in-time (mirrors githubFor). Returns
+   *  {pool,ownerId,token} ONLY when a non-empty token resolves for the owner; otherwise undefined
+   *  ⇒ the Scribe path is byte-identical to today (no Docker spawn). Never decrypts elsewhere. */
+  githubMcpFor?: (ownerId: string) => { pool: McpSessionPool; ownerId: string; token: string } | undefined
   validator: DeterministicValidator
   critic: CriticAgent
   scribe: ScribeAgent
@@ -212,6 +223,26 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     opts.connections && opts.env && opts.env.NODE_ENV !== 'test'
       ? (ownerId: string) => buildUserAdapter(opts.connections!, ownerId, opts.env!)
       : undefined
+  // ── SP1: per-session READ-ONLY GitHub-via-MCP wiring (TIGHTEN/ADDITIVE) ─────────
+  // Behind the SAME guard as githubFor (connections + env + NODE_ENV!=='test'), so NO MCP pool
+  // or Docker transport is ever constructed in tests. The pool's factory builds a
+  // StdioDockerTransport (the dynamic SDK import lives inside that file's connect()). githubMcpFor
+  // resolves the owner's decrypted token just-in-time and returns the wiring ONLY when present —
+  // mirroring buildUserAdapter's `if(!token) return undefined`, so an anonymous/unconnected owner
+  // leaves the Scribe path byte-identical to today.
+  const mcpEnabled = !!(opts.connections && opts.env && opts.env.NODE_ENV !== 'test')
+  const mcpPool: McpSessionPool | undefined = mcpEnabled
+    ? new McpSessionPool({
+        factory: ({ token }): McpTransport => new StdioDockerTransport({ token }),
+      })
+    : undefined
+  const githubMcpFor: ((ownerId: string) => { pool: McpSessionPool; ownerId: string; token: string } | undefined) | undefined =
+    mcpPool
+      ? (ownerId: string) => {
+          const token = opts.connections!.getToken(ownerId)
+          return token ? { pool: mcpPool, ownerId, token } : undefined
+        }
+      : undefined
   // Verifier selection: explicit injected runner > real (opt-in) > mock (fail-closed
   // default). The runner→Verifier construction has ONE home (verifier.ts/resolveVerifier);
   // there is no importable `createVerifier`, so no other module can wrap a fake runner
@@ -349,6 +380,8 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     bus,
     github,
     ...(githubFor ? { githubFor } : {}),
+    ...(mcpPool ? { mcpPool } : {}),
+    ...(githubMcpFor ? { githubMcpFor } : {}),
     validator: new DeterministicValidator(),
     // P3-AGENT-1B: the critic's selected skills are folded onto BOTH its prompts
     // internally. No critic skills (the default) ⇒ [] ⇒ both prompts byte-identical.
