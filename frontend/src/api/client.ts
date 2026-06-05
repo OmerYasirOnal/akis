@@ -87,6 +87,12 @@ export class ApiClient {
     const { events } = await this.json<{ events: SeqEvent[]; head: number }>(`/sessions/${id}/log`)
     return events
   }
+  /** The client-facing trust report as a self-contained Markdown artifact (owner-scoped). */
+  async getTrustReportMarkdown(id: string): Promise<string> {
+    const res = await this.fetchFn(`${this.baseUrl}/sessions/${id}/report?format=md`, { credentials: 'include' })
+    if (!res.ok) throw new ApiError(res.status, `report failed (${res.status})`, 'ReportUnavailable')
+    return res.text()
+  }
   approve(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/approve`) }
   run(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/run`) }
   confirm(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/confirm`) }
