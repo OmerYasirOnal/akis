@@ -35,6 +35,7 @@ import type { WorkflowConfig } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
+import { JsonFileSessionStore } from '../store/JsonFileSessionStore.js'
 import type { SessionStore } from '../store/SessionStore.js'
 import { registerStatic, staticServingEnabled, defaultStaticRoot } from './static.js'
 import { installGracefulShutdown } from './shutdown.js'
@@ -178,10 +179,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // One shared orchestrator stack (single store + single bus) across all requests,
   // so the SSE stream observes the same events the command routes produce. The
   // provider resolves via createProvider (fail-closed; mock only under NODE_ENV=test).
+  // BOTH env sources (the JsonFileUserStore lesson): a test injecting its own env must
+  // still never select the dev file stores.
+  const isTestEnv = env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test'
+  // DEV SESSION PERSISTENCE: builds survive a tsx-watch restart exactly like accounts do
+  // (the recurring live pain: a restart wiped in-memory sessions and left frozen views).
+  const devPersist = env.NODE_ENV !== 'production' && !isTestEnv
   const services =
     deps.services ??
     buildServices({
-      store: deps.sessionStore ?? new MockSessionStore(),
+      store: deps.sessionStore ?? (devPersist ? new JsonFileSessionStore() : new MockSessionStore()),
       skillsDir: deps.skillsDir ?? defaultSkillsDir(),
       keyStore: deps.keyStore,
       // Thread env unconditionally: the push-adapter selection (P1-CORE-2) reads
@@ -210,6 +217,28 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // ADDITIVE: a verified build signs a durable Build Passport over its already-minted facts.
       passportSigner,
     })
+  // DEV EVENT PERSISTENCE (pairs with the session store above): the bus buffers are what
+  // the FE rebuilds its view from (/log replay) — without them a restored session opens as
+  // an empty pipeline. Hydrate at boot, persist DEBOUNCED on every emit (buffers are
+  // per-session capped, so the file is bounded), and flush once more on close. Best-effort
+  // everywhere; only active when the default dev stores are in play (never under tests).
+  if (devPersist && !deps.services) {
+    const eventsFile = join(homedir(), '.akis', 'dev-events.json')
+    try {
+      const raw = JSON.parse(readFileSync(eventsFile, 'utf8')) as Parameters<typeof services.bus.hydrate>[0]
+      if (raw && typeof raw === 'object') services.bus.hydrate(raw)
+    } catch { /* first boot or unreadable — start empty */ }
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const persistEvents = (): void => {
+      try {
+        mkdirSync(dirname(eventsFile), { recursive: true })
+        writeFileSync(eventsFile, JSON.stringify(services.bus.snapshot()), { mode: 0o600 })
+        chmodSync(eventsFile, 0o600)
+      } catch { /* best-effort: dev convenience, never a crash */ }
+    }
+    services.bus.tap(() => { if (timer) clearTimeout(timer); timer = setTimeout(persistEvents, 500); timer.unref?.() })
+    app.addHook('onClose', async () => { if (timer) clearTimeout(timer); persistEvents() })
+  }
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
   // Expose the orchestrator services to the host (start()) so graceful shutdown can drain
   // the ingest queue before flushing the corpus write-through + closing the pool. Not part
@@ -293,7 +322,6 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // The test guard checks BOTH env sources: integration tests inject their own `env`
   // object (often without NODE_ENV) while vitest sets process.env.NODE_ENV=test — a
   // test must NEVER write the real ~/.akis/dev-users.json.
-  const isTestEnv = env.NODE_ENV === 'test' || process.env.NODE_ENV === 'test'
   const userStore = deps.userStore
     ?? (env.NODE_ENV !== 'production' && !isTestEnv ? new JsonFileUserStore() : new UserStore())
 
