@@ -16,14 +16,18 @@ export interface DoneMsg { id: string; kind: 'done'; verified: boolean; provider
 export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMsg | CodeReviewMsg | PreviewMsg | ErrorMsg | DoneMsg
 
 /**
- * Project the ordered AkisEvent stream into a chat thread. Chronological: agent
- * turns, narration, errors and done append in order; gate/verify/preview are
- * singleton cards updated in place (so the thread shows a gate "awaiting → satisfied"
+ * Project ONE run's ordered AkisEvent stream into inline chronological bubbles for its
+ * run-block. Agent turns, narration, errors and done append in order; gate/verify/preview
+ * are singleton cards updated in place (so the block shows a gate "awaiting → satisfied"
  * card rather than duplicates). Pure + deterministic (the stream layer dedups by seq).
+ *
+ * NO synthetic user-idea bubble: in the anchored multi-run transcript the idea lives in the
+ * chat spine (the run marker carries it / an ordinary user bubble precedes the run-block), so
+ * emitting it here would duplicate it. The `narration` bubble is still produced but MARKED so
+ * the caller can suppress raw (English) orchestrator prose in the TR UI.
  */
-export function foldChat(idea: string, events: readonly AkisEvent[]): ChatMessage[] {
+export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
   const items: ChatMessage[] = []
-  if (idea.trim()) items.push({ id: 'user', kind: 'user', text: idea.trim() })
 
   const openTurn = new Map<string, AgentMsg>()           // by laneId
   const gates = new Map<string, GateMsg>()
@@ -95,3 +99,11 @@ export function foldChat(idea: string, events: readonly AkisEvent[]): ChatMessag
   }
   return items
 }
+
+/**
+ * @deprecated Transitional alias kept ONLY so the still-old `useLiveChat` caller compiles
+ * during the multi-run refactor (next phase rewires it to call `foldRunBubbles` directly).
+ * It ignores the legacy `idea` argument — the idea now lives in the chat spine, never as a
+ * synthetic bubble. Do NOT add new callers; use `foldRunBubbles(events)`.
+ */
+export const foldChat = (_idea: string, events: readonly AkisEvent[]): ChatMessage[] => foldRunBubbles(events)

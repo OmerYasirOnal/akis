@@ -192,7 +192,7 @@ function TrustLedger({ view, t }: { view: SessionView; t: (k: StringKey) => stri
  * wired to the same onApprove/onConfirm. This inline strip is the CANONICAL run representation;
  * there is no nested second conversation (P0-2 removed the chat-in-chat 'Live agent activity').
  */
-export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfirm, busy, api, sessionGone = false }: {
+export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfirm, busy, api, sessionGone = false, compact = false }: {
   view: SessionView
   onApprove: () => void
   onConfirm: () => void
@@ -204,6 +204,10 @@ export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfir
    *  transport drop). ChatStudio shows the honest "Start new build" recovery card above, so the
    *  transport banners below are suppressed: a deleted session's SSE 404 is not a reconnect story. */
   sessionGone?: boolean
+  /** Tighter inline spacing for the per-run-block HEADER use (RunBlock): the same strip, the same
+   *  TrustLedger/gates/recovery/Stop wiring — just a smaller outer gap so the chronological bubbles
+   *  below it read as one continuous run block, not a detached panel. Otherwise unchanged. */
+  compact?: boolean
 }) {
   const { t } = useI18n()
   const steps = derivePipeline(view)
@@ -240,7 +244,7 @@ export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfir
         : undefined
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className={`flex flex-col ${compact ? 'gap-2' : 'gap-3'}`}>
       {/* NO panel title (user feedback: the run flows in the SAME chat, not a sub-window).
           The trust headline doubles as the section opener; Stop rides on its right edge.
           Stop/Cancel stays a clean terminal ABANDON of an in-flight run — never a gate bypass. */}

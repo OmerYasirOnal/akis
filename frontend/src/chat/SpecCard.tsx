@@ -10,7 +10,7 @@ import { useI18n } from '../i18n/I18nContext.js'
  * hands the spec to `onBuild`. The spec then flows through the UNCHANGED `startSession`
  * path → the same 4 structural gates + pipeline; this card holds no build authority.
  */
-export function SpecCard({ spec, onBuild, building, started, startedSpec }: { spec: string; onBuild: (spec: string) => void; building?: boolean; started?: boolean; startedSpec?: string | undefined }) {
+export function SpecCard({ spec, onBuild, building, started, startedSpec, isSpecStarted }: { spec: string; onBuild: (spec: string) => void; building?: boolean; started?: boolean; startedSpec?: string | undefined; isSpecStarted?: ((spec: string) => boolean) | undefined }) {
   const { t } = useI18n()
   const [committedSpec, setCommittedSpec] = useState(spec)
   const [draft, setDraft] = useState(spec)
@@ -18,7 +18,11 @@ export function SpecCard({ spec, onBuild, building, started, startedSpec }: { sp
   useEffect(() => { setCommittedSpec(spec); setDraft(spec); setEditing(false) }, [spec])
   const cleanDraft = draft.trim()
   const currentSpec = editing ? (cleanDraft || committedSpec) : committedSpec
-  const isStarted = !!started || (!!startedSpec && startedSpec.trim() === currentSpec.trim())
+  // started = the `started` bool (original-text match) OR a startedSpec string match OR the
+  // `isSpecStarted` predicate evaluated against THIS card's CURRENT (possibly EDITED) text — the
+  // last is what makes an edited-then-built card correctly read "started" (the run marker carries
+  // the EDITED text, which only currentSpec — not the original detected fence — equals).
+  const isStarted = !!started || (!!startedSpec && startedSpec.trim() === currentSpec.trim()) || (isSpecStarted?.(currentSpec) ?? false)
   const canEdit = !building && !isStarted
 
   const download = (): void => {

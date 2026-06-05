@@ -1,4 +1,4 @@
-import Fastify, { type FastifyInstance } from 'fastify'
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
 import { homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs'
@@ -47,7 +47,7 @@ import type { SessionPublisher } from './sessions.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels, workflowToAgentSkills, workflowCustomAgents } from '../workflow/resolve.js'
-import type { WorkflowConfig } from '@akis/shared'
+import type { WorkflowConfig, SessionState } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
@@ -476,7 +476,18 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // chat turn uses services.provider unchanged. CHAT-ONLY: builds keep their workflow bindings.
   // usage/quota/ownerOf add the per-user token gate + off-bus chat accounting (byte-identical
   // when budget 0). ownerOf reuses the revocation-aware userIdOf.
-  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ownerOf: userIdOf })
+  // BUILD-AWARE CHAT (read-only, owner-scoped): sessionRead mirrors sessions.routes' accessibleSession
+  // — a read-only store.get + ownership compare (an owned session is visible only to its owner; a
+  // foreign/unknown id resolves undefined → the chat route silently stays stateless). It carries NO
+  // orchestrator handle and NO write/gate capability: the chat route can SEE the build but never
+  // approve/run/verify/push/mint. This is the SAME read the gated routes already perform, deduped.
+  const sessionRead = async (req: FastifyRequest, id: string): Promise<SessionState | undefined> => {
+    const s = await services.store.get(id)
+    if (!s) return undefined
+    if (s.ownerId && (await userIdOf(req)) !== s.ownerId) return undefined // owner-scope: no cross-user read
+    return s
+  }
+  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ownerOf: userIdOf, sessionRead })
   // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
   // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
   // them the route is never registered (404) and there is no behavior change when RAG off.

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } from './akisThread.js'
+import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, type AkisMsg, type ThreadNode, type RunNode } from './akisThread.js'
 
 function memStore(initial: Record<string, string> = {}): Storage & { _data: Record<string, string> } {
   const data: Record<string, string> = { ...initial }
@@ -47,6 +47,44 @@ describe('akisThread persistence', () => {
       { role: 'error', content: 'rendered but never sent' },
     ])
   })
+
+  it('round-trips run markers in the SAME key, interleaved with chat messages (the spine)', () => {
+    const store = memStore()
+    const nodes: ThreadNode[] = [
+      { role: 'user', content: 'build a todo app' },
+      { role: 'assistant', content: 'Here is a spec…' },
+      { role: 'run', sessionId: 's1', idea: '# Todo App' },
+      { role: 'user', content: 'add a login page' },
+      { role: 'run', sessionId: 's2', idea: '# Todo App + Login' },
+    ]
+    saveThread(nodes, store)
+    expect(loadThread(store)).toEqual(nodes)
+  })
+
+  it('drops malformed run markers (missing sessionId/idea) but keeps valid ones', () => {
+    const store = memStore({
+      akis_chat_thread: JSON.stringify([
+        { role: 'user', content: 'ok' },
+        { role: 'run', sessionId: 's1', idea: '# App' },
+        { role: 'run', sessionId: 's2' },              // missing idea
+        { role: 'run', idea: 'no session' },           // missing sessionId
+        { role: 'run', sessionId: 5, idea: '# App' },  // wrong type
+      ]),
+    })
+    expect(loadThread(store)).toEqual([
+      { role: 'user', content: 'ok' },
+      { role: 'run', sessionId: 's1', idea: '# App' },
+    ])
+  })
+
+  it('isMsg / isRun discriminate the spine node kinds', () => {
+    const msg: ThreadNode = { role: 'user', content: 'hi' }
+    const run: RunNode = { role: 'run', sessionId: 's1', idea: '# App' }
+    expect(isMsg(msg)).toBe(true)
+    expect(isMsg(run)).toBe(false)
+    expect(isRun(run)).toBe(true)
+    expect(isRun(msg)).toBe(false)
+  })
 })
 
 describe('historyForApi', () => {
@@ -83,6 +121,22 @@ describe('historyForApi', () => {
   it('keeps a user message that happens to equal the greeting text', () => {
     const msgs: AkisMsg[] = [{ role: 'user', content: greeting }]
     expect(historyForApi(msgs, greeting)).toEqual([{ role: 'user', content: greeting }])
+  })
+
+  it('SKIPS run markers so build-aware history never bloats with run data', () => {
+    const nodes: ThreadNode[] = [
+      { role: 'user', content: 'build a todo app' },
+      { role: 'assistant', content: 'spec…' },
+      { role: 'run', sessionId: 's1', idea: '# A very long spec body that must never reach history' },
+      { role: 'user', content: 'add login' },
+    ]
+    expect(historyForApi(nodes, greeting)).toEqual([
+      { role: 'user', content: 'build a todo app' },
+      { role: 'assistant', content: 'spec…' },
+      { role: 'user', content: 'add login' },
+    ])
+    // never a run node nor anything but the two API roles
+    expect(historyForApi(nodes, greeting).every(m => m.role === 'user' || m.role === 'assistant')).toBe(true)
   })
 })
 

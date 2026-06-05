@@ -49,6 +49,27 @@ describe('SpecCard', () => {
     expect(btn).toBeDisabled()
   })
 
+  it('multi-run: the isSpecStarted predicate matches the EDITED current text, not the original fence', async () => {
+    // The unified studio anchors started-state on the run markers (a Set of built spec texts) via
+    // an isSpecStarted predicate. After editing then building, the run marker carries the EDITED
+    // text — so the predicate must be evaluated against the card's CURRENT (edited) text, which is
+    // the path the old single-`startedSpec` prop missed (it compared the ORIGINAL fence → re-build).
+    const onBuild = vi.fn()
+    const builtSpecs = new Set<string>()
+    const isSpecStarted = (s: string): boolean => builtSpecs.has(s.trim())
+    const { rerender } = renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} isSpecStarted={isSpecStarted} />)
+    await userEvent.click(screen.getByRole('button', { name: 'Edit spec' }))
+    await userEvent.clear(screen.getByLabelText('Edit spec'))
+    await userEvent.type(screen.getByLabelText('Edit spec'), '# Edited App{enter}Better body')
+    await userEvent.click(screen.getByRole('button', { name: 'Save edits' }))
+    // Before the build, the predicate matches nothing → still buildable.
+    expect(screen.getByRole('button', { name: 'Approve & Build' })).toBeEnabled()
+    // The build registers the EDITED text in the run-marker set; the card now reads "started".
+    builtSpecs.add('# Edited App\nBetter body')
+    rerender(<I18nProvider><SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} isSpecStarted={isSpecStarted} /></I18nProvider>)
+    expect(screen.getByRole('button', { name: 'Workflow started' })).toBeDisabled()
+  })
+
   it('while building: shows a disabled "Starting…" button (instant click feedback, no re-fire)', async () => {
     const onBuild = vi.fn()
     renderI18n(<SpecCard spec={'# TODO App\nbody'} onBuild={onBuild} building />)

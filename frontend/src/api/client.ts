@@ -245,13 +245,18 @@ export class ApiClient {
   /** Free-form conversation WITH AKIS (the orchestrator persona) — distinct from a build.
    *  `overrides` (the model picker) are CHAT-ONLY: they ride only on this route + /api/chat/stream,
    *  never on startSession/builds (which keep their workflow bindings). Empty fields are omitted so
-   *  the request is byte-identical to before the picker when nothing is overridden. */
+   *  the request is byte-identical to before the picker when nothing is overridden.
+   *  `sessionId` (BUILD-AWARE CHAT, optional, trailing): when set the server appends a read-only,
+   *  owner-scoped, contents-free snapshot of THAT build to the persona so the chat can answer about —
+   *  and route edits to — the current app. It is SEPARATE from `overrides` (never reaches a build).
+   *  Absent (no sessionId AND no overrides) the body is byte-identical to before this arg existed. */
   chatWithAkis(
     message: string,
     history: { role: 'user' | 'assistant'; content: string }[] = [],
     overrides?: ChatOverrides,
+    sessionId?: string,
   ): Promise<{ reply: string }> {
-    return this.json('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, history, ...chatOverrideBody(overrides) }) })
+    return this.json('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, history, ...chatOverrideBody(overrides), ...(sessionId ? { sessionId } : {}) }) })
   }
 
   /**
@@ -267,11 +272,12 @@ export class ApiClient {
     history: { role: 'user' | 'assistant'; content: string }[],
     onDelta: (delta: string) => void,
     overrides?: ChatOverrides,
+    sessionId?: string,
   ): Promise<{ reply: string }> {
     const res = await this.fetchFn(this.baseUrl + '/api/chat/stream', {
       method: 'POST', credentials: 'include',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-      body: JSON.stringify({ message, history, ...chatOverrideBody(overrides) }),
+      body: JSON.stringify({ message, history, ...chatOverrideBody(overrides), ...(sessionId ? { sessionId } : {}) }),
     })
     if (!res.ok) {
       if (res.status === 401) this.onUnauthorized?.()

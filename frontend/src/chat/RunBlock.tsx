@@ -1,0 +1,128 @@
+import { useEffect, useRef, useState } from 'react'
+import { ApiClient, ApiError } from '../api/client.js'
+import { useI18n } from '../i18n/I18nContext.js'
+import type { EventStreamClient } from '../live/EventStreamClient.js'
+import type { SessionView } from '../live/types.js'
+import { useLiveChat } from './useLiveChat.js'
+import { RunPipeline } from './RunPipeline.js'
+import { ChatBubble } from './ChatThread.js'
+import { ideaTitle } from './recentBuilds.js'
+
+/**
+ * ONE inline build, anchored at the array slot where its SpecCard was approved (the spine).
+ *
+ * A run-block IS a build: it mounts its OWN useLiveChat (so N run-blocks = N independent
+ * subscriptions, each coalescing per animation-frame on its own — no shared whole-studio
+ * flicker), renders the proven 5-stage trust strip as a COMPACT HEADER by reusing RunPipeline
+ * verbatim (its TrustLedger, the spec/push gate buttons, the critic/verify/push recovery and the
+ * Stop control are all preserved — gates stay structural + server-minted), and BELOW the header
+ * the chronological agent work as inline localized bubbles via foldRunBubbles → ChatThread's
+ * shared sub-renderers (no strip-vs-bubble duplication; English narration stays suppressed).
+ *
+ * `terminal`: an OLDER, already-finished run never stays live — useLiveChat folds its /log ONCE
+ * then closes (no open EventSource). Only the ACTIVE run streams. A reopened run is just a
+ * terminal block that replays the log.
+ *
+ * Persistence asymmetry (a run marker carries only sessionId + idea): if the server LOST the
+ * session, GET /sessions/:id 404s — the block shows the same honest "session gone → start a new
+ * build" recovery card the studio used, not a blank/frozen block.
+ */
+export function RunBlock({
+  sessionId, idea, terminal = false, api, onApprove, onConfirm, onNewBuild,
+  baseUrl = '', makeClient, onView, active = false, busy = false,
+}: {
+  sessionId: string
+  idea: string
+  /** True for an older/reopened run: fold the /log once then close (only the active run streams). */
+  terminal?: boolean
+  api: ApiClient
+  /** GATE-SAFE: bare callbacks to the existing gated routes (mint nothing client-side). */
+  onApprove: () => void
+  onConfirm: () => void
+  /** In-flight guard: while a gate action (approve/confirm/proceed) is mid-POST, the inline gate
+   *  cards disable so a double-click can't fire it twice (matches the pre-unification studio). */
+  busy?: boolean
+  /** Honest recovery for a 404'd (genuinely gone) session — reuses the studio's "new build" reset. */
+  onNewBuild: () => void
+  baseUrl?: string
+  makeClient?: () => EventStreamClient
+  /** The ACTIVE run reports its folded view UP so the studio's right rail (preview/trust/publish)
+   *  and header roster track it — exactly ONE reporter (the active run), so no setState storm. */
+  onView?: (view: SessionView) => void
+  /** Whether this run is the active (latest, in-flight or just-reopened) one. Only the active run
+   *  reports its view up; terminal/older runs render statically without driving the studio. */
+  active?: boolean
+}) {
+  const { t } = useI18n()
+  const live = useLiveChat(sessionId, idea, api, baseUrl, makeClient, terminal)
+
+  // Per-run stale-session detection: a run marker persists only sessionId+idea, so on reload the
+  // server may have lost the session (restart wiped the in-memory store / external deletion) →
+  // GET /sessions/:id 404s. ONLY a 404 flags it (transient network/500 stays silent), mirroring
+  // the studio's honest recovery. The active run re-probes when its live stream gives up.
+  const [sessionGone, setSessionGone] = useState(false)
+  useEffect(() => {
+    let cancelled = false
+    void api.getSession(sessionId)
+      .then(() => { if (!cancelled) setSessionGone(false) })
+      .catch(e => { if (!cancelled && ApiError.is(e) && e.status === 404) setSessionGone(true) })
+    return () => { cancelled = true }
+  }, [sessionId, api, live.view.connectionGone])
+
+  // Only the ACTIVE run reports its view up (the rail/header follow the active run). A terminal
+  // block stays static and never drives the studio. Report on every view change (the same
+  // per-frame cadence as the old single subscription — one setState per frame, no storm).
+  const onViewRef = useRef(onView)
+  onViewRef.current = onView
+  useEffect(() => { if (active) onViewRef.current?.(live.view) }, [active, live.view])
+
+  if (sessionGone) {
+    return (
+      <section role="alert" className="ml-11 rounded-2xl border border-amber-400/25 bg-amber-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(251,191,36,0.1)]">
+        <div className="flex flex-col gap-2">
+          <div className="font-semibold text-slate-100">{t('session.gone.hint')}</div>
+          <button
+            onClick={onNewBuild}
+            className="w-fit rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1.5 text-sm font-semibold text-slate-900 shadow-[0_0_14px_rgba(251,191,36,0.3)] hover:shadow-[0_0_16px_rgba(251,191,36,0.4)] disabled:opacity-40"
+          >
+            {t('session.gone.action')}
+          </button>
+        </div>
+      </section>
+    )
+  }
+
+  const title = ideaTitle(idea)
+
+  return (
+    <section className="border-t border-white/5 pt-3">
+      {/* The build's title (first line of the idea/spec) so a REOPENED run shows WHAT it is. */}
+      {title && (
+        <div className="mb-2 truncate text-sm font-semibold text-slate-100" title={idea}>{title}</div>
+      )}
+      {/* COMPACT pipeline-strip HEADER: RunPipeline verbatim (TrustLedger + spec/push gates +
+          critic/verify/push recovery + Stop), so all the load-bearing gate/recovery wiring stays
+          where it has been live-verified. Gates call the same bare onApprove/onConfirm (server-minted). */}
+      <RunPipeline
+        view={live.view}
+        onApprove={onApprove}
+        onConfirm={onConfirm}
+        busy={busy}
+        api={api}
+        sessionGone={sessionGone}
+        compact
+      />
+      {/* The chronological agent work, INLINE below the header: the latent (already-tested) bubble
+          renderer made live — agent turns, gate/verify/code-review/preview/error/done cards, with
+          orchestrator English narration suppressed (ChatThread's NarrationBubble returns null). The
+          gate bubbles' buttons reuse the SAME bare onApprove/onConfirm — no client-side mint. */}
+      {live.messages.length > 0 && (
+        <div className="mt-3 flex flex-col gap-4">
+          {live.messages.map(m => (
+            <ChatBubble key={m.id} m={m} onApprove={onApprove} onConfirm={onConfirm} busy={busy} />
+          ))}
+        </div>
+      )}
+    </section>
+  )
+}

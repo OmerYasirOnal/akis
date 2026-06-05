@@ -2,19 +2,19 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import type { StringKey } from '../i18n/catalog.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
-import { useLiveChat } from './useLiveChat.js'
-import { RunPipeline } from './RunPipeline.js'
 import { specSeedFromMarkdown } from './buildSpec.js'
 import { AkisChat } from './AkisChat.js'
-import { clearThread } from './akisThread.js'
-import { loadRecentBuilds, recordRecentBuild, ideaTitle, type RecentBuild } from './recentBuilds.js'
+import { clearThread, saveThread, type ThreadNode } from './akisThread.js'
+import { loadRecentBuilds, recordRecentBuild, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { TrustReportCard } from '../components/TrustReportCard.js'
 import { PublishButton } from '../components/PublishButton.js'
 import { AgentRoster } from '../components/AgentRoster.js'
+import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
+import type { SessionView } from '../live/types.js'
 import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord } from '@akis/shared'
 
 /** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
@@ -59,11 +59,22 @@ function StartingElapsed({ t }: { t: (k: StringKey) => string }) {
 
 export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; baseUrl?: string; makeClient?: () => EventStreamClient }) {
   const { t } = useI18n()
-  const [sent, setSent] = useState('')               // the submitted idea (drives the thread)
-  const [sessionId, setSessionId] = useState<string | undefined>()
+  // ANCHORED MULTI-RUN: the run list now lives IN the chat thread (run markers), so the studio no
+  // longer tracks one render sessionId. It tracks the ACTIVE run id (the latest build) for Stop,
+  // snapshot targeting (getSession), the right-rail preview/trust/publish and base-merge. Older
+  // runs are terminal blocks inside the spine.
+  const [activeSessionId, setActiveSessionId] = useState<string | undefined>()
+  // The active run's idea/spec text (for recentBuilds + base-merge); follows the active run.
+  const [activeIdea, setActiveIdea] = useState('')
   const [busy, setBusy] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(true)
   const [startingSpec, setStartingSpec] = useState<string | undefined>()
+  // The active run's folded live view, reported UP by its RunBlock (exactly ONE reporter — the
+  // active run — so no shared per-event setState storm). Drives the header roster + the right rail.
+  const [activeView, setActiveView] = useState<SessionView>(() => emptyView(''))
+  // Bumping this key REMOUNTS AkisChat so it re-reads the (re-seeded/cleared) thread from storage —
+  // how "new build" and "reopen" reset/seed the spine without AkisChat owning that lifecycle.
+  const [threadKey, setThreadKey] = useState(0)
   // Synchronous re-entrancy guard for the build start: `busy` is async React state, so two
   // fast clicks on "Approve & Build" both pass a `busy` check before the re-render lands and
   // create TWO sessions (one orphaned). A ref flips synchronously, so the second click is dropped.
@@ -71,47 +82,19 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const [recent, setRecent] = useState<RecentBuild[]>(() => loadRecentBuilds())
   // Deep-link target from /?s=<id> (History page → open in Studio). Read once on mount.
   const deepLinkId = useRef<string | undefined>(typeof window !== 'undefined' ? sessionIdFromSearch(window.location.search) : undefined)
-  // Prefer server-backed per-user history (persists across devices); fall back to the
-  // localStorage list (loaded above) if the request fails.
-  useEffect(() => {
-    void api.listMySessions().then(list => {
-      // Carry status + verified (P1-7) so the History menu shows the same minimal signal the
-      // History page does (title + localized status + verified mark), newest-first (the API
-      // returns newest-first; ts:0 keeps that order stable).
-      if (list.length) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0, status: s.status, verified: s.verified })))
-      // Resolve the /?s= deep-link: open that build (with its idea, for the user bubble). P1-4:
-      // it routes through the SAME status-driven mode as the HistoryMenu door (mode = a function of
-      // the session STATUS, not which door opened it). We do NOT clear the persisted thread here
-      // (unlike the explicit HistoryMenu open): a deep-link is also how a REFRESH of the active
-      // build resumes (syncUrl keeps ?s= current), and that thread legitimately belongs to it.
-      const id = deepLinkId.current
-      if (id) {
-        deepLinkId.current = undefined
-        const hit = list.find(s => s.id === id)
-        setSent(hit?.idea ?? ''); setSessionId(id)
-      }
-    }).catch(() => {
-      // Even if the list fails, still honor a deep-link by id (replay rebuilds the thread).
-      const id = deepLinkId.current
-      if (id) { deepLinkId.current = undefined; setSent(''); setSessionId(id) }
-    })
-  }, [api])
   const [actionError, setActionError] = useState<string | undefined>()
-  // Stale deep-link recovery: a session that NO LONGER EXISTS server-side (restart wiped the
-  // in-memory store, DB loss, or external deletion) makes GET /sessions/:id return 404. We flag
-  // it so the chat can offer an HONEST recovery card ("Start new build") instead of hanging on a
-  // frozen view. ONLY a 404 sets this — transient network/500 errors stay silent (today's
-  // behavior) so a blip never distracts the user with a false "session gone" claim.
+  // Stale recovery: a session that NO LONGER EXISTS server-side (restart wiped the in-memory store,
+  // DB loss, external deletion) makes GET /sessions/:id return 404. Drives the rail behavior (hide
+  // preview/trust/publish); the VISIBLE "Start new build" card is rendered INLINE by the run-block.
+  // ONLY a 404 sets this — transient network/500 stays silent (no false "session gone" claim).
   const [sessionGone, setSessionGone] = useState(false)
-
-  const live = useLiveChat(sessionId, sent, api, baseUrl, makeClient)
-  const status = live.view.status
+  const status = activeView.status
 
   // The agent-written code (SessionState.code.files) AND the structured test evidence
   // (SessionState.testEvidence — PR #75) both live on the EXISTING GET /sessions/:id; no
   // events carry the file contents or the per-scenario detail. Re-fetch via the existing
   // client when the run progresses so the Code tab shows the real artifact and the Trust
-  // tab shows the auditable evidence behind the verified result.
+  // tab shows the auditable evidence behind the verified result. Targets the ACTIVE run.
   const [codeFiles, setCodeFiles] = useState<CodeArtifact['files'] | undefined>(undefined)
   const [testEvidence, setTestEvidence] = useState<TestEvidence | undefined>(undefined)
   // The AUTHORITATIVE backend SessionStatus (richer than the SSE-derived view.status — it carries
@@ -122,155 +105,162 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // so visibly — the user must never be surprised that agents merged over existing files.
   const [editsBase, setEditsBase] = useState(false)
   // The LAST persisted publish outcome (session.publish) — fed to PublishButton so a just-deployed
-  // live URL / honest failure survives a tab-switch or refresh (which fully remount this subtree)
-  // instead of forcing a re-run of the ~30s+ SSH deploy. Read from the SAME getSession below; no
-  // extra fetch.
+  // live URL / honest failure survives a tab-switch or refresh.
   const [publishRecord, setPublishRecord] = useState<PublishRecord | undefined>(undefined)
-  useEffect(() => {
-    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); return }
-    let cancelled = false
-    void api.getSession(sessionId)
-      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false) } })
-      .catch(e => {
-        if (cancelled) return
-        // A 404 means the session is genuinely GONE (server restart wiped the in-memory store,
-        // DB loss, external deletion) → offer the honest recovery card. Any OTHER error (network,
-        // 500) keeps today's silent behavior: Code/Trust tabs stay empty, no false "gone" claim.
-        if (ApiError.is(e) && e.status === 404) setSessionGone(true)
-      })
-    return () => { cancelled = true }
-    // live.view.connectionGone in the deps (Opus review M1): the LIVE frozen-tab case — a
-    // silent server restart emits no status change, so the 404 probe must re-run when the
-    // stream exhausts its reconnects; that probe is what flips the honest gone-card on.
-  }, [sessionId, status, api, live.view.connectionGone])
 
-  // The single build path: the chat-authored spec becomes a session via the UNCHANGED
-  // startSession → the same 4 structural gates + pipeline + History. The ONLY caller is the
-  // Chat-to-Build approval (the SpecCard's "Approve & Build"), so every build flows through
-  // the conversation — there is no other entry point.
   /** Keep the address bar's ?s= deep-link pointing at the ACTIVE session (refresh-safe). */
   const syncUrl = (id: string): void => {
     if (typeof window !== 'undefined') window.history.replaceState({}, '', `${window.location.pathname}?s=${id}`)
   }
-  const startBuild = async (v: string): Promise<void> => {
-    const idea = v.trim(); if (!idea || busy || startingRef.current) return
+
+  /** Seed the spine with a clean greeting + a SINGLE run marker, then remount AkisChat so it loads
+   *  it. Used by BOTH History doors (HistoryMenu + the /?s= deep-link): a reopened build shows a
+   *  CLEAN chat (never an unrelated inherited conversation) plus its one run-block, which replays
+   *  the server /log to rebuild the transcript. */
+  const seedRun = (id: string, idea: string): void => {
+    const nodes: ThreadNode[] = [{ role: 'assistant', content: t('akis.greeting') }, { role: 'run', sessionId: id, idea: idea.trim() }]
+    saveThread(nodes)
+    setThreadKey(k => k + 1)
+    setActiveSessionId(id); setActiveIdea(idea); setActiveView(emptyView(id))
+    setBackendStatus(undefined); setActionError(undefined); setStartingSpec(undefined); setSessionGone(false)
+  }
+
+  // Prefer server-backed per-user history (persists across devices); fall back to the
+  // localStorage list (loaded above) if the request fails.
+  useEffect(() => {
+    void api.listMySessions().then(list => {
+      if (list.length) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0, status: s.status, verified: s.verified })))
+      // Resolve the /?s= deep-link: seed a one-run thread for that build (status-driven mode,
+      // not door-driven). The run-block replays /log to rebuild the transcript.
+      const id = deepLinkId.current
+      if (id) {
+        deepLinkId.current = undefined
+        const hit = list.find(s => s.id === id)
+        seedRun(id, hit?.idea ?? '')
+      }
+    }).catch(() => {
+      // Even if the list fails, still honor a deep-link by id (replay rebuilds the transcript).
+      const id = deepLinkId.current
+      if (id) { deepLinkId.current = undefined; seedRun(id, '') }
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api])
+
+  // Snapshot effect — targets the ACTIVE run for codeFiles/editsBase/backendStatus/publish + the
+  // honest 404 → sessionGone (which drives the right rail; the visible card is inside the run-block).
+  useEffect(() => {
+    if (!activeSessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); return }
+    let cancelled = false
+    void api.getSession(activeSessionId)
+      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false) } })
+      .catch(e => {
+        if (cancelled) return
+        // A 404 means the session is genuinely GONE → honest recovery. Any OTHER error (network,
+        // 500) keeps today's silent behavior: rail stays empty, no false "gone" claim.
+        if (ApiError.is(e) && e.status === 404) setSessionGone(true)
+      })
+    return () => { cancelled = true }
+    // activeView.connectionGone in the deps (Opus review M1): the LIVE frozen-tab case — a silent
+    // server restart emits no status change, so the 404 probe must re-run when the stream gives up.
+  }, [activeSessionId, status, api, activeView.connectionGone])
+
+  // The single build path: the chat-authored spec becomes a session via the UNCHANGED startSession
+  // → the same 4 structural gates + pipeline + History. The ONLY caller is the Chat-to-Build
+  // approval (AkisChat's SpecCard "Approve & Build"). startBuild RETURNS the new session id so
+  // AkisChat can append the inline run marker at its slot; it sets the ACTIVE run here.
+  const startBuild = async (v: string): Promise<string | undefined> => {
+    const idea = v.trim(); if (!idea || busy || startingRef.current) return undefined
     startingRef.current = true
     setBusy(true); setActionError(undefined); setStartingSpec(idea)
     try {
-      // Follow-up CHANGES edit the prior app (Phase B.5): when the prior session PRODUCED
-      // CODE, the next approved spec EDITS that app (baseSessionId → agents see + merge over
-      // the existing files) instead of regenerating. The condition mirrors the backend's own
-      // guard (prior.code?.files.length — sessions.routes) via the already-fetched codeFiles,
-      // so a verify_failed/push_failed run with real code is editable too — not just 'done'.
-      // "New build" resets sessionId (and codeFiles), so a fresh conversation starts from zero.
-      const baseId = sessionId && codeFiles?.length ? sessionId : undefined
-      // P0-1: the chat-approved spec is AUTHORITATIVE — `idea` here IS the spec text the SpecCard
-      // rendered + the human approved. Pass it as the spec seed so the backend uses it as-is and
-      // auto-satisfies Gate 1 (still minted server-side via the approvalAuthority); the pipeline
-      // then opens already at spec-approved with NO second 'Approve spec' click. The single
-      // human spec-approval moment is the SpecCard's "Approve & Build".
+      // If a PRIOR build is still IN-FLIGHT, approving a new spec ABANDONS it (mirrors newChat):
+      // cancel it server-side so the now-non-active older block (which folds its /log ONCE and
+      // closes its stream) isn't left running headless behind a frozen UI. Gate-SAFE: cancel only
+      // sets 'cancelled', never mints. A terminal prior run 409s the cancel (caught) — a no-op.
+      if (activeSessionId && !isTerminalStatus(backendStatus)) {
+        void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient — nothing to stop */ })
+      }
+      // Follow-up CHANGES edit the prior (ACTIVE) app (Phase B.5): when it PRODUCED CODE, the next
+      // approved spec EDITS that app (baseSessionId → agents merge over its files). The condition
+      // mirrors the backend's code-presence guard via the already-fetched codeFiles. The base is the
+      // ACTIVE session + its code files (preserved across the multi-run change).
+      const baseId = activeSessionId && codeFiles?.length ? activeSessionId : undefined
+      // P0-1: the chat-approved spec is AUTHORITATIVE — `idea` IS the spec the SpecCard rendered +
+      // the human approved. Pass it as the spec seed so the backend auto-satisfies Gate 1 (still
+      // minted server-side via the approvalAuthority) and FIRE-AND-FORGET kicks the run (the seeded-
+      // start auto-kick) — NO second approve, NO client api.run. Multi-run = separate startSession
+      // calls, each one session + one kick.
       const s = await api.startSession(idea, undefined, baseId, specSeedFromMarkdown(idea))
-      setSent(idea); setSessionId(s.id); setStartingSpec(undefined)
-      syncUrl(s.id) // keep the ?s= deep-link current (audit gap: a refresh mid-FOLLOW-UP reopened the prior session)
+      // The NEW build becomes the active run. codeFiles reset to the new session's snapshot effect;
+      // editsBase reflects the new session (the snapshot effect re-reads it).
+      setActiveSessionId(s.id); setActiveIdea(idea); setActiveView(emptyView(s.id)); setStartingSpec(undefined)
+      syncUrl(s.id)
       setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
-    } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)); setStartingSpec(undefined) }
+      return s.id
+    } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)); setStartingSpec(undefined); return undefined }
     finally { setBusy(false); startingRef.current = false }
   }
-  /** Re-open a past build (BOTH History doors route here — HistoryMenu directly, the /?s= deep-link
-   *  via the mount effect). useLiveChat replays /log + /events to rebuild the run; the inline
-   *  pipeline + composer render in ONE conversation surface (P0-3). The single reopen RULE (P1-4)
-   *  is status-driven, NOT door-driven: a terminal run is interactive (view + iterate), a
-   *  non-terminal one is the live cockpit. We drop the prior conversation's persisted thread so a
-   *  reopened build never inherits an UNRELATED chat — AkisChat re-seeds a clean greeting and the
-   *  composer is ready for a follow-up that EDITS this app (the base-merge start path). */
-  const openSession = (b: RecentBuild): void => {
-    setActionError(undefined); setStartingSpec(undefined); clearThread()
-    setSent(b.idea); setSessionId(b.id); setBackendStatus(undefined); syncUrl(b.id)
-  }
-  // Stable across renders (only closes over React's stable setters), so the gate callbacks built
-  // on it keep a stable identity too — which is what lets memo(RunPipeline) actually hold when the
-  // studio re-renders for a reason unrelated to the live view (e.g. toggling the preview rail).
+
+  /** Re-open a past build (BOTH History doors route here). Seeds a one-run thread + clean greeting;
+   *  the run-block replays /log + /events. */
+  const openSession = (b: RecentBuild): void => { seedRun(b.id, b.idea) }
+
+  // Stable across renders, so the gate callbacks keep a stable identity.
   const act = useCallback(async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setActionError(undefined)
     try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }
   }, [])
-  // Approve the spec gate, then KICK the run — but do NOT await the run. The /run request stays
-  // open for the WHOLE pipeline (minutes), so awaiting it under `busy` would grey out every
-  // control — Stop, gates, recovery, Run-app — for the entire build (the "a slow request greys
-  // out everything" trap). Fire-and-forget: the SSE stream drives all subsequent state; only a
-  // REJECTED start (e.g. a 409) is surfaced as a non-blocking note.
+  // Gate callbacks target the ACTIVE run (only the active run ever shows an awaiting gate). A
+  // seeded chat build auto-satisfies the spec gate server-side, so approve is the LEGACY non-seeded
+  // path (kept for compat); it never mints client-side. Fire-and-forget the /run so a slow pipeline
+  // never greys out every control.
   const approve = useCallback((): Promise<void> => act(async () => {
-    if (!sessionId) return
-    await api.approve(sessionId)
-    void api.run(sessionId).catch(e => setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)))
-  }), [act, api, sessionId])
-  const confirm = useCallback((): Promise<void> => act(async () => { if (sessionId) await api.confirm(sessionId) }), [act, api, sessionId])
+    if (!activeSessionId) return
+    await api.approve(activeSessionId)
+    void api.run(activeSessionId).catch(e => setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)))
+  }), [act, api, activeSessionId])
+  const confirm = useCallback((): Promise<void> => act(async () => { if (activeSessionId) await api.confirm(activeSessionId) }), [act, api, activeSessionId])
   // Localized note for a failed/unsupported preview boot (carries the backend's short reason).
   const previewFailNote = (e: { status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; reason?: string }): string =>
     t(e.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed') + (e.reason ? `: ${e.reason}` : '')
   const runApp = (): Promise<void> => act(async () => {
-    if (!sessionId) return
-    // Inspect the resolved entry: a failed/unsupported boot is surfaced (never silently dropped).
-    const e = await api.startPreview(sessionId)
+    if (!activeSessionId) return
+    const e = await api.startPreview(activeSessionId)
     if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e))
   })
   const newChat = (): void => {
-    // P1-6: 'New build' on a NON-TERMINAL run must STOP that run, not orphan it. We cancel the
-    // backend pipeline (api.cancel → Orchestrator.cancel, which only sets 'cancelled' and NEVER
-    // mints a token — strictly gate-SAFER) BEFORE clearing local state, so leaving a live build
-    // doesn't leave it running headless. Fire-and-forget: a 409 from an already-terminal run is
-    // swallowed (nothing to stop). A terminal session needs no cancel.
-    if (sessionId && !isTerminalStatus(backendStatus)) {
-      void api.cancelRun(sessionId).catch(() => { /* already terminal / transient — nothing to stop */ })
+    // P1-6: 'New build' on a NON-TERMINAL active run must STOP it, not orphan it. Cancel the backend
+    // pipeline (api.cancel → Orchestrator.cancel; only sets 'cancelled', NEVER mints) BEFORE clearing.
+    if (activeSessionId && !isTerminalStatus(backendStatus)) {
+      void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient — nothing to stop */ })
     }
-    // Clear the stale-session flag FIRST so the gone-card condition (sessionGone && sessionId)
-    // transitions cleanly from true→false in the SAME render React batches — no flicker of both
-    // a fresh chat AND the gone-card before the next getSession effect run.
     setSessionGone(false)
-    setSessionId(undefined); setSent(''); setActionError(undefined); setStartingSpec(undefined); setBackendStatus(undefined)
-    // Start a fresh conversation: drop the persisted thread so AkisChat re-seeds the greeting.
-    clearThread()
-    // Drop a stale /?s= deep-link from the address bar so a refresh starts clean.
+    setActiveSessionId(undefined); setActiveIdea(''); setActiveView(emptyView('')); setActionError(undefined); setStartingSpec(undefined); setBackendStatus(undefined)
+    // Drop the persisted spine + remount AkisChat so it re-seeds a clean greeting (no run markers).
+    clearThread(); setThreadKey(k => k + 1)
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
   }
 
-  // Auto-run the local preview once a build ships, so the app appears live with no
-  // extra click (once per session; the user can re-run from the rail). Best-effort.
+  // Auto-run the local preview once a build ships, so the app appears live with no extra click.
   const autoRan = useRef<string | undefined>(undefined)
   useEffect(() => {
-    if (sessionId && status === 'done' && autoRan.current !== sessionId) {
-      autoRan.current = sessionId
-      // Inspect the resolved entry: surface a failed/unsupported boot as a non-blocking note
-      // instead of fully swallowing it (still don't crash on a rejected request).
-      void api.startPreview(sessionId)
+    if (activeSessionId && status === 'done' && autoRan.current !== activeSessionId) {
+      autoRan.current = activeSessionId
+      void api.startPreview(activeSessionId)
         .then(e => { if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e)) })
         .catch(() => { /* network reject — surfaced via preview_status / manual run */ })
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sessionId, status, api])
+  }, [activeSessionId, status, api])
 
-  const canRun = !!sessionId && (status === 'done' || live.view.verified !== undefined)
-  // Honest recovery for a DELETED session (getSession 404): instead of a frozen view, a compact
-  // amber card says the session is gone and offers a one-click "Start new build" (reuses newChat).
-  // role="alert" so it's announced; gated by sessionId so an idle chat never shows it.
-  const staleSessionCard = sessionGone && sessionId ? (
-    <section role="alert" className="rounded-2xl border border-amber-400/25 bg-amber-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(251,191,36,0.1)]">
-      <div className="flex flex-col gap-2">
-        <div className="font-semibold text-slate-100">{t('session.gone.hint')}</div>
-        <button
-          onClick={newChat}
-          className="w-fit rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1.5 text-sm font-semibold text-slate-900 shadow-[0_0_14px_rgba(251,191,36,0.3)] hover:shadow-[0_0_16px_rgba(251,191,36,0.4)] disabled:opacity-40"
-        >
-          {t('session.gone.action')}
-        </button>
-      </div>
-    </section>
-  ) : null
+  const canRun = !!activeSessionId && (status === 'done' || activeView.verified !== undefined)
+  // BUILD-AWARE CHAT context key: the ACTIVE session id ONLY when it produced code (so the persona
+  // can answer about — and route edits to — the current app). SEPARATE from chat-only overrides;
+  // never reaches a build. No code yet ⇒ stateless chat (byte-identical request).
+  const buildContextSessionId = activeSessionId && codeFiles?.length ? activeSessionId : undefined
+
   const startingWorkflowCard = startingSpec ? (
     <section role="status" className="rounded-2xl border border-teal-400/25 bg-teal-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(7,209,175,0.1)]">
-      {/* The 1s elapsed ticker lives in a LEAF component (StartingElapsed) so its per-second
-          re-render touches ONLY the badge — not the whole studio (the flicker the user saw
-          was this timer living on ChatStudio state and re-rendering the entire tree each tick). */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 animate-pulse rounded-full bg-[#07D1AF]" aria-hidden />
@@ -281,72 +271,67 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       <div className="mt-1 text-xs text-slate-400">{t('workflow.starting.body')}</div>
     </section>
   ) : null
-  const workflowCard = sessionId ? (
-    // FRAMELESS by design (user feedback): the run is part of THE SAME conversation — no
-    // bordered sub-panel, no chat-in-chat. A subtle divider marks the transition instead.
-    <section className="border-t border-white/5 pt-3">
-      {/* The build's title (the idea/spec's first line) — so a REOPENED run shows WHAT it is in
-          the one conversation surface, where the nested ChatThread idea-bubble used to (P0-2/P0-3). */}
-      {ideaTitle(sent) && (
-        <div className="mb-2 truncate text-sm font-semibold text-slate-100" title={sent}>{ideaTitle(sent)}</div>
-      )}
-      {/* Edit-mode disclosure (B.5b): this build MERGES over a prior app — never a surprise. */}
-      {editsBase && (
-        <div className="mb-2 inline-flex items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-400/[0.08] px-2 py-0.5 text-[11px] font-medium text-violet-200">
-          <span aria-hidden>🔁</span> {t('pipeline.editsBase')}
-        </div>
-      )}
-      {/* P0-2: NO nested 'Live agent activity' ChatThread (chat-in-chat). The canonical run
-          representation is the inline pipeline strip (5 step nodes + AgentRoster + summary line)
-          below — one conversation, not a second one nested inside it. */}
-      <RunPipeline
-        view={live.view}
-        onApprove={approve}
-        onConfirm={confirm}
-        busy={busy}
-        api={api}
-        sessionGone={sessionGone}
-      />
-    </section>
+
+  // Edit-mode disclosure (B.5b): the ACTIVE build merges over a prior app — surfaced once, here,
+  // above the chat (the inline run-block stays focused on its pipeline + bubbles).
+  const editsBaseBadge = editsBase ? (
+    <div className="inline-flex w-fit items-center gap-1.5 rounded-md border border-violet-400/30 bg-violet-400/[0.08] px-2 py-0.5 text-[11px] font-medium text-violet-200">
+      <span aria-hidden>🔁</span> {t('pipeline.editsBase')}
+    </div>
   ) : null
 
-  // Shared frame header: the live agent roster + history access (+ New chat once a run exists).
+  // Shared frame header: the live agent roster (active run) + history (+ New chat once a run exists).
   const header = (
     <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
-      <AgentRoster view={live.view} />
+      <AgentRoster view={activeView} />
       <div className="flex shrink-0 items-center gap-2">
         <HistoryMenu builds={recent} onOpen={openSession} />
-        {sessionId && <button onClick={newChat} className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 hover:text-slate-200">{t('chat.new')}</button>}
+        {activeSessionId && <button onClick={newChat} className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 hover:text-slate-200">{t('chat.new')}</button>}
       </div>
     </div>
   )
 
-  // Height-bounded so the chat / pipeline scroll INSIDE the frame instead of growing the
-  // page (stable, no jump). Fixed to the viewport on desktop; a tall min-height on small
-  // screens where the header wraps. The conversation stays the primary surface: approving
-  // a spec inserts the live workflow into the same chat context, while preview lives in the rail.
+  // The single conversation surface — the chat spine with inline run-blocks. Shared between idle and
+  // build layouts so there is ONE render + ONE scroll. AkisChat appends run markers in place and
+  // renders each as a RunBlock; only the active run stays live.
+  const chat = (
+    <AkisChat
+      key={threadKey}
+      api={api}
+      baseUrl={baseUrl}
+      {...(makeClient ? { makeClient } : {})}
+      building={busy}
+      onBuild={startBuild}
+      {...(activeSessionId ? { activeSessionId } : {})}
+      {...(buildContextSessionId ? { buildContextSessionId } : {})}
+      onApprove={approve}
+      onConfirm={confirm}
+      onNewBuild={newChat}
+      onActiveView={setActiveView}
+      starting={startingWorkflowCard}
+    />
+  )
+
+  // Height-bounded so the chat scrolls INSIDE the frame instead of growing the page (stable, no
+  // jump). The conversation stays the primary surface; preview lives in the rail once a run exists.
+  // STABLE TREE: the chat <section> sits at the SAME tree position whether idle or building, so
+  // approving a spec (idle → build) never REMOUNTS AkisChat (which would discard the just-appended
+  // inline run marker). Only the rail is conditionally added as a sibling.
+  const hasRun = !!activeSessionId
   return (
     <div className="flex min-h-[32rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
-      {sessionId ? (
-        <div className={`grid min-h-0 flex-1 gap-6 ${previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_minmax(30rem,42%)] xl:grid-cols-[minmax(0,1fr)_minmax(34rem,46%)]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]'}`}>
-          {/* P0-3: ONE render + ONE scroll. Live AND reopened render the run the SAME way — the
-              inline pipeline (workflowCard) inside the SINGLE AkisChat conversation surface, which
-              owns the only vertical scroll. No separate reopened overflow panel, no stacked scroll
-              containers. P1-5: the composer is ALWAYS present, so a reopened TERMINAL build can be
-              iterated with a follow-up (which EDITS the prior app via the base-merge start path),
-              not just abandoned for a 'New build'. */}
-          <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
-            {header}
-            <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 px-4 py-4 xl:max-w-5xl">
-              {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
-              {/* Stale deep-link recovery takes VISUAL precedence above the chat/pipeline: a
-                  deleted session's honest path is "Start new build", not the frozen pipeline. */}
-              {staleSessionCard}
-              <AkisChat api={api} building={busy} builtSpec={sent} onBuild={(spec) => void startBuild(spec)} workflow={sessionGone ? undefined : workflowCard} />
-            </div>
-          </section>
+      <div className={`grid min-h-0 flex-1 gap-6 ${hasRun ? (previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_minmax(30rem,42%)] xl:grid-cols-[minmax(0,1fr)_minmax(34rem,46%)]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]') : 'grid-cols-1'}`}>
+        <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
+          {header}
+          <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl' : 'max-w-3xl xl:max-w-4xl'}`}>
+            {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
+            {editsBaseBadge}
+            <div className="min-h-0 flex-1">{chat}</div>
+          </div>
+        </section>
 
-          {/* Live preview rail — the actually-running app */}
+        {/* Live preview rail — the actually-running app (the ACTIVE run). Only once a run exists. */}
+        {hasRun && (
           <aside className={`min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.02] backdrop-blur-sm ${previewOpen ? 'p-4' : 'p-2'}`}>
             <div className={`mb-2 flex ${previewOpen ? 'justify-end' : 'justify-center'}`}>
               <button
@@ -360,12 +345,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
             </div>
             {previewOpen ? (
               <>
-                {sessionId && status === 'done' && <TrustReportCard sessionId={sessionId} api={api} />}
-                {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING.
-                    initialRecord seeds the last persisted outcome so a deployed live URL survives
-                    a tab-switch/refresh (this whole subtree remounts) without re-running the deploy. */}
-                {sessionId && status === 'done' && <PublishButton sessionId={sessionId} api={api} initialRecord={publishRecord} />}
-                <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+                {activeSessionId && !sessionGone && status === 'done' && <TrustReportCard sessionId={activeSessionId} api={api} />}
+                {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING. */}
+                {activeSessionId && !sessionGone && status === 'done' && <PublishButton sessionId={activeSessionId} api={api} initialRecord={publishRecord} />}
+                <PreviewPanel view={activeView} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
               </>
             ) : (
               <button
@@ -375,29 +358,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
               >
                 <span aria-hidden>▣</span>
                 <span>{t('preview.collapsed')}</span>
-                {live.view.verified !== undefined && (
-                  <span className={live.view.verified ? 'text-emerald-300' : 'text-slate-400'}>
-                    {live.view.verified ? t('preview.verified') : t('preview.unverified')}
+                {activeView.verified !== undefined && (
+                  <span className={activeView.verified ? 'text-emerald-300' : 'text-slate-400'}>
+                    {activeView.verified ? t('preview.verified') : t('preview.unverified')}
                   </span>
                 )}
               </button>
             )}
           </aside>
-        </div>
-      ) : (
-        // Idle: one full-height conversation, centered for readability. AkisChat owns the
-        // input (pinned at the bottom) and scrolls internally; approving the spec card it
-        // produces is the only way to start a build.
-        <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
-          {header}
-          <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-3 px-4 py-4 xl:max-w-4xl">
-            {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
-            <div className="min-h-0 flex-1">
-              <AkisChat api={api} building={busy} onBuild={(spec) => void startBuild(spec)} workflow={startingWorkflowCard} />
-            </div>
-          </div>
-        </section>
-      )}
+        )}
+      </div>
     </div>
   )
 }

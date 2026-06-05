@@ -1,4 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { SessionState } from '@akis/shared'
+import { isVerified } from '@akis/shared'
 import type { LlmProvider } from '../agent/LlmProvider.js'
 import { sseControl } from './sse.js'
 import { CATALOG, type ProviderId } from '../agent/providers/catalog.js'
@@ -30,6 +32,7 @@ export const AKIS_PERSONA = [
   'That `akis-spec` block renders a one-click "Approve & Build" spec card in the UI — the user reviews it and approves it to run the pipeline behind the structural gates.',
   'There is NO separate "Build" button and no idea box: the user starts the build ONLY by approving the spec card you produce, so describe it that way (e.g. "approve the spec to build it") — never tell them to "press Build". And NEVER tell the user to copy-paste the spec or retype it in a box; the akis-spec block IS the build action. Put only the spec inside the block; keep any chatter outside it.',
   'Never claim to have built or run anything yourself in this chat — the Build flow does that.',
+  'When you have been given the CURRENT BUILD context below and the user asks to CHANGE the current app (e.g. "make the button red", "add a settings page"), do NOT claim you changed it — you cannot edit the app from this chat. Instead, emit a FRESH FULL `akis-spec` block describing the EDITED app (the prior spec PLUS the requested change, written whole — not a diff), so the user can approve it to run an edit build. The edit happens only when they approve that card.',
   'When your reply asks the user a question or offers choices (e.g. tweaks, options, next steps), you MAY end the reply with a fenced block whose info string is exactly `akis-suggest`, containing 2–4 SHORT tappable quick-replies (one per line, ≤6 words each), like:',
   '```akis-suggest',
   '- Yes, build it',
@@ -112,6 +115,72 @@ export interface ChatDeps {
   usage?: UsageStorePort
   quota?: QuotaPolicy
   ownerOf?: (req: FastifyRequest) => Promise<string | undefined>
+  /** BUILD-AWARE CHAT (read-only, owner-scoped). Resolves a session the CALLER may access — the
+   *  SAME accessibleSession semantics as the gated routes (an owned session is returned only to
+   *  its owner; a foreign/unknown id resolves to undefined → the route silently falls back to a
+   *  stateless turn). STRICTLY CONVERSATIONAL: this is a read-only `store.get` + ownership compare,
+   *  it holds NO orchestrator handle and can never approve/run/verify/push/mint/write — it only
+   *  lets the persona SEE the current build (a contents-free snapshot) so it can route an edit
+   *  request to a fresh akis-spec card. Absent ⇒ no build-awareness (byte-identical to today). */
+  sessionRead?: (req: FastifyRequest, id: string) => Promise<SessionState | undefined>
+}
+
+/**
+ * Hard char cap on the build-context block as a whole — a single bounded extra SYSTEM block, never
+ * history. Spec body is truncated near 600 chars; the file list is paths only (never contents); the
+ * total is clamped so a huge spec/file list can never blow the token budget.
+ */
+export const BUILD_CONTEXT_MAX_CHARS = 2400
+const SPEC_BODY_MAX_CHARS = 600
+const MAX_CONTEXT_FILES = 40
+
+/** Truncate to `max` chars on a soft boundary, appending an ellipsis marker when cut. Reserve one
+ *  char for the ellipsis so the result is ALWAYS <= max (the ellipsis is 1 UTF-16 unit), keeping
+ *  the BUILD_CONTEXT_MAX_CHARS clamp an exact upper bound rather than max+1. */
+function truncate(s: string, max: number): string {
+  if (s.length <= max) return s
+  return `${s.slice(0, max - 1).trimEnd()}…`
+}
+
+/**
+ * PURE: build the read-only, owner-scoped, CONTENTS-FREE snapshot of the current build, appended
+ * after AKIS_PERSONA as one extra SYSTEM block so the persona can answer questions about — and
+ * route edits to — the app the user just built. It leaks NOTHING sensitive:
+ *   - spec title + spec body TRUNCATED near 600 chars (never the whole spec),
+ *   - the file PATH LIST only — never file CONTENTS,
+ *   - the verify OUTCOME (verified / not-yet / simulated), never code/secrets.
+ * The whole block is clamped to BUILD_CONTEXT_MAX_CHARS. It mints/writes nothing — it is a string.
+ */
+export function buildSessionContext(s: SessionState): string {
+  const lines: string[] = []
+  lines.push('--- CURRENT BUILD (read-only context, do not claim you can edit it directly) ---')
+  lines.push(`Idea: ${truncate(s.idea, 200)}`)
+  if (s.spec?.title) lines.push(`Spec title: ${truncate(s.spec.title, 200)}`)
+  if (s.spec?.body) lines.push(`Spec:\n${truncate(s.spec.body, SPEC_BODY_MAX_CHARS)}`)
+  const files = s.code?.files ?? []
+  if (files.length) {
+    const shown = files.slice(0, MAX_CONTEXT_FILES).map(f => `- ${f.filePath}`)
+    const extra = files.length > MAX_CONTEXT_FILES ? `\n- …and ${files.length - MAX_CONTEXT_FILES} more` : ''
+    lines.push(`Files (paths only, contents withheld):\n${shown.join('\n')}${extra}`)
+  }
+  // Verify OUTCOME only (never the token/digest/code): verified, simulated, failed, or not-yet.
+  // The branded verifyToken is the gate truth (isVerified); testEvidence is the display mirror that
+  // survives in the snapshot and carries the honest `demo` (simulated-run) marker.
+  const demo = s.testEvidence?.demo === true
+  const testsRun = s.testEvidence?.testsRun
+  const testsSuffix = testsRun !== undefined ? ` (${testsRun} tests)` : ''
+  const verifyLine = isVerified(s)
+    ? `Verification: ${demo ? 'SIMULATED (demo) pass — NOT real verification' : 'verified by real tests'}${testsSuffix}`
+    : demo && s.testEvidence?.passed === true
+      ? `Verification: SIMULATED (demo) pass — NOT real verification${testsSuffix}`
+      : s.testEvidence?.passed === true
+        ? `Verification: tests passed${testsSuffix}`
+        : s.status === 'verify_failed' || s.testEvidence?.passed === false
+          ? 'Verification: tests did NOT pass yet'
+          : 'Verification: not yet verified'
+  lines.push(verifyLine)
+  lines.push('If the user asks to CHANGE this app, emit a fresh full akis-spec block for the edited app (never claim you changed it).')
+  return truncate(lines.join('\n'), BUILD_CONTEXT_MAX_CHARS)
 }
 
 /** A typed 4xx the route catches and maps to a clean reply.code(status).send({error,code}). */
@@ -215,12 +284,25 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
     if (tok > 0) void Promise.resolve(deps.usage.add(ownerKey, tok)).catch(() => { /* best-effort */ })
   }
 
-  app.post<{ Body: { message?: unknown; history?: unknown; provider?: unknown; model?: unknown; effort?: unknown } }>('/api/chat', async (req, reply) => {
+  // BUILD-AWARE system prompt for ONE turn. Absent a sessionId (or no sessionRead dep, or a
+  // foreign/unknown id) the system is AKIS_PERSONA BYTE-IDENTICAL to today — the build-awareness
+  // is purely ADDITIVE and owner-scoped. When the caller owns the session, append the read-only,
+  // contents-free context block AFTER the persona. This is the ONLY new read: a string assembly
+  // over a read-only store.get — it mints/writes/gates NOTHING (SACRED: strictly conversational).
+  const resolveSystem = async (req: FastifyRequest, sessionId: string | undefined): Promise<string> => {
+    if (!sessionId || !deps.sessionRead) return AKIS_PERSONA
+    const s = await deps.sessionRead(req, sessionId)
+    if (!s) return AKIS_PERSONA // foreign/unknown id → stateless fallback (never confirms it exists)
+    return `${AKIS_PERSONA}\n\n${buildSessionContext(s)}`
+  }
+
+  app.post<{ Body: { message?: unknown; history?: unknown; provider?: unknown; model?: unknown; effort?: unknown; sessionId?: unknown } }>('/api/chat', async (req, reply) => {
     const message = isStr(req.body?.message) ? req.body.message.trim() : ''
     if (!message) return reply.code(400).send({ error: 'message required', code: 'BadRequest' })
     const provider = isStr(req.body?.provider) ? req.body.provider.trim() || undefined : undefined
     const model = isStr(req.body?.model) ? req.body.model.trim() || undefined : undefined
     const effort = isStr(req.body?.effort) ? req.body.effort.trim() || undefined : undefined
+    const sessionId = isStr(req.body?.sessionId) ? req.body.sessionId.trim() || undefined : undefined
     const messages = assembleMessages(message, req.body?.history)
     // Per-user token-quota PRE-CHECK — BEFORE resolving/calling any provider (SACRED: a blocked
     // turn never reaches the model). No-op when usage/quota aren't injected (byte-identical).
@@ -235,8 +317,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       if (err instanceof ChatRequestError) return reply.code(err.status).send({ error: err.message, code: err.code })
       throw err
     }
+    // Build-aware system (owner-scoped, read-only); absent/foreign sessionId ⇒ AKIS_PERSONA byte-identical.
+    const system = await resolveSystem(req, sessionId)
     try {
-      const res = await resolved.chat({ system: AKIS_PERSONA, messages, maxTokens: mapEffortToTokens(effort) })
+      const res = await resolved.chat({ system, messages, maxTokens: mapEffortToTokens(effort) })
       // Account the turn's REAL spend (the sole chat path; {0,0}/absent adds nothing).
       chargeUsage(gate.ownerKey, res.usage)
       // Return the reply verbatim (trimmed). An empty reply is surfaced HONESTLY as '' so the
@@ -250,12 +334,13 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
   // POST /api/chat/stream — token-by-token SSE. Frames: `delta` ({text}) per chunk,
   // a terminal `done` ({reply}) carrying the full assembled reply (so the FE re-runs
   // spec detection on the authoritative text), or `error` ({message,code}) on failure.
-  app.post<{ Body: { message?: unknown; history?: unknown; provider?: unknown; model?: unknown; effort?: unknown } }>('/api/chat/stream', async (req, reply) => {
+  app.post<{ Body: { message?: unknown; history?: unknown; provider?: unknown; model?: unknown; effort?: unknown; sessionId?: unknown } }>('/api/chat/stream', async (req, reply) => {
     const message = isStr(req.body?.message) ? req.body.message.trim() : ''
     if (!message) return reply.code(400).send({ error: 'message required', code: 'BadRequest' })
     const provider = isStr(req.body?.provider) ? req.body.provider.trim() || undefined : undefined
     const model = isStr(req.body?.model) ? req.body.model.trim() || undefined : undefined
     const effort = isStr(req.body?.effort) ? req.body.effort.trim() || undefined : undefined
+    const sessionId = isStr(req.body?.sessionId) ? req.body.sessionId.trim() || undefined : undefined
     const messages = assembleMessages(message, req.body?.history)
     // Per-user token-quota PRE-CHECK — BEFORE reply.hijack() (after hijack only SSE frames can be
     // written, so a 429 would be impossible). Mirrors the existing pre-hijack 4xx for a bad
@@ -273,7 +358,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       if (err instanceof ChatRequestError) return reply.code(err.status).send({ error: err.message, code: err.code })
       throw err
     }
-    const chatReq = { system: AKIS_PERSONA, messages, maxTokens: mapEffortToTokens(effort) }
+    // Build-aware system — resolved BEFORE hijack (the owner-scoped read can't run once we own the
+    // socket). Absent/foreign sessionId ⇒ AKIS_PERSONA byte-identical; read-only, mints nothing.
+    const system = await resolveSystem(req, sessionId)
+    const chatReq = { system, messages, maxTokens: mapEffortToTokens(effort) }
 
     // Take over the socket and stream on reply.raw (mirrors the agent live stream).
     reply.hijack()
