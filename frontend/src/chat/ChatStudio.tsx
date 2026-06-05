@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import type { StringKey } from '../i18n/catalog.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -181,21 +181,24 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     setActionError(undefined); setStartingSpec(undefined); clearThread()
     setSent(b.idea); setSessionId(b.id); setBackendStatus(undefined); syncUrl(b.id)
   }
-  const act = async (fn: () => Promise<unknown>): Promise<void> => {
+  // Stable across renders (only closes over React's stable setters), so the gate callbacks built
+  // on it keep a stable identity too — which is what lets memo(RunPipeline) actually hold when the
+  // studio re-renders for a reason unrelated to the live view (e.g. toggling the preview rail).
+  const act = useCallback(async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setActionError(undefined)
     try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }
-  }
+  }, [])
   // Approve the spec gate, then KICK the run — but do NOT await the run. The /run request stays
   // open for the WHOLE pipeline (minutes), so awaiting it under `busy` would grey out every
   // control — Stop, gates, recovery, Run-app — for the entire build (the "a slow request greys
   // out everything" trap). Fire-and-forget: the SSE stream drives all subsequent state; only a
   // REJECTED start (e.g. a 409) is surfaced as a non-blocking note.
-  const approve = (): Promise<void> => act(async () => {
+  const approve = useCallback((): Promise<void> => act(async () => {
     if (!sessionId) return
     await api.approve(sessionId)
     void api.run(sessionId).catch(e => setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)))
-  })
-  const confirm = (): Promise<void> => act(async () => { if (sessionId) await api.confirm(sessionId) })
+  }), [act, api, sessionId])
+  const confirm = useCallback((): Promise<void> => act(async () => { if (sessionId) await api.confirm(sessionId) }), [act, api, sessionId])
   // Localized note for a failed/unsupported preview boot (carries the backend's short reason).
   const previewFailNote = (e: { status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; reason?: string }): string =>
     t(e.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed') + (e.reason ? `: ${e.reason}` : '')
@@ -319,7 +322,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   return (
     <div className="flex min-h-[32rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
       {sessionId ? (
-        <div className={`grid min-h-0 flex-1 gap-6 ${previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_24rem]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]'}`}>
+        <div className={`grid min-h-0 flex-1 gap-6 ${previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_minmax(30rem,42%)] xl:grid-cols-[minmax(0,1fr)_minmax(34rem,46%)]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]'}`}>
           {/* P0-3: ONE render + ONE scroll. Live AND reopened render the run the SAME way — the
               inline pipeline (workflowCard) inside the SINGLE AkisChat conversation surface, which
               owns the only vertical scroll. No separate reopened overflow panel, no stacked scroll
@@ -328,7 +331,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
               not just abandoned for a 'New build'. */}
           <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
             {header}
-            <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 px-4 py-4">
+            <div className="mx-auto flex min-h-0 w-full max-w-4xl flex-1 flex-col gap-3 px-4 py-4 xl:max-w-5xl">
               {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
               {/* Stale deep-link recovery takes VISUAL precedence above the chat/pipeline: a
                   deleted session's honest path is "Start new build", not the frozen pipeline. */}
@@ -377,7 +380,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         // produces is the only way to start a build.
         <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
           {header}
-          <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-3 px-4 py-4">
+          <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-3 px-4 py-4 xl:max-w-4xl">
             {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
             <div className="min-h-0 flex-1">
               <AkisChat api={api} building={busy} onBuild={(spec) => void startBuild(spec)} workflow={startingWorkflowCard} />

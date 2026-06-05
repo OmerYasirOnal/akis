@@ -69,7 +69,7 @@ export function TrustReportCard({ sessionId, api }: { sessionId: string; api: Ap
                   {t('report.download')}
                 </button>
               </div>
-              <pre className="max-h-72 overflow-auto whitespace-pre-wrap rounded-lg bg-black/40 p-3 text-[11px] leading-relaxed text-slate-300">{md}</pre>
+              <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[11px] leading-relaxed text-slate-300">{md}</pre>
             </>
           )}
         </div>

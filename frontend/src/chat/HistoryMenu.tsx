@@ -35,7 +35,7 @@ export function HistoryMenu({ builds, onOpen }: { builds: RecentBuild[]; onOpen:
         <span aria-hidden className="text-[9px]">▾</span>
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-1 max-h-80 w-72 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/95 p-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-md">
+        <div role="menu" className="absolute right-0 z-20 mt-1 max-h-[70vh] w-80 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/95 p-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-md sm:max-h-96 sm:w-96">
           {builds.length === 0
             ? <div className="px-3 py-3 text-xs text-slate-500">{t('history.empty')}</div>
             : builds.map(b => (

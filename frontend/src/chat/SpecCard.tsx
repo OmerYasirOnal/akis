@@ -40,13 +40,13 @@ export function SpecCard({ spec, onBuild, building, started, startedSpec }: { sp
           <div className="text-xs text-slate-400">{t('spec.card.hint')}</div>
         </div>
       </div>
-      <div className="max-h-80 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 px-4 py-3">
+      <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 px-4 py-3">
         {editing ? (
           <textarea
             aria-label={t('spec.editLabel')}
             value={draft}
             onChange={e => setDraft(e.target.value)}
-            className="min-h-72 w-full resize-y bg-transparent text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500"
+            className="min-h-64 w-full resize-y bg-transparent text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500"
           />
         ) : (
           <Markdown content={currentSpec} />
