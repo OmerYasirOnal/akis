@@ -29,7 +29,7 @@ import { ideaTitle } from './recentBuilds.js'
  */
 export function RunBlock({
   sessionId, idea, terminal = false, api, onApprove, onConfirm, onNewBuild,
-  baseUrl = '', makeClient, onView, active = false,
+  baseUrl = '', makeClient, onView, active = false, busy = false,
 }: {
   sessionId: string
   idea: string
@@ -39,6 +39,9 @@ export function RunBlock({
   /** GATE-SAFE: bare callbacks to the existing gated routes (mint nothing client-side). */
   onApprove: () => void
   onConfirm: () => void
+  /** In-flight guard: while a gate action (approve/confirm/proceed) is mid-POST, the inline gate
+   *  cards disable so a double-click can't fire it twice (matches the pre-unification studio). */
+  busy?: boolean
   /** Honest recovery for a 404'd (genuinely gone) session — reuses the studio's "new build" reset. */
   onNewBuild: () => void
   baseUrl?: string
@@ -104,6 +107,7 @@ export function RunBlock({
         view={live.view}
         onApprove={onApprove}
         onConfirm={onConfirm}
+        busy={busy}
         api={api}
         sessionGone={sessionGone}
         compact
@@ -115,7 +119,7 @@ export function RunBlock({
       {live.messages.length > 0 && (
         <div className="mt-3 flex flex-col gap-4">
           {live.messages.map(m => (
-            <ChatBubble key={m.id} m={m} onApprove={onApprove} onConfirm={onConfirm} />
+            <ChatBubble key={m.id} m={m} onApprove={onApprove} onConfirm={onConfirm} busy={busy} />
           ))}
         </div>
       )}

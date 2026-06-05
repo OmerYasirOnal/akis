@@ -116,7 +116,7 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
       })
     }
     connect()
-    refold() // render the user-idea bubble immediately, before the first event arrives
+    refold() // render the known (empty) view immediately, before the first event arrives
     return () => { cancelled = true; if (timer) clearTimeout(timer); if (rafId !== undefined) cancelAnimationFrame(rafId); client?.close() }
   }, [terminal, sessionId, idea, api, baseUrl, makeClient])
 

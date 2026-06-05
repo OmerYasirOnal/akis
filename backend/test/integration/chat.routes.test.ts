@@ -314,9 +314,11 @@ describe('POST /api/chat — build-aware sessionId injection (owner-scoped)', ()
     // store interaction it can make is the injected READ. Asserting the reader is the sole touch
     // (and the route still replies) proves the build-aware turn cannot move status / mint / emit a
     // gate event: there is no code path from here to a gate.
-    let writes = 0
+    // The reader is the ONLY store touch the route can make — count its invocations so the
+    // assertion is meaningful (a build-aware turn READS exactly once and has no other store seam).
+    let reads = 0
     const reader = async (_req: FastifyRequest, id: string): Promise<SessionState | undefined> => {
-      // A reader that observes a mutation attempt would record it; the route never mutates.
+      reads += 1
       return id === 's-built' ? builtSession() : undefined
     }
     const { provider, calls } = spyProvider()
@@ -327,7 +329,7 @@ describe('POST /api/chat — build-aware sessionId injection (owner-scoped)', ()
     const res = await app.inject({ method: 'POST', url: '/api/chat', payload: { message: 'add a settings page', sessionId: 's-built' } })
     expect(res.statusCode).toBe(200)
     expect(typeof res.json().reply).toBe('string')
-    expect(writes).toBe(0) // no write seam exists; the turn is purely conversational
+    expect(reads).toBe(1) // the SOLE store interaction is one read — no write/gate seam exists
     expect(calls).toHaveLength(1) // exactly one provider chat, no gate side effects
   })
 })

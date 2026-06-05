@@ -173,6 +173,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     startingRef.current = true
     setBusy(true); setActionError(undefined); setStartingSpec(idea)
     try {
+      // If a PRIOR build is still IN-FLIGHT, approving a new spec ABANDONS it (mirrors newChat):
+      // cancel it server-side so the now-non-active older block (which folds its /log ONCE and
+      // closes its stream) isn't left running headless behind a frozen UI. Gate-SAFE: cancel only
+      // sets 'cancelled', never mints. A terminal prior run 409s the cancel (caught) — a no-op.
+      if (activeSessionId && !isTerminalStatus(backendStatus)) {
+        void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient — nothing to stop */ })
+      }
       // Follow-up CHANGES edit the prior (ACTIVE) app (Phase B.5): when it PRODUCED CODE, the next
       // approved spec EDITS that app (baseSessionId → agents merge over its files). The condition
       // mirrors the backend's code-presence guard via the already-fetched codeFiles. The base is the

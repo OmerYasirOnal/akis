@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, memo, type FormEvent, type ReactNode } from 'react'
+import { useState, useEffect, useRef, useMemo, useCallback, memo, type FormEvent, type ReactNode } from 'react'
 import type { ApiClient, ProviderInfo, ChatOverrides, UsageInfo } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -106,7 +106,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
                   <Markdown content={detected.intro} />
                 </div>
               )}
-              <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} />
+              <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} isSpecStarted={isSpecStarted} />
             </>
           )
           : (
@@ -239,21 +239,29 @@ export function AkisChat({
     for (const n of nodes) if (isRun(n)) s.add(n.idea.trim())
     return s
   }, [nodes])
-  const isSpecStarted = (spec: string): boolean => startedSpecs.has(spec.trim())
+  // useCallback-STABLE so the memoized AssistantMessage (which receives this predicate) is not
+  // re-rendered every animation frame while a build streams its view up (the per-frame memo-defeat
+  // the rAF coalescer is meant to avoid). The predicate matches a SpecCard's CURRENT (possibly
+  // EDITED) text against the run markers — so an edited-then-built card correctly reads "started".
+  const isSpecStarted = useCallback((spec: string): boolean => startedSpecs.has(spec.trim()), [startedSpecs])
 
   // Append a run marker at the TAIL (the array slot where the SpecCard was approved) so the build
   // renders INLINE, below the chat turns that preceded it — chronology is structural, no timestamp.
-  const appendRun = (sessionId: string, idea: string): void => {
+  // useCallback-stable (only setNodes + a ref, both stable) so handleBuild below stays stable too.
+  const appendRun = useCallback((sessionId: string, idea: string): void => {
     stickToBottom.current = true
     setNodes(ns => [...ns, { role: 'run', sessionId, idea: idea.trim() }])
-  }
+  }, [])
 
   // The Chat-to-Build seam: hand the approved spec to the studio's startBuild (the ONLY mint path),
   // and on a started session append its run marker IN PLACE. SACRED: only the spec string crosses
-  // here — chat-only model overrides never reach this build call.
-  const handleBuild = onBuild
-    ? (spec: string): void => { void Promise.resolve(onBuild(spec)).then(id => { if (typeof id === 'string' && id) appendRun(id, spec) }) }
-    : undefined
+  // here — chat-only model overrides never reach this build call. useCallback-stable (deps onBuild +
+  // appendRun) so the memoized AssistantMessage holds across the per-frame build re-renders. The
+  // SpecCard is gated on onBuild presence at the call site (onBuild ? handleBuild : undefined).
+  const handleBuild = useCallback((spec: string): void => {
+    if (!onBuild) return
+    void Promise.resolve(onBuild(spec)).then(id => { if (typeof id === 'string' && id) appendRun(id, spec) })
+  }, [onBuild, appendRun])
 
   const onScroll = (): void => {
     const el = scrollRef.current
@@ -414,6 +422,7 @@ export function AkisChat({
                 idea={m.idea}
                 terminal={!isActive}
                 active={isActive}
+                busy={!!building}
                 api={api}
                 onApprove={onApprove ?? (() => {})}
                 onConfirm={onConfirm ?? (() => {})}
@@ -457,7 +466,7 @@ export function AkisChat({
               key={i}
               content={m.content}
               streaming={isStreaming(m)}
-              onBuild={handleBuild}
+              onBuild={onBuild ? handleBuild : undefined}
               building={building}
               isSpecStarted={isSpecStarted}
             />

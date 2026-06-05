@@ -134,10 +134,12 @@ export const BUILD_CONTEXT_MAX_CHARS = 2400
 const SPEC_BODY_MAX_CHARS = 600
 const MAX_CONTEXT_FILES = 40
 
-/** Truncate to `max` chars on a soft boundary, appending an ellipsis marker when cut. */
+/** Truncate to `max` chars on a soft boundary, appending an ellipsis marker when cut. Reserve one
+ *  char for the ellipsis so the result is ALWAYS <= max (the ellipsis is 1 UTF-16 unit), keeping
+ *  the BUILD_CONTEXT_MAX_CHARS clamp an exact upper bound rather than max+1. */
 function truncate(s: string, max: number): string {
   if (s.length <= max) return s
-  return `${s.slice(0, max).trimEnd()}…`
+  return `${s.slice(0, max - 1).trimEnd()}…`
 }
 
 /**
