@@ -3,6 +3,19 @@ import type { SeqEvent } from '../live/types.js'
 
 export interface ModelOption { id: string; label: string; recommended?: boolean }
 
+/** CHAT-ONLY model-picker overrides. Sent ONLY on /api/chat[/stream]; NEVER on builds. */
+export interface ChatOverrides { provider?: string; model?: string; effort?: 'fast' | 'balanced' | 'deep' }
+
+/** Serialize only the NON-EMPTY override fields, so an unset picker leaves the request body
+ *  byte-identical to before the picker existed (the server then uses its default provider). */
+function chatOverrideBody(o?: ChatOverrides): Record<string, string> {
+  const body: Record<string, string> = {}
+  if (o?.provider) body.provider = o.provider
+  if (o?.model) body.model = o.model
+  if (o?.effort) body.effort = o.effort
+  return body
+}
+
 /** A preview lifecycle entry (mirrors the backend PreviewEntry). */
 export interface PreviewEntry { sessionId: string; status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; url?: string; reason?: string }
 
@@ -143,9 +156,16 @@ export class ApiClient {
   /** Full-page redirect target to begin an OAuth flow. */
   oauthAuthorizeUrl(provider: string): string { return `${this.baseUrl}/oauth/${provider}/authorize` }
 
-  /** Free-form conversation WITH AKIS (the orchestrator persona) — distinct from a build. */
-  chatWithAkis(message: string, history: { role: 'user' | 'assistant'; content: string }[] = []): Promise<{ reply: string }> {
-    return this.json('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, history }) })
+  /** Free-form conversation WITH AKIS (the orchestrator persona) — distinct from a build.
+   *  `overrides` (the model picker) are CHAT-ONLY: they ride only on this route + /api/chat/stream,
+   *  never on startSession/builds (which keep their workflow bindings). Empty fields are omitted so
+   *  the request is byte-identical to before the picker when nothing is overridden. */
+  chatWithAkis(
+    message: string,
+    history: { role: 'user' | 'assistant'; content: string }[] = [],
+    overrides?: ChatOverrides,
+  ): Promise<{ reply: string }> {
+    return this.json('/api/chat', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ message, history, ...chatOverrideBody(overrides) }) })
   }
 
   /**
@@ -160,11 +180,12 @@ export class ApiClient {
     message: string,
     history: { role: 'user' | 'assistant'; content: string }[],
     onDelta: (delta: string) => void,
+    overrides?: ChatOverrides,
   ): Promise<{ reply: string }> {
     const res = await this.fetchFn(this.baseUrl + '/api/chat/stream', {
       method: 'POST', credentials: 'include',
       headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
-      body: JSON.stringify({ message, history }),
+      body: JSON.stringify({ message, history, ...chatOverrideBody(overrides) }),
     })
     if (!res.ok) {
       if (res.status === 401) this.onUnauthorized?.()

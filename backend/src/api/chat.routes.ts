@@ -1,6 +1,8 @@
 import type { FastifyInstance } from 'fastify'
 import type { LlmProvider } from '../agent/LlmProvider.js'
 import { sseControl } from './sse.js'
+import { CATALOG, type ProviderId } from '../agent/providers/catalog.js'
+import { createProvider, ProviderConfigError, type KeyLookup } from '../agent/providers/createProvider.js'
 
 /**
  * AKIS's conversational persona — the orchestrator talking to the user directly.
@@ -66,7 +68,96 @@ export function alternating(messages: ChatMsg[]): ChatMsg[] {
  */
 export const CHAT_MAX_TOKENS = 8192
 
-export interface ChatDeps { provider: LlmProvider }
+/**
+ * Effort → maxTokens for a CHAT turn (the "effort level" picker). The three named tiers
+ * map to a token budget; `balanced` is the default and equals CHAT_MAX_TOKENS so an
+ * absent/invalid effort keeps the EXACT byte-identical budget chat uses today (no drift).
+ *
+ * FAIL-OPEN (not fail-closed): an unknown/misspelled effort silently degrades to
+ * `balanced` rather than 400ing — an invalid effort is harmless (it only sizes the
+ * reply), so the conversation must never break over a typo. (Contrast provider/model,
+ * which 400 because a wrong provider would talk to the wrong API or leak the wrong key.)
+ */
+export const EFFORT_TOKENS = { fast: 2048, balanced: 8192, deep: 16384 } as const
+export type Effort = keyof typeof EFFORT_TOKENS
+
+export function mapEffortToTokens(effort: string | undefined): number {
+  switch (effort?.toLowerCase()) {
+    case 'fast': return EFFORT_TOKENS.fast
+    case 'deep': return EFFORT_TOKENS.deep
+    default: return EFFORT_TOKENS.balanced // 'balanced' OR absent/invalid → the chat default
+  }
+}
+
+/**
+ * The chat route can resolve a DIFFERENT provider/model PER REQUEST (the model picker),
+ * so it needs the same env + KeyStore createProvider consults. Absent both, every request
+ * uses `deps.provider` unchanged (byte-identical to before the picker existed).
+ *
+ * SACRED: these per-request overrides are CHAT-ONLY. They never touch builds — the build
+ * flow (startSession/workflows) keeps its workflow bindings and never sees {provider,model,
+ * effort}. The route resolves a throwaway provider for the single chat turn and discards it.
+ */
+export interface ChatDeps {
+  provider: LlmProvider
+  env?: Record<string, string | undefined>
+  keyStore?: KeyLookup
+}
+
+/** A typed 4xx the route catches and maps to a clean reply.code(status).send({error,code}). */
+class ChatRequestError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string) {
+    super(message)
+    this.name = 'ChatRequestError'
+  }
+}
+
+function isRealProviderId(p: string): p is Exclude<ProviderId, 'mock'> {
+  return Object.prototype.hasOwnProperty.call(CATALOG, p)
+}
+
+/**
+ * Resolve the provider for ONE chat turn from the optional {provider, model} overrides.
+ *
+ * - Both absent → return `defaultProvider` UNCHANGED (byte-identical; no createProvider call).
+ * - `provider` given → validate it is a known CATALOG provider (unknown → 400 BadRequest),
+ *   and if `model` is given, validate it belongs to that provider (unknown → 400 BadRequest).
+ *   Then build a throwaway provider via createProvider. A missing key surfaces as 400 NoKey
+ *   (never 500, never echoes the key); any other ProviderConfigError → 400 BadRequest.
+ * - `model` without `provider` → 400 BadRequest (a model alone is ambiguous).
+ *
+ * Validation is done HERE (against the pure CATALOG, env-independent) BEFORE createProvider,
+ * so a bad provider/model is a deterministic 400 even under the test mock — and createProvider
+ * is only reached for a genuinely-named override.
+ */
+export function resolvePerRequestProvider(
+  defaultProvider: LlmProvider,
+  provider: string | undefined,
+  model: string | undefined,
+  env?: Record<string, string | undefined>,
+  keyStore?: KeyLookup,
+): LlmProvider {
+  if (!provider && !model) return defaultProvider
+  if (!provider) throw new ChatRequestError(400, 'BadRequest', 'model requires a provider')
+  if (!isRealProviderId(provider)) throw new ChatRequestError(400, 'BadRequest', `Unknown provider '${provider}'`)
+  if (model && !CATALOG[provider].models.some(m => m.id === model)) {
+    throw new ChatRequestError(400, 'BadRequest', `Unknown model '${model}' for provider '${provider}'`)
+  }
+  try {
+    // A genuinely-named provider/model: build a throwaway provider for THIS turn only.
+    // createProvider is fail-closed — missing key throws ProviderConfigError (never a mock
+    // in production), which we translate to a clean 400 NoKey below (never a 500, never the key).
+    return createProvider({ provider, ...(model ? { model } : {}), ...(env ? { env } : {}), ...(keyStore ? { keyStore } : {}) })
+  } catch (err) {
+    if (err instanceof ProviderConfigError) {
+      // "No API key" → NoKey; everything else (misconfig) → BadRequest. The message NEVER
+      // contains the key (createProvider never logs/embeds it), so it is safe to echo.
+      const noKey = /no api key|no key|key found|key configured/i.test(err.message)
+      throw new ChatRequestError(400, noKey ? 'NoKey' : 'BadRequest', noKey ? `No API key for provider ${provider}` : err.message)
+    }
+    throw err
+  }
+}
 
 /**
  * Sanitize + assemble the provider messages for an AKIS chat turn. SHARED by the
@@ -95,12 +186,24 @@ function assembleMessages(message: string, rawHistoryInput: unknown): ChatMsg[] 
  * uses the stream and falls back to /api/chat on any stream error / unsupported provider.
  */
 export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
-  app.post<{ Body: { message?: unknown; history?: unknown } }>('/api/chat', async (req, reply) => {
+  app.post<{ Body: { message?: unknown; history?: unknown; provider?: unknown; model?: unknown; effort?: unknown } }>('/api/chat', async (req, reply) => {
     const message = isStr(req.body?.message) ? req.body.message.trim() : ''
     if (!message) return reply.code(400).send({ error: 'message required', code: 'BadRequest' })
+    const provider = isStr(req.body?.provider) ? req.body.provider.trim() || undefined : undefined
+    const model = isStr(req.body?.model) ? req.body.model.trim() || undefined : undefined
+    const effort = isStr(req.body?.effort) ? req.body.effort.trim() || undefined : undefined
     const messages = assembleMessages(message, req.body?.history)
+    // Resolve the per-request provider FIRST so a bad provider/model/key is a clean 4xx (400
+    // BadRequest / 400 NoKey) — never a 502. Absent overrides → deps.provider, byte-identical.
+    let resolved: LlmProvider
     try {
-      const res = await deps.provider.chat({ system: AKIS_PERSONA, messages, maxTokens: CHAT_MAX_TOKENS })
+      resolved = resolvePerRequestProvider(deps.provider, provider, model, deps.env, deps.keyStore)
+    } catch (err) {
+      if (err instanceof ChatRequestError) return reply.code(err.status).send({ error: err.message, code: err.code })
+      throw err
+    }
+    try {
+      const res = await resolved.chat({ system: AKIS_PERSONA, messages, maxTokens: mapEffortToTokens(effort) })
       // Return the reply verbatim (trimmed). An empty reply is surfaced HONESTLY as '' so the
       // UI can show a real "empty reply" notice — never disguised as a friendly '…' answer.
       return reply.send({ reply: (res.text ?? '').trim() })
@@ -112,11 +215,24 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
   // POST /api/chat/stream — token-by-token SSE. Frames: `delta` ({text}) per chunk,
   // a terminal `done` ({reply}) carrying the full assembled reply (so the FE re-runs
   // spec detection on the authoritative text), or `error` ({message,code}) on failure.
-  app.post<{ Body: { message?: unknown; history?: unknown } }>('/api/chat/stream', async (req, reply) => {
+  app.post<{ Body: { message?: unknown; history?: unknown; provider?: unknown; model?: unknown; effort?: unknown } }>('/api/chat/stream', async (req, reply) => {
     const message = isStr(req.body?.message) ? req.body.message.trim() : ''
     if (!message) return reply.code(400).send({ error: 'message required', code: 'BadRequest' })
+    const provider = isStr(req.body?.provider) ? req.body.provider.trim() || undefined : undefined
+    const model = isStr(req.body?.model) ? req.body.model.trim() || undefined : undefined
+    const effort = isStr(req.body?.effort) ? req.body.effort.trim() || undefined : undefined
     const messages = assembleMessages(message, req.body?.history)
-    const chatReq = { system: AKIS_PERSONA, messages, maxTokens: CHAT_MAX_TOKENS }
+    // Resolve the per-request provider BEFORE hijacking the socket — a bad provider/model/key
+    // must surface as a clean JSON 4xx (the FE then falls back to /api/chat); after reply.hijack()
+    // only SSE frames can be written, so a 400 here would be impossible.
+    let resolvedProvider: LlmProvider
+    try {
+      resolvedProvider = resolvePerRequestProvider(deps.provider, provider, model, deps.env, deps.keyStore)
+    } catch (err) {
+      if (err instanceof ChatRequestError) return reply.code(err.status).send({ error: err.message, code: err.code })
+      throw err
+    }
+    const chatReq = { system: AKIS_PERSONA, messages, maxTokens: mapEffortToTokens(effort) }
 
     // Take over the socket and stream on reply.raw (mirrors the agent live stream).
     reply.hijack()
@@ -144,10 +260,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       // Use the streaming seam when the provider supports it; otherwise fall back to
       // chat() and emit its whole reply as a single delta (graceful degradation).
       let res
-      if (deps.provider.chatStream) {
-        res = await deps.provider.chatStream(chatReq, onDelta)
+      if (resolvedProvider.chatStream) {
+        res = await resolvedProvider.chatStream(chatReq, onDelta)
       } else {
-        res = await deps.provider.chat(chatReq)
+        res = await resolvedProvider.chat(chatReq)
         onDelta((res.text ?? ''))
       }
       // Prefer the assembled stream text; fall back to the result text (single-shot path).

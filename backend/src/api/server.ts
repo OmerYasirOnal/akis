@@ -372,7 +372,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   })
   registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env })
   registerAnalyticsRoutes(app, { stats })
-  registerChatRoutes(app, { provider: services.provider })
+  // Thread env + keyStore so the chat route can resolve a DIFFERENT provider/model PER
+  // REQUEST (the model picker), fail-closed like createProvider. Absent any override every
+  // chat turn uses services.provider unchanged. CHAT-ONLY: builds keep their workflow bindings.
+  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}) })
   // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
   // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
   // them the route is never registered (404) and there is no behavior change when RAG off.

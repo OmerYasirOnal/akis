@@ -1,11 +1,14 @@
 import { useState, useEffect, useRef, type FormEvent, type ReactNode } from 'react'
-import type { ApiClient } from '../api/client.js'
+import type { ApiClient, ProviderInfo, ChatOverrides } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { Markdown } from '../components/Markdown.js'
 import { extractBuildSpec, hasTruncatedSpec, extractSuggestions } from './buildSpec.js'
 import { SpecCard } from './SpecCard.js'
 import { useSmoothText } from './useSmoothText.js'
+import { ModelChip, type Effort } from './ModelChip.js'
+import { ModelPicker, type ModelSelection } from './ModelPicker.js'
+import { loadModelPref, saveModelPref, type ModelPref } from './modelPref.js'
 import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } from './akisThread.js'
 
 /**
@@ -110,6 +113,15 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
   })
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  // ── Model picker (CHAT-ONLY visibility + selection) ──
+  // The user's saved provider/model/effort preference (safe-parsed from localStorage).
+  const [modelPref, setModelPref] = useState<ModelPref>(() => loadModelPref())
+  // The provider catalog + serving mode, fetched ONCE on mount (mode is session-global, so
+  // it is cached here and the chip reads it without refetching per render). Both degrade
+  // gracefully: a failed fetch just hides the chip (the chat itself is unaffected).
+  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  const [mode, setMode] = useState<'live' | 'demo' | null>(null)
+  const [pickerOpen, setPickerOpen] = useState(false)
   // The last user message we tried to send — drives Retry (resends it, untouched).
   const lastUser = useRef<string | undefined>(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -123,6 +135,28 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
 
   // Autofocus the composer on mount so the user can start typing immediately.
   useEffect(() => { inputRef.current?.focus() }, [])
+
+  // Fetch the provider catalog + serving mode ONCE on mount (mode is session-global, cached).
+  // Both are best-effort: any failure (offline, route absent in a test) just leaves the chip
+  // hidden — the conversation never depends on them. If the saved pref has no provider yet,
+  // SEED it from the first provider's defaultModel so the chip shows a concrete model.
+  useEffect(() => {
+    let alive = true
+    void api.listProviders()
+      .then(raw => {
+        if (!alive) return
+        // Defensive: only ever trust an actual array (a misbehaving mock/route could return
+        // a non-array, and `first.id` on undefined would crash the whole chat).
+        const list = Array.isArray(raw) ? raw : []
+        setProviders(list)
+        const first = list[0]
+        if (!first) return
+        setModelPref(prev => (prev.provider ? prev : { ...prev, provider: first.id, model: first.defaultModel }))
+      })
+      .catch(() => {/* chip simply stays hidden */})
+    void api.health().then(h => { if (alive && (h?.mode === 'live' || h?.mode === 'demo')) setMode(h.mode) }).catch(() => {/* mode badge omitted */})
+    return () => { alive = false }
+  }, [api])
 
   // Auto-scroll to the latest message/card — UNLESS the user scrolled up to read history.
   useEffect(() => {
@@ -156,6 +190,17 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
     })
   }
 
+  // The CHAT-ONLY model-picker overrides for a chat request. WARNING (SACRED): these are
+  // chat-only. They ride ONLY on api.chatWithAkis[Stream] below. They MUST NEVER be passed
+  // to onBuild()/startSession() or any build/workflow call — builds keep their workflow
+  // bindings, and leaking {provider, model, effort} into a build would corrupt that contract.
+  // Empty provider/model mean "AKIS default", so the body omits them (byte-identical request).
+  const chatOverrides = (): ChatOverrides => ({
+    ...(modelPref.provider ? { provider: modelPref.provider } : {}),
+    ...(modelPref.model ? { model: modelPref.model } : {}),
+    effort: modelPref.effort,
+  })
+
   // Send `text` to AKIS, STREAMING the reply into a live placeholder that updates as
   // deltas arrive. On any stream failure, fall back to the non-stream await path; only
   // if THAT also fails do we append an error ROW (never a faked AK reply). The history
@@ -180,7 +225,8 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
           return next
         })
       }
-      const { reply } = await api.chatWithAkisStream(text, history, onDelta)
+      // CHAT-ONLY overrides (see chatOverrides above): never forwarded to a build.
+      const { reply } = await api.chatWithAkisStream(text, history, onDelta, chatOverrides())
       finalize(reply)
     } catch (streamErr) {
       // Streaming failed (provider lacks it, a mid-stream drop, or an SSE `error` frame):
@@ -192,7 +238,8 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
         setMsgs(m => [...m, { role: 'error', content: errorText(streamErr) }])
       } else {
         try {
-          const { reply } = await api.chatWithAkis(text, history)
+          // Fallback non-stream call also carries the CHAT-ONLY overrides (never a build).
+          const { reply } = await api.chatWithAkis(text, history, chatOverrides())
           const clean = (reply ?? '').trim()
           setMsgs(m => clean
             ? [...m, { role: 'assistant', content: clean }]
@@ -299,6 +346,34 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
           </div>
         )
       })()}
+      {/* Visibility chip: show WHICH model + effort + mode is active near the composer.
+          Hidden until the provider catalog AND mode have loaded (best-effort fetches). */}
+      {(() => {
+        const active = providers.find(p => p.id === modelPref.provider)
+        if (!active || mode === null) return null
+        const modelLabel = active.models.find(m => m.id === modelPref.model)?.label ?? modelPref.model ?? t('chat.provider.akisDefault')
+        return (
+          <ModelChip
+            provider={active.label}
+            model={modelLabel}
+            effort={modelPref.effort}
+            mode={mode}
+            onClick={() => setPickerOpen(true)}
+          />
+        )
+      })()}
+      {pickerOpen && providers.length > 0 && (
+        <ModelPicker
+          providers={providers}
+          selected={modelPref as ModelSelection}
+          onSelect={(sel: ModelSelection) => {
+            const next: ModelPref = { provider: sel.provider, model: sel.model, effort: sel.effort as Effort }
+            setModelPref(next)
+            saveModelPref(next)
+          }}
+          onClose={() => setPickerOpen(false)}
+        />
+      )}
       <form className="flex gap-2" onSubmit={send} aria-busy={busy}>
         <input ref={inputRef} aria-label={t('akis.ask')} value={input} onChange={e => setInput(e.target.value)} placeholder={t('akis.ask')}
           className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none" />
