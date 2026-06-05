@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { Orchestrator, AlreadyPushedError } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
@@ -44,9 +44,10 @@ describe('Orchestrator — chat-approved spec seed (P0-1: single spec approval)'
     const seed = { title: 'Minimal Todo', body: '# Minimal Todo\nAdd, list, complete todos.' }
     const s = await orch.start({ idea: seed.body, spec: seed })
     // The pipeline opens ALREADY at spec-approved (building), with NO second human click needed.
+    // start()'s RETURN VALUE is the pre-kick snapshot; the auto-kicked run advances the STORE
+    // concurrently, so stored.status is asserted via waitFor at the end, not read racily here.
     expect(s.status).toBe('building')
     const stored = (await services.store.get(s.id))!
-    expect(stored.status).toBe('building')
     // The seeded spec is AUTHORITATIVE (used as-is, not re-authored by Scribe).
     expect(stored.spec).toEqual(seed)
     // Gate 1 is genuinely satisfied: a real branded ApprovalToken is persisted (still minted
@@ -57,19 +58,36 @@ describe('Orchestrator — chat-approved spec seed (P0-1: single spec approval)'
     const gates = services.bus.recent(s.id).filter(e => e.kind === 'gate' && (e as { gate: string }).gate === 'spec_approval')
     expect(gates.some(e => (e as { state: string }).state === 'awaiting')).toBe(false)
     expect(gates.some(e => (e as { state: string }).state === 'satisfied')).toBe(true)
+    // Let the auto-kicked run settle so its async work never leaks into another test.
+    await vi.waitFor(async () => expect((await services.store.get(s.id))!.status).toBe('awaiting_push_confirm'))
   })
 
-  it('a seed-started session runs straight to verified+push without any approve() click (Proto reachable)', async () => {
+  it('a seed-started session runs to verified+push with NO further call — start() ITSELF kicks the run (the SpecCard click is the single human action)', async () => {
     const { orch, services } = makeOrch()
     const seed = { title: 'Todo', body: '# Todo\nThe app.' }
     const s = await orch.start({ idea: seed.body, spec: seed })
-    // No orch.approve() call — the chat-approved seed already satisfied Gate 1.
-    await orch.runToVerification(s.id)
+    expect(s.status).toBe('building')
+    // Deliberately NO runToVerification() here — this pins the server-side auto-kick.
+    // Caught LIVE: without it nothing ever ran the pipeline (the FE's only api.run caller is
+    // the legacy in-pipeline gate card a seeded start never shows) and every chat build
+    // wedged at 'building' forever.
+    await vi.waitFor(async () => expect((await services.store.get(s.id))!.status).toBe('awaiting_push_confirm'))
     const after = (await services.store.get(s.id))!
     expect(isVerified(after)).toBe(true)
-    expect(after.status).toBe('awaiting_push_confirm')
     const done = await orch.confirmPush(s.id)
     expect(done.status).toBe('done')
+  })
+
+  it('a second concurrent run is refused FAST (in-flight guard → WrongStatusError/409), never a double Proto run', async () => {
+    const { orch } = makeOrch()
+    const s = await orch.start({ idea: 'build a todo web app' })
+    await orch.approve(s.id)
+    const first = orch.runToVerification(s.id)
+    // The guard is set synchronously before the first await, so a concurrent second call is
+    // rejected immediately — not minutes later on an optimistic-lock conflict after double
+    // token spend.
+    await expect(orch.runToVerification(s.id)).rejects.toThrow(/already in flight/)
+    await expect(first).resolves.toMatchObject({ status: 'awaiting_push_confirm' })
   })
 
   it('an idea-only start is UNCHANGED: Scribe runs and the awaiting_spec_approval gate still emits', async () => {

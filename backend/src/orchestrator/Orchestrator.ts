@@ -94,6 +94,25 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'session', status: 'failed', agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
   }
 
+  /** Kick the build pipeline FIRE-AND-FORGET (the seeded-start auto-run). Failures must land in
+   *  the session + bus — the FE is SSE-driven and there is no awaiting HTTP caller to carry the
+   *  error — never vanish as an unhandled rejection. Known pipeline failures already emitFailed
+   *  before throwing; this catch covers the rest (provider/network/store errors) and moves a
+   *  still-'building' session to 'failed' so the UI can offer retry instead of waiting forever. */
+  private kickRun(id: string): void {
+    void this.runToVerification(id).catch(async (err: unknown) => {
+      const msg = err instanceof Error ? err.message : String(err)
+      this.s.bus.emit({ kind: 'error', message: msg, code: 'RunFailed', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      try {
+        const cur = await this.s.store.get(id)
+        if (cur && cur.status === 'building') {
+          await this.s.store.update(id, { status: 'failed' }, cur.version)
+          this.emitFailed(id)
+        }
+      } catch { /* the bus error above stays the last word — never throw from a forgotten promise */ }
+    })
+  }
+
   /** Assemble the typed read view AKIS dispatches each agent with (F2-AC16/AC17).
    *  It carries data only — no gate capability — so a dispatched agent can read
    *  context but cannot reach a gate through it. */
@@ -157,7 +176,15 @@ export class Orchestrator {
       const spec = { title: input.spec.title, body: input.spec.body }
       session = await this.s.store.update(id, { spec, status: 'awaiting_spec_approval' }, session.version)
       this.narrate(id, 'Using the spec you approved in chat — no second approval needed.')
-      return await this.mintSpecApproval(id, spec, session.version)
+      const approved = await this.mintSpecApproval(id, spec, session.version)
+      // The SpecCard's "Approve & Build" is the SINGLE human action for BOTH the gate and the
+      // run (#124 collapsed the separate Approve click) — so the RUN must be kicked HERE,
+      // server-side. Fire-and-forget: awaiting it would hold the POST /sessions response open
+      // for the whole multi-minute pipeline. Caught LIVE: without this kick NOBODY starts the
+      // run — the FE's only api.run caller is the legacy in-pipeline gate card, which a
+      // seeded start never shows — so every chat build wedged at 'building' forever.
+      this.kickRun(id)
+      return approved
     }
 
     // Edge (advisory): consult any custom agents before drafting the spec. No-op
@@ -239,7 +266,22 @@ export class Orchestrator {
     return session
   }
 
+  /** Session ids with a pipeline run currently in flight — the synchronous check-and-set in
+   *  runToVerification() makes a concurrent second run (seeded-start auto-kick + a stray
+   *  POST /run, or two parallel POST /run) fail FAST with a 409 instead of running Proto twice
+   *  and only colliding later on the store's optimistic lock (after double token spend). */
+  private readonly inFlightRuns = new Set<string>()
+
   async runToVerification(id: string): Promise<SessionState> {
+    // Check-and-set BEFORE the first await — race-tight under Node's single-threaded turns.
+    if (this.inFlightRuns.has(id)) throw new WrongStatusError('build', 'building (a run is already in flight)')
+    this.inFlightRuns.add(id)
+    try {
+      return await this.runPipeline(id)
+    } finally { this.inFlightRuns.delete(id) }
+  }
+
+  private async runPipeline(id: string): Promise<SessionState> {
     let session = await this.s.store.get(id)
     if (!session) throw new Error(`session ${id} not found`)
     if (session.status !== 'building') throw new WrongStatusError('build', session.status)

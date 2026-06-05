@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 import { buildServer } from '../../src/api/server.js'
@@ -59,14 +59,19 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     expect(done.json().status).toBe('done')
   })
 
-  it('P0-1: a spec-seeded POST /sessions opens already spec-approved (building) with NO second approve, and runs to done', async () => {
+  it('P0-1: a spec-seeded POST /sessions opens already spec-approved (building) and runs to done with NO /approve AND NO /run call', async () => {
     const { app } = makeApp({ passing: true })
     const seed = { title: 'Todo', body: '# Todo\nThe app.' }
     const created = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: seed.body, spec: seed } })).json()
     // The chat-approved seed satisfied Gate 1 server-side: the session is ALREADY building.
     expect(created.status).toBe('building')
-    // No /approve click — the human approved once at the chat SpecCard. Run goes straight through.
-    expect((await app.inject({ method: 'POST', url: `/sessions/${created.id}/run` })).statusCode).toBe(200)
+    // No /approve AND no /run — the chat SpecCard click is the SINGLE human action; the server
+    // kicks the pipeline itself (caught LIVE: relying on the FE's legacy /run caller wedged
+    // every seeded build at 'building' forever). Poll until the auto-run parks at the push gate.
+    await vi.waitFor(async () => {
+      const cur = (await app.inject({ method: 'GET', url: `/sessions/${created.id}` })).json()
+      expect(cur.status).toBe('awaiting_push_confirm')
+    })
     const done = await app.inject({ method: 'POST', url: `/sessions/${created.id}/confirm` })
     expect(done.statusCode).toBe(200)
     expect(done.json().status).toBe('done')
