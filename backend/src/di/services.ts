@@ -1,7 +1,9 @@
 import type { SessionStore } from '../store/SessionStore.js'
 import { EventBus } from '../events/bus.js'
 import { MockGitHubAdapter, type GitHubAdapter } from './MockGitHubAdapter.js'
-import { selectGitHubAdapter } from './selectGitHubAdapter.js'
+import { selectGitHubAdapter, parseOwnerRepo } from './selectGitHubAdapter.js'
+import { RealGitHubAdapter } from './RealGitHubAdapter.js'
+import type { GitHubConnectionStore } from '../keys/GitHubConnectionStore.js'
 import { DeterministicValidator } from '../validator/DeterministicValidator.js'
 import { CriticAgent } from '../orchestrator/subagents/critic/CriticAgent.js'
 import { ScribeAgent } from '../orchestrator/subagents/ScribeAgent.js'
@@ -36,6 +38,13 @@ export interface OrchestratorServices {
    *  NODE_ENV=test); the opt-in RealGitHubAdapter when AKIS_GITHUB_PUSH_TOKEN +
    *  AKIS_GITHUB_PUSH_REPO are both set. Reached only through the ApprovedPush gate. */
   github: GitHubAdapter
+  /** TIGHTEN-ONLY per-user push override. When the session owner has a live, decryptable
+   *  GitHub connection (token + target repo), this resolves a RealGitHubAdapter bound to
+   *  THAT user's repo; otherwise undefined ⇒ confirmPush falls back to the shared `github`
+   *  (env token → mock) UNCHANGED. Absent entirely (no connections store / NODE_ENV=test)
+   *  ⇒ today's behavior byte-for-byte. It only changes WHICH already-gated adapter is used,
+   *  never whether/how a push is authorized. */
+  githubFor?: (ownerId: string) => GitHubAdapter | undefined
   validator: DeterministicValidator
   critic: CriticAgent
   scribe: ScribeAgent
@@ -168,6 +177,11 @@ export interface BuildServicesOptions {
    *  + repo target). Only meaningful when `rag` is on. Absent ⇒ MockRepoReader (default
    *  OFF, zero behavior change). */
   env?: Record<string, string | undefined>
+  /** Per-user GitHub connection store (TIGHTEN-ONLY push override). When present AND env is
+   *  threaded AND NODE_ENV!=='test', buildServices wires `githubFor` so confirmPush prefers
+   *  the session owner's own connected repo. Absent ⇒ `githubFor` stays undefined and the
+   *  shared env/mock adapter is used exactly as today. */
+  connections?: GitHubConnectionStore
   /** Ed25519 signer for the Build Passport. ADDITIVE — when present, a verified build signs
    *  a durable passport over the already-minted VerifyToken facts. Absent ⇒ no passport
    *  (default boot unchanged). The PRIVATE key is held only on the signer (never logged/returned). */
@@ -187,6 +201,17 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   // byte identical to today). Token read here, NEVER logged/returned. selectGitHubAdapter
   // falls back to the mock on any misconfig so a bad opt-in can never break boot.
   const github: GitHubAdapter = selectGitHubAdapter(opts.env, mockGithub)
+  // ── Per-user push override (TIGHTEN-ONLY) ───────────────────────────────────────
+  // When a connections store is wired AND env is threaded AND NODE_ENV!=='test', resolve a
+  // per-owner adapter from the owner's encrypted connection (token + target repo). Returns
+  // undefined for any owner without a usable connection — confirmPush then falls back to the
+  // shared `github` (env→mock) UNCHANGED. NEVER throws (a bad/undecryptable connection ⇒
+  // undefined). Under NODE_ENV=test (like selectGitHubAdapter) `githubFor` stays undefined,
+  // so no real adapter is ever constructed in tests.
+  const githubFor: ((ownerId: string) => GitHubAdapter | undefined) | undefined =
+    opts.connections && opts.env && opts.env.NODE_ENV !== 'test'
+      ? (ownerId: string) => buildUserAdapter(opts.connections!, ownerId, opts.env!)
+      : undefined
   // Verifier selection: explicit injected runner > real (opt-in) > mock (fail-closed
   // default). The runner→Verifier construction has ONE home (verifier.ts/resolveVerifier);
   // there is no importable `createVerifier`, so no other module can wrap a fake runner
@@ -323,6 +348,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     store: opts.store,
     bus,
     github,
+    ...(githubFor ? { githubFor } : {}),
     validator: new DeterministicValidator(),
     // P3-AGENT-1B: the critic's selected skills are folded onto BOTH its prompts
     // internally. No critic skills (the default) ⇒ [] ⇒ both prompts byte-identical.
@@ -347,6 +373,30 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     ...(opts.passportSigner ? { passportSigner: opts.passportSigner } : {}),
     ...knowledgeWiring,
   }
+}
+
+/** Resolve a per-OWNER RealGitHubAdapter from the owner's encrypted connection, or undefined
+ *  when the owner has no usable connection (no token / undecryptable / unparseable repo). Never
+ *  throws — the caller falls back to the shared env/mock adapter. The token is read here and
+ *  handed to the adapter as a Bearer credential; it is NEVER logged or surfaced. */
+function buildUserAdapter(
+  connections: GitHubConnectionStore,
+  ownerId: string,
+  env: Record<string, string | undefined>,
+): GitHubAdapter | undefined {
+  const token = connections.getToken(ownerId)
+  if (!token) return undefined
+  const repo = connections.status(ownerId)?.repo
+  const target = parseOwnerRepo(repo)
+  if (!target) return undefined
+  return new RealGitHubAdapter({
+    owner: target.owner,
+    repo: target.repo,
+    token,
+    // GH Enterprise base is a server-wide concern (shared with the env adapter); the
+    // per-user override only changes the destination repo + credential.
+    ...(env.AKIS_GITHUB_PUSH_API_BASE?.trim() ? { apiBase: env.AKIS_GITHUB_PUSH_API_BASE.trim() } : {}),
+  })
 }
 
 /** What buildServices surfaces for the knowledge subsystem. The source/queue handles
