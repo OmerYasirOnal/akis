@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CodeBrowser } from './CodeBrowser.js'
@@ -50,6 +50,20 @@ describe('CodeBrowser', () => {
     expect(screen.getByText('console.log(x)')).toBeInTheDocument()
     const lines = screen.getByTestId('code-gutter').querySelectorAll('li')
     expect(lines).toHaveLength(2) // two content lines → two gutter numbers
+  })
+
+  it('copies the selected file content to the clipboard', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    // userEvent.setup() installs a real-ish clipboard (a read-only accessor), so assign via
+    // defineProperty(configurable) rather than Object.assign (which would throw on the getter).
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    renderI18n(<CodeBrowser files={files} />)
+    // Select src/index.ts (README.md sorts first by default), then copy its exact content.
+    const list = within(screen.getByRole('list', { name: /Generated code/i }))
+    await user.click(list.getByText('src/index.ts'))
+    await user.click(screen.getByRole('button', { name: 'Copy file' }))
+    expect(writeText).toHaveBeenCalledWith('export const x = 1\nconsole.log(x)')
   })
 
   it('renders an empty state when there are no files (no crash)', () => {

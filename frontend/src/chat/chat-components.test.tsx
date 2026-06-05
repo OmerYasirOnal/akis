@@ -204,4 +204,55 @@ describe('ChatStudio', () => {
     expect(screen.queryByLabelText('Autopilot')).toBeNull()
     expect(screen.getByLabelText(/ask akis/i)).toBeInTheDocument()
   })
+
+  // A plain assistant reply (NO akis-spec fence) → the plain-reply bubble, which carries the
+  // hover/focus-revealed "Copy reply" button (AssistantMessage is private, so we drive the
+  // full studio harness exactly like the spec-flow tests above).
+  const PLAIN_REPLY = 'Sure — I can help with that. Tell me a bit more about the app you want.'
+
+  it('shows a Copy reply button on a completed assistant bubble and copies the full reply', async () => {
+    const writeText = vi.fn((_text: string) => Promise.resolve())
+    Object.assign(navigator, { clipboard: { writeText } })
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: PLAIN_REPLY }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hello there{Enter}')
+    // The greeting bubble is itself a copyable plain reply, so wait for a SECOND Copy reply to
+    // appear (the answer), then click the last one and assert it carries the full reply text.
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Copy reply' }).length).toBeGreaterThanOrEqual(2))
+    const copyButtons = screen.getAllByRole('button', { name: 'Copy reply' })
+    await userEvent.click(copyButtons[copyButtons.length - 1]!)
+    await waitFor(() => expect(writeText).toHaveBeenCalledWith(PLAIN_REPLY))
+  })
+
+  it('does NOT add a Copy reply for the in-flight bubble while the reply is still streaming', async () => {
+    let resolveChat: ((r: Response) => void) | undefined
+    const fetchFn = vi.fn(async (path: string) => {
+      // Streaming fails → falls back to the non-stream /api/chat, which we keep PENDING so the
+      // turn is still in flight (busy) when we count the Copy reply buttons.
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return await new Promise<Response>(resolve => { resolveChat = resolve })
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    // Before sending, the greeting bubble already shows ONE Copy reply.
+    const beforeCount = screen.getAllByRole('button', { name: 'Copy reply' }).length
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hello there{Enter}')
+    // The turn is in flight (the thinking cue is up); the in-flight bubble gets NO Copy reply,
+    // so the count is unchanged (only the greeting's button is present).
+    await screen.findByText(/Thinking/i)
+    expect(screen.getAllByRole('button', { name: 'Copy reply' }).length).toBe(beforeCount)
+    // Resolve so the completed reply now adds its Copy reply (count grows).
+    resolveChat?.({ ok: true, status: 200, json: async () => ({ reply: PLAIN_REPLY }), text: async () => '' } as unknown as Response)
+    await waitFor(() => expect(screen.getAllByRole('button', { name: 'Copy reply' }).length).toBe(beforeCount + 1))
+  })
 })

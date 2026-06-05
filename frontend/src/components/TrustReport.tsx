@@ -2,8 +2,46 @@ import type { TestEvidence, ScenarioEvidence } from '@akis/shared'
 import type { CodeReviewState } from '../live/types.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
+import { CopyButton } from './CopyButton.js'
 
 type T = (k: StringKey) => string
+
+/**
+ * A deterministic, plain-text projection of the SAME facts the panel renders — counts, the
+ * DEMO flag, the critic verdict, and the named scenarios — so the copied digest carries no
+ * exposure beyond what's already on screen. The DEMO line keys off the `demo` PARAM (the same
+ * signal the badge uses, passed from `view.tests.demo`), NOT `evidence.demo` — they are
+ * different signals and the digest must match what the panel actually shows. Pure + unit-testable.
+ */
+export function evidenceDigest(evidence: TestEvidence, codeReview: CodeReviewState | undefined, demo: boolean | undefined, t: T): string {
+  // Recompute counts IDENTICALLY to the component body (keep these in lockstep).
+  const total = evidence.testsRun ?? 0
+  const failedCount = evidence.failure?.failedCount ?? evidence.scenarios.filter(s => !s.passed).length
+  const passedCount = Math.max(0, total - failedCount)
+
+  const lines: string[] = ['AKIS Trust evidence']
+  lines.push(`Tests: ${total}  Passed: ${passedCount}  Failed: ${failedCount}  Run time: ${evidence.durationMs}ms`)
+  if (demo) lines.push('[DEMO — simulated verification]')
+  if (codeReview) {
+    const parts = [
+      t(codeReview.approved ? 'trust.critic.approved' : 'trust.critic.rejected'),
+      `${codeReview.findings} ${t('trust.critic.findings')}`,
+    ]
+    if (codeReview.critical) parts.push(t('trust.critic.critical'))
+    parts.push(`${t('trust.critic.iteration')} ${codeReview.iteration}`)
+    lines.push(`Critic: ${parts.join(', ')}`)
+  }
+  if (evidence.scenarios.length > 0) {
+    lines.push('Scenarios:')
+    for (const s of evidence.scenarios) {
+      const suite = s.suite === 'bdd' ? t('trust.suite.bdd') : t('trust.suite.e2e')
+      // On a fail, append the structured reason or step (same precedence the rows use).
+      const detail = !s.passed ? (s.reason || s.step) : undefined
+      lines.push(`- [${s.passed ? 'PASS' : 'FAIL'}] (${suite}) ${s.name}${detail ? ` — ${detail}` : ''}`)
+    }
+  }
+  return lines.join('\n')
+}
 
 /**
  * Read-only TRUST REPORT — turns the bare "N tests" integer into the auditable evidence
@@ -46,14 +84,20 @@ export function TrustReport({ evidence, codeReview, demo }: {
     <div className="flex h-full flex-col gap-3 overflow-y-auto">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-200">{t('trust.title')}</h3>
-        {/* A simulated (mock-runner) verification is flagged PROMINENTLY — a Trust Report on a
-            demo run must say so, so a demo "✓" can never read as a real ≥1-test pass. */}
-        {demo && (
-          <span role="status" title={t('result.demo.title')}
-            className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
-            <span aria-hidden>⚠</span>{t('result.demo.badge')}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {/* A simulated (mock-runner) verification is flagged PROMINENTLY — a Trust Report on a
+              demo run must say so, so a demo "✓" can never read as a real ≥1-test pass. */}
+          {demo && (
+            <span role="status" title={t('result.demo.title')}
+              className="inline-flex items-center gap-1 rounded-md border border-amber-400/40 bg-amber-400/15 px-2 py-0.5 text-[11px] font-semibold text-amber-200">
+              <span aria-hidden>⚠</span>{t('result.demo.badge')}
+            </span>
+          )}
+          {/* Copy a plain-text digest of the SAME facts shown — only when evidence is present. */}
+          {evidence && (
+            <CopyButton text={evidenceDigest(evidence, codeReview, demo, t)} label={t('copy.evidence')} className="text-[10px]" />
+          )}
+        </div>
       </div>
 
       {!evidence ? (

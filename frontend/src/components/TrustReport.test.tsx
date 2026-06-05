@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import type { ReactElement } from 'react'
 import type { TestEvidence } from '@akis/shared'
 import { TrustReport } from './TrustReport.js'
@@ -116,6 +116,49 @@ describe('TrustReport', () => {
     renderI18n(<TrustReport evidence={passingEvidence} />)
     expect(screen.queryByRole('status')).toBeNull()
     expect(screen.queryByText(STRINGS.en['result.demo.badge'], { exact: false })).toBeNull()
+  })
+
+  describe('Copy evidence (plain-text digest)', () => {
+    it('copies a digest containing the counts and each scenario name', async () => {
+      const writeText = vi.fn((_text: string) => Promise.resolve())
+      Object.assign(navigator, { clipboard: { writeText } })
+      const review: CodeReviewState = { approved: true, findings: 0, critical: false, iteration: 1 }
+      renderI18n(<TrustReport evidence={passingEvidence} codeReview={review} />)
+      fireEvent.click(screen.getByRole('button', { name: STRINGS.en['copy.evidence'] }))
+      await waitFor(() => expect(writeText).toHaveBeenCalled())
+      const digest = writeText.mock.calls[0]![0] as string
+      expect(digest).toContain('Tests: 3')
+      expect(digest).toContain('Passed: 3')
+      expect(digest).toContain('User can sign up')
+      expect(digest).toContain('User can log in')
+      expect(digest).toContain('Homepage renders')
+      // Critic verdict line present.
+      expect(digest).toContain(STRINGS.en['trust.critic.approved'])
+    })
+
+    it('DEMO line keys off the demo PROP, not evidence.demo (true → present)', async () => {
+      const writeText = vi.fn((_text: string) => Promise.resolve())
+      Object.assign(navigator, { clipboard: { writeText } })
+      // passingEvidence has NO evidence.demo field — the DEMO line must come from the prop alone.
+      renderI18n(<TrustReport evidence={passingEvidence} demo />)
+      fireEvent.click(screen.getByRole('button', { name: STRINGS.en['copy.evidence'] }))
+      await waitFor(() => expect(writeText).toHaveBeenCalled())
+      expect(writeText.mock.calls[0]![0] as string).toContain('DEMO')
+    })
+
+    it('DEMO line absent when demo={false} (tracks the prop, not evidence.demo)', async () => {
+      const writeText = vi.fn((_text: string) => Promise.resolve())
+      Object.assign(navigator, { clipboard: { writeText } })
+      renderI18n(<TrustReport evidence={passingEvidence} demo={false} />)
+      fireEvent.click(screen.getByRole('button', { name: STRINGS.en['copy.evidence'] }))
+      await waitFor(() => expect(writeText).toHaveBeenCalled())
+      expect(writeText.mock.calls[0]![0] as string).not.toContain('DEMO')
+    })
+
+    it('shows no copy button when there is no evidence', () => {
+      renderI18n(<TrustReport />)
+      expect(screen.queryByRole('button', { name: STRINGS.en['copy.evidence'] })).toBeNull()
+    })
   })
 
   it('renders a <script>-in-a-reason as TEXT, never an executed node (XSS guard)', () => {

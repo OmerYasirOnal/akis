@@ -1,6 +1,8 @@
-import { memo, type ReactNode } from 'react'
+import { memo, isValidElement, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { useI18n } from '../i18n/I18nContext.js'
+import { CopyButton } from './CopyButton.js'
 
 /**
  * The SINGLE markdown renderer for the cosmic UI.
@@ -39,9 +41,7 @@ const COMPONENTS: Components = {
     }
     return <code className="rounded bg-white/[0.08] px-1.5 py-0.5 font-mono text-[0.85em] text-[#07D1AF]">{children}</code>
   },
-  pre: ({ children }) => (
-    <pre className="my-2 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60 p-3 font-mono text-slate-200">{children}</pre>
-  ),
+  pre: (props) => <PreBlock>{props.children}</PreBlock>,
   table: ({ children }) => (
     <div className="my-2 overflow-x-auto">
       <table className="w-full border-collapse text-sm">{children}</table>
@@ -49,6 +49,34 @@ const COMPONENTS: Components = {
   ),
   th: ({ children }) => <th className="border border-white/10 bg-white/[0.04] px-2 py-1 text-left font-semibold text-slate-100">{children}</th>,
   td: ({ children }) => <td className="border border-white/10 px-2 py-1 text-slate-200">{children}</td>,
+}
+
+/**
+ * Flatten a React node tree to its visible text. WHY the node tree and NOT the DOM: a fenced
+ * block's text is read straight from the ALREADY-ESCAPED React children (the <code> element's
+ * string child), never via innerHTML/textContent of a real node — so a `<script>` written inside
+ * a fence stays literal text in the copied payload, preserving the rehype-raw-free XSS guarantee.
+ */
+function nodeText(node: ReactNode): string {
+  if (node === null || node === undefined || typeof node === 'boolean') return ''
+  if (typeof node === 'string') return node
+  if (typeof node === 'number') return String(node)
+  if (Array.isArray(node)) return node.map(nodeText).join('')
+  if (isValidElement(node)) return nodeText((node.props as { children?: ReactNode }).children)
+  return ''
+}
+
+/** A fenced code block with a copy-overlay button (one per block). Pulled out so it can call
+ *  hooks (useI18n) and extract the block's text from the React children for copying. */
+function PreBlock({ children }: { children?: ReactNode }) {
+  const { t } = useI18n()
+  return (
+    // `relative` anchors the overlay; `pr-10` keeps the button off the code text.
+    <pre className="relative my-2 overflow-x-auto rounded-lg border border-white/10 bg-slate-950/60 p-3 pr-10 font-mono text-slate-200">
+      {children}
+      <CopyButton text={nodeText(children)} label={t('copy.codeBlock')} className="absolute right-2 top-2" />
+    </pre>
+  )
 }
 
 export const Markdown = memo(function Markdown({ content, className }: { content: string; className?: string }): ReactNode {
