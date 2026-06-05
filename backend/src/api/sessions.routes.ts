@@ -7,6 +7,8 @@ import type { WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { sseEvent, sseControl, sseComment } from './sse.js'
 import { verifyPassport } from '../verify/passport.js'
 import { buildTrustReport, renderTrustReportMarkdown } from '../report/trustReport.js'
+import type { UsageStorePort } from '../usage/UsageStore.js'
+import { checkQuota, type QuotaPolicy } from '../usage/quota.js'
 
 export interface SessionsDeps {
   orchestrator: Orchestrator
@@ -19,6 +21,12 @@ export interface SessionsDeps {
   /** Resolve the authenticated user id from a request (for per-user build history);
    *  returns undefined when unauthenticated. */
   userIdOf?: (req: FastifyRequest) => (string | undefined) | Promise<string | undefined>
+  /** Per-user token-quota PRE-CHECK (multi-tenant safety). When BOTH are injected, POST /sessions
+   *  refuses to START a build (429) for an owner over budget — BEFORE any orchestrator/provider
+   *  call. Absent (tests that don't inject) ⇒ no check (byte-identical). SACRED: a start-only
+   *  pre-check; an already-running session is never read or aborted. */
+  usage?: UsageStorePort
+  quota?: QuotaPolicy
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -111,6 +119,14 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     }
     try {
       const ownerId = await deps.userIdOf?.(req)
+      // Per-user token-quota PRE-CHECK (SACRED: start-only, fail-closed, never touches a gate or
+      // an in-flight run). Only when BOTH usage + quota are injected; budget 0 ⇒ unlimited via
+      // checkQuota's fast-path (no store read, byte-identical default). A blocked owner gets a
+      // clean 429 BEFORE orch.start — no orchestrator/provider call happens.
+      if (deps.usage && deps.quota) {
+        const decision = await checkQuota(deps.usage, deps.quota, ownerId)
+        if (!decision.allowed) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt })
+      }
       const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}) })
       if (orch !== orchestrator) bound.set(s.id, orch)
       return reply.code(201).send(s)

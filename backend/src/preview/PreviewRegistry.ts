@@ -145,6 +145,11 @@ export class PreviewRegistry {
 
   get(sessionId: string): PreviewEntry | undefined { return this.entries.get(sessionId) }
 
+  /** Count of LIVE preview child processes (operational health on /health + /api/ops). Static
+   *  previews have NO proc, so they are excluded — this is real load (dev servers holding ports),
+   *  not tracked entries. */
+  runningCount(): number { return this.procs.size }
+
   private set(e: PreviewEntry): PreviewEntry { this.entries.set(e.sessionId, e); this.deps.onStatus?.(e); return e }
 
   async start(sessionId: string, dir: string, type: AppType): Promise<PreviewEntry> {

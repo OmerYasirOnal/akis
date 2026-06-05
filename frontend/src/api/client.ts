@@ -26,8 +26,23 @@ export interface AuthUser { id: string; name: string; email: string }
 export interface SessionSummary { id: string; idea: string; status: string; verified: boolean }
 
 /** GET /health projection. `mode:'demo'` means the mock provider and/or mock verification
- *  is active — "verified" output is NOT from real tests; the FE surfaces a warning badge. */
-export interface HealthInfo { ok: boolean; persistence: 'postgres' | 'memory'; mode: 'live' | 'demo' }
+ *  is active — "verified" output is NOT from real tests; the FE surfaces a warning badge.
+ *  The operational signals (uptime/memory/active counts/db) are ADDITIVE + OPTIONAL so an
+ *  older server without them folds exactly as before (the badge logic only reads `mode`). */
+export interface HealthInfo {
+  ok: boolean
+  persistence: 'postgres' | 'memory'
+  mode: 'live' | 'demo'
+  uptimeSec?: number
+  memory?: { rssMb: number; heapUsedMb: number }
+  activeSessions?: number
+  livePreviews?: number
+  db?: 'ok' | 'degraded' | 'off'
+}
+
+/** GET /api/usage projection — the caller's token usage vs. their budget. `budget:0` means
+ *  UNLIMITED (single-operator dev): then `remaining:-1` (sentinel) and `resetAt:''`. */
+export interface UsageInfo { usedTokens: number; budget: number; remaining: number; resetAt: string }
 
 /** Per-agent activity counts for the analytics dashboard. */
 export interface AgentStat { agent: string; runs: number; ok: number }
@@ -96,6 +111,10 @@ export class ApiClient {
 
   /** Server health + serving mode (read once on load to surface the demo badge). */
   health(): Promise<HealthInfo> { return this.json<HealthInfo>('/health') }
+
+  /** The authenticated caller's token usage vs. their budget (drives the usage meter). 401 for
+   *  an anonymous caller; on a budgeted deployment this powers the "used / budget" indicator. */
+  usage(): Promise<UsageInfo> { return this.json<UsageInfo>('/api/usage') }
 
   /** `baseSessionId` (Phase B.5): seed the new build with a prior session's app so the
    *  agents EDIT it (merge semantics) instead of regenerating — the follow-up-changes flow.
