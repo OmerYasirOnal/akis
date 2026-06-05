@@ -17,17 +17,14 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENV_FILE="${AKIS_ENV_FILE:-$ROOT/backend/.env}"
 if [ -f "$ENV_FILE" ]; then echo "→ env: sourcing $ENV_FILE"; set -a; . "$ENV_FILE"; set +a; fi
 
-# No real provider key configured → fall back to the keyless mock demo.
-if [ -z "${AI_API_KEY:-}${ANTHROPIC_API_KEY:-}${OPENAI_API_KEY:-}${OPENROUTER_API_KEY:-}${GOOGLE_API_KEY:-}${GEMINI_API_KEY:-}" ]; then
-  export AKIS_ALLOW_MOCK="${AKIS_ALLOW_MOCK:-1}"
-fi
+# REAL BY DEFAULT (owner decision 2026-06-05: "artık mock olmasın"). The provider key
+# may live in the ENCRYPTED KEYSTORE (Settings → Provider keys), which a shell check can
+# NEVER see — so dev.sh must not guess keylessness from env vars (that silently forced
+# mock + demo-verify even though the real key was present; observed live). Mock is now
+# an EXPLICIT opt-in only: AKIS_ALLOW_MOCK=1 ./scripts/dev.sh (true keyless first run).
+# Without any key anywhere the server fails closed with a clear message — honest, not fake.
 export AKIS_RAG="${AKIS_RAG:-1}"
-# REAL BY DEFAULT (owner decision 2026-06-05: "artık mock olmasın"): with a real key,
-# verification is the REAL boot-smoke (boots the app, probes it). Demo-verify is an
-# EXPLICIT opt-in only — never a silent default.
-if [ -z "${AKIS_ALLOW_MOCK:-}" ]; then
-  export AKIS_REAL_TESTS="${AKIS_REAL_TESTS:-1}"
-fi
+export AKIS_REAL_TESTS="${AKIS_REAL_TESTS:-1}"
 export AKIS_DEMO_VERIFY="${AKIS_DEMO_VERIFY:-}" 
 export NODE_ENV="${NODE_ENV:-development}"          # never 'test' (that forces the mock)
 export PORT="${PORT:-3000}"
