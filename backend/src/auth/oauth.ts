@@ -71,23 +71,74 @@ export function verifyState(state: string, secret: string, now = Math.floor(Date
   } catch { return undefined }
 }
 
-/** The provider authorize URL to redirect the browser to. */
-export function authorizeUrl(provider: OAuthProviderId, clientId: string, redirectUri: string, state: string): string {
+// ── CONNECT-state: HMAC-signed, carries the userId + repo target (CSRF + identity). ──
+// The browser round-trips github.com → AKIS on the callback; under SameSite=Strict the
+// session cookie is DROPPED, so the cookie alone cannot identify the user. We therefore
+// bind the userId AND the repo INSIDE the MAC'd body — neither can be swapped/tampered
+// without invalidating the signature. This is the SOLE, UNFORGEABLE identity/CSRF/target
+// binding. Same envelope/secret as signState. TTL is tight (≤600s) to bound replay (there
+// is no single-use nonce store — deferred).
+export function signConnectState(userId: string, repo: string, secret: string, ttlSeconds = 600, now = Math.floor(Date.now() / 1000)): string {
+  const body = b64({ u: userId, r: repo, n: randomBytes(8).toString('hex'), exp: now + ttlSeconds })
+  return `${body}.${mac(body, secret)}`
+}
+
+export function verifyConnectState(state: string, secret: string, now = Math.floor(Date.now() / 1000)): { userId: string; repo: string } | undefined {
+  const parts = state.split('.')
+  if (parts.length !== 2) return undefined
+  const [body, sig] = parts as [string, string]
+  const expected = mac(body, secret)
+  const a = Buffer.from(sig), b = Buffer.from(expected)
+  if (a.length !== b.length || !timingSafeEqual(a, b)) return undefined
+  try {
+    const o = JSON.parse(Buffer.from(body, 'base64url').toString('utf8')) as { u?: string; r?: string; exp?: number }
+    if (typeof o.exp !== 'number' || o.exp < now) return undefined
+    if (typeof o.u !== 'string' || !o.u || typeof o.r !== 'string' || !o.r) return undefined
+    return { userId: o.u, repo: o.r }
+  } catch { return undefined }
+}
+
+/** The scope a per-user CONNECT requires — branch+PR push needs write to the target repo.
+ *  (Login uses the narrower DEFS.github.scope; the two flows share the same GitHub app.) */
+export const githubConnectScope = 'repo'
+
+/** The provider authorize URL to redirect the browser to. `scopeOverride` is used ONLY by
+ *  the connect route (to request the broader `repo` scope); it DEFAULTS to the provider's
+ *  login scope so the existing login authorize call is byte-identical. */
+export function authorizeUrl(provider: OAuthProviderId, clientId: string, redirectUri: string, state: string, scopeOverride?: string): string {
   const def = DEFS[provider]
-  const q = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, scope: def.scope, state, response_type: 'code' })
+  const scope = scopeOverride ?? def.scope
+  const q = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri, scope, state, response_type: 'code' })
   if (provider === 'github') q.set('allow_signup', 'true')
   return `${def.authorizeUrl}?${q.toString()}`
 }
 
-/** Exchange an auth code for an access token. */
-export async function exchangeCode(provider: OAuthProviderId, args: { code: string; clientId: string; clientSecret: string; redirectUri: string }, http: HttpFetch): Promise<string> {
+/** Exchange an auth code for an access token + the granted scopes. Returns `{token, scopes}`:
+ *  the scope string GitHub returns (space- or comma-delimited) is parsed to string[], FAIL-
+ *  CLOSED to [] when absent (never throws on a missing scope). Neither token nor scope is
+ *  ever logged. */
+export async function exchangeCode(provider: OAuthProviderId, args: { code: string; clientId: string; clientSecret: string; redirectUri: string }, http: HttpFetch): Promise<{ token: string; scopes: string[] }> {
   const def = DEFS[provider]
   const body = new URLSearchParams({ client_id: args.clientId, client_secret: args.clientSecret, code: args.code, redirect_uri: args.redirectUri, grant_type: 'authorization_code' }).toString()
   const res = await http(def.tokenUrl, { method: 'POST', headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body })
   if (!res.ok) throw new Error(`token exchange failed (${res.status})`)
-  const json = (await res.json()) as { access_token?: string }
+  const json = (await res.json()) as { access_token?: string; scope?: string }
   if (!json.access_token) throw new Error('no access_token in token response')
-  return json.access_token
+  const scopes = String(json.scope ?? '').split(/[ ,]+/).filter(Boolean)
+  return { token: json.access_token, scopes }
+}
+
+/** Fetch the GitHub `login` (the @handle) for display on the connection card. A dedicated
+ *  helper rather than mutating fetchProfile (which folds `login` into the normalized `name`
+ *  and is shared by the login path). Token-free errors; returns '' on any failure. */
+export async function fetchGitHubLogin(accessToken: string, http: HttpFetch): Promise<string> {
+  const auth = { authorization: `Bearer ${accessToken}`, accept: 'application/json', 'user-agent': 'akis-studio' }
+  try {
+    const u = (await (await http('https://api.github.com/user', { headers: auth })).json()) as { login?: string }
+    return typeof u.login === 'string' ? u.login : ''
+  } catch {
+    return ''
+  }
 }
 
 /** Fetch + normalize the user's profile. */

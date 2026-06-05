@@ -4,6 +4,7 @@ import { join, dirname, resolve } from 'node:path'
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
+import { JsonFileGitHubConnectionStore, GitHubConnectionMemoryStore, type GitHubConnectionStore } from '../keys/GitHubConnectionStore.js'
 import { randomBytes } from 'node:crypto'
 import { registerProviderRoutes } from './providers.routes.js'
 import { registerSessionRoutes } from './sessions.routes.js'
@@ -28,6 +29,7 @@ import { StatsCollector } from '../analytics/StatsCollector.js'
 import { registerChatRoutes } from './chat.routes.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
+import { registerGitHubConnectRoutes } from './githubConnect.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels, workflowToAgentSkills, workflowCustomAgents } from '../workflow/resolve.js'
@@ -53,6 +55,10 @@ import { nextTs } from '../events/clock.js'
 
 export interface ServerDeps {
   keyStore: KeyStore
+  /** Per-user GitHub connection store. Built in start() (where the master key is in scope,
+   *  exactly like keyStore) and threaded here; tests/host-injection get an in-memory default
+   *  in buildServer. Holds each user's ENCRYPTED GitHub token + their target repo. */
+  connections?: GitHubConnectionStore
   env?: Record<string, string | undefined>
   /** Test/host injection of the orchestrator stack. Built from defaults if omitted. */
   services?: OrchestratorServices
@@ -132,6 +138,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // without a key, createProvider still throws (no silent mock).
   const useMock = flag(env.AKIS_ALLOW_MOCK) && !hasRealProviderKey(env, deps.keyStore)
 
+  // Per-user GitHub connection store. start() builds the encrypted JsonFile store (where the
+  // master key is in scope); tests/host-injection get an in-memory default here. Threaded into
+  // BOTH buildServices calls so the per-owner push override (`githubFor`) is wired identically
+  // on the default orchestrator AND every per-workflow orchestrator.
+  const connections: GitHubConnectionStore = deps.connections ?? new GitHubConnectionMemoryStore()
+
   // Build Passport signer (the durable, third-party-verifiable proof of a verified build).
   // From AKIS_PASSPORT_PRIVATE_KEY when configured (Ed25519 PKCS#8 PEM); otherwise a clearly
   // DEV keypair persisted OUTSIDE the repo (AKIS_PASSPORT_KEY_PATH, default ~/.config/akis/
@@ -194,6 +206,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Thread env unconditionally: the push-adapter selection (P1-CORE-2) reads
       // AKIS_GITHUB_PUSH_TOKEN/REPO here regardless of RAG, and NODE_ENV gates the mock.
       env,
+      // Per-user GitHub push override (TIGHTEN-ONLY): a session owner's own connected repo
+      // is preferred when present; absent it, the env/mock adapter is used unchanged.
+      connections,
       // Opt-in REAL verification: with the boot adapter, Trace BOOTS the produced app and
       // probes the running server (boot-smoke, PR2) — "verified" means it genuinely served.
       ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true, verifyBoot: lazyVerifyBoot } : {}),
@@ -280,6 +295,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // Thread env unconditionally so the push-adapter selection (P1-CORE-2) sees
     // AKIS_GITHUB_PUSH_TOKEN/REPO + NODE_ENV regardless of RAG.
     env,
+    // Same per-user GitHub override on per-workflow orchestrators (one shared store).
+    connections,
     ...(useMock ? { provider: new MockProvider() } : {}),
     ...(demoVerify ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     agentModels: workflowToAgentModels(wf),
@@ -371,6 +388,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(trustedOrigin ? { publicBaseUrl: trustedOrigin } : {}),
   })
   registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env })
+  // Per-user GitHub connection (connect/status/disconnect). Reuses the SAME userIdOf closure
+  // (revocation-aware) so only the authenticated owner reaches their own connection. The
+  // connect token is stored in `connections` (encrypted) — NEVER as a session credential.
+  registerGitHubConnectRoutes(app, { connections, secret: authSecret, cookie, env, userIdOf })
   registerAnalyticsRoutes(app, { stats })
   // Thread env + keyStore so the chat route can resolve a DIFFERENT provider/model PER
   // REQUEST (the model picker), fail-closed like createProvider. Absent any override every
@@ -576,6 +597,13 @@ export async function start(): Promise<void> {
   // Default OUTSIDE the repo so an encrypted key blob can never be committed.
   const file = process.env.AI_KEY_STORE_PATH ?? join(homedir(), '.config', 'akis', 'keys.json')
   const keyStore = new JsonFileKeyStore(file, master)
+  // Per-user GitHub connection store, built HERE (where `master` is in scope, exactly like the
+  // KeyStore). Same .config/akis dir as the KeyStore default (NOT ~/.akis); 0600 encrypted at
+  // rest. Under NODE_ENV=test, the in-memory store (no test writes the real .config/akis).
+  const connectionsFile = process.env.AKIS_GITHUB_CONN_STORE_PATH ?? join(homedir(), '.config', 'akis', 'github-connections.json')
+  const connections: GitHubConnectionStore = process.env.NODE_ENV !== 'test'
+    ? new JsonFileGitHubConnectionStore(connectionsFile, master)
+    : new GitHubConnectionMemoryStore()
   // The active embedding dimension (mirrors selectEmbeddingProvider: keyless/test → 256 local;
   // an OpenAI key → the catalog model's dim) sizes the guarded real pgvector(N) column so it
   // matches what is actually stored. Reads env + the SAME KeyStore the embedder consults.
@@ -600,6 +628,7 @@ export async function start(): Promise<void> {
   try { await reclaimWorkspaces() } catch (e) { console.error('preview: workspace reclaim failed:', (e as Error).message) } // eslint-disable-line no-console
   const app = buildServer({
     keyStore,
+    connections,
     persistence: pg ? 'postgres' : 'memory',
     ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, vectorStore: pg.vectorStore, bm25: pg.bm25 } : {}),
   })

@@ -54,6 +54,18 @@ export interface ProviderInfo {
   updatedAt?: string
 }
 
+/** The caller's per-user GitHub connection status. `configured` = the server has the GitHub
+ *  OAuth app AND encryption configured (so a Connect button would actually work). When
+ *  `connected`, the username/repo/scopes/connectedAt are present — but NEVER the token. */
+export interface GitHubConnectionStatus {
+  connected: boolean
+  configured: boolean
+  username?: string
+  repo?: string
+  scopes?: string[]
+  connectedAt?: string
+}
+
 /** Typed error for non-2xx responses (gate 409s carry a `code`; workflow 400s carry the
  *  `errors[]` field-level validation list from validateWorkflowConfig). */
 export class ApiError extends Error {
@@ -155,6 +167,15 @@ export class ApiClient {
   getOAuthProviders(): Promise<{ providers: string[] }> { return this.json('/oauth/providers') }
   /** Full-page redirect target to begin an OAuth flow. */
   oauthAuthorizeUrl(provider: string): string { return `${this.baseUrl}/oauth/${provider}/authorize` }
+
+  // ── Per-user GitHub connection (deliver gated builds to a repo the USER owns) ──
+  /** Full-page redirect target to begin the GitHub connect flow for a target repo. The
+   *  token is never in any URL — only the (validated) "owner/name" target. */
+  githubConnectUrl(repo: string): string { return `${this.baseUrl}/auth/github/connect?repo=${encodeURIComponent(repo)}` }
+  /** The caller's GitHub connection status — never includes the token. */
+  githubStatus(): Promise<GitHubConnectionStatus> { return this.json<GitHubConnectionStatus>('/auth/github/status') }
+  /** Remove the caller's stored GitHub connection. */
+  disconnectGitHub(): Promise<{ removed: boolean }> { return this.json('/auth/github', { method: 'DELETE' }) }
 
   /** Free-form conversation WITH AKIS (the orchestrator persona) — distinct from a build.
    *  `overrides` (the model picker) are CHAT-ONLY: they ride only on this route + /api/chat/stream,

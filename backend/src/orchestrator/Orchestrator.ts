@@ -410,13 +410,20 @@ export class Orchestrator {
     // Gate 4: mint requires the persisted VerifyToken AND a digest match; throws otherwise.
     const token = mintApprovedPush(cur, files)
 
+    // TIGHTEN-ONLY per-user destination: when the session owner has a live GitHub connection
+    // (token + their own target repo), push to THAT adapter; else the shared env/mock adapter
+    // EXACTLY as today. This only changes WHICH already-gated adapter the unchanged
+    // pushToGitHub(ApprovedPush, …) path consumes — never whether/how the push is authorized.
+    // Anonymous sessions (no ownerId) and owners without a connection fall through to env→mock.
+    const gh = (cur.ownerId ? this.s.githubFor?.(cur.ownerId) : undefined) ?? this.s.github
+
     // Push FIRST. Only persist 'done' after a successful push, so a push failure
     // leaves a retryable state (push_failed) and never loses the code.
     this.s.bus.emit({ kind: 'tool_call', tool: 'push_to_github', args: { files: files.length }, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     let repoUrl: string
     try {
-      repoUrl = await this.s.github.createRepo(id)
-      await pushToGitHub(token, this.s.github, files)
+      repoUrl = await gh.createRepo(id)
+      await pushToGitHub(token, gh, files)
     } catch (err) {
       await this.s.store.update(id, { status: 'push_failed' }, cur.version)
       this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })

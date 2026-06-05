@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { selectGitHubAdapter } from '../../src/di/selectGitHubAdapter.js'
+import { selectGitHubAdapter, parseOwnerRepo } from '../../src/di/selectGitHubAdapter.js'
 import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
 import { RealGitHubAdapter } from '../../src/di/RealGitHubAdapter.js'
 
@@ -38,5 +38,39 @@ describe('selectGitHubAdapter (opt-in: real ONLY when token + repo set AND not N
     const m = mock()
     const got = selectGitHubAdapter({ NODE_ENV: 'test', AKIS_GITHUB_PUSH_TOKEN: TOKEN, AKIS_GITHUB_PUSH_REPO: 'me/proj' }, m)
     expect(got).toBe(m)
+  })
+})
+
+describe('parseOwnerRepo (shape-validates now-untrusted user input)', () => {
+  it('accepts a well-formed owner/name', () => {
+    expect(parseOwnerRepo('ada/app')).toEqual({ owner: 'ada', repo: 'app' })
+    expect(parseOwnerRepo('  Ada-Lovelace/my.cool_repo-1  ')).toEqual({ owner: 'Ada-Lovelace', repo: 'my.cool_repo-1' })
+  })
+
+  it('rejects missing / empty / no-slash', () => {
+    expect(parseOwnerRepo(undefined)).toBeUndefined()
+    expect(parseOwnerRepo('')).toBeUndefined()
+    expect(parseOwnerRepo('justname')).toBeUndefined()
+  })
+
+  it('rejects multiple slashes', () => {
+    expect(parseOwnerRepo('a/b/c')).toBeUndefined()
+  })
+
+  it('rejects whitespace inside, leading/trailing owner hyphens', () => {
+    expect(parseOwnerRepo('a b/c')).toBeUndefined()
+    expect(parseOwnerRepo('-ada/app')).toBeUndefined()
+    expect(parseOwnerRepo('ada-/app')).toBeUndefined()
+  })
+
+  it('rejects path-traversal-ish repo names ("..", trailing dot)', () => {
+    expect(parseOwnerRepo('ada/..')).toBeUndefined()
+    expect(parseOwnerRepo('ada/a..b')).toBeUndefined()
+    expect(parseOwnerRepo('ada/app.')).toBeUndefined()
+    expect(parseOwnerRepo('ada/.')).toBeUndefined()
+  })
+
+  it('rejects an over-long owner (>39 chars)', () => {
+    expect(parseOwnerRepo(`${'a'.repeat(40)}/app`)).toBeUndefined()
   })
 })
