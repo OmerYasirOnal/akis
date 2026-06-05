@@ -103,3 +103,64 @@ describe('RunPipeline sessionGone precedence', () => {
     expect(screen.getByText(/reconnecting/i)).toBeInTheDocument()
   })
 })
+
+describe('ChatStudio — P0-1 single spec approval (chat-approved spec seed)', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  /** A fetch that: returns an akis-spec reply for the chat, an empty history list, and a created
+   *  building session for POST /sessions — capturing the POST body so the test can assert the seed. */
+  function studioFetch(captured: { body?: unknown }): (path: string, init?: RequestInit) => Promise<Response> {
+    const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
+    return async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as unknown as Response // force non-stream fallback
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && init?.method === 'POST') {
+        captured.body = JSON.parse(String(init.body))
+        return { ok: true, status: 201, json: async () => ({ id: 'snew', status: 'building', idea: '# TODO App\nA list.', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      // getSession after the build starts: a building (non-terminal) session.
+      if (path.endsWith('/sessions/snew')) return { ok: true, status: 200, json: async () => ({ id: 'snew', status: 'building', version: 1 }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  it('passes the chat-approved spec as a {title, body} seed to POST /sessions (no second approve)', async () => {
+    const captured: { body?: unknown } = {}
+    const api = new ApiClient('', vi.fn(studioFetch(captured)))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    // Ask AKIS → a SpecCard with "Approve & Build" appears. The composer submit is labeled "Ask".
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    const buildBtn = await screen.findByRole('button', { name: 'Approve & Build' })
+    await userEvent.click(buildBtn)
+
+    // The POST body carried the AUTHORITATIVE seed: the title is the spec heading, body is the spec.
+    await waitFor(() => expect(captured.body).toBeDefined())
+    const body = captured.body as { idea: string; spec?: { title: string; body: string } }
+    expect(body.spec).toBeDefined()
+    expect(body.spec!.title).toBe('TODO App')
+    expect(body.spec!.body).toContain('# TODO App')
+  })
+
+  it("P1-6: 'New build' on a NON-TERMINAL run cancels it (api.cancel) before clearing", async () => {
+    const captured: { body?: unknown } = {}
+    const api = new ApiClient('', vi.fn(studioFetch(captured)))
+    const cancelRun = vi.spyOn(api, 'cancelRun').mockResolvedValue({} as never)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    // The build started → a non-terminal (building) session. getSession resolves backendStatus.
+    await waitFor(() => expect(captured.body).toBeDefined())
+
+    // 'New build' must STOP the running pipeline (not orphan it) before resetting.
+    await userEvent.click(await screen.findByRole('button', { name: 'New build' }))
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('snew'))
+  })
+})

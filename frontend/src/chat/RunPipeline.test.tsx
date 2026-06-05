@@ -90,16 +90,12 @@ describe('RunPipeline', () => {
     expect(screen.getByText(/✓ Verified · 2 tests · review clean · shipped/)).toBeInTheDocument()
   })
 
-  it('renders the live-agent-activity slot, COLLAPSED when the run is not in-flight', () => {
-    const { container } = render(wrap(<RunPipeline view={emptyView('s1')} onApprove={() => {}} onConfirm={() => {}} details={<div>RAW LOG HERE</div>} />))
-    expect(screen.getByText('Live agent activity')).toBeInTheDocument()
-    expect(screen.getByText('RAW LOG HERE')).toBeInTheDocument()
-    expect(container.querySelector('details')?.open).toBe(false) // idle/terminal → collapsed
-  })
-  it('defaults the live-agent-activity log OPEN while the run is in-flight (watch each agent work)', () => {
-    const view = { ...emptyView('s1'), status: 'running' as const }
-    const { container } = render(wrap(<RunPipeline view={view} onApprove={() => {}} onConfirm={() => {}} details={<div>RAW LOG HERE</div>} />))
-    expect(container.querySelector('details')?.open).toBe(true)
+  // P0-2: the nested "Live agent activity" ChatThread (chat-in-chat) is REMOVED. The canonical
+  // run representation is this inline pipeline strip; there is no second conversation nested in it.
+  it('renders NO nested live-agent-activity <details> log (chat-in-chat removed)', () => {
+    const { container } = render(wrap(<RunPipeline view={{ ...emptyView('s1'), status: 'running' as const }} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByText('Live agent activity')).toBeNull()
+    expect(container.querySelector('details')).toBeNull()
   })
 
   // ── Run-state recovery: a parked run shows ACTION buttons (not a silent amber dot). ──

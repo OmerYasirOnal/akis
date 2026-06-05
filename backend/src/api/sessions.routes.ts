@@ -76,9 +76,22 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const notFound = (reply: FastifyReply, id: string): FastifyReply =>
     reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
 
-  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string } }>('/sessions', async (req, reply) => {
+  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string; spec?: { title?: unknown; body?: unknown } } }>('/sessions', async (req, reply) => {
     const idea = typeof req.body?.idea === 'string' ? req.body.idea.trim() : ''
     if (!idea) return reply.code(400).send({ error: 'idea required', code: 'BadRequest' })
+    // P0-1: an OPTIONAL chat-approved spec seed. When present it must be a well-shaped object
+    // ({title, body} both non-empty strings) — the chat SpecCard's text is AUTHORITATIVE, so the
+    // orchestrator uses it as-is and auto-satisfies Gate 1 (still minted server-side via the
+    // approvalAuthority). A malformed seed is rejected (400) rather than silently dropped, so a
+    // build never proceeds on a half-formed spec the human did not actually approve.
+    let spec: { title: string; body: string } | undefined
+    const rawSpec = req.body?.spec
+    if (rawSpec !== undefined) {
+      const title = typeof rawSpec.title === 'string' ? rawSpec.title.trim() : ''
+      const body = typeof rawSpec.body === 'string' ? rawSpec.body.trim() : ''
+      if (!title || !body) return reply.code(400).send({ error: 'spec must have a non-empty title and body', code: 'BadRequest' })
+      spec = { title, body }
+    }
     let orch = orchestrator
     const workflowId = req.body?.workflowId
     if (workflowId && deps.workflowStore && deps.makeOrchestrator) {
@@ -98,7 +111,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     }
     try {
       const ownerId = await deps.userIdOf?.(req)
-      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(base ? { base } : {}) })
+      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}) })
       if (orch !== orchestrator) bound.set(s.id, orch)
       return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }

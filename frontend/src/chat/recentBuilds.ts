@@ -1,4 +1,14 @@
-export interface RecentBuild { id: string; idea: string; ts: number }
+export interface RecentBuild {
+  id: string
+  idea: string
+  ts: number
+  /** The backend SessionStatus, when known (server-backed history rows carry it) — drives the
+   *  localized status pill in the History menu (P1-7). Absent for a locally-recorded build that
+   *  predates the status, or a fresh recordRecentBuild (no status yet) — the pill is then omitted. */
+  status?: string
+  /** Whether the build is verified (server-backed rows) — drives the ✓ mark in the menu (P1-7). */
+  verified?: boolean
+}
 
 /** A clean, single-line title from a raw idea/spec. A chat-authored build's `idea` is the
  *  whole spec markdown (e.g. "# Minimal Todo App\n## Scope …"), so a history row would show
