@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { Role } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -42,7 +43,7 @@ const DOT: Record<AgentPresence, string> = {
 
 /** A compact, always-visible identity strip for the AKIS agents — so it's clear which
  *  AI agents are doing the work, and what each one is responsible for, live. */
-export function AgentRoster({ view }: { view: SessionView }) {
+export const AgentRoster = memo(function AgentRoster({ view }: { view: SessionView }) {
   const { t } = useI18n()
   return (
     <div className="flex flex-wrap gap-2">
@@ -61,4 +62,4 @@ export function AgentRoster({ view }: { view: SessionView }) {
       })}
     </div>
   )
-}
+})

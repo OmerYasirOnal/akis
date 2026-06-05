@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import type { StringKey } from '../i18n/catalog.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { useLiveChat } from './useLiveChat.js'
@@ -26,6 +27,24 @@ import type { CodeArtifact, TestEvidence } from '@akis/shared'
  * the layout is height-bounded so the chat scrolls INSIDE its frame instead of growing the
  * page — a stable, modern surface. The preview auto-runs once a build ships.
  */
+/** The "starting…" elapsed ticker as a LEAF: owns its own 1s interval + state so a tick
+ *  re-renders ONLY this badge, never the parent studio tree (fixes the whole-studio flicker). */
+function StartingElapsed({ t }: { t: (k: StringKey) => string }) {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const startedAt = Date.now()
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  const m = Math.floor(elapsed / 60), sec = elapsed % 60
+  return (
+    <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-xs tabular-nums text-slate-300">
+      {t('workflow.starting.elapsed')} {m.toString().padStart(2, '0')}:{sec.toString().padStart(2, '0')}
+      {elapsed >= 8 && <span className="ml-2 text-amber-200">{t('workflow.starting.slow')}</span>}
+    </span>
+  )
+}
+
 export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; baseUrl?: string; makeClient?: () => EventStreamClient }) {
   const { t } = useI18n()
   const [sent, setSent] = useState('')               // the submitted idea (drives the thread)
@@ -33,7 +52,6 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const [busy, setBusy] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(true)
   const [startingSpec, setStartingSpec] = useState<string | undefined>()
-  const [startingElapsed, setStartingElapsed] = useState(0)
   // Synchronous re-entrancy guard for the build start: `busy` is async React state, so two
   // fast clicks on "Approve & Build" both pass a `busy` check before the re-render lands and
   // create TWO sessions (one orphaned). A ref flips synchronously, so the second click is dropped.
@@ -183,19 +201,6 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   }, [sessionId, status, api])
 
   const canRun = !!sessionId && (status === 'done' || live.view.verified !== undefined)
-  useEffect(() => {
-    if (!startingSpec) { setStartingElapsed(0); return }
-    const startedAt = Date.now()
-    setStartingElapsed(0)
-    const timer = setInterval(() => setStartingElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000)
-    return () => clearInterval(timer)
-  }, [startingSpec])
-  const formatElapsed = (seconds: number): string => {
-    const s = Math.max(0, Math.floor(seconds))
-    const m = Math.floor(s / 60)
-    const sec = s % 60
-    return `${m.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`
-  }
   // Honest recovery for a DELETED session (getSession 404): instead of a frozen view, a compact
   // amber card says the session is gone and offers a one-click "Start new build" (reuses newChat).
   // role="alert" so it's announced; gated by sessionId so an idle chat never shows it.
@@ -214,17 +219,17 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   ) : null
   const startingWorkflowCard = startingSpec ? (
     <section role="status" className="rounded-2xl border border-teal-400/25 bg-teal-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(7,209,175,0.1)]">
+      {/* The 1s elapsed ticker lives in a LEAF component (StartingElapsed) so its per-second
+          re-render touches ONLY the badge — not the whole studio (the flicker the user saw
+          was this timer living on ChatStudio state and re-rendering the entire tree each tick). */}
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <span className="h-2 w-2 animate-pulse rounded-full bg-[#07D1AF]" aria-hidden />
           <span className="font-semibold text-teal-100">{t('workflow.starting.title')}</span>
         </div>
-        <span className="rounded-md border border-white/10 bg-white/[0.04] px-2 py-0.5 text-xs tabular-nums text-slate-300">
-          {t('workflow.starting.elapsed')} {formatElapsed(startingElapsed)}
-        </span>
+        <StartingElapsed t={t} />
       </div>
       <div className="mt-1 text-xs text-slate-400">{t('workflow.starting.body')}</div>
-      {startingElapsed >= 8 && <div className="mt-2 text-xs text-amber-200">{t('workflow.starting.slow')}</div>}
     </section>
   ) : null
   const workflowCard = sessionId ? (
