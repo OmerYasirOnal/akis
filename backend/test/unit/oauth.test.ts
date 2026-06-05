@@ -46,9 +46,11 @@ describe('authorizeUrl', () => {
 })
 
 describe('exchangeCode', () => {
-  it('returns the access_token', async () => {
+  it('returns the access token + granted scopes', async () => {
     const http: HttpFetch = async () => (await ok({ access_token: 'tok123' }))
-    expect(await exchangeCode('github', { code: 'c', clientId: 'i', clientSecret: 's', redirectUri: 'r' }, http)).toBe('tok123')
+    // exchangeCode now returns {token, scopes} (scopes drive the per-user connect flow);
+    // an absent scope fails closed to [] rather than throwing.
+    expect(await exchangeCode('github', { code: 'c', clientId: 'i', clientSecret: 's', redirectUri: 'r' }, http)).toEqual({ token: 'tok123', scopes: [] })
   })
   it('throws when the token response has no token / is not ok', async () => {
     await expect(exchangeCode('github', { code: 'c', clientId: 'i', clientSecret: 's', redirectUri: 'r' }, async () => ok({}))).rejects.toThrow()
