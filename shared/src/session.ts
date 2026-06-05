@@ -103,6 +103,42 @@ export interface TestEvidence {
   demo?: boolean
 }
 
+/**
+ * How a produced file set is served when published — mirrors the backend
+ * `AppDetector.AppType` union 1:1 (kept here, not imported from backend, so `shared`
+ * never depends on backend). Only `static` and `node-service` are publishable in v1;
+ * `vite`/`next`/`unsupported` publish as ok:false (need infra we don't provision yet).
+ */
+export type PublishAppType = 'vite' | 'next' | 'node-service' | 'static' | 'unsupported'
+
+/**
+ * ADDITIVE, NON-GATE record of the last "publish to your own server" attempt for this
+ * session — written EXACTLY like `passport`/`testEvidence`: on the generic `update` patch
+ * (NOT a gate method), so it never widens the gate-write surface. Publishing is a POST-`done`,
+ * fully OPTIONAL, NON-GATING action: a failure patches `{ok:false, …}` and LEAVES status
+ * `done`; it never verifies/mints/blocks. Observability/result only.
+ *
+ * SECURITY: `logTail` is BOUNDED (≤ ~40 lines / ~4KB) and SCRUBBED of every secret (the SSH
+ * private key, the key temp-file PATH, any Authorization/token, any env value) before it is
+ * persisted — it can never leak a credential nor become trusted RAG grounding.
+ */
+export interface PublishRecord {
+  /** The live URL (publicUrl override, else http://<host>:<appPort>). Absent on an early failure. */
+  url?: string
+  /** ISO timestamp of the attempt. */
+  at: string
+  /** Whether the deploy itself succeeded (NOT the gate truth — publish is non-gating). */
+  ok: boolean
+  /** Result of a post-deploy URL probe FROM AKIS. `false` on success = the OCI security-list/
+   *  host-firewall case (port not open) — recorded HONESTLY so "ok but blank page" is never a
+   *  silent false success. Absent when no probe ran (e.g. an early failure). */
+  reachable?: boolean
+  /** How the app was classified for deploy. */
+  appType: PublishAppType
+  /** Bounded, scrubbed, secret-free tail of the deploy log (honest failure reasons live here). */
+  logTail: string[]
+}
+
 export interface SessionState {
   id: string
   status: SessionStatus
@@ -148,6 +184,14 @@ export interface SessionState {
    * presence of `verifyToken` (see `isVerified`). Absent until a verified build signs one.
    */
   passport?: BuildPassport
+  /**
+   * ADDITIVE, NON-GATE record of the last publish-to-your-own-server attempt (OCI free-tier).
+   * Written on the NORMAL (generic-patch) update path, NOT a gate method, so it never widens
+   * the gate-write surface — EXACTLY like `passport`/`testEvidence`. Publishing is a POST-`done`,
+   * optional, non-gating step: it can never gate/block/mint, and a failed deploy patches
+   * `{ok:false}` while LEAVING status `done`. Absent until the owner publishes a `done` session.
+   */
+  publish?: PublishRecord
   version: number               // optimistic lock
 }
 

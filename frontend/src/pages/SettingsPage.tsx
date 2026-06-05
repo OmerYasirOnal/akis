@@ -2,6 +2,7 @@ import type { ApiClient } from '../api/client.js'
 import { AgentsTab } from '../agents/AgentsTab.js'
 import { ProviderKeys } from './ProviderKeys.js'
 import { GitHubConnection } from './GitHubConnection.js'
+import { PublishDestination } from './PublishDestination.js'
 import { AccountSettings } from './AccountSettings.js'
 import { useAuth } from '../auth/AuthContext.js'
 import { Card, SectionTitle, Button } from '../ui/kit.js'
@@ -40,6 +41,10 @@ export function SettingsPage({ api }: { api: ApiClient }) {
 
       <Card className="p-5">
         <GitHubConnection api={api} />
+      </Card>
+
+      <Card className="p-5">
+        <PublishDestination api={api} />
       </Card>
 
       <Card className="flex items-center justify-between gap-4 p-5">

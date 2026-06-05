@@ -12,9 +12,10 @@ import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { TrustReportCard } from '../components/TrustReportCard.js'
+import { PublishButton } from '../components/PublishButton.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
-import type { CodeArtifact, TestEvidence, SessionStatus } from '@akis/shared'
+import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord } from '@akis/shared'
 
 /** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
  *  done/failed/cancelled are final, and verify_failed/push_failed are parked-but-finished
@@ -120,11 +121,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // UX honesty (B.5b): when this build EDITS a prior app (session.base set server-side), say
   // so visibly — the user must never be surprised that agents merged over existing files.
   const [editsBase, setEditsBase] = useState(false)
+  // The LAST persisted publish outcome (session.publish) — fed to PublishButton so a just-deployed
+  // live URL / honest failure survives a tab-switch or refresh (which fully remount this subtree)
+  // instead of forcing a re-run of the ~30s+ SSH deploy. Read from the SAME getSession below; no
+  // extra fetch.
+  const [publishRecord, setPublishRecord] = useState<PublishRecord | undefined>(undefined)
   useEffect(() => {
-    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); return }
+    if (!sessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); return }
     let cancelled = false
     void api.getSession(sessionId)
-      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setSessionGone(false) } })
+      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false) } })
       .catch(e => {
         if (cancelled) return
         // A 404 means the session is genuinely GONE (server restart wiped the in-memory store,
@@ -355,6 +361,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
             {previewOpen ? (
               <>
                 {sessionId && status === 'done' && <TrustReportCard sessionId={sessionId} api={api} />}
+                {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING.
+                    initialRecord seeds the last persisted outcome so a deployed live URL survives
+                    a tab-switch/refresh (this whole subtree remounts) without re-running the deploy. */}
+                {sessionId && status === 'done' && <PublishButton sessionId={sessionId} api={api} initialRecord={publishRecord} />}
                 <PreviewPanel view={live.view} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
               </>
             ) : (

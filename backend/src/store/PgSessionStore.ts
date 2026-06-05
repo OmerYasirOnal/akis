@@ -1,4 +1,4 @@
-import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken, TestEvidence, BuildPassport } from '@akis/shared'
+import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken, TestEvidence, BuildPassport, PublishRecord } from '@akis/shared'
 import type { SessionStore, SessionPatch } from './SessionStore.js'
 import type { SqlClient } from './pg.js'
 
@@ -24,11 +24,12 @@ export class PgSessionStore implements SessionStore {
     // `base` (Phase B.5 edit-mode seed) is written ONLY here — it is set at session creation
     // by the controlled API path and is NOT in PATCH_COLUMNS, so it is immutable thereafter.
     await this.db.query(
-      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, base, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, base, version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
       [
         s.id, s.status, s.idea, s.ownerId ?? null,
         toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken), toJson(s.testEvidence), toJson(s.passport),
+        toJson(s.publish),
         toJson(s.base),
         s.version,
       ],
@@ -58,10 +59,14 @@ export class PgSessionStore implements SessionStore {
     ['code', 'code'],
     ['testEvidence', 'test_evidence'],
     ['passport', 'passport'],
+    // ADDITIVE, NON-GATE: the last publish-to-your-own-server attempt (`publish` jsonb). On the
+    // normal patch path (NOT a gate method), so it does NOT widen the gate-write surface — EXACTLY
+    // like `passport`/`testEvidence`. Without this entry the field is silently dropped on Postgres.
+    ['publish', 'publish'],
   ]
 
   /** Columns whose value is a nested object stored as jsonb (must be passed through toJson). */
-  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport'])
+  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport', 'publish'])
 
   async update(id: string, patch: SessionPatch, expectedVersion: number): Promise<SessionState> {
     const sets: string[] = []
@@ -132,7 +137,7 @@ function toJson(v: unknown): unknown {
  *  already parsed by `pg` into JS objects). */
 interface SessionRow {
   id: unknown; status: unknown; idea: unknown; owner_id: unknown
-  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; base: unknown; version: unknown
+  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; publish: unknown; base: unknown; version: unknown
 }
 
 /**
@@ -161,6 +166,10 @@ function toSession(raw: Record<string, unknown>): SessionState {
     // ADDITIVE, NON-GATE: the signed Build Passport round-trips as plain jsonb (the Ed25519
     // signature lives INSIDE it; nothing to re-attach), so it persists on Postgres too.
     ...(r.passport != null ? { passport: r.passport as BuildPassport } : {}),
+    // ADDITIVE, NON-GATE: the last publish-to-your-own-server attempt round-trips as plain jsonb
+    // (data only — no capability; the SSH key never enters this record), so the FE PublishButton
+    // surfaces the live URL / honest failure reason on Postgres too, not just the in-memory store.
+    ...(r.publish != null ? { publish: r.publish as PublishRecord } : {}),
     // ADDITIVE, NON-GATE, set-only-at-create: the Phase B.5 edit-mode seed round-trips as
     // plain jsonb (data only — no capability), so edit-mode builds survive a Pg restart.
     ...(r.base != null ? { base: r.base as NonNullable<SessionState['base']> } : {}),

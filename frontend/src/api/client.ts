@@ -1,5 +1,33 @@
-import type { SessionState, WorkflowConfig, WorkflowConfigInput } from '@akis/shared'
+import type { SessionState, WorkflowConfig, WorkflowConfigInput, PublishRecord } from '@akis/shared'
 import type { SeqEvent } from '../live/types.js'
+
+export type { PublishRecord }
+
+/** The caller's publish-destination status (GET /publish/profile). `configured` = encryption is
+ *  available (a Save would work); `present` = a stored, DECRYPTABLE profile exists. NEVER the key
+ *  — only non-secret metadata + the key fingerprint hint. */
+export interface PublishProfileStatus {
+  configured: boolean
+  present: boolean
+  host?: string
+  sshUser?: string
+  targetDir?: string
+  appPort?: number
+  publicUrl?: string
+  keyFingerprint?: string
+  updatedAt?: string
+}
+
+/** What the PUT /publish/profile form sends. The SSH key is WRITE-ONLY — never populated from
+ *  status, never echoed back. appPort/publicUrl are optional. */
+export interface PublishProfileInput {
+  host: string
+  sshUser: string
+  sshPrivateKey: string
+  targetDir: string
+  appPort?: number
+  publicUrl?: string
+}
 
 export interface ModelOption { id: string; label: string; recommended?: boolean }
 
@@ -199,6 +227,20 @@ export class ApiClient {
   githubStatus(): Promise<GitHubConnectionStatus> { return this.json<GitHubConnectionStatus>('/auth/github/status') }
   /** Remove the caller's stored GitHub connection. */
   disconnectGitHub(): Promise<{ removed: boolean }> { return this.json('/auth/github', { method: 'DELETE' }) }
+
+  // ── Publish to your own server (OCI free-tier) — POST-`done`, optional, NON-GATING ──
+  /** The caller's publish-destination status — NEVER includes the SSH key (only metadata + a
+   *  key fingerprint). */
+  publishStatus(): Promise<PublishProfileStatus> { return this.json<PublishProfileStatus>('/publish/profile') }
+  /** Set (create/replace) the caller's publish destination. The SSH key is WRITE-ONLY. */
+  setPublishProfile(input: PublishProfileInput): Promise<PublishProfileStatus> {
+    return this.json<PublishProfileStatus>('/publish/profile', { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) })
+  }
+  /** Remove the caller's stored publish destination. */
+  deletePublishProfile(): Promise<{ removed: boolean }> { return this.json('/publish/profile', { method: 'DELETE' }) }
+  /** Deploy a `done` build to the owner's own server. NON-GATING: a deploy failure returns 200
+   *  with the session carrying a `publish` record `{ok:false, logTail}` and status STAYS `done`. */
+  publish(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/publish`) }
 
   /** Free-form conversation WITH AKIS (the orchestrator persona) — distinct from a build.
    *  `overrides` (the model picker) are CHAT-ONLY: they ride only on this route + /api/chat/stream,
