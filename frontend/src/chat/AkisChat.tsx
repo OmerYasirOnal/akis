@@ -5,6 +5,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import { Markdown } from '../components/Markdown.js'
 import { extractBuildSpec, hasTruncatedSpec, extractSuggestions } from './buildSpec.js'
 import { SpecCard } from './SpecCard.js'
+import { useSmoothText } from './useSmoothText.js'
 import { loadThread, saveThread, historyForApi, isNearBottom, type AkisMsg } from './akisThread.js'
 
 /**
@@ -38,6 +39,66 @@ type ChatMsg = AkisMsg & { streaming?: boolean }
 /** Drop the live streaming placeholder (used on finalize + on a stream failure). */
 function dropPlaceholder(msgs: ChatMsg[]): ChatMsg[] {
   return msgs.filter(m => !m.streaming)
+}
+
+/**
+ * One assistant bubble. A component (not inline JSX in the map) so `useSmoothText` sits at a
+ * stable hook position regardless of how the thread grows/shrinks. Every extraction runs on
+ * the FULL accumulated `content` (spec/suggestion detection must see the authoritative text);
+ * only the visible reply text is animated, and only while it's the actively streaming message.
+ */
+function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: {
+  content: string
+  streaming: boolean
+  // Explicit `| undefined` (not `?`) so the call site can forward AkisChat's own optional
+  // props straight through under exactOptionalPropertyTypes (which distinguishes absent vs undefined).
+  onBuild: ((spec: string) => void) | undefined
+  building: boolean | undefined
+  builtSpec: string | undefined
+}): ReactNode {
+  const { t } = useI18n()
+  // A build-ready spec is detected only when onBuild is wired (the studio flow). Detection
+  // runs on the ACCUMULATED text, so the SpecCard appears the instant the fence closes mid-stream.
+  const detected = onBuild ? extractBuildSpec(content) : null
+  // Suppress the "truncated" notice WHILE streaming — an open-but-not-yet-closed fence is
+  // normal mid-stream, not a real truncation (avoids a flicker).
+  const truncated = onBuild && !streaming ? hasTruncatedSpec(content) : false
+  const started = !!detected && builtSpec?.trim() === detected.spec.trim()
+  // Strip the suggestion block off the FULL text first (extraction is authoritative), then
+  // SMOOTH-reveal that clean reply while streaming. Completed/history bubbles show it instantly.
+  const { text: stripped } = extractSuggestions(content)
+  const smoothed = useSmoothText(stripped)
+  const displayed = streaming ? smoothed : stripped
+  return (
+    <div className="flex items-start gap-3">
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
+      <div className="min-w-0 max-w-[80%] space-y-3">
+        {detected
+          ? (
+            <>
+              {detected.intro && (
+                <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+                  <Markdown content={detected.intro} />
+                </div>
+              )}
+              <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} startedSpec={builtSpec} />
+            </>
+          )
+          : (
+            <>
+              <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+                <Markdown content={displayed} />
+              </div>
+              {truncated && (
+                <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
+                  {t('akis.spec.truncated')}
+                </div>
+              )}
+            </>
+          )}
+      </div>
+    </div>
+  )
 }
 
 export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api: ApiClient; onBuild?: (spec: string) => void; building?: boolean; builtSpec?: string; workflow?: ReactNode }) {
@@ -199,43 +260,18 @@ export function AkisChat({ api, onBuild, building, builtSpec, workflow }: { api:
               </div>
             )
           }
-          // A build-ready spec is detected only when onBuild is wired (the studio flow).
-          // Spec detection runs on the ACCUMULATED placeholder text, so the SpecCard appears
-          // the instant the akis-spec fence closes mid-stream.
-          const detected = onBuild ? extractBuildSpec(m.content) : null
-          // Suppress the "truncated" notice WHILE streaming — an open-but-not-yet-closed
-          // fence is normal mid-stream, not a real truncation (avoids a flicker).
-          const truncated = onBuild && !m.streaming ? hasTruncatedSpec(m.content) : false
-          const started = !!detected && builtSpec?.trim() === detected.spec.trim()
+          // Assistant bubble in its own component so the smoothing hook lives at a STABLE
+          // position (one hook per message instance, never inside the map callback — that
+          // would violate the Rules of Hooks as the thread grows/shrinks).
           return (
-            <div key={i} className="flex items-start gap-3">
-              <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
-              <div className="min-w-0 max-w-[80%] space-y-3">
-                {detected
-                  ? (
-                    <>
-                      {detected.intro && (
-                        <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
-                          <Markdown content={detected.intro} />
-                        </div>
-                      )}
-                      <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} startedSpec={builtSpec} />
-                    </>
-                  )
-                  : (
-                    <>
-                      <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
-                        <Markdown content={extractSuggestions(m.content).text} />
-                      </div>
-                      {truncated && (
-                        <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
-                          {t('akis.spec.truncated')}
-                        </div>
-                      )}
-                    </>
-                  )}
-              </div>
-            </div>
+            <AssistantMessage
+              key={i}
+              content={m.content}
+              streaming={!!m.streaming}
+              onBuild={onBuild}
+              building={building}
+              builtSpec={builtSpec}
+            />
           )
         })}
         {workflow && (
