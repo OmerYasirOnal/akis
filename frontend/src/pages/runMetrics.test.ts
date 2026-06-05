@@ -47,6 +47,22 @@ describe('aggregateRunMetrics (pure per-run cost)', () => {
     expect(trace).toMatchObject({ tools: 1, ms: 1_000 })
   })
 
+  it('an ITERATING agent (two attempts) reconciles: sum(perAgent) === totals (Opus review MED)', () => {
+    // The critic iterate loop reruns Proto — the breakdown row must show that agent's TRUE
+    // cost including retries, so the table always sums to the headline totals.
+    const events: AkisEvent[] = [
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { durationMs: 5_000, toolCalls: 2, usage: { inTokens: 1_000, outTokens: 1_000 } } }),
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { durationMs: 5_000, toolCalls: 3, usage: { inTokens: 1_000, outTokens: 1_000 } } }),
+    ]
+    const m = aggregateRunMetrics(foldSessionView('s1', events))
+    expect(m.totalTokens).toBe(4_000)
+    expect(m.totalMs).toBe(10_000)
+    const proto = m.perAgent.find(a => a.role === 'proto')
+    expect(proto).toMatchObject({ tok: 4_000, tools: 5, ms: 10_000 }) // reconciles, never half
+  })
+
   it('a {0,0}-only run (mock) → totalTokens undefined (the metrics never carried usage)', () => {
     // The backend builder collapsed {0,0}→absent, so the agent_end carries NO usage — the
     // aggregate naturally dashes, guarding the honesty rule end to end.

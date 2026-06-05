@@ -94,7 +94,7 @@ function AssistantMessage({ content, streaming, onBuild, building, builtSpec }: 
                   NOT rendered while streaming (would copy a half-stream) nor when empty; once
                   present it stays in the DOM via opacity so it's RTL-findable + keyboard-reachable.
                   Copies `stripped` (the visible reply, suggestion block already removed). */}
-              <div className="group relative rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+              <div className="group relative rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 pr-10 text-slate-200">
                 <Markdown content={displayed} />
                 {!streaming && stripped.trim() && (
                   <CopyButton text={stripped} label={t('copy.reply')}

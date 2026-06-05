@@ -101,7 +101,7 @@ export class ScribeAgent {
       const questions = ['Who is the primary user?', 'What is the single most important feature?']
       // No LLM call on the clarify branch → usage absent ("—"), but real time is reported.
       const metrics = buildAgentMetrics(undefined, startedAt, toolCalls)
-      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, ...(metrics ? { metrics } : {}), agent: 'scribe', laneId, sessionId, ts: nextTs() })
+      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, metrics, agent: 'scribe', laneId, sessionId, ts: nextTs() })
       return { type: 'clarify', questions }
     }
 
@@ -117,7 +117,7 @@ export class ScribeAgent {
       // an orphaned tool_call, then re-throw (the orchestrator fails the session).
       this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_scribe', ok: false, result: { error: errMsg(err) }, agent: 'scribe', laneId, sessionId, ts: nextTs() })
       const metrics = buildAgentMetrics(undefined, startedAt, toolCalls)
-      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: false, ...(metrics ? { metrics } : {}), agent: 'scribe', laneId, sessionId, ts: nextTs() })
+      this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: false, metrics, agent: 'scribe', laneId, sessionId, ts: nextTs() })
       throw err
     }
 
@@ -136,7 +136,7 @@ export class ScribeAgent {
     // Scribe reports an HONEST LOWER BOUND, not a fabrication. The {0,0}→absent rule (mock
     // provider) is applied in buildAgentMetrics, so a keyless demo renders "—", never "0 tok".
     const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls)
-    this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, ...(metrics ? { metrics } : {}), agent: 'scribe', laneId, sessionId, ts: nextTs() })
+    this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, metrics, agent: 'scribe', laneId, sessionId, ts: nextTs() })
     return outcome
   }
 

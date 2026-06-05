@@ -115,7 +115,7 @@ export class ProtoAgent {
       // agent_end) so the live stream never has an orphaned tool_call, then re-throw.
       this.deps.bus.emit({ kind: 'tool_result', tool: 'dispatch_proto', ok: false, result: { error: errMsg(err) }, agent: 'proto', laneId, sessionId, ts: nextTs() })
       const metrics = buildAgentMetrics(undefined, startedAt, toolCalls)
-      this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: false, ...(metrics ? { metrics } : {}), agent: 'proto', laneId, sessionId, ts: nextTs() })
+      this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: false, metrics, agent: 'proto', laneId, sessionId, ts: nextTs() })
       throw err
     }
 
@@ -128,7 +128,7 @@ export class ProtoAgent {
     // across rounds), so this is the real cost of the whole app generation. {0,0}→absent (mock)
     // is handled in buildAgentMetrics.
     const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls)
-    this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: parsed, ...(metrics ? { metrics } : {}), agent: 'proto', laneId, sessionId, ts: nextTs() })
+    this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: parsed, metrics, agent: 'proto', laneId, sessionId, ts: nextTs() })
     return { files }
   }
 

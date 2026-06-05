@@ -44,10 +44,14 @@ export function aggregateRunMetrics(view: SessionView): RunMetrics {
       totalMs += ms
       const tok = m.usage ? m.usage.inTokens + m.usage.outTokens : undefined
       if (tok !== undefined) totalTokens = (totalTokens ?? 0) + tok
+      // ACCUMULATE per agent (Opus review MED): an iterate loop reruns Proto, and the
+      // breakdown must reconcile with the totals — a row shows that agent's TRUE cost
+      // including retries, so sum(perAgent) === total by construction.
+      const prev = latest.get(step.agent)
       latest.set(step.agent, {
-        ...(tok !== undefined ? { tok } : {}),
-        tools: m.toolCalls ?? 0,
-        ms,
+        ...(tok !== undefined || prev?.tok !== undefined ? { tok: (prev?.tok ?? 0) + (tok ?? 0) } : {}),
+        tools: (prev?.tools ?? 0) + (m.toolCalls ?? 0),
+        ms: (prev?.ms ?? 0) + ms,
       })
     }
   }

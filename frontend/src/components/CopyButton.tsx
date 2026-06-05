@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -18,11 +18,16 @@ import { useI18n } from '../i18n/I18nContext.js'
 export function CopyButton({ text, label, className }: { text: string; label: string; className?: string }) {
   const { t } = useI18n()
   const [copied, setCopied] = useState(false)
+  // Cleared on unmount (Opus review): a streaming bubble or re-keyed card can unmount within
+  // the 1.5s window — the timer must never set state on a dead component.
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
+  useEffect(() => () => { if (timer.current) clearTimeout(timer.current) }, [])
   const copy = async (): Promise<void> => {
     try {
       await navigator.clipboard.writeText(text)
       setCopied(true)
-      setTimeout(() => setCopied(false), 1500)
+      if (timer.current) clearTimeout(timer.current)
+      timer.current = setTimeout(() => setCopied(false), 1500)
     } catch { /* clipboard denied — silent no-op */ }
   }
   return (
