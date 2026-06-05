@@ -211,7 +211,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     if (req.query.format === 'md') {
       return reply
         .type('text/markdown; charset=utf-8')
-        .header('content-disposition', `attachment; filename="trust-report-${id}.md"`)
+        .header('content-disposition', `attachment; filename="trust-report-${id.replace(/[^A-Za-z0-9._-]/g, '_')}.md"`)
         .send(renderTrustReportMarkdown(report))
     }
     return reply.send(report)

@@ -61,8 +61,10 @@ export function buildTrustReport(
   now: () => string = () => new Date().toISOString(),
 ): TrustReport {
   const ev = session.testEvidence
-  // Demo detection: the verify event's ADDITIVE `demo` annotation (never the gate's input).
-  let simulated = false
+  // Demo detection — PERSISTED evidence first (durable; review #113: the verify event lives
+  // in a capped ring buffer and can be evicted on long sessions), event scan as a secondary
+  // for evidence persisted before the demo field existed.
+  let simulated = ev?.demo === true
   let reviewState: TrustReport['review']
   let provider: string | undefined
   for (const { event } of log) {
@@ -79,7 +81,7 @@ export function buildTrustReport(
     project: { title: session.spec?.title ?? session.idea.split('\n')[0] ?? session.id, sessionId: session.id },
     spec: {
       title: session.spec?.title ?? '(no spec)',
-      summary: session.spec ? specSummary(session.spec.body) : '(no approved spec)',
+      summary: session.spec ? specSummary(session.spec.body).replace(/`/g, '\\`') : '(no approved spec)', // escape fences: the summary must stay INSIDE the report structure
       ...(lastTs(log, e => e.kind === 'gate' && e.gate === 'spec_approval' && e.state === 'satisfied') !== undefined
         ? { approvedAt: lastTs(log, e => e.kind === 'gate' && e.gate === 'spec_approval' && e.state === 'satisfied')! }
         : {}),

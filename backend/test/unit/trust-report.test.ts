@@ -92,6 +92,23 @@ describe('buildTrustReport (pure projection — grants nothing)', () => {
     expect(md).toContain('line1 line2 \\| x')
   })
 
+  it('EVICTION-PROOF: a simulated run stays SIMULATED even when the verify event was evicted from the ring buffer (review #113 CRITICAL)', () => {
+    // The verify event is GONE (capped buffer on a long session) — only the persisted
+    // evidence remains, and it carries the durable demo marker.
+    const session = base({ testEvidence: { ...REAL_EVIDENCE, demo: true } })
+    const r = buildTrustReport(session, [] /* empty log = everything evicted */)
+    expect(r.verification.simulated).toBe(true)
+    expect(r.verification.verified).toBe(false) // can NEVER read verified
+    expect(renderTrustReportMarkdown(r)).toContain('🟡 SIMULATED')
+  })
+
+  it('spec bodies containing markdown fences cannot break out of the report structure', () => {
+    const session = base({ spec: { title: 'X', body: 'before\n```js\nalert(1)\n```\nafter' } })
+    const md = renderTrustReportMarkdown(buildTrustReport(session, []))
+    expect(md).not.toContain('\n```js') // fences arrive escaped, not live
+    expect(md).toContain('\\`\\`\\`')
+  })
+
   it('the disclaimer is always present and scoped to listed checks at a timestamp', () => {
     const md = renderTrustReportMarkdown(buildTrustReport(base(), []))
     expect(md).toContain('not a guarantee')

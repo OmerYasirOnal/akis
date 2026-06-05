@@ -57,6 +57,10 @@ export class TraceAgent {
     // byte-identical verify event with NO `demo` field (never `demo:false` noise).
     this.deps.bus.emit({ kind: 'verify', testsRun: token?.testsRun ?? 0, passed: token !== null, ...(this.deps.verifier.demo ? { demo: true } : {}), agent: 'trace', laneId, sessionId, ts: nextTs() })
     this.deps.bus.emit({ kind: 'agent_end', role: 'trace', ok: token !== null, agent: 'trace', laneId, sessionId, ts: nextTs() })
-    return { token, ...(evidence ? { evidence } : {}) }
+    // The SAME demo source as the verify event, but stamped onto the PERSISTED evidence —
+    // the event lives in a capped ring buffer and can be evicted on long sessions; the
+    // evidence survives, so a simulated run stays labeled forever (review #113).
+    const stamped = evidence && this.deps.verifier.demo ? { ...evidence, demo: true } : evidence
+    return { token, ...(stamped ? { evidence: stamped } : {}) }
   }
 }

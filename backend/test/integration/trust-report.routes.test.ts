@@ -42,6 +42,10 @@ describe('GET /sessions/:id/report (the client-facing trust report)', () => {
     // simulated true and verified false, even though the mock "passed".
     expect(r.verification.simulated).toBe(true)
     expect(r.verification.verified).toBe(false)
+    // The durable path too (review #113): the PERSISTED evidence carries demo, so the
+    // label survives ring-buffer eviction on long sessions.
+    const sess = await s.inject({ method: 'GET', url: `/sessions/${id}`, headers: { cookie: ada } })
+    expect(sess.json().testEvidence?.demo).toBe(true)
   })
 
   it('?format=md returns a downloadable Markdown artifact', async () => {
