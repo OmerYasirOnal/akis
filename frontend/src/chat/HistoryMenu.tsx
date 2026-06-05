@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { ideaTitle, type RecentBuild } from './recentBuilds.js'
+import { statusSignal } from './statusLabel.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -42,10 +43,22 @@ export function HistoryMenu({ builds, onOpen }: { builds: RecentBuild[]; onOpen:
                 key={b.id}
                 role="menuitem"
                 onClick={() => { setOpen(false); onOpen(b) }}
-                className="block w-full truncate rounded-lg px-3 py-2 text-left text-xs text-slate-300 transition hover:bg-white/5 hover:text-slate-100"
+                className="block w-full rounded-lg px-3 py-2 text-left text-xs text-slate-300 transition hover:bg-white/5 hover:text-slate-100"
                 title={b.idea}
               >
-                {ideaTitle(b.idea) || t('history.untitled')}
+                {/* P1-7: the menu carries the SAME minimal signal as the History page — title +
+                    localized status pill + verified mark — not just the bare title. */}
+                <div className="truncate">{ideaTitle(b.idea) || t('history.untitled')}</div>
+                {(b.status || b.verified) && (
+                  <div className="mt-1 flex items-center gap-1.5">
+                    {b.status && (
+                      <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-wide ${statusSignal(b.status).tone}`}>
+                        {t(statusSignal(b.status).labelKey)}
+                      </span>
+                    )}
+                    {b.verified && <span className="text-[9px] font-medium text-emerald-300">✓ {t('history.verified')}</span>}
+                  </div>
+                )}
               </button>
             ))}
         </div>

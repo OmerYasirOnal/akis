@@ -69,6 +69,22 @@ export function extractSuggestions(message: string): { suggestions: string[]; te
   return { suggestions, text }
 }
 
+/**
+ * Split a chat-approved spec MARKDOWN string into the {title, body} seed the backend
+ * persists as the AUTHORITATIVE SpecArtifact (P0-1) — so the chat's spec is NOT silently
+ * re-authored by Scribe. The title is the first markdown heading (leading #'s stripped),
+ * falling back to the first non-empty line, then a generic label; the body is the FULL spec
+ * text (heading included) so nothing the human approved is dropped. Pure + UI-free.
+ */
+export function specSeedFromMarkdown(spec: string): { title: string; body: string } {
+  const text = (typeof spec === 'string' ? spec : '').trim()
+  const firstLine = text.split('\n').map(l => l.trim()).find(l => l.length > 0) ?? ''
+  const title = firstLine.replace(/^#{1,6}\s*/, '').replace(/^\*+|\*+$/g, '').trim() || 'Untitled spec'
+  // The body is the whole approved spec markdown — the title heading is part of the spec the
+  // human read and approved, so it stays in the body the agents build from.
+  return { title: title.slice(0, 200), body: text }
+}
+
 // An OPENING akis-spec fence with NO required closing fence after it — same opener shape as
 // SPEC_BLOCK but without the matching close. Anchored to a line so an inner ```code fence
 // (a different info string) is never mistaken for the opener.

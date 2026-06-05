@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { initialSession, isVerified, type SessionState } from '@akis/shared'
+import { initialSession, isVerified, type SessionState, type SpecArtifact } from '@akis/shared'
 import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
 import { nextTs } from '../events/clock.js'
@@ -16,6 +16,17 @@ import { backendRequirementGap } from './backendRequirement.js'
 export interface StartInput {
   idea: string
   ownerId?: string
+  /**
+   * P0-1: an AUTHORITATIVE, chat-approved spec seed. When present, `start()` uses it as the
+   * SpecArtifact instead of re-running Scribe over the idea (so the chat's approved spec is not
+   * silently re-authored), and AUTO-SATISFIES Gate 1 by minting the ApprovedSpec through the
+   * SAME approvalAuthority path `approve()` uses — the human already expressed spec-approval
+   * intent at the chat SpecCard, so the pipeline opens already at spec-approved with NO second
+   * 'awaiting_spec_approval' gate and NO second human click. The structural gate is PRESERVED:
+   * the ApprovedSpec is still minted server-side via the approvalAuthority; Proto still cannot
+   * run without it. Absent ⇒ behavior is byte-identical to today (Scribe runs, gate emits).
+   */
+  spec?: { title: string; body: string }
   /** EDIT MODE (Phase B.5): seed this build with a prior session's app — Proto edits it
    *  (merge semantics) instead of regenerating from scratch. Owner-checked at the API. */
   base?: { files: { filePath: string; content: string }[]; fromSession: string }
@@ -132,6 +143,20 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'session', status: 'started', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     this.narrate(id, `Planning: ${input.idea}`)
 
+    // P0-1: an AUTHORITATIVE chat-approved spec seed short-circuits the spec stage entirely.
+    // The human ALREADY approved this exact spec at the chat SpecCard, so we DO NOT re-run
+    // Scribe (which would author a DIFFERENT spec) nor its spec-stage critic review (which can
+    // spuriously park). We persist the seeded spec and AUTO-SATISFY Gate 1 by minting the
+    // ApprovedSpec through the SAME approvalAuthority path approve() uses — never a literal,
+    // never a generic patch. The pipeline opens already at 'building' (spec-approved), ready
+    // for Proto, with NO second human click and NO 'awaiting_spec_approval' gate emit.
+    if (input.spec) {
+      const spec = { title: input.spec.title, body: input.spec.body }
+      session = await this.s.store.update(id, { spec, status: 'awaiting_spec_approval' }, session.version)
+      this.narrate(id, 'Using the spec you approved in chat — no second approval needed.')
+      return await this.mintSpecApproval(id, spec, session.version)
+    }
+
     // Edge (advisory): consult any custom agents before drafting the spec. No-op
     // without advisory agents; never gates — only narrates research notes.
     await this.runAdvisory(id, 'pre_scribe', `Research before drafting a spec for: ${input.idea}`)
@@ -192,9 +217,20 @@ export class Orchestrator {
     if (!cur) throw new Error(`session ${id} not found`)
     if (cur.status !== 'awaiting_spec_approval') throw new WrongStatusError('approve', cur.status)
     if (!cur.spec) throw new Error('no spec to approve')
-    // Gate 1: persist a branded ApprovalToken bound to the exact reviewed spec.
-    // The approval mint is held only by the orchestrator's ApprovalAuthority.
-    const approving = await this.s.store.recordApproval(id, this.s.approvalAuthority.approve(cur.spec), cur.version)
+    return await this.mintSpecApproval(id, cur.spec, cur.version)
+  }
+
+  /**
+   * Gate 1 — the SINGLE spec-approval mint path. Persists a branded ApprovalToken bound to the
+   * exact reviewed spec (the mint is held only by the orchestrator's ApprovalAuthority — never a
+   * literal, never a generic patch), advances the session to 'building', and emits the
+   * 'spec_approval' satisfied gate. Shared by the human gate (`approve()`) AND the chat-approved
+   * spec seed (`start()` with a spec) so BOTH express the human's spec-approval intent through
+   * one byte-identical mint — the trigger MOMENT moves up to the chat SpecCard, the code path
+   * stays identical. `expectedVersion` is the caller's optimistic-lock cursor.
+   */
+  private async mintSpecApproval(id: string, spec: SpecArtifact, expectedVersion: number): Promise<SessionState> {
+    const approving = await this.s.store.recordApproval(id, this.s.approvalAuthority.approve(spec), expectedVersion)
     const session = await this.s.store.update(id, { status: 'building' }, approving.version)
     this.emitGate(id, 'spec_approval', 'satisfied')
     return session

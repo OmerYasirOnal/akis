@@ -27,6 +27,21 @@ describe('HistoryMenu', () => {
     await userEvent.click(screen.getByRole('button', { name: /History/ }))
     expect(screen.getByText(/No builds yet/)).toBeInTheDocument()
   })
+  // P1-7: the menu carries the SAME minimal signal as the History page (localized status + ✓).
+  it('shows a localized status pill + verified mark per build (not the raw enum)', async () => {
+    const builds = [{ id: 's1', idea: 'a todo app', ts: 0, status: 'done', verified: true }]
+    render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
+    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    expect(screen.getByText('Shipped')).toBeInTheDocument()   // localized, not "done"
+    expect(screen.queryByText('done')).toBeNull()
+    expect(screen.getByText(/verified/)).toBeInTheDocument()
+  })
+  it('omits the status pill for a legacy build with no status (no crash)', async () => {
+    const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }]
+    render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
+    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    expect(screen.getByRole('menuitem', { name: /a todo app/ })).toBeInTheDocument()
+  })
 })
 
 describe('HistoryPage', () => {
@@ -38,7 +53,9 @@ describe('HistoryPage', () => {
     const api = new ApiClient('', fetchFn)
     render(wrap(<HistoryPage api={api} />))
     await waitFor(() => expect(screen.getByText('a todo app')).toBeInTheDocument())
-    expect(screen.getByText('done')).toBeInTheDocument()
+    // P1-7: the status pill is now a localized human label ("Shipped"), not the raw enum "done".
+    expect(screen.getByText('Shipped')).toBeInTheDocument()
+    expect(screen.queryByText('done')).toBeNull()
     await userEvent.click(screen.getByText('a todo app'))
     expect(window.location.search).toBe('?s=s1')
   })

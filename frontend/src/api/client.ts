@@ -98,9 +98,13 @@ export class ApiClient {
   health(): Promise<HealthInfo> { return this.json<HealthInfo>('/health') }
 
   /** `baseSessionId` (Phase B.5): seed the new build with a prior session's app so the
-   *  agents EDIT it (merge semantics) instead of regenerating — the follow-up-changes flow. */
-  startSession(idea: string, workflowId?: string, baseSessionId?: string): Promise<SessionState> {
-    return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea, ...(workflowId ? { workflowId } : {}), ...(baseSessionId ? { baseSessionId } : {}) }) })
+   *  agents EDIT it (merge semantics) instead of regenerating — the follow-up-changes flow.
+   *  `spec` (P0-1): the AUTHORITATIVE chat-approved spec ({title, body}). When present the
+   *  server uses it as-is and auto-satisfies Gate 1 (still minted server-side via the
+   *  approvalAuthority) — so the human approves the spec ONCE at the chat SpecCard and the
+   *  pipeline does NOT show a second 'Approve spec' gate. Omitted ⇒ today's idea-only start. */
+  startSession(idea: string, workflowId?: string, baseSessionId?: string, spec?: { title: string; body: string }): Promise<SessionState> {
+    return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea, ...(workflowId ? { workflowId } : {}), ...(baseSessionId ? { baseSessionId } : {}), ...(spec ? { spec } : {}) }) })
   }
   getSession(id: string): Promise<SessionState> {
     return this.json<SessionState>(`/sessions/${id}`)

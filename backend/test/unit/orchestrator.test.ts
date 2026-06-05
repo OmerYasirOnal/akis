@@ -4,6 +4,7 @@ import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { NotVerifiedError } from '../../src/gates/pushGate.js'
+import { mintApprovedSpec } from '../../src/gates/specGate.js'
 import type { RepoSource, RepoIngestInput } from '../../src/knowledge/ingest/RepoSource.js'
 import { isVerified } from '@akis/shared'
 import { fileURLToPath } from 'node:url'
@@ -34,6 +35,52 @@ describe('Orchestrator — happy path', () => {
     const done = await orch.confirmPush(s.id)
     expect(done.status).toBe('done')
     expect(isVerified(done)).toBe(true)
+  })
+})
+
+describe('Orchestrator — chat-approved spec seed (P0-1: single spec approval)', () => {
+  it('a seed-started session opens already at building (spec-approved) with a minted ApprovedSpec and NO awaiting_spec_approval gate', async () => {
+    const { orch, services } = makeOrch()
+    const seed = { title: 'Minimal Todo', body: '# Minimal Todo\nAdd, list, complete todos.' }
+    const s = await orch.start({ idea: seed.body, spec: seed })
+    // The pipeline opens ALREADY at spec-approved (building), with NO second human click needed.
+    expect(s.status).toBe('building')
+    const stored = (await services.store.get(s.id))!
+    expect(stored.status).toBe('building')
+    // The seeded spec is AUTHORITATIVE (used as-is, not re-authored by Scribe).
+    expect(stored.spec).toEqual(seed)
+    // Gate 1 is genuinely satisfied: a real branded ApprovalToken is persisted (still minted
+    // server-side via the approvalAuthority — never a literal).
+    expect(stored.approval).toBeDefined()
+    expect(mintApprovedSpec(stored).spec).toEqual(seed)
+    // The gate event is SATISFIED, never a second 'awaiting' spec-approval gate.
+    const gates = services.bus.recent(s.id).filter(e => e.kind === 'gate' && (e as { gate: string }).gate === 'spec_approval')
+    expect(gates.some(e => (e as { state: string }).state === 'awaiting')).toBe(false)
+    expect(gates.some(e => (e as { state: string }).state === 'satisfied')).toBe(true)
+  })
+
+  it('a seed-started session runs straight to verified+push without any approve() click (Proto reachable)', async () => {
+    const { orch, services } = makeOrch()
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const s = await orch.start({ idea: seed.body, spec: seed })
+    // No orch.approve() call — the chat-approved seed already satisfied Gate 1.
+    await orch.runToVerification(s.id)
+    const after = (await services.store.get(s.id))!
+    expect(isVerified(after)).toBe(true)
+    expect(after.status).toBe('awaiting_push_confirm')
+    const done = await orch.confirmPush(s.id)
+    expect(done.status).toBe('done')
+  })
+
+  it('an idea-only start is UNCHANGED: Scribe runs and the awaiting_spec_approval gate still emits', async () => {
+    const { orch, services } = makeOrch()
+    const s = await orch.start({ idea: 'build a todo web app' })
+    // No seed → today's path: parked at the human spec gate, no approval minted yet.
+    expect(s.status).toBe('awaiting_spec_approval')
+    expect((await services.store.get(s.id))!.approval).toBeUndefined()
+    const gates = services.bus.recent(s.id).filter(e => e.kind === 'gate' && (e as { gate: string }).gate === 'spec_approval')
+    expect(gates.some(e => (e as { state: string }).state === 'awaiting')).toBe(true)
+    expect(gates.some(e => (e as { state: string }).state === 'satisfied')).toBe(false)
   })
 })
 

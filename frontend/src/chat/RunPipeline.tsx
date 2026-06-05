@@ -1,4 +1,4 @@
-import { useState, type ReactNode, memo } from 'react'
+import { useState, memo } from 'react'
 import type { SessionView } from '../live/types.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
@@ -189,16 +189,14 @@ function TrustLedger({ view, t }: { view: SessionView; t: (k: StringKey) => stri
  * 5 fixed AKIS stages (Spec → Build → Review → Verify → Ship) derived purely from the
  * SessionView, a one-line summary once there's something to summarise, and surfaces the
  * spec-approval / push-confirm gate buttons IN-LINE on their step when a gate is awaiting —
- * wired to the same onApprove/onConfirm the verbose thread uses. The verbose chronological
- * log lives below this in a collapsed <details> (rendered by ChatStudio).
+ * wired to the same onApprove/onConfirm. This inline strip is the CANONICAL run representation;
+ * there is no nested second conversation (P0-2 removed the chat-in-chat 'Live agent activity').
  */
-export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfirm, busy, details, api, sessionGone = false }: {
+export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfirm, busy, api, sessionGone = false }: {
   view: SessionView
   onApprove: () => void
   onConfirm: () => void
   busy?: boolean
-  /** The collapsed raw-log slot (the existing ChatThread), rendered inside <details>. */
-  details?: ReactNode
   /** REST client used to drive the recovery actions (resolve/retry). Same-origin default
    *  (prod). A caller can inject a baseUrl-bound client; tests inject a fake. */
   api?: ApiClient
@@ -215,10 +213,6 @@ export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfir
   // a structural gate (the server re-runs real verification; spec/push gates still apply).
   const client = api ?? new ApiClient()
   const [recovering, setRecovering] = useState(false)
-  // The activity log defaults OPEN while a run is in-flight (so you WATCH each agent work,
-  // not hunt for a collapsed "raw log"), and the user can still collapse/expand it — once
-  // set, their choice sticks (`undefined` = follow the run's in-flight state).
-  const [logOpen, setLogOpen] = useState<boolean | undefined>(undefined)
   const drive = (fn: (id: string) => Promise<unknown>) => (): void => {
     const id = view.sessionId
     if (!id || recovering) return
@@ -314,18 +308,6 @@ export const RunPipeline = memo(function RunPipeline({ view, onApprove, onConfir
             .replace(/(\d+) tests/, `$1 ${t('pipeline.stat.tests')}`)
             .replace(/(\d+) findings/, `$1 ${t('pipeline.stat.findings')}`)}
         </div>
-      )}
-
-      {details && (
-        <details open={logOpen ?? inFlight} onToggle={e => setLogOpen((e.currentTarget as HTMLDetailsElement).open)}
-          className="group rounded-xl border border-white/10 bg-white/[0.02]">
-          <summary className="flex cursor-pointer select-none list-none items-center gap-1.5 px-3 py-2 text-xs font-medium text-slate-400 transition hover:text-slate-200">
-            <span className="inline-block transition group-open:rotate-90" aria-hidden>▸</span>
-            {inFlight && <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#07D1AF]" aria-hidden />}
-            {t('pipeline.details')}
-          </summary>
-          <div className="border-t border-white/10 px-3 py-3">{details}</div>
-        </details>
       )}
     </div>
   )
