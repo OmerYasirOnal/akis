@@ -1,11 +1,30 @@
 # AKIS MVP Commercialization & GTM Strategy
 
-**Date:** 2026-06-02  
+**Date:** 2026-06-05 (originally drafted 2026-06-02; product-readiness claims re-synced to the shipped codebase before merge)  
 **Repository:** `akis-platform-mvp`  
 **Purpose:** Turn AKIS from an MVP into a sellable first product with a focused ICP, pricing, validation plan, and launch sequence.  
 **Core decision:** AKIS should ship the MVP as a **verified AI delivery layer**, not as a generic AI coding agent or broad agent orchestration platform.
 
 ---
+
+## 0. Product readiness snapshot (2026-06-05)
+
+The strategy below was drafted against an early MVP. Since then the product shipped a major arc (PRs #88–#112), and the honest baseline for GTM execution is now:
+
+**Shipped and live-verified (in-browser, real provider):**
+
+- Chat-first studio: idea → clarifying questions (tappable quick-reply chips) → generated spec card → human **spec approval** → build, all in one conversation.
+- The 3 structural safeguards, visible in the UI: spec-approval gate, fail-closed verification (a `VerifyToken` exists only when ≥1 real check ran and passed — producer and verifier are structurally separate agents), and the human **push gate**. A trust ledger + per-step role badges make the gates legible, and demo mode honestly labels simulated verification.
+- **Real verification, not vibes:** the verifier can actually boot generated apps (real install + real process + HTTP probes derived from the spec's acceptance criteria) — a boot-crashing or asset-broken app fails closed. Real verification is enabled per deployment (`AKIS_REAL_TESTS=1`); the keyless demo mode simulates it and the UI honestly labels those runs "simulated" — the fail-closed gate machinery is identical in both.
+- **Full-stack generation:** multi-file static apps, zero-dependency Node services, and account-based apps (built-in SQLite + scrypt auth + session cookies). Live proof: a prompt-built team-voting app with signup/login/create-poll/vote-once enforcement working end to end through the preview proxy.
+- **EDIT MODE:** a follow-up request edits the previously shipped app instead of regenerating it — the client-revision workflow agencies actually live in.
+- Live preview (instant after ship via pre-warm), BYO-key provider settings, GitHub push behind the gate, self-host Docker path, dev-account persistence, auth hardening (rate limiting + session revocation).
+
+**Not yet built (the actual commercial gap list):** shareable/branded client trust report (an in-app trust ledger and a signed build passport exist; the exportable client-facing artifact does not), client approval links, billing/pricing gate, analytics dashboard. These map to the P1 rows in §8 and are the work the 90-day plan must sequence — the P0 trust spine is no longer the bottleneck.
+
+---
+
+*(Terms: ICP = ideal customer profile · GTM = go-to-market · WTP = willingness to pay · PLG = product-led growth · BYO-key = customers bring their own AI-provider API key.)*
 
 ## 1. Founder-level decision
 
@@ -79,14 +98,14 @@ This is the clearest path because agencies/freelancers already sell software out
 
 “Agent orchestration” is technically true but commercially weak for the first buyer. Buyers do not wake up wanting orchestration. They want fewer failed deliveries, less client doubt, and safer AI-built code.
 
-AKIS has four structural gates that can become a strong commercial wedge:
+AKIS has **3 structural safeguards** — two human-approval gates (spec, push) plus a sealed, fail-closed verification capability — which surface to the buyer as four legible properties:
 
 1. **Spec approval gate:** no code before scope is approved.
-2. **Producer ≠ verifier:** the same AI cannot grade its own work.
-3. **Verified requires evidence:** a task is not verified unless a real test/check ran.
+2. **Producer ≠ verifier:** the same AI cannot grade its own work (this separation is the structure INSIDE the verification safeguard, not a prompt promise).
+3. **Verified requires evidence:** a task is not verified unless a real test/check ran — the verification token is fail-closed and cannot be minted any other way.
 4. **Human push gate:** GitHub changes require human approval and token/access control.
 
-The MVP should make these gates visible. If users cannot see the gates, AKIS will look like a slower AI builder. If they can see the gates, AKIS becomes a trust product.
+These are now visible in the product (trust ledger, per-step role badges, locked-until-verified deploy step, honest demo-mode labeling). The remaining GTM work is making them visible to the buyer's *client* — the shareable trust report.
 
 ---
 
@@ -152,7 +171,7 @@ Scoring: 1 weak, 5 strong.
 | Indie hackers / micro-SaaS founders | 4 | 4 | 3 | 4 | 4 | **19** | Secondary PLG |
 | QA/platform/security teams | 5 | 3 | 4 | 2 | 4 | **18** | Later higher-ticket path |
 | Regulated teams | 5 | 2 | 5 | 1 | 3 | **16** | Not MVP-first |
-| Direct SMB / “bakkal” | 3 | 2 | 2 | 2 | 3 | **12** | Channel-through-agency first |
+| Direct SMB / “bakkal” (Turkish: corner-shop-scale small business) | 3 | 2 | 2 | 2 | 3 | **12** | Channel-through-agency first |
 
 ### Primary ICP details
 
@@ -237,20 +256,22 @@ Do not build this first unless QA/platform buyers show stronger willingness-to-p
 
 ### Must ship for commercial MVP
 
-| Priority | Feature | Why it matters |
-|---:|---|---|
-| P0 | Spec approval state | This is the first human-in-the-loop proof. |
-| P0 | Visible run timeline | User must see idea → spec → code → test → review → push. |
-| P0 | Real check/test evidence | Without this, “verified” becomes marketing only. |
-| P0 | Separate verifier/critic identity | This is the strongest trust differentiator. |
-| P0 | Human push approval | Makes the GitHub delivery story concrete. |
-| P0 | Trust report export/share | Agencies need a client-facing artifact. |
-| P1 | BYO-key provider setup | Reduces cost and improves trust/control. |
-| P1 | Client approval link | Strong agency feature; can be simple at first. |
-| P1 | Pricing/billing gate | Needed to validate WTP. |
-| P2 | Analytics dashboard | Useful, but trust report first. |
-| P2 | Marketplace | Too early. |
-| P2 | Full studio | Nice, but avoid scope creep. |
+Status column verified against the shipped code on 2026-06-05 (context in §0).
+
+| Priority | Feature | Why it matters | Status |
+|---:|---|---|---|
+| P0 | Spec approval state | This is the first human-in-the-loop proof. | ✅ Shipped (gate + spec card UI) |
+| P0 | Visible run timeline | User must see idea → spec → code → test → review → push. | ✅ Shipped (pipeline + live agent activity) |
+| P0 | Real check/test evidence | Without this, “verified” becomes marketing only. | ✅ Shipped (real boot + criteria probes, fail-closed; demo mode honestly labeled) |
+| P0 | Separate verifier/critic identity | This is the strongest trust differentiator. | ✅ Shipped (structural separation + role badges) |
+| P0 | Human push approval | Makes the GitHub delivery story concrete. | ✅ Shipped (push gate + 🔒 locked-until-verified) |
+| P0 | Trust report export/share | Agencies need a client-facing artifact. | 🔶 Partial — in-app trust ledger + signed build passport exist; **the exportable client-facing report is the first commercial build item** |
+| P1 | BYO-key provider setup | Reduces cost and improves trust/control. | ✅ Shipped (provider settings + encrypted key store) |
+| P1 | Client approval link | Strong agency feature; can be simple at first. | ❌ Not built |
+| P1 | Pricing/billing gate | Needed to validate WTP. | ❌ Not built (fake-door/manual invoicing per §11 first) |
+| P2 | Analytics dashboard | Useful, but trust report first. | ❌ Not built (correctly deferred) |
+| P2 | Marketplace | Too early. | ❌ Not built (correctly deferred) |
+| P2 | Full studio | Nice, but avoid scope creep. | ✅ Effectively shipped (chat-first studio + editor + live preview) — without delaying P0s |
 
 ### Minimum trust report contents
 
@@ -295,6 +316,8 @@ Developer-specific:
 
 ### Three message pillars
 
+(The buyer-facing distillation of §3's four properties — producer≠verifier is deliberately folded into pillar 2 rather than marketed separately.)
+
 1. **Approval before build**  
    No implementation starts until the spec is accepted.
 
@@ -323,11 +346,15 @@ The emotional hook is the moment AKIS says:
 
 > “AI says it is done, but the check failed. Push blocked.”
 
+A strong second act for agency demos (shipped; exercised in a live in-browser run): the client asks for a change — the user types it as a follow-up message, and AKIS **edits the existing app** (EDIT MODE) instead of regenerating it, re-running the same gates on the revision. That is the client-revision loop agencies live in, with proof attached to every round.
+
 ---
 
 ## 10. GTM plan for the next 90 days
 
 ### Days 1–15: tighten MVP and proof story
+
+Note (2026-06-05): with the P0 trust spine shipped (§0/§8), this phase is **packaging and narrative work on the existing product** — writing the landing copy, recording the demo from real shipped flows, extracting a sample report — not new feature engineering.
 
 Deliverables:
 
@@ -411,7 +438,8 @@ Success metrics:
 | Module | Decision | Reason |
 |---|---|---|
 | Billing | Open first | WTP must be tested now. Manual billing is acceptable if faster. |
-| Analytics / Trust Report | Open second | This is the differentiator and client-facing value. |
+| Trust Report (exportable) | Open second | The differentiator and client-facing value — the P0 commercial blocker in §8. |
+| Analytics dashboard | Open later | Useful, but P2 per §8 — never ahead of the report. |
 | Studio | Only after core flow | Useful, but can become scope creep. |
 | Jira/Confluence/CI | Wait for QA design partner | Do not build enterprise features without pull. |
 | Marketplace | Keep closed | Marketplace is not useful until repeated workflows and supply exist. |
@@ -484,18 +512,20 @@ The moat should be:
 
 ## 16. MVP launch checklist
 
-Before calling the MVP ready to sell, AKIS should have:
+Before calling the MVP ready to sell, AKIS should have (status as of 2026-06-05):
 
-- [ ] Landing page says “verified before GitHub” clearly.
-- [ ] Demo shows a failed check blocking push.
-- [ ] Spec approval is visible.
-- [ ] Producer and verifier are visibly separate.
-- [ ] Test/check evidence is visible.
-- [ ] Human push approval is visible.
-- [ ] Trust report can be copied/exported/shared.
+- [ ] Landing page says “verified before GitHub” clearly. *(landing exists; headline alignment pending)*
+- [x] Demo shows a failed check blocking push. *(fail-closed verification is real: a boot-crashing app cannot be marked verified; the live-run transcript shows blocked pushes)*
+- [x] Spec approval is visible.
+- [x] Producer and verifier are visibly separate. *(role badges + trust ledger)*
+- [x] Test/check evidence is visible. *(test evidence panel; demo runs honestly labeled “simulated”)*
+- [x] Human push approval is visible. *(🔒 locked-until-verified deploy step)*
+- [ ] Trust report can be copied/exported/shared. *(in-app ledger + signed build passport exist; exportable client artifact is the first commercial build item)*
 - [ ] Agency Beta price is shown or offered.
 - [ ] At least 2 design partners have used the workflow.
 - [ ] At least 1 real payment or written paid commitment exists.
+
+The remaining unchecked items are **commercial**, not engineering: report export, pricing surface, and design partners. That is exactly where the 90-day plan in §10 starts.
 
 ---
 
