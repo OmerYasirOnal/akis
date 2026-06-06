@@ -323,8 +323,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // In demo mode the embedded "running app" is a demo (mock provider/verification), so
   // stamp the lifecycle events with the SAME `demo` signal #59 surfaces on /health
   // (`demo.mode`) — informational only, absent on a live boot (byte-identical).
+  // CAP: heavy previews are full dev servers (150-400MB) — bound them (AKIS_MAX_PREVIEWS, default 2).
+  const maxPreviews = Number(env.AKIS_MAX_PREVIEWS)
   const previewRegistry = new PreviewRegistry({
     sandbox: new LocalDirectSandbox(),
+    ...(Number.isInteger(maxPreviews) && maxPreviews > 0 ? { maxConcurrent: maxPreviews } : {}),
     onStatus: e => services.bus.emit({
       kind: 'preview_status', status: e.status,
       ...(e.url !== undefined ? { url: e.url } : {}),

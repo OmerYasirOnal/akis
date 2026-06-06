@@ -36,6 +36,12 @@ export interface PreviewProc {
 export type Launch = (spec: StartSpec, cwd: string) => PreviewProc
 export type Probe = (port: number) => Promise<boolean>
 
+/** Synthetic verify-boot id marker — defined HERE (verify/previewBoot re-exports it) so the
+ *  preview module never imports from verify/ (which imports this file — an import cycle).
+ *  Verify boots are EXEMPT from the concurrency cap BOTH ways: never counted, never evicted —
+ *  preview pressure can never starve the green gate. */
+export const VERIFY_SESSION_SUFFIX = '#verify'
+
 export interface PreviewRegistryDeps {
   sandbox: Sandbox
   launch?: Launch
@@ -48,6 +54,11 @@ export interface PreviewRegistryDeps {
    *  testable WITHOUT depending on a real pnpm on the test runner's global PATH — the default
    *  spawns the real `<cmd> --version`. (PR #83 review: keep tests host-independent.) */
   commandOnPath?: (cmd: string) => Promise<boolean>
+  /** CAP (audit bigger-bet): max CONCURRENT heavy previews (non-static, non-verify dev servers —
+   *  150-400MB RSS each; 2-3 of them OOM a small box outright). An EXPLICIT start at the cap
+   *  evicts the OLDEST heavy preview (the user asked for THIS one); the auto-prewarm instead
+   *  checks {@link PreviewRegistry.atCapacity} and skips. Default 2. */
+  maxConcurrent?: number
 }
 
 /** A bounded string buffer keeping only the last `max` bytes (ring-trimmed) so capturing
@@ -137,10 +148,26 @@ export class PreviewRegistry {
   private launch: Launch
   private probe: Probe
   private commandOnPath: (cmd: string) => Promise<boolean>
+  private maxConcurrent: number
   constructor(private deps: PreviewRegistryDeps) {
     this.launch = deps.launch ?? defaultLaunch
     this.probe = deps.probe ?? defaultProbe
     this.commandOnPath = deps.commandOnPath ?? commandOnPath
+    this.maxConcurrent = deps.maxConcurrent ?? 2
+  }
+
+  /** Heavy = holds (or is about to hold) a dev-server process: live, non-static, not a verify
+   *  boot. A 'starting' entry has no type yet — it counts (it is becoming heavy). */
+  private countsTowardCap(e: PreviewEntry): boolean {
+    return (e.status === 'ready' || e.status === 'starting')
+      && e.type !== 'static'
+      && !e.sessionId.includes(VERIFY_SESSION_SUFFIX)
+  }
+
+  /** True when one MORE heavy preview would exceed the cap — the auto-prewarm checks this and
+   *  SKIPS (warming up is never worth evicting something, nor OOMing the box). */
+  atCapacity(): boolean {
+    return [...this.entries.values()].filter(e => this.countsTowardCap(e)).length >= this.maxConcurrent
   }
 
   get(sessionId: string): PreviewEntry | undefined { return this.entries.get(sessionId) }
@@ -162,6 +189,16 @@ export class PreviewRegistry {
     const spec = startSpec(type, 0, sessionId)
     if (!spec) { await teardown(dir).catch(() => {}); return this.set({ sessionId, status: 'unsupported', dir, type, reason: `app type '${type}' not previewable` }) }
 
+    // CAP enforcement for an EXPLICIT heavy start: evict the OLDEST heavy preview(s) to make
+    // room (the user asked for THIS one; the evicted one re-boots on its next Run). Verify boots
+    // bypass the cap entirely — the green gate must never queue behind preview pressure.
+    if (!sessionId.includes(VERIFY_SESSION_SUFFIX)) {
+      while (this.atCapacity()) {
+        const oldest = [...this.entries.values()].find(e => this.countsTowardCap(e))
+        if (!oldest) break
+        await this.stop(oldest.sessionId)
+      }
+    }
     this.set({ sessionId, status: 'starting', dir })
     const install = installSpec()
     // Install preflight: a missing pnpm yields a bare "code null" — give an actionable hint.

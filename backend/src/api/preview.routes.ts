@@ -78,6 +78,9 @@ export function wirePreviewPrewarm(
     if (e.kind !== 'done') return
     const cur = registry.get(e.sessionId)
     if (cur && (cur.status === 'ready' || cur.status === 'starting')) return
+    // CAP (audit bigger-bet): a warm-up is never worth evicting a live preview or OOMing the box —
+    // at capacity the prewarm silently skips; the user's explicit Run still works (it evicts).
+    if (registry.atCapacity()) return
     void startPreviewForSession(store, registry, e.sessionId).catch(() => {
       /* best-effort: a failed prewarm just means Run pays the boot, as before */
     })

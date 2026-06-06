@@ -10,11 +10,13 @@ import type { SessionStore } from '../../src/store/SessionStore.js'
 
 const FILES = [{ filePath: 'index.html', content: '<html>app</html>' }]
 
-function fakes(opts?: { existing?: PreviewEntry; files?: typeof FILES | [] }) {
+function fakes(opts?: { existing?: PreviewEntry; files?: typeof FILES | []; atCapacity?: boolean }) {
   const start = vi.fn(async (id: string, dir: string, type: string): Promise<PreviewEntry> => ({ sessionId: id, status: 'ready', dir, ...(type ? { type: type as NonNullable<PreviewEntry['type']> } : {}) }))
   const registry = {
     start,
     get: vi.fn(() => opts?.existing),
+    // CAP: the prewarm consults capacity before warming up (default: room available).
+    atCapacity: vi.fn(() => opts?.atCapacity ?? false),
   } as unknown as PreviewRegistry
   const store = {
     get: vi.fn(async () => ({ id: 's1', code: { files: opts?.files ?? FILES } })),
@@ -99,6 +101,17 @@ describe('wirePreviewPrewarm (ship-time boot, task #50 perceived latency)', () =
     off()
     bus.emit(done('s1'))
     await settle()
+    expect(start).not.toHaveBeenCalled()
+  })
+})
+
+describe('prewarm capacity gate (audit bigger-bet)', () => {
+  it('SKIPS the warm-up at capacity — a prewarm never evicts a live preview nor OOMs the box', async () => {
+    const { registry, store, start } = fakes({ atCapacity: true })
+    const bus = new EventBus()
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit({ kind: 'done', sessionId: 's1', verified: true, provider: 'mock', agent: 'orchestrator', laneId: 'main', ts: 1 })
+    await new Promise(r => setTimeout(r, 5))
     expect(start).not.toHaveBeenCalled()
   })
 })

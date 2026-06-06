@@ -18,7 +18,10 @@ import type { BootResult } from './bootSmoke.js'
  * would silently `stop()` (kill) the first verify's booted app mid-probe and leak its workspace.
  * A unique id per run keeps every verify boot an independent entry with independent teardown.
  */
-export const VERIFY_SESSION_SUFFIX = '#verify'
+// The constant LIVES in the registry (avoids a preview↔verify import cycle); re-exported here
+// for existing consumers.
+import { VERIFY_SESSION_SUFFIX } from '../preview/PreviewRegistry.js'
+export { VERIFY_SESSION_SUFFIX }
 
 /**
  * Build the `boot` dependency for the boot-smoke runner from a {@link PreviewRegistry}: it

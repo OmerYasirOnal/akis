@@ -279,3 +279,36 @@ describe('PreviewRegistry — post-ready crash watch (live-caught stale-ready 50
     expect(reg.get('s-stop')!.status).toBe('stopped')
   })
 })
+
+describe('PreviewRegistry concurrency cap (audit bigger-bet: heavy previews OOM a small box)', () => {
+  const heavyReg = (max: number) => new PreviewRegistry({
+    sandbox: okSandbox, commandOnPath: async () => true,
+    launch: () => fakeProc(), probe: async () => true, maxConcurrent: max,
+  })
+
+  it('an EXPLICIT heavy start at the cap evicts the OLDEST heavy preview (user intent wins)', async () => {
+    const reg = heavyReg(1)
+    const first = await reg.start('s-old', '/tmp/a', 'vite')
+    expect(first.status).toBe('ready')
+    const second = await reg.start('s-new', '/tmp/b', 'vite')
+    expect(second.status).toBe('ready')
+    expect(reg.get('s-old')?.status).toBe('stopped')   // oldest evicted to make room
+    expect(reg.atCapacity()).toBe(true)                // exactly one heavy slot, now s-new
+  })
+
+  it('STATIC previews never count toward the cap (no process, no memory)', async () => {
+    const reg = heavyReg(1)
+    await reg.start('s-static', '/tmp/s', 'static')
+    const heavy = await reg.start('s-heavy', '/tmp/h', 'vite')
+    expect(heavy.status).toBe('ready')
+    expect(reg.get('s-static')?.status).toBe('ready')  // untouched — statics are free
+  })
+
+  it('VERIFY boots are exempt BOTH ways: never blocked, never evicting (the green gate cannot starve)', async () => {
+    const reg = heavyReg(1)
+    await reg.start('s-user', '/tmp/u', 'vite')
+    const verify = await reg.start('s-user#verify:nonce1', '/tmp/v', 'vite')
+    expect(verify.status).toBe('ready')                 // not blocked by the cap
+    expect(reg.get('s-user')?.status).toBe('ready')     // and it evicted NOTHING
+  })
+})
