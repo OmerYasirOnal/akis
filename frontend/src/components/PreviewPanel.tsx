@@ -90,14 +90,16 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
         <div className="flex items-center gap-2">
           {/* P1-CORE-1: when the boot is in demo mode (mock provider/verification), the embedded
               "running app" is a demo, not a real-verified build — flag it on the preview itself. */}
+          {/* Pills normalized (review): one shape — rounded-md + 1px border + matching padding — so
+              the demo/verified/Run cluster reads as a set instead of jittering between styles. */}
           {view.preview.demo && (
             <span role="status" title={t('result.demo.title')}
-              className="rounded border border-amber-400/30 bg-amber-400/15 px-2 py-0.5 text-xs text-amber-200">
+              className="rounded-md border border-amber-400/30 bg-amber-400/15 px-2 py-0.5 text-xs text-amber-200">
               {t('result.demo.badge')}
             </span>
           )}
           {view.verified !== undefined && (
-            <span className={`rounded px-2 py-0.5 text-xs ${view.verified ? 'bg-emerald-500/20 text-emerald-300' : 'bg-slate-500/20 text-slate-300'}`}>
+            <span className={`rounded-md border px-2 py-0.5 text-xs ${view.verified ? 'border-emerald-400/30 bg-emerald-500/20 text-emerald-300' : 'border-slate-400/20 bg-slate-500/20 text-slate-300'}`}>
               {view.verified ? t('preview.verified') : t('preview.unverified')}
             </span>
           )}
@@ -151,8 +153,11 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
             // origin is enough to run a self-contained app. (Apps needing real same-origin
             // storage are a deferred cross-origin-preview hardening.)
             <>
+              {/* LETTERBOX (review: wide-panel sprawl): cap the logical width + center on the dark
+                  surface so an ultrawide panel frames the app (dark margins) instead of stretching it
+                  edge-to-edge as a bare white slab. Narrow panels (< the cap) still fill full width. */}
               <iframe title="preview" src={url} onLoad={() => setLoaded(true)}
-                className={`h-full w-full bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                className={`mx-auto block h-full w-full max-w-[1100px] bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                 sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
               {/* Dark themed skeleton over the iframe until it actually PAINTS — no white flash. */}
               {!loaded && (
