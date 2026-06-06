@@ -12,6 +12,7 @@ import { signPassport } from '../verify/passport.js'
 import type { BuildPassport, VerifyToken } from '@akis/shared'
 import { mergeFiles } from './mergeFiles.js'
 import { backendRequirementGap } from './backendRequirement.js'
+import { wantsRepoContext } from './repoContextIntent.js'
 
 export interface StartInput {
   idea: string
@@ -194,9 +195,11 @@ export class Orchestrator {
     const scribeCtx = await this.ctx(id, input.idea)
     // SP1 (TIGHTEN/ADDITIVE): resolve per-owner READ-ONLY GitHub-MCP wiring just-in-time, exactly
     // like the githubFor pattern (confirmPush). githubMcpFor returns {pool,ownerId,token} ONLY when
-    // a non-empty token resolves for the owner — anonymous sessions (no ownerId) or owners without
-    // a connection ⇒ undefined ⇒ the Scribe path is byte-identical to today (no Docker spawn).
-    const githubMcp = input.ownerId ? this.s.githubMcpFor?.(input.ownerId) : undefined
+    // a non-empty token resolves for the owner. SMART TRIGGER: only wire it when the IDEA actually
+    // signals the user wants their connected repo as reference (wantsRepoContext) — so a plain build
+    // never spawns the github-MCP Docker child. No owner / no connection / no repo-intent ⇒ undefined
+    // ⇒ the Scribe path is byte-identical to today (no Docker spawn).
+    const githubMcp = input.ownerId && wantsRepoContext(input.idea) ? this.s.githubMcpFor?.(input.ownerId) : undefined
     const scribeOut = await this.s.scribe.run({
       sessionId: id, laneId: 'main', idea: input.idea, ctx: scribeCtx,
       ...(githubMcp ? { githubMcp } : {}),
@@ -308,10 +311,12 @@ export class Orchestrator {
     // (which describes the candidate) and the files Proto sees stay consistent. A fresh
     // build (no base) keeps today's full-regeneration iterate semantics, byte-identical.
     let baseFiles = session.base?.files
-    // SP1: resolve the per-owner READ-ONLY github handle ONCE for the whole build loop (the same
-    // githubMcpFor the Scribe draft uses). When a connection resolves, Proto runs a bounded
-    // github-read gather pass before each code attempt; absent ⇒ Proto is byte-identical to today.
-    const githubMcp = session.ownerId ? this.s.githubMcpFor?.(session.ownerId) : undefined
+    // SP1: resolve the per-owner READ-ONLY github handle ONCE for the whole build loop. SMART
+    // TRIGGER: only when the spec/idea signals the user wants their connected repo as reference
+    // (wantsRepoContext) — so a plain build never spawns the github-MCP Docker child nor runs Proto's
+    // extra gather pass. No owner / no connection / no repo-intent ⇒ undefined ⇒ byte-identical to today.
+    const githubMcp = session.ownerId && wantsRepoContext(`${approved.spec.title}\n${approved.spec.body}\n${session.idea}`)
+      ? this.s.githubMcpFor?.(session.ownerId) : undefined
     // Proto gathers the bounded github repo context ONCE on attempt 0 and returns it; we cache it
     // here and thread it back on every iterate round so the github read pass never re-runs per attempt.
     let repoContext: string | undefined
