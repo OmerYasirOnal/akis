@@ -1,7 +1,7 @@
 import type { PublishRecord, PublishAppType } from '@akis/shared'
 import type { RepoFile } from '../di/MockGitHubAdapter.js'
 import { detectAppType } from '../preview/AppDetector.js'
-import type { SshTransport, SshConfig } from './SshTransport.js'
+import { type SshTransport, type SshConfig, shSingleQuote } from './SshTransport.js'
 import type { PublishProfile } from '../keys/PublishProfileStore.js'
 import { validHost, validSshUser, validTargetDir, validAppPort, validPublicUrl } from './validate.js'
 import { STATIC_SERVE_MJS } from './staticServe.js'
@@ -129,13 +129,24 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
       'stop prior app',
     )
 
-    // 5. REMOTE node preflight (ENOENT discipline over SSH). `command -v node` is the POSIX probe.
-    const nodeCheck = await runStep(`command -v node >/dev/null 2>&1 && node --version || echo __NO_NODE__`, 'check node')
+    // 5. REMOTE node preflight (ENOENT discipline over SSH). The transport runs this through a LOGIN
+    //    shell (bash -lc), so an nvm/non-system node IS on PATH — `command -v node` now resolves it
+    //    even when the default non-login ssh shell would not (the LIVE OCI defect). We capture BOTH
+    //    the ABSOLUTE node path AND the version on one line: `<abspath>\n<version>` so we can (a)
+    //    parse the version for the floor check and (b) USE the absolute path for the actual app
+    //    launches — the running app then does NOT depend on PATH at all (a detached nohup/run.sh
+    //    process may re-exec under a shell that never sourced the profile).
+    const nodeCheck = await runStep(`p="$(command -v node 2>/dev/null)"; [ -n "$p" ] && printf '%s\\n' "$p" && node --version || echo __NO_NODE__`, 'check node')
     if (!nodeCheck) return { ok: false, url, at, appType, logTail: log.value() }
     if (nodeCheck.stdout.includes('__NO_NODE__') || nodeCheck.code !== 0) {
       log.push(`node not found on the instance for user ${profile.sshUser} — install Node and retry`)
       return { ok: false, url, at, appType, logTail: log.value() }
     }
+    // The ABSOLUTE node path is the FIRST line of the probe output (the version is on the next line).
+    // We fall back to the bare `node` only if the path line is somehow empty (defensive — the
+    // __NO_NODE__ guard above already rejects the genuinely-absent case). nodeBin is shell-quoted
+    // before it enters a command so a path with spaces/quotes can never break the launcher.
+    const nodeBin = parseNodePath(nodeCheck.stdout) ?? 'node'
     // 5b. NODE-VERSION preflight. The verified fullstack shape uses node:sqlite/DatabaseSync, which
     //     is a builtin only since Node 22.5 (DatabaseSync stabilized at 22.13). On a Node-20 box (the
     //     documented OCI target) `node .` throws ERR_UNKNOWN_BUILTIN_MODULE at module load and the
@@ -190,8 +201,11 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
       // Ship the vendored static server alongside the files; start it bound to 0.0.0.0.
       await transport.putFiles([{ filePath: 'static-serve.mjs', content: STATIC_SERVE_MJS }], targetDir, stepTimeout())
       const start = await runStep(
-        // cd FIRST (relative reads resolve under targetDir), start detached, record pids.
-        `cd "${targetDir}" && nohup node static-serve.mjs ${appPort} "${targetDir}" >static.log 2>&1 & echo $! >app.pid; true`,
+        // cd FIRST (relative reads resolve under targetDir), start detached, record pids. We launch
+        // via the ABSOLUTE node path (nodeBin, shell-quoted) — a detached nohup process is NOT
+        // guaranteed to keep the login-shell PATH, so depending on bare `node` would re-introduce
+        // the very "node not found" failure for an nvm node. The absolute path needs no PATH at all.
+        `cd "${targetDir}" && nohup ${shSingleQuote(nodeBin)} static-serve.mjs ${appPort} "${targetDir}" >static.log 2>&1 & echo $! >app.pid; true`,
         'start static server',
       )
       if (!start) return { ok: false, url, at, appType, logTail: log.value() }
@@ -226,11 +240,14 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
       // CWD spawns a NEW empty app.db (silent data loss). The `until` loop re-execs on exit WITH a
       // 2s sleep so an instantly-crashing app cannot tight-spin and peg the CPU. It binds 0.0.0.0
       // (external reach — NOT preview's loopback). PORT/HOST mirror the preview node-service contract.
+      // run.sh launches via the ABSOLUTE node path (baked in, shell-quoted) — `nohup bash run.sh`
+      // detaches under a shell that may NOT have sourced the profile, so a bare `node .` would
+      // re-trigger the "node not found" failure for an nvm node. The absolute path needs no PATH.
       const runSh = [
         '#!/usr/bin/env bash',
         `cd "${targetDir}" || exit 1`,
         'until false; do',
-        `  PORT=${appPort} HOST=0.0.0.0 node . >app.log 2>&1 &`,
+        `  PORT=${appPort} HOST=0.0.0.0 ${shSingleQuote(nodeBin)} . >app.log 2>&1 &`,
         '  echo $! > app.pid',
         '  wait "$(cat app.pid)"',
         '  sleep 2',
@@ -303,15 +320,36 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
 /** A parsed semver-ish node version (only major/minor matter for our floor checks). */
 interface NodeVersion { major: number; minor: number; raw: string }
 
-/** Parse the `node --version` output (e.g. "v22.13.1" or "v20.19.1\n"). Returns undefined when the
- *  output carries no recognizable version (so the caller treats it as "unknown / can't confirm"). */
+/** Parse the node preflight output. The probe prints `<abspath>\n<version>` (e.g.
+ *  "/usr/bin/node\nv22.13.1"), so we parse the version from the LAST line that is a BARE
+ *  `v<major>.<minor>.<patch>` token — never from the path line, whose directory name could carry an
+ *  unrelated digit-triple (e.g. an `/opt/node-18.20.4/…` symlink to a different node). Returns
+ *  undefined when no line is a recognizable version (so the caller treats it as "unknown"). */
 function parseNodeVersion(stdout: string): NodeVersion | undefined {
-  const m = stdout.match(/v?(\d+)\.(\d+)\.(\d+)/)
-  if (!m) return undefined
-  const major = Number(m[1])
-  const minor = Number(m[2])
-  if (!Number.isFinite(major) || !Number.isFinite(minor)) return undefined
-  return { major, minor, raw: `v${m[1]}.${m[2]}.${m[3]}` }
+  // Scan lines from the bottom (the version line follows the path line) for a bare version token.
+  const lines = stdout.split('\n').map(l => l.trim()).reverse()
+  for (const line of lines) {
+    const m = line.match(/^v?(\d+)\.(\d+)\.(\d+)$/)
+    if (!m) continue
+    const major = Number(m[1])
+    const minor = Number(m[2])
+    if (!Number.isFinite(major) || !Number.isFinite(minor)) continue
+    return { major, minor, raw: `v${m[1]}.${m[2]}.${m[3]}` }
+  }
+  return undefined
+}
+
+/** Extract the ABSOLUTE node path the preflight resolved via `command -v node` (the FIRST non-empty,
+ *  absolute-looking line of the probe output). Returns undefined when no absolute path is present
+ *  (the caller then falls back to bare `node`). We accept ONLY an absolute path (leading '/') so a
+ *  stray non-path first line can never be baked into a launcher as a bogus executable. */
+function parseNodePath(stdout: string): string | undefined {
+  // The login-shell probe output may include banner/MOTD lines a `.profile` prints (some begin with
+  // '/'), plus the `command -v node` result (an absolute path ENDING in /node) and `node --version`.
+  // PREFER a path whose basename is `node` so a stray "/Welcome…"-style banner line can never be
+  // baked into a launcher as a bogus executable; fall back to the first absolute line otherwise.
+  const abs = stdout.split('\n').map(l => l.trim()).filter(l => l.startsWith('/'))
+  return abs.find(l => /\/node$/.test(l)) ?? abs[0]
 }
 
 /** Whether `have` is at least `floor` (major then minor). */

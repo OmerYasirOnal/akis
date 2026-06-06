@@ -18,6 +18,11 @@ export interface FakeCommandRule {
  *
  * Programmable per-command exit/stdout/stderr/delay via rules (first matching rule wins); an
  * unmatched command defaults to code 0 (success). NO network, NO real SSH, NO disk.
+ *
+ * NOTE: this fake records the RAW command the Publisher passes (it does NOT apply the login-shell
+ * `bash -lc` wrap — that is an OpenSshTransport concern, asserted in openSshTransport.test.ts). So
+ * the Publisher tests here assert on the plain command strings the Publisher builds, while the
+ * transport test pins the wrap. Rule `match` substrings therefore match the unwrapped command.
  */
 export class FakeSshTransport implements SshTransport {
   /** Every remote command, in call order. */

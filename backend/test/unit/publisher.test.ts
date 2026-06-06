@@ -16,14 +16,22 @@ const NODE_WITH_DEPS = [
   { filePath: 'server.js', content: "require('express')()" },
 ]
 
+// The remote node preflight now prints `<abspath>\n<version>` (a login-shell `command -v node`
+// followed by `node --version`) so the Publisher can BAKE the absolute path into the launchers. The
+// default fixture is a realistic nvm path so every default-path test exercises the absolute-path
+// launch (not a bare `node`). The match key 'node --version' still substring-matches the new probe.
+const NODE_PROBE_OUT = '/home/ubuntu/.nvm/versions/node/v22.13.1/bin/node\nv22.13.1'
+const NODE_BIN = '/home/ubuntu/.nvm/versions/node/v22.13.1/bin/node'
+
 /** Build a publish input wired to a fresh FakeSshTransport (captured for assertions). */
 function setup(files: PublishInput['files'], rules: FakeCommandRule[] = [], extra: Partial<PublishInput> = {}) {
   const fake = new FakeSshTransport([
     // Override rules win (first match): a test prepends e.g. a non-writable probe or a missing node.
     ...rules,
     // Default: node (>=22.13 so the node:sqlite preflight passes for the fullstack shape) + npm
-    // present, target dir writable, and the started process is alive + the port is bound.
-    { match: 'node --version', stdout: 'v22.13.1' },
+    // present, target dir writable, and the started process is alive + the port is bound. The node
+    // probe emits an absolute path line + the version line (the real login-shell probe shape).
+    { match: 'node --version', stdout: NODE_PROBE_OUT },
     { match: 'command -v npm', stdout: '__NPM__' },
     { match: '.akis-write-probe', stdout: '__WRITABLE__' },
     { match: 'echo "$alive $bound"', stdout: '__ALIVE__ __BOUND__' },
@@ -50,7 +58,10 @@ describe('Publisher (FakeSshTransport, offline)', () => {
     expect(allFiles).toContain('index.html')
     const serveContent = fake.puts.flatMap(p => p.files).find(f => f.filePath === 'static-serve.mjs')!.content
     expect(serveContent).toContain("'0.0.0.0'")
-    expect(fake.commands.some(c => c.includes('node static-serve.mjs 8080'))).toBe(true)
+    // The launcher uses the ABSOLUTE node path resolved by the preflight (shell-quoted), NOT bare
+    // `node` — so a detached nohup process never depends on a profile-sourced PATH.
+    expect(fake.commands.some(c => c.includes(`'${NODE_BIN}' static-serve.mjs 8080`))).toBe(true)
+    expect(fake.commands.some(c => c.includes('static-serve.mjs 8080'))).toBe(true)
     expect(fake.closed).toBe(true)
   })
 
@@ -71,14 +82,16 @@ describe('Publisher (FakeSshTransport, offline)', () => {
     expect(fake.commands.some(c => c.includes('npm ci'))).toBe(false)
   })
 
-  it("generated run.sh `cd`s into targetDir BEFORE `node .` and the until-loop has a sleep", async () => {
+  it("generated run.sh `cd`s into targetDir BEFORE the node launch and the until-loop has a sleep", async () => {
     const { fake, input } = setup(FULLSTACK_FILES)
     await publish(input)
     const runSh = fake.puts.flatMap(p => p.files).find(f => f.filePath === 'run.sh')!.content
     const cdIdx = runSh.indexOf('cd "/home/ubuntu/app"')
-    const nodeIdx = runSh.indexOf('node .')
+    // The launch uses the ABSOLUTE node path (shell-quoted), NOT bare `node .` — so the supervised
+    // restart-loop process needs no profile-sourced PATH.
+    const nodeIdx = runSh.indexOf(`'${NODE_BIN}' .`)
     expect(cdIdx).toBeGreaterThanOrEqual(0)
-    expect(nodeIdx).toBeGreaterThan(cdIdx) // cd FIRST, then node .
+    expect(nodeIdx).toBeGreaterThan(cdIdx) // cd FIRST, then the node launch
     expect(runSh).toContain('sleep 2') // no tight-spin on an instantly-crashing app
     expect(runSh).toContain('HOST=0.0.0.0')
   })
@@ -230,7 +243,9 @@ describe('Publisher (FakeSshTransport, offline)', () => {
     const { fake, input } = setup(STATIC_FILES)
     await publish(input)
     const cleanIdx = fake.commands.findIndex(c => c.includes('find') && c.includes('rm -rf'))
-    const uploadHappensAfter = fake.commands.findIndex(c => c.includes('node static-serve.mjs'))
+    // The start command now launches via the resolved absolute node path, so match the stable
+    // `static-serve.mjs` marker (not the old bare `node static-serve.mjs`).
+    const uploadHappensAfter = fake.commands.findIndex(c => c.includes('static-serve.mjs'))
     expect(cleanIdx).toBeGreaterThanOrEqual(0)
     // The clean step runs before the server is started (and before putFiles, which is not a `run`
     // command but is ordered by the same await sequence).
@@ -287,5 +302,70 @@ describe('Publisher (FakeSshTransport, offline)', () => {
     await publish(input)
     const staged = fake.puts.flatMap(p => p.files.map(f => f.filePath))
     expect(staged).toContain('a..b.txt') // the segment-test guard does not over-match
+  })
+
+  // ── node-on-PATH bulletproofing: capture the ABSOLUTE node path + bake it into the launchers ──
+  // PINS the LIVE OCI fix: the preflight resolves the absolute node path via a login-shell
+  // `command -v node`, and that absolute path (NOT a bare `node`, which a detached process may not
+  // find for an nvm node) is used to START the app — static AND baked into run.sh.
+
+  it('node preflight resolves the ABSOLUTE node path and the version still parses from the probe', async () => {
+    const { fake, input } = setup(STATIC_FILES)
+    const rec = await publish(input)
+    expect(rec.ok).toBe(true)
+    // The probe asks for BOTH the resolved path and the version on one command.
+    const probe = fake.commands.find(c => c.includes('command -v node') && c.includes('node --version'))!
+    expect(probe).toBeDefined()
+    // The version still parses out of the (path + version) output → recorded in logTail.
+    expect(rec.logTail.join(' ')).toContain('detected node v22.13.1')
+  })
+
+  it('STATIC start uses the RESOLVED absolute node path (not bare `node`)', async () => {
+    const { fake, input } = setup(STATIC_FILES)
+    await publish(input)
+    const startCmd = fake.commands.find(c => c.includes('static-serve.mjs'))!
+    expect(startCmd).toContain(`'${NODE_BIN}' static-serve.mjs`)
+    // It must NOT launch via a bare `node ` token (that would re-introduce the PATH dependency).
+    expect(startCmd).not.toMatch(/(^|[^'])\bnode static-serve\.mjs/)
+  })
+
+  it('NODE-SERVICE run.sh BAKES the resolved absolute node path (the supervised app needs no PATH)', async () => {
+    const { fake, input } = setup(FULLSTACK_FILES)
+    await publish(input)
+    const runSh = fake.puts.flatMap(p => p.files).find(f => f.filePath === 'run.sh')!.content
+    // The launch line uses the absolute path, shell-quoted, NOT a bare `node .`.
+    expect(runSh).toContain(`'${NODE_BIN}' .`)
+    expect(runSh).not.toMatch(/(^|[^'])\bnode \./m)
+  })
+
+  it('an absolute node path WITH a space is shell-quoted into the launcher as one literal word', async () => {
+    // A pathological-but-valid install path. Quoting must keep it a single argument so the launcher
+    // does not split it (which would make node not found, the exact failure we are killing).
+    const spaced = '/opt/my node/bin/node'
+    const { fake, input } = setup(STATIC_FILES, [{ match: 'node --version', stdout: `${spaced}\nv22.13.1` }])
+    const rec = await publish(input)
+    expect(rec.ok).toBe(true)
+    const startCmd = fake.commands.find(c => c.includes('static-serve.mjs'))!
+    expect(startCmd).toContain(`'/opt/my node/bin/node' static-serve.mjs`)
+  })
+
+  it('a genuinely-ABSENT node (even via the login shell) STILL fails honestly with "install Node"', async () => {
+    // The probe prints __NO_NODE__ when `command -v node` resolves nothing — the login-shell wrap
+    // does not invent a node, so a real absence must remain an honest ok:false. No launcher should run.
+    const { fake, input } = setup(STATIC_FILES, [{ match: 'node --version', stdout: '__NO_NODE__' }])
+    const rec = await publish(input)
+    expect(rec.ok).toBe(false)
+    expect(rec.logTail.join(' ')).toContain('node not found on the instance')
+    expect(rec.logTail.join(' ')).toContain('install Node')
+    // The app was never started (no launcher command was issued).
+    expect(fake.commands.some(c => c.includes('static-serve.mjs'))).toBe(false)
+  })
+
+  it('SECRET-LEAK with the new node-path threading: the key still appears in NO argv (start cmd included)', async () => {
+    // The absolute node path is interpolated into the START command — assert that adding it did NOT
+    // open a leak channel (the key is never part of any command by construction).
+    const { fake, input } = setup(STATIC_FILES)
+    await publish(input)
+    fake.assertNoLeak('FAKE_PUBLISHER_TEST_KEY_SECRET_BYTES')
   })
 })

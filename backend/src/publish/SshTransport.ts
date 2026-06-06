@@ -79,6 +79,33 @@ export class SshBinaryMissingError extends Error {
 }
 
 /**
+ * POSIX single-quote escape: wrap `s` so it is ONE literal shell word no matter what it contains.
+ * Every `'` is closed, escaped as `\'` (outside quotes), then reopened — the canonical
+ * `'foo'\''bar'` idiom. The result is safe to splice into a command line as a single argument.
+ * (We deliberately do NOT use double quotes: `$`/backtick/`\` would still be interpreted.)
+ */
+export function shSingleQuote(s: string): string {
+  return `'${s.split("'").join(`'\\''`)}'`
+}
+
+/**
+ * Wrap a remote command so it runs in a LOGIN shell (`bash -lc <cmd>`), which sources the user's
+ * profile (~/.profile, ~/.bash_profile, nvm's init) so a non-system / nvm-managed `node` is on
+ * PATH. WHY: `ssh user@host '<cmd>'` runs <cmd> in a NON-login, NON-interactive shell that does
+ * NOT source the profile, so an nvm node is invisible and `command -v node` reports "not found"
+ * even when Node IS installed (the LIVE OCI defect). The whole command (which itself contains
+ * quotes, `&&`, pipes) is passed as ONE single-quoted argument to `bash -lc`.
+ *
+ * SECURITY INVARIANT PRESERVED: secrets are NEVER part of `cmd` (the Publisher never interpolates a
+ * secret into a command — the key reaches OpenSSH only via `-i <0600 file>`), so the wrapped argv
+ * stays secret-free. The wrap is applied ONLY to the `ssh` command channel — NOT to `scp`
+ * (file-transfer is a separate path and must not be shell-wrapped).
+ */
+export function loginShellWrap(cmd: string): string {
+  return `bash -lc ${shSingleQuote(cmd)}`
+}
+
+/**
  * OpenSSH-backed transport: spawns the system `ssh`/`scp` binaries (no native `ssh2` dep — the
  * repo's deliberate no-native-deps posture). The decrypted key is written to a 0600 file under a
  * 0700 per-run dir in os.tmpdir(); both are removed in close() AND by a process-exit hook.
@@ -173,8 +200,13 @@ export class OpenSshTransport implements SshTransport {
   async run(cmd: string, opts?: SshRunOpts): Promise<SshExecResult> {
     if (!(await this.commandOnPath('ssh'))) throw new SshBinaryMissingError('ssh')
     const { keyPath, knownHostsPath } = this.ensureKey()
-    // `--` terminates options so the (already-validated) host can never be read as one.
-    const args = [...this.sshBaseArgs(keyPath, knownHostsPath), '--', `${this.cfg.user}@${this.cfg.host}`, cmd]
+    // `--` terminates options so the (already-validated) host can never be read as one. The remote
+    // command runs through a LOGIN shell (`bash -lc <single-quoted cmd>`) so the profile is sourced
+    // and an nvm/non-system node is on PATH — without this `command -v node` falsely reports "not
+    // found" on a box where node IS installed (the LIVE OCI defect). `cmd` carries NO secret, so the
+    // wrapped argv stays secret-free. The wrap is applied here (the ssh channel) and NOT to scp.
+    const remote = loginShellWrap(cmd)
+    const args = [...this.sshBaseArgs(keyPath, knownHostsPath), '--', `${this.cfg.user}@${this.cfg.host}`, remote]
     return spawnCapture('ssh', args, opts?.timeoutMs)
   }
 

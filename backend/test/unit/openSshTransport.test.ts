@@ -29,7 +29,7 @@ vi.mock('node:child_process', () => {
   }
 })
 
-const { OpenSshTransport, SshBinaryMissingError } = await import('../../src/publish/SshTransport.js')
+const { OpenSshTransport, SshBinaryMissingError, loginShellWrap, shSingleQuote } = await import('../../src/publish/SshTransport.js')
 
 const PEM = '-----BEGIN OPENSSH PRIVATE KEY-----\nFAKE_KEY_BYTES_FOR_OPENSSH_TRANSPORT_TEST\n-----END OPENSSH PRIVATE KEY-----'
 // SACRED: a test must NEVER write the real ~/.config/akis. Every OpenSshTransport here injects a
@@ -58,6 +58,63 @@ describe('OpenSshTransport (offline, mocked spawn)', () => {
     const keyPath = call.args[iIdx + 1]!
     expect(keyPath).not.toContain('PRIVATE KEY')
     expect(call.args.join(' ')).not.toContain('FAKE_KEY_BYTES')
+    await t.close()
+  })
+
+  // ── node-on-PATH fix at the transport seam: the remote command runs in a LOGIN shell ──────────
+  // PINS the LIVE OCI defect's fix: `ssh user@host '<cmd>'` runs a NON-login shell that does NOT
+  // source the profile, so an nvm node is off PATH and `command -v node` falsely reports "not
+  // found". Wrapping <cmd> as `bash -lc '<cmd>'` sources the profile so node IS on PATH.
+
+  it('the remote command is LOGIN-SHELL wrapped (bash -lc) so the profile is sourced (nvm node on PATH)', async () => {
+    const t = new OpenSshTransport(CFG, async () => true)
+    await t.run('command -v node')
+    const call = spawnCalls.find(c => c.cmd === 'ssh')!
+    // The LAST argv element is the remote command — it must be the login-shell wrap, not the raw cmd.
+    const remote = call.args[call.args.length - 1]!
+    expect(remote).toBe(`bash -lc 'command -v node'`)
+    // Equivalently: bash, -lc, then the single-quoted cmd appear as a contiguous prefix.
+    expect(remote.startsWith('bash -lc ')).toBe(true)
+    await t.close()
+  })
+
+  it('a remote command containing quotes/&&/pipes is passed as ONE single-quoted argument to bash -lc', async () => {
+    // This is exactly the shape the Publisher sends (the clean/kill/probe commands embed quotes,
+    // `&&`, pipes). It must survive as a single literal word so the login shell parses it correctly.
+    const cmd = `find "/home/ubuntu/app" ! -name 'app.db' -exec rm -rf {} + && echo done`
+    const t = new OpenSshTransport(CFG, async () => true)
+    await t.run(cmd)
+    const remote = spawnCalls.find(c => c.cmd === 'ssh')!.args.slice(-1)[0]!
+    expect(remote).toBe(loginShellWrap(cmd))
+    // The embedded single quotes are correctly escaped via the '\'' idiom (not naively doubled).
+    expect(remote).toContain(`'\\''app.db'\\''`)
+    await t.close()
+  })
+
+  it('shSingleQuote/loginShellWrap escape single quotes with the POSIX \'\\\'\' idiom', () => {
+    expect(shSingleQuote('plain')).toBe(`'plain'`)
+    expect(shSingleQuote("a'b")).toBe(`'a'\\''b'`)
+    // A round-trip-correctness sanity: the wrap is `bash -lc ` + the single-quoted command.
+    expect(loginShellWrap("echo 'hi'")).toBe(`bash -lc 'echo '\\''hi'\\'''`)
+  })
+
+  it('scp (putFiles) is NOT login-shell wrapped — file transfer is a separate channel', async () => {
+    const t = new OpenSshTransport(CFG, async () => true)
+    await t.putFiles([{ filePath: 'index.html', content: 'x' }], '/home/ubuntu/app')
+    const scp = spawnCalls.find(c => c.cmd === 'scp')!
+    expect(scp).toBeDefined()
+    // No `bash -lc` must appear anywhere in the scp argv (wrapping scp would break the transfer).
+    expect(scp.args.some(a => a.includes('bash -lc'))).toBe(false)
+    await t.close()
+  })
+
+  it('the LOGIN-SHELL wrap does NOT leak the key bytes into argv (secret-free invariant preserved)', async () => {
+    // The wrap operates only on the (secret-free) cmd; the key still reaches ssh ONLY via -i <file>.
+    const t = new OpenSshTransport(CFG, async () => true)
+    await t.run('command -v node')
+    const call = spawnCalls.find(c => c.cmd === 'ssh')!
+    expect(call.args.join(' ')).not.toContain('FAKE_KEY_BYTES')
+    expect(call.args.join(' ')).not.toContain('PRIVATE KEY')
     await t.close()
   })
 
