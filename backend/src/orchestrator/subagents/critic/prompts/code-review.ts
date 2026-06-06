@@ -105,8 +105,8 @@ export function buildCodeReviewUserPrompt(
   const parts: string[] = [
     `ORIGINAL USER IDEA: "${originalIdea}"`,
     `REVIEW ITERATION: ${iteration}`,
-    `\nAPPROVED SPEC (reference for compliance check):\n${JSON.stringify(referenceSpec, null, 2)}`,
-    `\nCODE OUTPUT TO REVIEW:\n${JSON.stringify(artifact, null, 2)}`,
+    `\nAPPROVED SPEC (reference for compliance check):\n${JSON.stringify(referenceSpec)}`,
+    `\nCODE OUTPUT TO REVIEW:\n${JSON.stringify(artifact)}`,
   ];
   return parts.join('\n');
 }

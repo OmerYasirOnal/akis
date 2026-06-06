@@ -98,3 +98,35 @@ describe('cache-token visibility (audit quick-win — prompt caching observable,
     expect(r.usage).toEqual({ inTokens: 5, outTokens: 7 })
   })
 })
+
+describe('multi-turn prompt caching (audit fix: the system-only marker was INERT below the 4096-token minimum)', () => {
+  function capture() {
+    const seen: { body?: Record<string, unknown> } = {}
+    const fetchFn = (async (_url: string, init: RequestInit) => {
+      seen.body = JSON.parse(String(init.body)) as Record<string, unknown>
+      return new Response(JSON.stringify({ content: [{ type: 'text', text: 'ok' }] }), { status: 200 })
+    }) as unknown as typeof fetch
+    return { seen, fetchFn }
+  }
+
+  it('a LARGE conversation gets a cache breakpoint on the LAST message (the iterate-round prefix)', async () => {
+    const { seen, fetchFn } = capture()
+    const p = new AnthropicProvider({ apiKey: 'sk-ant-x', model: 'claude-haiku-4-5-20251001', fetchFn })
+    const big = 'x'.repeat(20_000) // ~5k tokens — clears CACHE_MIN_PROMPT_TOKENS
+    await p.chat({ system: 'SYS', messages: [{ role: 'user', content: big }, { role: 'assistant', content: 'draft' }, { role: 'user', content: 'iterate: fix the header' }] })
+    const msgs = seen.body!.messages as { content: unknown }[]
+    const last = msgs[msgs.length - 1]!.content as { type: string; text: string; cache_control?: unknown }[]
+    expect(Array.isArray(last)).toBe(true)
+    expect(last[last.length - 1]!.cache_control).toEqual({ type: 'ephemeral' })
+    // earlier messages stay plain string content (only the breakpoint message converts)
+    expect(typeof msgs[0]!.content).toBe('string')
+  })
+
+  it('a SMALL chat stays byte-identical (sub-minimum marker would be inert — none added)', async () => {
+    const { seen, fetchFn } = capture()
+    const p = new AnthropicProvider({ apiKey: 'sk-ant-x', model: 'claude-haiku-4-5-20251001', fetchFn })
+    await p.chat({ system: 'SYS', messages: [{ role: 'user', content: 'merhaba' }] })
+    const msgs = seen.body!.messages as { content: unknown }[]
+    expect(typeof msgs[0]!.content).toBe('string') // untouched
+  })
+})

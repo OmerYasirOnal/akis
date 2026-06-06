@@ -129,7 +129,7 @@ export function buildSpecReviewUserPrompt(
   const parts: string[] = [
     `ORIGINAL USER IDEA: "${originalIdea}"`,
     `REVIEW ITERATION: ${iteration}`,
-    `\nSPEC TO REVIEW:\n${JSON.stringify(artifact, null, 2)}`,
+    `\nSPEC TO REVIEW:\n${JSON.stringify(artifact)}`,
   ];
   return parts.join('\n');
 }

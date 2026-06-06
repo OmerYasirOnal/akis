@@ -37,6 +37,15 @@ const ANTHROPIC_VERSION = '2023-06-01'
  *   `input` is already an object. Tool results ride inside a user message as the
  *   FIRST `tool_result` block, immediately after the assistant `tool_use` turn.
  */
+/** The conversation-level cache breakpoint only helps once the prompt clears the model's
+ *  cacheable minimum (4096 tokens on Haiku 4.5/Opus; sub-minimum markers are silently inert).
+ *  4500 adds margin over the worst-case minimum; chars/4 is the standard rough estimate. */
+export const CACHE_MIN_PROMPT_TOKENS = 4500
+function estimatePromptTokens(req: ChatRequest): number {
+  const chars = req.system.length + req.messages.reduce((n, m) => n + (m.content?.length ?? 0), 0)
+  return Math.floor(chars / 4)
+}
+
 export class AnthropicProvider implements LlmProvider {
   readonly name = 'anthropic'
   readonly model: string
@@ -66,6 +75,26 @@ export class AnthropicProvider implements LlmProvider {
       // byte-identical either way.
       system: [{ type: 'text', text: req.system, cache_control: { type: 'ephemeral' } }],
       messages: req.messages.map(m => this.mapMessage(m)),
+    }
+    // MULTI-TURN PROMPT CACHING (the audit's inert-caching fix): the per-agent system prompts are
+    // 393-1087 tokens — far below the 4096-token cacheable minimum on Haiku 4.5/Opus — so the
+    // system breakpoint alone NEVER cached anything (cache_creation stayed 0; now observable via
+    // usage.cacheReadTokens). The real repeated prefix is the GROWING CONVERSATION: iterate /
+    // continuation rounds resend spec+code+feedback within seconds, well inside the 5-minute TTL.
+    // Marking the LAST message caches the whole rendered prefix (tools → system → messages); the
+    // next round appends turns AFTER the marker and re-reads everything before it at ~0.1×
+    // (write premium 1.25× — break-even at the 2nd round). Only marked when the estimated prompt
+    // clears the minimum with margin: a sub-minimum marker is silently inert, and small one-shot
+    // chats stay byte-identical to today.
+    const msgs = body.messages as Record<string, unknown>[]
+    if (msgs.length > 0 && estimatePromptTokens(req) >= CACHE_MIN_PROMPT_TOKENS) {
+      const last = msgs[msgs.length - 1]!
+      const content = last.content
+      if (typeof content === 'string') {
+        last.content = [{ type: 'text', text: content, cache_control: { type: 'ephemeral' } }]
+      } else if (Array.isArray(content) && content.length > 0) {
+        ;(content[content.length - 1] as Record<string, unknown>).cache_control = { type: 'ephemeral' }
+      }
     }
     if (req.temperature !== undefined) body.temperature = req.temperature
     if (req.tools?.length) {
