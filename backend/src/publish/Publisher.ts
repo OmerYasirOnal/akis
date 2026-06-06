@@ -138,8 +138,18 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
     //    process may re-exec under a shell that never sourced the profile).
     const nodeCheck = await runStep(`p="$(command -v node 2>/dev/null)"; [ -n "$p" ] && printf '%s\\n' "$p" && node --version || echo __NO_NODE__`, 'check node')
     if (!nodeCheck) return { ok: false, url, at, appType, logTail: log.value() }
-    if (nodeCheck.stdout.includes('__NO_NODE__') || nodeCheck.code !== 0) {
+    // DISTINGUISH the two failure modes (caught LIVE: a bad key was misreported as "node missing"):
+    //  - the command RAN and node is genuinely absent → __NO_NODE__
+    //  - ssh itself FAILED (auth / host-key / connection / a malformed key) → non-zero exit with the
+    //    sentinel NEVER printed. Reporting "install Node" there sends the user down the wrong path, so
+    //    surface the REAL (already-scrubbed) ssh reason instead.
+    if (nodeCheck.stdout.includes('__NO_NODE__')) {
       log.push(`node not found on the instance for user ${profile.sshUser} — install Node and retry`)
+      return { ok: false, url, at, appType, logTail: log.value() }
+    }
+    if (nodeCheck.code !== 0) {
+      const reason = (nodeCheck.stderr || '').split('\n').map(l => l.trim()).filter(Boolean).slice(-1)[0] ?? ''
+      log.push(`could not run a command over SSH on ${profile.sshUser}@${profile.host} — check the host/user are correct and the private key is a valid, authorized PEM${reason ? ` (${reason})` : ''}`)
       return { ok: false, url, at, appType, logTail: log.value() }
     }
     // The ABSOLUTE node path is the FIRST line of the probe output (the version is on the next line).

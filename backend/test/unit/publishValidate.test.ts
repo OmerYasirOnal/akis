@@ -72,12 +72,21 @@ describe('publish validators (security boundary for argv-bound Settings input)',
     expect(validPublicUrl('')).toBe(false)
   })
 
-  it('looksLikePem accepts a PEM private-key block, REJECTS arbitrary text', () => {
-    expect(looksLikePem('-----BEGIN OPENSSH PRIVATE KEY-----\nabc\n-----END OPENSSH PRIVATE KEY-----')).toBe(true)
-    expect(looksLikePem('-----BEGIN RSA PRIVATE KEY-----\nxyz\n-----END RSA PRIVATE KEY-----')).toBe(true)
+  it('looksLikePem accepts a real multi-line PEM key, REJECTS arbitrary text + mangled keys', () => {
+    // A realistic multi-line base64 body (the only shape ssh can actually load).
+    const body = 'b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACCqn/BRp0Qq0k1wxBeky3xHKcJsxoE7VS9YSY7HGGw7ygAAAJgvl9ErL5fR'
+    const valid = `-----BEGIN OPENSSH PRIVATE KEY-----\n${body}\n-----END OPENSSH PRIVATE KEY-----`
+    expect(looksLikePem(valid)).toBe(true)
+    expect(looksLikePem(`-----BEGIN RSA PRIVATE KEY-----\n${body}\n-----END RSA PRIVATE KEY-----`)).toBe(true)
     expect(looksLikePem('just a string')).toBe(false)
     expect(looksLikePem('-----BEGIN CERTIFICATE-----\nx\n-----END CERTIFICATE-----')).toBe(false)
     expect(looksLikePem('')).toBe(false)
+    // CAUGHT LIVE: a flattened (newlines stripped) or space-joined paste keeps the markers but ssh
+    // rejects the body as "invalid format" — looksLikePem must reject it at SAVE, not let it through
+    // to a confusing publish failure. (A no-newline body, or non-base64 content, is rejected.)
+    expect(looksLikePem(valid.replace(/\n/g, ' '))).toBe(false)   // newlines → spaces (form mangle)
+    expect(looksLikePem(valid.replace(/\n/g, ''))).toBe(false)    // fully flattened to one line
+    expect(looksLikePem('-----BEGIN OPENSSH PRIVATE KEY-----\n!!!! not base64 !!!!\n-----END OPENSSH PRIVATE KEY-----')).toBe(false)
   })
 })
 

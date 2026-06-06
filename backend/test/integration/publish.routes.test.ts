@@ -3,7 +3,9 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
 import { registerPublishRoutes } from '../../src/api/publish.routes.js'
 import { PublishProfileMemoryStore, type PublishProfileStore } from '../../src/keys/PublishProfileStore.js'
 
-const KEY = '-----BEGIN OPENSSH PRIVATE KEY-----\nFAKE_ROUTE_TEST_KEY_SECRET\n-----END OPENSSH PRIVATE KEY-----'
+// A fake but well-FORMED key: a multi-line base64 body (the only shape looksLikePem + ssh accept).
+// Not a real secret — just valid-looking so the save validator passes and the round-trip asserts hold.
+const KEY = '-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW\nQyNTUxOQAAACDFAKEROUTETESTKEYbm90YXJlYWxrZXl4eHh4eHh4eHh4eHg9PQ==\n-----END OPENSSH PRIVATE KEY-----'
 const GOOD = { host: 'oci.example.com', sshUser: 'ubuntu', sshPrivateKey: KEY, targetDir: '/home/ubuntu/app', appPort: 8080, publicUrl: 'http://oci.example.com:8080' }
 
 interface AppOpts {

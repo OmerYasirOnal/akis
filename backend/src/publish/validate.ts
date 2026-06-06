@@ -142,7 +142,17 @@ export function validPublicUrl(url: unknown): url is string {
  *  route, not mid-deploy. The full block is the secret; never log it. */
 export function looksLikePem(pem: unknown): pem is string {
   if (typeof pem !== 'string') return false
-  return /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]+-----END [A-Z0-9 ]*PRIVATE KEY-----/.test(pem.trim())
+  const m = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----([\s\S]+?)-----END [A-Z0-9 ]*PRIVATE KEY-----/.exec(pem.trim())
+  if (!m) return false
+  // CAUGHT LIVE: a key whose newlines were flattened/space-joined by a copy-paste or a form still has
+  // the BEGIN/END markers but a corrupt body — ssh then fails with "Load key: invalid format" and the
+  // publish used to misreport it. A real key body is MULTI-LINE base64, so require an actual newline in
+  // the body AND that, with all whitespace stripped, it is non-trivial base64 (rejects the flattened/
+  // space-mangled paste at SAVE time instead of as a confusing publish failure later).
+  const body = m[1] ?? ''
+  if (!/\n/.test(body)) return false
+  const compact = body.replace(/\s+/g, '')
+  return compact.length >= 50 && /^[A-Za-z0-9+/=]+$/.test(compact)
 }
 
 /** Resolve a hostname to its IP addresses. Injected into the probe guard so tests can model DNS
