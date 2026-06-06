@@ -23,6 +23,23 @@ describe('foldRunBubbles', () => {
     expect(turn.agent).toBe('scribe')
     expect(turn.done).toBe(true)
     expect(turn.tools).toEqual([{ tool: 'dispatch_scribe', ok: true }])
+    expect(turn.attempts).toBe(1)
+  })
+
+  it('COALESCES an agent re-run (critic-driven iterate loop) into ONE bubble with attempts++ (no stacked duplicates)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto' }),
+      ev({ kind: 'code_review', approved: false, findings: 3, critical: false, iteration: 1, agent: 'critic' }),
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto' }), // round 2 — the critic asked for changes
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto' }),
+    ])
+    const protoTurns = msgs.filter(m => m.kind === 'agent') as AgentMsg[]
+    expect(protoTurns).toHaveLength(1) // ONE Proto bubble, not two stacked identical ones
+    expect(protoTurns[0]!.attempts).toBe(2)
+    expect(protoTurns[0]!.done).toBe(true)
+    // Proto stays before the critic card (chronological anchor of its FIRST turn is preserved).
+    expect(msgs.findIndex(m => m.kind === 'agent')).toBeLessThan(msgs.findIndex(m => m.kind === 'code_review'))
   })
 
   it('shows orchestrator narration as its own (suppressible) bubble when no turn is open', () => {

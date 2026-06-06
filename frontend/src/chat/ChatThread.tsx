@@ -58,6 +58,9 @@ export function AgentBubble({ m }: { m: AgentMsg }) {
       <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-3">
         <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-100">
           <span title={t(`roster.status.${m.ok === false ? 'failed' : m.done ? 'done' : 'working'}`)} className={`h-2 w-2 rounded-full ${dot(m.ok, m.done)}`} />{AKIS_NAME[m.agent] ?? m.agent}
+          {/* Coalesced re-runs (critic-driven iterate loop): show "↻N" so one bubble conveys "revised
+              N times" instead of N identical stacked bubbles. Hidden for a single-pass agent. */}
+          {m.attempts > 1 && <span title={t('chat.revised')} className="rounded bg-white/[0.06] px-1 text-[11px] font-normal text-slate-400">↻{m.attempts}</span>}
           {!m.done && <span className="text-xs font-normal text-teal-300">{t('chat.working')}</span>}
         </div>
         {m.tools.map((tl, i) => {

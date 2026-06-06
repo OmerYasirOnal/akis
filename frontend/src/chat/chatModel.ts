@@ -5,7 +5,7 @@ import type { AkisEvent, Role, GateState } from '@akis/shared'
 export interface UserMsg { id: string; kind: 'user'; text: string }
 export interface NarrationMsg { id: string; kind: 'narration'; agent: Role; text: string }
 export interface ToolLine { tool: string; ok?: boolean }
-export interface AgentMsg { id: string; kind: 'agent'; agent: Role; tools: ToolLine[]; notes: string[]; done: boolean; ok?: boolean }
+export interface AgentMsg { id: string; kind: 'agent'; agent: Role; tools: ToolLine[]; notes: string[]; done: boolean; ok?: boolean; attempts: number }
 export interface GateMsg { id: string; kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: GateState }
 export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passed: boolean }
 /** Read-only critic code-review verdict card (automatic, NOT a human gate). Structured only. */
@@ -29,7 +29,8 @@ export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMs
 export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
   const items: ChatMessage[] = []
 
-  const openTurn = new Map<string, AgentMsg>()           // by laneId
+  const openTurn = new Map<string, AgentMsg>()           // by laneId (the currently-open turn)
+  const byAgent = new Map<Role, AgentMsg>()              // by role — COALESCE an agent's re-runs
   const gates = new Map<string, GateMsg>()
   let verifyMsg: VerifyMsg | undefined
   let codeReviewMsg: CodeReviewMsg | undefined
@@ -40,8 +41,18 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
     const id = `${e.kind}-${n++}`
     switch (e.kind) {
       case 'agent_start': {
-        const m: AgentMsg = { id, kind: 'agent', agent: e.agent, tools: [], notes: [], done: false }
-        openTurn.set(e.laneId, m); items.push(m)
+        // COALESCE re-runs of the SAME agent (the critic-driven iterate loop fires agent_start for
+        // Proto once per round). Instead of stacking N identical "Proto · writing the code" bubbles
+        // (the noisy repetition the user flagged), reuse the agent's existing bubble IN PLACE — reset
+        // its turn state and bump the attempt count, so it reads as ONE agent that revised N times.
+        const prev = byAgent.get(e.agent)
+        if (prev) {
+          prev.done = false; delete prev.ok; prev.tools = []; prev.notes = []; prev.attempts += 1
+          openTurn.set(e.laneId, prev)
+        } else {
+          const m: AgentMsg = { id, kind: 'agent', agent: e.agent, tools: [], notes: [], done: false, attempts: 1 }
+          byAgent.set(e.agent, m); openTurn.set(e.laneId, m); items.push(m)
+        }
         break
       }
       case 'agent_end': {
