@@ -495,7 +495,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     users: userStore, secret: authSecret, cookie, devEcho: env.NODE_ENV !== 'production', mailer, signupDisabled,
     ...(trustedOrigin ? { publicBaseUrl: trustedOrigin } : {}),
   })
-  registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env })
+  registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env, signupDisabled })
   // Per-user GitHub connection (connect/status/disconnect). Reuses the SAME userIdOf closure
   // (revocation-aware) so only the authenticated owner reaches their own connection. The
   // connect token is stored in `connections` (encrypted) — NEVER as a session credential.

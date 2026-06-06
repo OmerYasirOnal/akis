@@ -59,6 +59,16 @@ services:
       AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-akis-insecure-demo-secret-change-me}
       # Browser-facing origin (OAuth + cross-site cookies). e.g. http://localhost:3000
       PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-}
+      # Optional GitHub/Google sign-in. A button appears only when BOTH id+secret are set.
+      # SINGLE-USER SAFE: when signup is disabled (the prod default), OAuth can LOG IN / link an
+      # existing account but NEVER creates a new one — so enabling OAuth cannot reopen signup.
+      # Register the callback URL ${PUBLIC_BASE_URL}/oauth/<github|google>/callback on the OAuth app.
+      GITHUB_OAUTH_CLIENT_ID: ${GITHUB_OAUTH_CLIENT_ID:-}
+      GITHUB_OAUTH_CLIENT_SECRET: ${GITHUB_OAUTH_CLIENT_SECRET:-}
+      GOOGLE_OAUTH_CLIENT_ID: ${GOOGLE_OAUTH_CLIENT_ID:-}
+      GOOGLE_OAUTH_CLIENT_SECRET: ${GOOGLE_OAUTH_CLIENT_SECRET:-}
+      # Strongest single-user guarantee: if set, ONLY this (provider-verified) email may sign in.
+      AKIS_OWNER_EMAIL: ${AKIS_OWNER_EMAIL:-}
       # Optional: a provider key enables REAL builds (and auto-disables the mock above).
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
     ports:

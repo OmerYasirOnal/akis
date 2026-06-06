@@ -50,7 +50,7 @@ describe('PgUserStore', () => {
 
   it('upsertOAuth returns the user already bound to the externalId (no email lookup/insert)', async () => {
     const { db, calls } = fakeDb([{ match: s => s.includes('external_id'), rows: () => [row({ external_id: 'github:7' })] }])
-    const u = await new PgUserStore(db).upsertOAuth({ externalId: 'github:7', email: 'ada@akis.dev', name: 'Ada' })
+    const u = (await new PgUserStore(db).upsertOAuth({ externalId: 'github:7', email: 'ada@akis.dev', name: 'Ada' }))!
     expect(u.externalId).toBe('github:7')
     expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
   })
@@ -61,7 +61,7 @@ describe('PgUserStore', () => {
       { match: s => s.includes('WHERE email'), rows: () => [row({ email: 'ada@akis.dev' })] },
       { match: s => s.startsWith('UPDATE'), rows: () => [] },
     ])
-    const u = await new PgUserStore(db).upsertOAuth({ externalId: 'github:7', email: 'ada@akis.dev', name: 'Ada' })
+    const u = (await new PgUserStore(db).upsertOAuth({ externalId: 'github:7', email: 'ada@akis.dev', name: 'Ada' }))!
     expect(u.id).toBe('id1'); expect(u.externalId).toBe('github:7')
     expect(calls.find(c => c.text.startsWith('UPDATE'))!.params).toEqual(['github:7', 'id1'])
     expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
@@ -76,7 +76,7 @@ describe('PgUserStore', () => {
       { match: s => s.includes('WHERE external_id'), rows: () => [] },
       { match: s => s.includes('WHERE email'), rows: () => [row({ id: 'id1', external_id: 'github:old' })] },
     ])
-    const u = await new PgUserStore(db).upsertOAuth({ externalId: 'github:new', email: 'ada@akis.dev', name: 'Ada' })
+    const u = (await new PgUserStore(db).upsertOAuth({ externalId: 'github:new', email: 'ada@akis.dev', name: 'Ada' }))!
     expect(u.externalId).toBe('github:old')
     expect(calls.some(c => c.text.startsWith('UPDATE'))).toBe(false)
     expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
@@ -87,7 +87,7 @@ describe('PgUserStore', () => {
       { match: s => s.startsWith('SELECT'), rows: () => [] },
       { match: s => s.startsWith('INSERT'), rows: p => [row({ id: p[0] as string, name: p[1] as string, email: p[2] as string, password_hash: p[3] as string, external_id: p[4] as string })] },
     ])
-    const u = await new PgUserStore(db, () => 'oauth-id').upsertOAuth({ externalId: 'github:9', email: 'New@akis.dev', name: 'New' })
+    const u = (await new PgUserStore(db, () => 'oauth-id').upsertOAuth({ externalId: 'github:9', email: 'New@akis.dev', name: 'New' }))!
     expect(u.id).toBe('oauth-id')
     expect(calls.find(c => c.text.startsWith('INSERT'))!.params).toEqual(['oauth-id', 'New', 'new@akis.dev', '', 'github:9'])
   })

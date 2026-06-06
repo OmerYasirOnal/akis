@@ -19,7 +19,13 @@ export interface UserStorePort {
    *  JWT (which carries the version it was signed with) stops verifying. Called on
    *  password reset and logout-all. */
   bumpTokenVersion(id: string): Promise<void>
-  upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser>
+  /** Find-or-link-or-create a user from a provider-VERIFIED OAuth profile. Steps: (1) return the
+   *  user already bound to externalId; (2) else link this identity to an existing verified-email
+   *  account; (3) else CREATE a new user — but ONLY when `opts.allowCreate` is not false. When
+   *  creation is refused (signup-disabled) it returns `null`, so OAuth can NEVER mint a new account
+   *  and bypass the no-open-signup posture (the no-sandbox RCE guard). Existing-user login/link is
+   *  always allowed (the owner can sign in via OAuth). Default allowCreate=true (signup-enabled). */
+  upsertOAuth(input: { externalId: string; email: string; name: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null>
 }
 
 /**
@@ -47,7 +53,7 @@ export class UserStore implements UserStorePort {
    *  (externalId) first; falls back to the (provider-VERIFIED) email, linking it to that
    *  identity. New OAuth users have an empty passwordHash (never verifies). The caller
    *  MUST have verified the email with the provider before linking by email. */
-  async upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser> {
+  async upsertOAuth(input: { externalId: string; email: string; name: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null> {
     const byExt = this.byExternalId.get(input.externalId)
     if (byExt) return byExt
     const email = input.email.trim().toLowerCase()
@@ -56,6 +62,8 @@ export class UserStore implements UserStorePort {
       if (!existing.externalId) { existing.externalId = input.externalId; this.byExternalId.set(input.externalId, existing) }
       return existing
     }
+    // Step 3 (create) — REFUSED when signup is disabled: OAuth must not mint a new account.
+    if (opts?.allowCreate === false) return null
     const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock(), externalId: input.externalId }
     this.byEmail.set(email, u); this.byId.set(u.id, u); this.byExternalId.set(input.externalId, u)
     return u

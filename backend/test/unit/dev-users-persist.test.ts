@@ -36,7 +36,7 @@ describe('JsonFileUserStore (dev account persistence)', () => {
       const b = new JsonFileUserStore(file)
       expect((await b.findById(u.id))!).toMatchObject({ passwordHash: 'h2', name: 'Ada L' })
       // The OAuth identity round-trips INCLUDING the externalId index (upsert finds it again).
-      expect((await b.upsertOAuth({ externalId: 'gh:1', email: 'other@x.test', name: 'x' })).id).toBe(oauth.id)
+      expect((await b.upsertOAuth({ externalId: 'gh:1', email: 'other@x.test', name: 'x' }))?.id).toBe(oauth?.id)
     } finally { rmSync(dir, { recursive: true, force: true }) }
   })
 

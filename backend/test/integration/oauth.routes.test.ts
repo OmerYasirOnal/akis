@@ -17,9 +17,9 @@ const fakeHttp: HttpFetch = async (url) => {
   throw new Error('unexpected ' + url)
 }
 
-function app(env: Record<string, string | undefined>, http?: HttpFetch, users = new UserStore()) {
+function app(env: Record<string, string | undefined>, http?: HttpFetch, users = new UserStore(), signupDisabled?: boolean) {
   const f = Fastify({ logger: false })
-  registerOAuthRoutes(f, { users, secret: SECRET, cookie: cookieConfigFromEnv(env), env, ...(http ? { http } : {}) })
+  registerOAuthRoutes(f, { users, secret: SECRET, cookie: cookieConfigFromEnv(env), env, ...(http ? { http } : {}), ...(signupDisabled !== undefined ? { signupDisabled } : {}) })
   return { f, users }
 }
 
@@ -72,5 +72,35 @@ describe('oauth routes', () => {
     const { f } = app(GH_ENV, failing)
     const res = await f.inject({ method: 'GET', url: `/oauth/github/callback?code=abc&state=${signState('github', SECRET)}` })
     expect(res.headers.location).toBe('http://localhost:5173/login?error=oauth_failed')
+  })
+
+  // SINGLE-USER GATE: OAuth must not create a new account when signup is disabled (else it bypasses
+  // the no-open-signup / no-sandbox-RCE posture). Existing-account login/link must still work.
+  it('signupDisabled: callback for an UNKNOWN verified email is DENIED and creates NO user', async () => {
+    const { f, users } = app(GH_ENV, fakeHttp, new UserStore(), true)
+    const res = await f.inject({ method: 'GET', url: `/oauth/github/callback?code=abc&state=${signState('github', SECRET)}` })
+    expect(res.statusCode).toBe(302)
+    expect(res.headers.location).toBe('http://localhost:5173/login?error=oauth_denied')
+    expect(res.headers['set-cookie']).toBeUndefined() // no session minted
+    expect(await users.findByEmail('ada@gh.dev')).toBeUndefined() // NO account created
+  })
+
+  it('signupDisabled: callback for an EXISTING account links + logs in (no new user)', async () => {
+    const users = new UserStore()
+    const owner = await users.create({ name: 'Ada', email: 'ada@gh.dev', passwordHash: 'h' }) // pre-seeded owner
+    const { f } = app(GH_ENV, fakeHttp, users, true)
+    const res = await f.inject({ method: 'GET', url: `/oauth/github/callback?code=abc&state=${signState('github', SECRET)}` })
+    expect(res.statusCode).toBe(302)
+    expect(res.headers.location).toBe('http://localhost:5173/') // logged in
+    expect(String(res.headers['set-cookie'])).toContain('HttpOnly')
+    expect((await users.findByEmail('ada@gh.dev'))?.id).toBe(owner.id) // linked the SAME account, no new row
+    expect((await users.findByEmail('ada@gh.dev'))?.externalId).toBe('github:7')
+  })
+
+  it('AKIS_OWNER_EMAIL allowlist: a non-owner verified email is DENIED even with signup enabled', async () => {
+    const { f, users } = app({ ...GH_ENV, AKIS_OWNER_EMAIL: 'owner@elsewhere.dev' }, fakeHttp)
+    const res = await f.inject({ method: 'GET', url: `/oauth/github/callback?code=abc&state=${signState('github', SECRET)}` })
+    expect(res.headers.location).toBe('http://localhost:5173/login?error=oauth_denied')
+    expect(await users.findByEmail('ada@gh.dev')).toBeUndefined()
   })
 })

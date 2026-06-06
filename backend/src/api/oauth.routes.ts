@@ -12,6 +12,10 @@ export interface OAuthDeps {
   secret: string
   cookie: CookieConfig
   env: NodeJS.ProcessEnv
+  /** When true (the prod single-user posture), OAuth may LINK/LOG-IN an existing account but must
+   *  NOT create a new one — otherwise OAuth silently bypasses the no-open-signup gate (the
+   *  no-sandbox RCE guard) that POST /auth/signup enforces. Mirrors resolveSignupDisabled(env). */
+  signupDisabled?: boolean
   /** Injectable HTTP for tests; defaults to global fetch. */
   http?: HttpFetch
 }
@@ -58,7 +62,18 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthDeps): void
     try {
       const { token } = await exchangeCode(provider, { code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri: `${base}/oauth/${provider}/callback` }, http)
       const profile = await fetchProfile(provider, token, http)
-      const user = await deps.users.upsertOAuth({ externalId: profile.externalId, email: profile.email, name: profile.name })
+      // DEFENSE-IN-DEPTH (single-user): an explicit owner allowlist — when AKIS_OWNER_EMAIL is set,
+      // ONLY that (provider-verified) email may authenticate at all, so even with creds configured no
+      // one else can sign in. Refusal is generic (no account-existence leak).
+      const ownerEmail = (deps.env.AKIS_OWNER_EMAIL ?? '').trim().toLowerCase()
+      if (ownerEmail && profile.email.trim().toLowerCase() !== ownerEmail) return redirectLogin(reply, base, 'oauth_denied')
+      // GATE creation behind the signup-disabled policy: link/log-in an existing account, but never
+      // CREATE a new one when signup is closed (else OAuth bypasses the no-sandbox-RCE signup gate).
+      const user = await deps.users.upsertOAuth(
+        { externalId: profile.externalId, email: profile.email, name: profile.name },
+        { allowCreate: !deps.signupDisabled },
+      )
+      if (!user) return redirectLogin(reply, base, 'oauth_denied') // creation refused — signup is closed
       setSessionCookie(reply, toPublic(user), deps.secret, deps.cookie, user.tokenVersion ?? 0) // explicit tv (review #112): OAuth sessions revoke identically
       return reply.redirect(`${base}/`)
     } catch {

@@ -76,9 +76,9 @@ export class JsonFileUserStore implements UserStorePort {
     this.persist()
     return u
   }
-  async upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser> {
-    const u = await this.inner.upsertOAuth(input)
-    this.persist()
+  async upsertOAuth(input: { externalId: string; email: string; name: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null> {
+    const u = await this.inner.upsertOAuth(input, opts)
+    if (u) this.persist() // a refused create (null) changed nothing — don't rewrite the file
     return u
   }
 }

@@ -69,3 +69,13 @@ security boundary.**
 - **Default stays mock:** `createMockTestRunner` remains the default; the real
   runner is opt-in (config + browsers present), so the suite + smoke stay green with
   zero setup and no untrusted code executes by default.
+
+## Account creation surfaces (single-user posture)
+
+AKIS runs AI-generated code on the host with **no sandbox**, so a public open-signup instance is RCE-for-anyone. Account creation is therefore closed by default in production and there are **two** surfaces, both gated by the same `resolveSignupDisabled(env)` policy (`AKIS_DISABLE_SIGNUP || (NODE_ENV==='production' && !AKIS_ALLOW_SIGNUP)`):
+
+- **Password signup** — `POST /auth/signup` → 403 `SignupDisabled` (`auth.routes.ts`), and additionally blocked at the Caddy edge.
+- **OAuth (GitHub/Google)** — the callback (`oauth.routes.ts`) passes `allowCreate: !signupDisabled` to `users.upsertOAuth`, so when signup is disabled OAuth may **log in / link an existing account** (by a provider-VERIFIED email) but **never creates a new user** (returns `null` → `/login?error=oauth_denied`). Without this, OAuth would silently bypass the signup gate. The provider-verified-email check (GitHub primary+verified, Google `email_verified`) prevents attacker-asserted-email account *takeover*; the `allowCreate` gate prevents unauthorized account *creation*.
+- **Defense-in-depth:** set `AKIS_OWNER_EMAIL` — then ONLY that provider-verified email may authenticate via OAuth at all, even if provider creds are configured.
+
+Note: the 4 structural build gates are orthogonal to auth and are untouched by this — a created/linked session is a normal authenticated user, still bounded by spec-approval → producer≠verifier → verified-real → push gates.

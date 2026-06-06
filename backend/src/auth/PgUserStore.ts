@@ -61,7 +61,7 @@ export class PgUserStore implements UserStorePort {
     return rows[0] ? toUser(rows[0] as unknown as Row) : undefined
   }
 
-  async upsertOAuth(input: { externalId: string; email: string; name: string }): Promise<AuthUser> {
+  async upsertOAuth(input: { externalId: string; email: string; name: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null> {
     // 1) same provider identity returning?
     const byExt = await this.db.query('SELECT * FROM users WHERE external_id = $1', [input.externalId])
     if (byExt.rows[0]) return toUser(byExt.rows[0] as unknown as Row)
@@ -77,6 +77,8 @@ export class PgUserStore implements UserStorePort {
       await this.db.query('UPDATE users SET external_id = $1 WHERE id = $2', [input.externalId, byEmail.id])
       return { ...byEmail, externalId: input.externalId }
     }
+    // Step 3 (create) — REFUSED when signup is disabled: OAuth must not mint a new account.
+    if (opts?.allowCreate === false) return null
     // 3) create — race-safe: a concurrent first login may insert the same email/identity.
     try {
       const { rows } = await this.db.query(

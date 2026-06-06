@@ -101,13 +101,14 @@ describe('UserStore', () => {
   })
   it('upsertOAuth binds by externalId and links a (verified) email account to that identity', async () => {
     const s = new UserStore()
-    const a = await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' })
+    const a = await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' }) // allowCreate defaults true → never null here
+    expect(a).not.toBeNull()
     // same identity returns the same user
-    expect((await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' })).id).toBe(a.id)
+    expect((await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' }))?.id).toBe(a?.id)
     // a password account is linked to the identity when the (verified) email matches
     const pw = await s.create({ name: 'Bo', email: 'bo@akis.dev', passwordHash: 'h' })
     const linked = await s.upsertOAuth({ externalId: 'google:2', email: 'BO@akis.dev', name: 'Bo' })
-    expect(linked.id).toBe(pw.id)
+    expect(linked?.id).toBe(pw.id)
     expect((await s.findById(pw.id))?.externalId).toBe('google:2')
   })
 })
