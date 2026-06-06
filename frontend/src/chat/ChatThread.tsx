@@ -1,6 +1,7 @@
-import type { ChatMessage, UserMsg, AgentMsg, GateMsg, VerifyMsg, CodeReviewMsg, PreviewMsg, ErrorMsg, DoneMsg } from './chatModel.js'
+import type { ChatMessage, UserMsg, AgentMsg, GateMsg, VerifyMsg, CodeReviewMsg, RecoveryMsg, PreviewMsg, ErrorMsg, DoneMsg } from './chatModel.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
+import { metricsBadge } from './metricsFormat.js'
 
 /** Friendly, localized labels for the raw agent tool names — so the activity reads as clean
  *  steps ("Kod yazılıyor…") instead of dev slugs ("dispatch_proto"). Unknown tools fall back
@@ -71,26 +72,70 @@ export function AgentBubble({ m }: { m: AgentMsg }) {
             </div>
           )
         })}
+        {/* HONEST per-agent cost ("12.3k tok · 1 tool · 42s") — the transparency badge that used to
+            ride the retired pipeline step. Absent/zero usage (Trace, mock) shows time only, never a
+            fabricated "0 tok". */}
+        {(() => { const badge = m.metrics ? metricsBadge(t, m.metrics) : undefined; return badge
+          ? <div className="ml-1 mt-0.5 truncate text-[10px] tabular-nums text-[#07D1AF]/60" title={badge}>{badge}</div>
+          : null })()}
       </div>
     </div>
   )
 }
 
+/** A human GATE as an inline conversational card — shown ONLY while AWAITING the human (the one
+ *  actionable moment). A satisfied/rejected gate renders NOTHING here: the slim trust-ledger header
+ *  carries "Spec ✓ / Deploy ✓", so a "satisfied" bubble would just duplicate it (the redundancy the
+ *  unified view had when gates lived in BOTH a strip and a bubble). This is now the SOLE gate surface. */
 export function GateBubble({ m, onApprove, onConfirm, busy }: { m: GateMsg; onApprove: () => void; onConfirm: () => void; busy?: boolean }) {
   const { t } = useI18n()
+  if (m.state !== 'awaiting') return null
   const isSpec = m.gate === 'spec_approval'
-  const tone = m.state === 'satisfied' ? 'text-emerald-300' : m.state === 'rejected' ? 'text-rose-300' : 'text-amber-300'
   return (
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
       <div className="w-full max-w-[80%] rounded-2xl rounded-tl-sm border border-teal-400/20 bg-teal-400/[0.04] px-4 py-3">
         <div className="text-xs uppercase tracking-widest text-slate-500">{t('chat.gate.label')} · {t(`chat.gate.${m.gate}`)}</div>
-        <div className={`mb-2 text-sm ${tone}`}>{t(`gate.state.${m.state}`)}</div>
-        {m.state === 'awaiting' && (
-          <button onClick={isSpec ? onApprove : onConfirm} disabled={busy}
-            className="rounded bg-teal-500/90 px-3 py-1 text-sm font-medium text-slate-900 disabled:opacity-40">
-            {t(isSpec ? 'chat.approve' : 'chat.confirm')}
-          </button>
+        <div className="mb-2 text-sm text-amber-300">{t(`gate.state.${m.state}`)}</div>
+        <button onClick={isSpec ? onApprove : onConfirm} disabled={busy}
+          className="rounded bg-teal-500/90 px-3 py-1 text-sm font-medium text-slate-900 disabled:opacity-40">
+          {t(isSpec ? 'chat.approve' : 'chat.confirm')}
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/** A parked-run RECOVERY decision as an inline card — the actionable surface that USED to live on
+ *  the pipeline strip (now retired). Shown only while AWAITING; once resolved it goes quiet (the
+ *  next bubble — a re-run, a verify, a done — carries the outcome). GATE-SAFE: proceed/retry POST to
+ *  the owner-scoped recovery routes; the server re-runs REAL verification and never bypasses a gate. */
+export function RecoveryBubble({ m, onProceed, onAbandon, onRetry, onConfirm, busy }: {
+  m: RecoveryMsg; onProceed: () => void; onAbandon: () => void; onRetry: () => void; onConfirm: () => void; busy?: boolean
+}) {
+  const { t } = useI18n()
+  if (m.state !== 'awaiting') return null
+  const hint = m.recovery === 'critic_resolution' ? 'recovery.critic.hint' : m.recovery === 'verify_failed' ? 'recovery.verify.hint' : 'recovery.push.hint'
+  return (
+    <div className="flex items-start gap-3">
+      <Avatar role="orchestrator" />
+      <div className="w-full max-w-[80%] rounded-2xl rounded-tl-sm border border-amber-400/30 bg-amber-400/[0.06] px-4 py-3">
+        <div className="mb-2 text-sm text-amber-200">{t(hint)}</div>
+        {m.recovery === 'critic_resolution' && (
+          <div className="flex flex-wrap gap-1.5">
+            <button onClick={onProceed} disabled={busy}
+              className="rounded-md bg-gradient-to-r from-[#07D1AF] to-violet-500 px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.critic.proceed')}</button>
+            <button onClick={onAbandon} disabled={busy}
+              className="rounded-md border border-rose-400/40 px-3 py-1 text-sm font-semibold text-rose-200 hover:bg-rose-400/10 disabled:opacity-40">{t('recovery.critic.abandon')}</button>
+          </div>
+        )}
+        {m.recovery === 'verify_failed' && (
+          <button onClick={onRetry} disabled={busy}
+            className="rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.verify.retry')}</button>
+        )}
+        {m.recovery === 'push_failed' && (
+          <button onClick={onConfirm} disabled={busy}
+            className="rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.push.retry')}</button>
         )}
       </div>
     </div>
@@ -171,12 +216,18 @@ export function DoneBubble({ m }: { m: DoneMsg }) {
 
 /** Render ONE folded bubble by kind — the shared dispatcher reused by both ChatThread (below)
  *  and RunBlock (inline). Narration is suppressed (returns null). */
-export function ChatBubble({ m, onApprove, onConfirm, busy }: { m: ChatMessage; onApprove: () => void; onConfirm: () => void; busy?: boolean }) {
+export function ChatBubble({ m, onApprove, onConfirm, onProceed, onAbandon, onRetry, busy }: {
+  m: ChatMessage; onApprove: () => void; onConfirm: () => void
+  /** Recovery handlers — only the 'recovery' bubble uses them; optional so non-recovery callers omit. */
+  onProceed?: () => void; onAbandon?: () => void; onRetry?: () => void; busy?: boolean
+}) {
+  const noop = (): void => {}
   switch (m.kind) {
     case 'user': return <UserBubble m={m} />
     case 'narration': return <NarrationBubble />
     case 'agent': return <AgentBubble m={m} />
     case 'gate': return <GateBubble m={m} onApprove={onApprove} onConfirm={onConfirm} {...(busy !== undefined ? { busy } : {})} />
+    case 'recovery': return <RecoveryBubble m={m} onProceed={onProceed ?? noop} onAbandon={onAbandon ?? noop} onRetry={onRetry ?? noop} onConfirm={onConfirm} {...(busy !== undefined ? { busy } : {})} />
     case 'verify': return <VerifyBubble m={m} />
     case 'code_review': return <CodeReviewBubble m={m} />
     case 'preview': return <PreviewBubble m={m} />

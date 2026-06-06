@@ -86,21 +86,21 @@ const viewWith = (p: Partial<SessionView>): SessionView => ({ ...emptyView('s1')
 describe('RunPipeline sessionGone precedence', () => {
   it('suppresses the connectionGone banner when sessionGone is true', () => {
     const gone = viewWith({ status: 'running', connectionGone: true })
-    const { rerender } = render(wrap(<RunPipeline view={gone} onApprove={() => {}} onConfirm={() => {}} sessionGone />))
+    const { rerender } = render(wrap(<RunPipeline view={gone} sessionGone />))
     // Session is genuinely gone → the gone-card upstream is the recovery path, so the transport
     // "Reload" banner is NOT rendered (it would just hit the same 404).
     expect(screen.queryByText(/Live updates stopped|live updates stopped/i)).toBeNull()
     expect(screen.queryByRole('button', { name: /Reload/i })).toBeNull()
     // But WITHOUT sessionGone (transient transport loss), the banner still renders.
-    rerender(wrap(<RunPipeline view={gone} onApprove={() => {}} onConfirm={() => {}} sessionGone={false} />))
+    rerender(wrap(<RunPipeline view={gone} sessionGone={false} />))
     expect(screen.getByRole('button', { name: /Reload/i })).toBeInTheDocument()
   })
 
   it('suppresses the reconnecting banner when sessionGone is true', () => {
     const lost = viewWith({ status: 'running', connectionLost: true })
-    const { rerender } = render(wrap(<RunPipeline view={lost} onApprove={() => {}} onConfirm={() => {}} sessionGone />))
+    const { rerender } = render(wrap(<RunPipeline view={lost} sessionGone />))
     expect(screen.queryByText(/reconnecting/i)).toBeNull()
-    rerender(wrap(<RunPipeline view={lost} onApprove={() => {}} onConfirm={() => {}} sessionGone={false} />))
+    rerender(wrap(<RunPipeline view={lost} sessionGone={false} />))
     expect(screen.getByText(/reconnecting/i)).toBeInTheDocument()
   })
 })
