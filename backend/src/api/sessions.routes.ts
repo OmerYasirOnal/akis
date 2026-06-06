@@ -162,8 +162,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   app.get('/sessions/mine', async (req, reply) => {
     const ownerId = await deps.userIdOf?.(req)
     if (!ownerId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
-    const list = await services.store.listByOwner(ownerId)
-    return list.map(s => ({ id: s.id, idea: s.idea, status: s.status, verified: isVerified(s) }))
+    // PROJECTION (audit quick-win): only the 4 rendered fields cross the wire/DB — the full
+    // code/spec jsonb no longer ships per history view. Semantics identical (real isVerified).
+    return services.store.listSummariesByOwner(ownerId)
   })
 
   app.get<{ Params: { id: string } }>('/sessions/:id', async (req, reply) => {

@@ -58,6 +58,15 @@ WORKDIR /app
 RUN apk add --no-cache tini openssh-client
 
 COPY --from=builder --chown=node:node /app/node_modules          ./node_modules
+# pdf-parse DEAD-WEIGHT prune (audit quick-win): the package bundles FOUR pdf.js builds plus 4.8MB
+# of test fixtures, but the single call site (knowledge/ingest/parse/parseUpload.ts) imports
+# lib/pdf-parse.js, whose default loads ONLY ./pdf.js/v1.10.100 — so ~26MB of dead weight rode in
+# every image. pdf-parse is exact-pinned (1.1.1) so these paths are stable; a version bump
+# revisits this line by design (the rm simply no-ops on a changed layout thanks to -f).
+RUN rm -rf ./node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/test \
+           ./node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v1.10.88 \
+           ./node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v1.9.426 \
+           ./node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v2.0.550
 COPY --from=builder --chown=node:node /app/package.json          ./package.json
 COPY --from=builder --chown=node:node /app/pnpm-workspace.yaml   ./pnpm-workspace.yaml
 COPY --from=builder --chown=node:node /app/tsconfig.base.json    ./tsconfig.base.json

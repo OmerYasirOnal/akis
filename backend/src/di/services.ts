@@ -16,7 +16,7 @@ import type { TestRunner } from '../verify/TestRunner.js'
 import { resolveVerifier, type VerifierSpec } from '../verify/verifier.js'
 import { LocalDirectSandbox, type Sandbox } from '../exec/Sandbox.js'
 import { createApprovalAuthority, type ApprovalAuthority } from '../gates/specGate.js'
-import { loadSkills, buildSystemPrompt, type Skill } from '../skills/registry.js'
+import { loadSkillsCached, buildSystemPrompt, type Skill } from '../skills/registry.js'
 import { SCRIBE_SYSTEM } from '../orchestrator/subagents/ScribeAgent.js'
 import { PROTO_SYSTEM } from '../orchestrator/subagents/ProtoAgent.js'
 import type { LlmProvider } from '../agent/LlmProvider.js'
@@ -370,7 +370,9 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   // receives the resolved Skill[] and folds them onto BOTH via the same helper. A role
   // with NO selected skills (the default) resolves to [] ⇒ byte-identical base prompt(s).
   // Per-agent selection is honored: a role's names never reach another role's prompt.
-  const skills = loadSkills(opts.skillsDir)
+  // PERF (audit quick-win): cached per dir — the library is immutable in a deployed image,
+  // so a run start no longer re-walks the whole skills tree on the event loop.
+  const skills = loadSkillsCached(opts.skillsDir)
   const selectSkillsFor = (role: Role): Skill[] => {
     const names = opts.agentSkills?.[role]
     if (!names || names.length === 0) return []

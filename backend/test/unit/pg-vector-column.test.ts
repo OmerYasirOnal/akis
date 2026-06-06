@@ -42,7 +42,10 @@ describe('ensurePgVectorColumn (Part B: guarded real pgvector column)', () => {
     expect(sqls).toContain('CREATE EXTENSION IF NOT EXISTS vector')
     // The dim flows into the ALTER (parameterized by the active embedding dim).
     expect(sqls.some(s => /ALTER TABLE vector_chunks ALTER COLUMN vector TYPE vector\(1536\)/.test(s))).toBe(true)
-    expect(sqls.some(s => /CREATE INDEX IF NOT EXISTS \w+ ON vector_chunks USING ivfflat/.test(s))).toBe(true)
+    // DEAD-INDEX REMOVAL (audit): the unused ivfflat ANN index is no longer created — ranking is
+    // JS-side, so it was pure write-tax. The migration DROPs it (reclaims space on upgraded boxes).
+    expect(sqls.some(s => /CREATE INDEX .* ivfflat/.test(s))).toBe(false)
+    expect(sqls.some(s => /DROP INDEX IF EXISTS vector_chunks_vector_ann_idx/.test(s))).toBe(true)
   })
 
   it('is idempotent: when the column is ALREADY a vector, it skips the ALTER (re-running boots cleanly)', async () => {
@@ -52,8 +55,9 @@ describe('ensurePgVectorColumn (Part B: guarded real pgvector column)', () => {
     const res = await ensurePgVectorColumn(db, 256)
     expect(res.enabled).toBe(true)
     expect(sqls.some(s => s.startsWith('ALTER TABLE vector_chunks ALTER COLUMN vector TYPE'))).toBe(false)
-    // The index creation is still issued (IF NOT EXISTS → a no-op on a second run).
-    expect(sqls.some(s => /CREATE INDEX IF NOT EXISTS \w+ ON vector_chunks USING ivfflat/.test(s))).toBe(true)
+    // The dead-index DROP is still issued (IF EXISTS → a no-op on a second run), never a CREATE.
+    expect(sqls.some(s => /DROP INDEX IF EXISTS vector_chunks_vector_ann_idx/.test(s))).toBe(true)
+    expect(sqls.some(s => /CREATE INDEX .* ivfflat/.test(s))).toBe(false)
   })
 
   it('degrades to the fallback (enabled:false) if the ALTER itself fails (e.g. a non-castable legacy corpus)', async () => {

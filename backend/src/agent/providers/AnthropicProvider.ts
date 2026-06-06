@@ -16,14 +16,14 @@ type AnthropicBlock = AnthropicTextBlock | AnthropicToolUseBlock | { type: strin
 interface AnthropicResponse {
   content: AnthropicBlock[]
   stop_reason?: string
-  usage?: { input_tokens?: number; output_tokens?: number }
+  usage?: { input_tokens?: number; output_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number }
 }
 
 /** The subset of Anthropic streaming SSE events we consume (text + stop/usage). */
 interface AnthropicStreamEvent {
   type: string
   delta?: { type?: string; text?: string; stop_reason?: string }
-  message?: { usage?: { input_tokens?: number } }
+  message?: { usage?: { input_tokens?: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number } }
   usage?: { output_tokens?: number }
 }
 
@@ -98,7 +98,17 @@ export class AnthropicProvider implements LlmProvider {
     const result: ChatResult = {}
     if (text) result.text = text
     if (toolCalls.length) result.toolCalls = toolCalls
-    if (res.usage) result.usage = { inTokens: res.usage.input_tokens ?? 0, outTokens: res.usage.output_tokens ?? 0 }
+    if (res.usage) {
+      // CACHE VISIBILITY (audit quick-win): surface cache_read/cache_creation so 'is prompt
+      // caching firing at all?' is finally observable. Visibility ONLY — input_tokens is already
+      // the uncached remainder, so these never enter quota math.
+      result.usage = {
+        inTokens: res.usage.input_tokens ?? 0,
+        outTokens: res.usage.output_tokens ?? 0,
+        ...(res.usage.cache_read_input_tokens ? { cacheReadTokens: res.usage.cache_read_input_tokens } : {}),
+        ...(res.usage.cache_creation_input_tokens ? { cacheCreateTokens: res.usage.cache_creation_input_tokens } : {}),
+      }
+    }
     if (res.stop_reason) result.stopReason = res.stop_reason
     return result
   }

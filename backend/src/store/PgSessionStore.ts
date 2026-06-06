@@ -1,5 +1,5 @@
 import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken, TestEvidence, BuildPassport, PublishRecord, ChatTurn } from '@akis/shared'
-import type { SessionStore, SessionPatch } from './SessionStore.js'
+import type { SessionStore, SessionPatch, SessionSummary } from './SessionStore.js'
 import type { SqlClient } from './pg.js'
 
 /**
@@ -101,6 +101,28 @@ export class PgSessionStore implements SessionStore {
       [ownerId],
     )
     return rows.map(toSession)
+  }
+
+  async listSummariesByOwner(ownerId: string): Promise<SessionSummary[]> {
+    // PROJECTION (audit quick-win): the history list renders 4 fields, but SELECT * shipped the
+    // FULL code/spec/passport/test_evidence jsonb (the entire generated app) per row, JSON-parsed
+    // and discarded. Select only what is rendered + verify_token. `verified` keeps the REAL
+    // isVerified semantics in JS — token present AND token.sessionId === id — NEVER a bare
+    // verify_token-IS-NOT-NULL (which would falsely report a mismatched token as verified).
+    const { rows } = await this.db.query(
+      'SELECT id, idea, status, verify_token FROM sessions WHERE owner_id = $1 ORDER BY created_at DESC',
+      [ownerId],
+    )
+    return rows.map(raw => {
+      const r = raw as { id: unknown; idea: unknown; status: unknown; verify_token: unknown }
+      const token = r.verify_token as { sessionId?: string } | null
+      return {
+        id: String(r.id),
+        idea: String(r.idea),
+        status: r.status as SessionState['status'],
+        verified: token != null && token.sessionId === String(r.id),
+      }
+    })
   }
 
   /**

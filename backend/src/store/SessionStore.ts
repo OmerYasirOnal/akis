@@ -22,4 +22,12 @@ export interface SessionStore {
   recordVerification(id: string, token: VerifyToken, expectedVersion: number): Promise<SessionState>
   /** All sessions owned by a user, newest first (per-user build history). */
   listByOwner(ownerId: string): Promise<SessionState[]>
+  /** PROJECTION (audit quick-win): the 4 fields the history list actually renders. listByOwner
+   *  SELECT *'d the full code/spec/passport jsonb (megabytes of generated app) per history view,
+   *  all discarded. `verified` keeps the REAL isVerified semantics (token present AND bound to
+   *  THIS session id) — never a bare token-IS-NOT-NULL, which would lie on a mismatched token. */
+  listSummariesByOwner(ownerId: string): Promise<SessionSummary[]>
 }
+
+/** The history-list projection (see listSummariesByOwner). */
+export interface SessionSummary { id: string; idea: string; status: SessionState['status']; verified: boolean }

@@ -107,6 +107,21 @@ function paritySuite(name: string, make: () => SessionStore) {
       expect(isVerified(next)).toBe(false)
     })
 
+    it('listSummariesByOwner projects {id, idea, status, verified} with the REAL isVerified semantics', async () => {
+      const store = make()
+      await store.create(seed({ ownerId: 'u1' }))
+      await store.create(seed({ id: 's2', idea: 'second', status: 'done', ownerId: 'u1' }))
+      await store.create(seed({ id: 's3', ownerId: 'someone-else' }))
+      // s2 genuinely verified; s1 carries a MISMATCHED token (token bound to another session id) —
+      // the projection must NOT report it verified (the bare verify_token-IS-NOT-NULL trap).
+      await store.recordVerification('s2', { sessionId: 's2', testsRun: 1, codeDigest: 'cd' } as unknown as VerifyToken, 0)
+      await store.recordVerification('s1', { sessionId: 'NOT-s1', testsRun: 1, codeDigest: 'cd' } as unknown as VerifyToken, 0)
+      const out = await store.listSummariesByOwner('u1')
+      expect(out).toHaveLength(2)                      // owner-scoped (s3 excluded)
+      expect(out[0]).toEqual({ id: 's2', idea: 'second', status: 'done', verified: true })  // newest first
+      expect(out[1]).toEqual({ id: 's1', idea: 'idea', status: 'composing', verified: false }) // mismatched token ⇒ NOT verified
+    })
+
     it('recordVerification round-trips a branded token so isVerified() holds after get()', async () => {
       const store = make()
       await store.create(seed())

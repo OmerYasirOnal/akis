@@ -40,3 +40,24 @@ describe('skill registry', () => {
     }
   })
 })
+
+describe('loadSkillsCached (perf quick-win: one disk walk per dir per process)', () => {
+  it('returns the SAME array instance for a repeat dir (no re-walk) and caches dirs independently', async () => {
+    const { loadSkillsCached } = await import('../../src/skills/registry.js')
+    const { mkdtempSync, writeFileSync, mkdirSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dirA = mkdtempSync(join(tmpdir(), 'akis-skills-a-'))
+    const dirB = mkdtempSync(join(tmpdir(), 'akis-skills-b-'))
+    mkdirSync(join(dirA, 'x'), { recursive: true })
+    writeFileSync(join(dirA, 'x', 's.md'), '---\nname: a-skill\nappliesToRole: proto\n---\nbody')
+    const first = loadSkillsCached(dirA)
+    expect(first.map(s => s.name)).toEqual(['a-skill'])
+    // A mutation AFTER the first load is intentionally NOT picked up (immutable-library contract);
+    // the cache hands back the same instance instead of re-walking the tree.
+    writeFileSync(join(dirA, 'x', 's2.md'), '---\nname: late-skill\nappliesToRole: proto\n---\nbody')
+    expect(loadSkillsCached(dirA)).toBe(first)
+    // A DIFFERENT dir is its own cache entry.
+    expect(loadSkillsCached(dirB)).toEqual([])
+  })
+})

@@ -9,6 +9,9 @@ export interface IngestMetrics {
 
 export interface DeadLetter { task: unknown; error: string }
 
+/** The dead-letter ring cap — newest kept, oldest dropped (see deadLetters). */
+export const DEAD_LETTERS_MAX = 100
+
 export interface IngestQueueOpts {
   maxRetries?: number               // default 3 (F1-AC7)
   backoffMs?: (attempt: number) => number  // default 1s/4s/16s; tests pass () => 0
@@ -25,6 +28,10 @@ export class IngestQueue {
   private running = false
   private maxRetries: number
   private backoffMs: (attempt: number) => number
+  /** RING-CAPPED (audit quick-win): each dead letter retains the FULL failed payload (chunk text
+   *  included), so an unbounded list slowly eats a long-running server during a flaky embedding
+   *  outage. Only the last DEAD_LETTERS_MAX are kept — metrics.deadLettered still carries the
+   *  LIFETIME count, so trimming loses no aggregate observability. */
   readonly deadLetters: DeadLetter[] = []
   readonly metrics: IngestMetrics = { ingested: 0, failed: 0, deadLettered: 0, dedupHits: 0, excluded: 0, queueDepth: 0 }
 
@@ -69,6 +76,7 @@ export class IngestQueue {
         await this.attempt(task, run, n + 1)
       } else {
         this.deadLetters.push({ task, error: err instanceof Error ? err.message : String(err) })
+        if (this.deadLetters.length > DEAD_LETTERS_MAX) this.deadLetters.splice(0, this.deadLetters.length - DEAD_LETTERS_MAX)
         this.metrics.deadLettered++
       }
     }

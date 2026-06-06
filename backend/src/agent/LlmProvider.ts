@@ -46,7 +46,10 @@ export interface ChatRequest {
 export interface ChatResult {
   text?: string
   toolCalls?: ToolCall[]
-  usage?: { inTokens: number; outTokens: number }
+  /** Token spend. `cacheReadTokens`/`cacheCreateTokens` are ADDITIVE OPTIONAL visibility for
+   *  Anthropic prompt caching (the audit found caching wired but INERT with no signal to notice):
+   *  they are NEVER re-weighted into quota math — `inTokens` is already the UNCACHED remainder. */
+  usage?: { inTokens: number; outTokens: number; cacheReadTokens?: number; cacheCreateTokens?: number }
   stopReason?: string
 }
 

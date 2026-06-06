@@ -77,3 +77,24 @@ describe('AnthropicProvider', () => {
     expect(toolMsg.content[0]).toEqual({ type: 'tool_result', tool_use_id: 'toolu_1', content: 'result-text' })
   })
 })
+
+describe('cache-token visibility (audit quick-win — prompt caching observable, never re-weighted)', () => {
+  it('maps cache_read/cache_creation into OPTIONAL usage fields; inTokens stays the uncached remainder', async () => {
+    const body = {
+      content: [{ type: 'text', text: 'hi' }],
+      usage: { input_tokens: 12, output_tokens: 3, cache_read_input_tokens: 4096, cache_creation_input_tokens: 1024 },
+    }
+    const fetchFn = (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
+    const p = new AnthropicProvider({ apiKey: 'sk-ant-x', model: 'claude-haiku-4-5-20251001', fetchFn })
+    const r = await p.chat({ system: 'SYS', messages: [{ role: 'user', content: 'q' }] })
+    expect(r.usage).toEqual({ inTokens: 12, outTokens: 3, cacheReadTokens: 4096, cacheCreateTokens: 1024 })
+  })
+
+  it('absent cache fields keep usage byte-identical (no spurious keys)', async () => {
+    const body = { content: [{ type: 'text', text: 'hi' }], usage: { input_tokens: 5, output_tokens: 7 } }
+    const fetchFn = (async () => new Response(JSON.stringify(body), { status: 200 })) as unknown as typeof fetch
+    const p = new AnthropicProvider({ apiKey: 'sk-ant-x', model: 'claude-haiku-4-5-20251001', fetchFn })
+    const r = await p.chat({ system: 'SYS', messages: [{ role: 'user', content: 'q' }] })
+    expect(r.usage).toEqual({ inTokens: 5, outTokens: 7 })
+  })
+})

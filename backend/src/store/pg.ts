@@ -259,15 +259,16 @@ export async function ensurePgVectorColumn(client: SqlClient, dim: number): Prom
         `ALTER TABLE vector_chunks ALTER COLUMN vector TYPE vector(${n}) USING vector::vector(${n})`,
       )
     }
-    // Best-effort cosine ANN index (separately guarded so an index quirk never un-does the column
-    // upgrade). ivfflat is the broadly-available option; lists is a small fixed default for the
-    // single-user corpus. Brute-force ranking still happens in JS, so this is a future-scale assist.
+    // DEAD-INDEX REMOVAL (audit quick-win): an ivfflat ANN index used to be created here, but NO
+    // query ever used it — ranking happens entirely in JS (zero `<=>`/vector_cosine SQL anywhere),
+    // so it was pure write-tax (maintained on every upsert/delete) plus shared_buffers pressure on
+    // a small box. Dropped best-effort (IF EXISTS — also reclaims space on a box that already
+    // built it); when ranking moves into pgvector SQL (the bigger-bet refactor), recreate it
+    // TOGETHER with the query that uses it.
     try {
-      await client.query(
-        'CREATE INDEX IF NOT EXISTS vector_chunks_vector_ann_idx ON vector_chunks USING ivfflat (vector vector_cosine_ops) WITH (lists = 100)',
-      )
+      await client.query('DROP INDEX IF EXISTS vector_chunks_vector_ann_idx')
     } catch {
-      // Index creation failed (e.g. ivfflat unsupported on this build) — column upgrade stands.
+      // Drop failed (permissions/odd build) — harmless, the column upgrade stands.
     }
     return { enabled: true }
   } catch {
@@ -285,7 +286,7 @@ const PG_CONNECT_TIMEOUT_MS = 5000
  *  EventEmitter `on` (to attach the REQUIRED idle-client 'error' listener — see below). */
 type PgPool = SqlClient & { on(event: 'error', listener: (err: Error) => void): unknown }
 /** The `pg` module shape createPgPool needs, and an injectable importer for it. */
-type PgModule = { Pool: new (cfg: { connectionString: string; connectionTimeoutMillis?: number }) => PgPool }
+type PgModule = { Pool: new (cfg: { connectionString: string; connectionTimeoutMillis?: number; max?: number; idleTimeoutMillis?: number }) => PgPool }
 export type PgImporter = () => Promise<PgModule>
 
 /** Default importer: a NON-LITERAL specifier so tsc never resolves `pg` at build time
@@ -311,7 +312,15 @@ export async function createPgPool(connectionString: string, importPg: PgImporte
   } catch {
     throw new Error('DATABASE_URL is set but the `pg` package is not installed (run: pnpm -C backend add pg)')
   }
-  const pool = new pg.Pool({ connectionString, connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS })
+  // POOL CAP (audit quick-win): node-pg's default `max` is 10 server-side backends (~5-10MB RSS
+  // each) — far past what this single-operator, ~1-query-per-request workload ever uses, and real
+  // memory on a small shared box. 4 is generous (zero transactions / zero pool.connect() fan-out
+  // in this codebase, so a saturated small pool just queues briefly; the connect timeout below
+  // still fails fast). idleTimeoutMillis returns idle backends to the DB instead of pinning them
+  // for the process lifetime. AKIS_PG_POOL_MAX overrides for bigger deployments.
+  const envMax = Number(process.env.AKIS_PG_POOL_MAX)
+  const max = Number.isInteger(envMax) && envMax > 0 ? envMax : 4
+  const pool = new pg.Pool({ connectionString, connectionTimeoutMillis: PG_CONNECT_TIMEOUT_MS, max, idleTimeoutMillis: 10_000 })
   // node-postgres emits an 'error' event on behalf of IDLE clients when a backend
   // connection dies (DB restart, failover, admin terminate, idle timeout). A `pg.Pool`
   // is an EventEmitter, so an 'error' with NO listener throws and becomes an UNCAUGHT

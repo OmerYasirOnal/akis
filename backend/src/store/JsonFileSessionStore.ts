@@ -3,6 +3,7 @@ import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import type { SessionState, ApprovalToken, VerifyToken } from '@akis/shared'
 import { MockSessionStore } from './MockSessionStore.js'
+import type { SessionSummary } from './SessionStore.js'
 import type { SessionStore, SessionPatch } from './SessionStore.js'
 
 /**
@@ -78,4 +79,5 @@ export class JsonFileSessionStore implements SessionStore {
     return out
   }
   async listByOwner(ownerId: string): Promise<SessionState[]> { return this.inner.listByOwner(ownerId) }
+  async listSummariesByOwner(ownerId: string): Promise<SessionSummary[]> { return this.inner.listSummariesByOwner(ownerId) }
 }

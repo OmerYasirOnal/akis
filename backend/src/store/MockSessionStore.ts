@@ -1,5 +1,6 @@
 import type { SessionState, ApprovalToken, VerifyToken } from '@akis/shared'
-import type { SessionStore, SessionPatch } from './SessionStore.js'
+import { isVerified } from '@akis/shared'
+import type { SessionStore, SessionPatch, SessionSummary } from './SessionStore.js'
 
 export class MockSessionStore implements SessionStore {
   private map = new Map<string, SessionState>()
@@ -39,6 +40,12 @@ export class MockSessionStore implements SessionStore {
   async listByOwner(ownerId: string): Promise<SessionState[]> {
     // Map preserves insertion order; reverse for newest-first.
     return [...this.map.values()].filter(s => s.ownerId === ownerId).reverse().map(s => ({ ...s }))
+  }
+
+  async listSummariesByOwner(ownerId: string): Promise<SessionSummary[]> {
+    // Same order/ownership as listByOwner; only the 4 rendered fields, verified = the REAL check.
+    return [...this.map.values()].filter(s => s.ownerId === ownerId).reverse()
+      .map(s => ({ id: s.id, idea: s.idea, status: s.status, verified: isVerified(s) }))
   }
 
   /** Dev persistence seam (mirrors UserStore): dump every session for a file snapshot. */

@@ -33,7 +33,10 @@ export class EventBus {
   private taps = new Set<Listener>()
   private buffers = new Map<string, SeqEvent[]>()
   private seqs = new Map<string, number>()
-  constructor(private readonly cap = 200) {}
+  /** Pending graced evictions per session — armed on a terminal event, cancelled by ANY new
+   *  event for that session (a retry/iterate revives it). See emit(). */
+  private evictions = new Map<string, NodeJS.Timeout>()
+  constructor(private readonly cap = 200, private readonly evictAfterMs = 60_000) {}
 
   /** Dev persistence seam: dump every session's retained buffer + seq head as plain JSON.
    *  Buffers are already per-session capped, so a snapshot is bounded by design. */
@@ -70,12 +73,32 @@ export class EventBus {
   }
 
   emit(e: AkisEvent): void {
+    // A pending eviction is cancelled by ANY new event — a retry/iterate revived the session,
+    // so its replay buffer must stay live (the timer re-arms only on the next terminal event).
+    const pending = this.evictions.get(e.sessionId)
+    if (pending) { clearTimeout(pending); this.evictions.delete(e.sessionId) }
     const seq = (this.seqs.get(e.sessionId) ?? 0) + 1
     this.seqs.set(e.sessionId, seq)
     const buf = this.buffers.get(e.sessionId) ?? []
     buf.push({ seq, event: e })
     if (buf.length > this.cap) buf.splice(0, buf.length - this.cap)
     this.buffers.set(e.sessionId, buf)
+    // MEMORY (audit quick-win): buffers/seqs used to stay resident for the PROCESS LIFETIME —
+    // every build that ever ran kept its buffer forever. On the same terminal events the
+    // UsageCollector already prunes on (`done`, session failed/done/cancelled), arm a GRACED
+    // eviction: the grace lets the final /log replay + SSE drain finish, and replaySince
+    // already reports `dropped` for an evicted buffer (the client re-syncs from session state),
+    // so a late reader degrades exactly like an overflow. unref() keeps the timer from
+    // holding the process open.
+    if (e.kind === 'done' || (e.kind === 'session' && e.status !== 'started')) {
+      const timer = setTimeout(() => {
+        this.evictions.delete(e.sessionId)
+        this.buffers.delete(e.sessionId)
+        this.seqs.delete(e.sessionId)
+      }, this.evictAfterMs)
+      timer.unref?.()
+      this.evictions.set(e.sessionId, timer)
+    }
     // A broken subscriber (e.g. an SSE write to a dead socket) must NOT stop the
     // other listeners for this event, nor throw back into the producer that
     // emitted it. Cleanup is the subscriber's own responsibility.

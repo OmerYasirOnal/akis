@@ -32,3 +32,18 @@ describe('IngestionSink', () => {
     expect(ingested).toHaveLength(0)
   })
 })
+
+describe('IngestQueue dead-letter ring cap (memory quick-win)', () => {
+  it('keeps only the newest DEAD_LETTERS_MAX entries while the LIFETIME metric keeps counting', async () => {
+    const { IngestQueue, DEAD_LETTERS_MAX } = await import('../../src/knowledge/ingest/IngestQueue.js')
+    const q = new IngestQueue({ maxRetries: 0, backoffMs: () => 0 })
+    for (let i = 0; i < DEAD_LETTERS_MAX + 25; i++) {
+      q.enqueue({ id: `t-${i}` }, async () => { throw new Error(`boom-${i}`) })
+    }
+    await q.drain()
+    expect(q.deadLetters.length).toBe(DEAD_LETTERS_MAX)                       // ring-capped
+    expect(q.metrics.deadLettered).toBe(DEAD_LETTERS_MAX + 25)                // lifetime aggregate intact
+    expect(q.deadLetters.at(-1)?.error).toContain(`boom-${DEAD_LETTERS_MAX + 24}`) // newest survive
+    expect(q.deadLetters[0]?.error).toContain('boom-25')                      // oldest dropped
+  })
+})

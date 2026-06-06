@@ -38,6 +38,21 @@ export function loadSkills(dir: string): Skill[] {
   })
 }
 
+/** PERF (audit quick-win): makeOrchestrator runs at EVERY workflow-bound run start and used to
+ *  re-walk the whole skill library synchronously (readdir/stat/read + gray-matter per file),
+ *  blocking the single-threaded event loop exactly when a build kicks off. Skills are immutable
+ *  in a deployed image — dev edits arrive via a tsx-watch restart, which resets module state and
+ *  with it this cache — so each dir is walked ONCE per process. `loadSkills` itself stays pure
+ *  (tests that mutate a tmp dir between calls keep their semantics). */
+const skillCache = new Map<string, Skill[]>()
+export function loadSkillsCached(dir: string): Skill[] {
+  const hit = skillCache.get(dir)
+  if (hit) return hit
+  const loaded = loadSkills(dir)
+  skillCache.set(dir, loaded)
+  return loaded
+}
+
 export interface SelectArgs { role: Role; request: string }
 
 export function selectSkills(reg: Skill[], { role, request }: SelectArgs): Skill[] {
