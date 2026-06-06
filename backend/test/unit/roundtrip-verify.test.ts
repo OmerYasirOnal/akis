@@ -87,3 +87,42 @@ describe('round-trip behavioral probe via runBootSmoke', () => {
     expect(res.e2eScenarios.some(s => s.name.startsWith('round-trip'))).toBe(false)
   })
 })
+
+import { deriveAuthChecks } from '../../src/verify/bootSmoke.js'
+
+const AUTH_SPEC = { title: 'Secret API', body: 'Given a user When I GET /api/secret without logging in Then I receive 401 unauthorized' }
+
+describe('deriveAuthChecks (pure spec scan — narrow, explicit-signal-only)', () => {
+  it('derives an auth-guard check when a line names a path AND an unauthenticated signal', () => {
+    const checks = deriveAuthChecks(AUTH_SPEC)
+    expect(checks).toHaveLength(1)
+    expect(checks[0]).toMatchObject({ kind: 'authRequired', path: '/api/secret' })
+  })
+  it('yields NOTHING without an explicit unauth signal (no loose inference → no false probe)', () => {
+    expect(deriveAuthChecks({ title: 'T', body: 'Given a page When I GET /api/notes Then I see a list' })).toEqual([])
+    expect(deriveAuthChecks({ title: 'T', body: 'without entering data the page still loads' })).toEqual([]) // "without" ≠ unauth signal + no path
+    expect(deriveAuthChecks(undefined)).toEqual([])
+  })
+})
+
+describe('auth-guard probe via runBootSmoke', () => {
+  // 401 only for the protected path; 200 for everything else (the smoke probe still passes).
+  const guard = (protectedStatus: number) => async (url: string): Promise<ProbeResponse> =>
+    url.includes('/api/secret') ? { status: protectedStatus, body: '' } : { status: 200, body: '<html>ok</html>' }
+  const okBoot = (): { boot: () => Promise<BootResult> } => ({ boot: async () => ({ url: 'http://127.0.0.1:9999', teardown: vi.fn(async () => {}) }) })
+
+  it('GUARDED (401 without a cookie) → the auth-guard check passes', async () => {
+    const res = await runBootSmoke(NODE_SERVICE_FILES, { ...okBoot(), spec: AUTH_SPEC, sessionId: 's', roundTrip: true, fetchImpl: guard(401) })
+    expect(res.passed).toBe(true)
+    expect(res.e2eScenarios.some(s => s.name.startsWith('auth-guard') && s.passed)).toBe(true)
+  })
+  it('UNGUARDED (200 without a cookie) → the run FAILS (real missing-guard gap)', async () => {
+    const res = await runBootSmoke(NODE_SERVICE_FILES, { ...okBoot(), spec: AUTH_SPEC, sessionId: 's', roundTrip: true, fetchImpl: guard(200) })
+    expect(res.passed).toBe(false)
+    expect(res.e2eScenarios.some(s => s.name.startsWith('auth-guard') && !s.passed && /unguarded/.test(s.outcome ?? ''))).toBe(true)
+  })
+  it('AMBIGUOUS (404) → the auth-guard self-skips, never false-REDs', async () => {
+    const res = await runBootSmoke(NODE_SERVICE_FILES, { ...okBoot(), spec: AUTH_SPEC, sessionId: 's', roundTrip: true, fetchImpl: guard(404) })
+    expect(res.e2eScenarios.some(s => s.name.startsWith('auth-guard') && s.outcome === 'skipped')).toBe(true)
+  })
+})

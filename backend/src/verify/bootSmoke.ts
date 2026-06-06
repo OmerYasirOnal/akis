@@ -101,6 +101,33 @@ export function deriveAssetChecks(files: RepoFile[]): Check[] {
  * flag. Pure (string scan), deduped, bounded to 5. No `/api` path named ⇒ no round-trip check (the
  * GET probes still run) — conservative by construction.
  */
+/**
+ * Derive an AUTH-GUARD check per spec line that EXPLICITLY describes a protected endpoint — i.e. an
+ * unauthenticated-context signal (`without logging in / a session / a token`, `unauthenticated`,
+ * `requires login`, `401`, `403`, `unauthorized`) AND an explicit path on the SAME line. Gated by the
+ * caller to node-service + the flag. NARROW by design: no loose inference, so a non-auth scenario
+ * never becomes a 401 probe. Pure (line scan), deduped, bounded to 5.
+ */
+// MUST stay ⊇-consistent with criteria.ts AUTH_SIGNAL: an auth criterion is SKIPPED there (no
+// pathStatus) and probed HERE (expect 401/403). Strong phrases only (no bare 401/403/unauthorized —
+// those appear as page copy, e.g. a "403 Forbidden" heading, and must keep ordinary coverage).
+const UNAUTH_SIGNAL = /\b(without\s+(?:logging\s+in|signing\s+in|a\s+session|auth(?:entication)?|a\s+token|credentials)|unauthenticated|not\s+(?:logged|signed)\s+in|anonymous(?:ly)?|requires?\s+(?:login|sign[\s-]?in|auth(?:entication)?|a\s+session))\b/i
+const LINE_PATH = /(\/[A-Za-z0-9][A-Za-z0-9_\-./]*)/
+export function deriveAuthChecks(spec: SpecArtifact | undefined): Check[] {
+  if (!spec) return []
+  const seen = new Set<string>()
+  const checks: Check[] = []
+  for (const line of spec.body.split('\n')) {
+    if (!UNAUTH_SIGNAL.test(line)) continue
+    const m = LINE_PATH.exec(line)
+    const path = m?.[1]?.replace(/[.,;:!?)`'"]+$/, '')
+    if (!path || path === '/' || seen.has(path) || checks.length >= 5) continue
+    seen.add(path)
+    checks.push({ kind: 'authRequired', name: `auth-guard ${path}`.slice(0, 60), path })
+  }
+  return checks
+}
+
 const API_PATH = /\/api\/[A-Za-z0-9][A-Za-z0-9_\-./]*/g
 export function deriveRoundTripChecks(spec: SpecArtifact | undefined): Check[] {
   if (!spec) return []
@@ -157,6 +184,14 @@ async function probe(check: Check, baseUrl: string, fetchImpl: (url: string, ini
   // A skipped check makes NO request — it is recorded as a skipped (non-pass, non-fail) scenario.
   if (check.kind === 'skipped') return { name, passed: false, outcome: 'skipped' }
   if (check.kind === 'roundTrip') return probeRoundTrip(check, baseUrl, fetchImpl)
+  if (check.kind === 'authRequired') {
+    // GET the protected path with NO cookie (probes never carry one). 401/403 ⇒ guarded (pass);
+    // a 2xx ⇒ the guard is MISSING (a real gap → fail); anything else ⇒ skipped (can't establish).
+    const res = await fetchImpl(joinUrl(baseUrl, check.path))
+    if (res.status === 401 || res.status === 403) return { name, passed: true }
+    if (res.status >= 200 && res.status < 300) return { name, passed: false, outcome: `unguarded ${res.status}` }
+    return { name, passed: false, outcome: 'skipped' }
+  }
 
   const path = check.kind === 'bodyContains' || check.kind === 'render' || check.kind === 'pathStatus' ? check.path : '/'
   const res = await fetchImpl(joinUrl(baseUrl, path))
@@ -261,6 +296,10 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
       // Additive: a pass adds a genuinely-behavioral test; a fail is a real Potemkin; a non-2xx
       // POST self-skips. Default OFF ⇒ the check set is byte-identical to before.
       ...(deps.roundTrip && detectAppType(files) === 'node-service' ? deriveRoundTripChecks(deps.spec) : []),
+      // OPT-IN auth-guard checks (same flag + node-service gate): a 401/403-without-cookie probe for
+      // any endpoint the spec EXPLICITLY says is protected. Conservative derivation → rarely fires,
+      // never false-REDs a healthy app (a 2xx is a genuine missing-guard failure; else self-skips).
+      ...(deps.roundTrip && detectAppType(files) === 'node-service' ? deriveAuthChecks(deps.spec) : []),
     ]
     const scenarios: E2eScenario[] = []
     for (const c of checks) scenarios.push(await probe(c, boot.url, fetchImpl))

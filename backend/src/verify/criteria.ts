@@ -28,6 +28,12 @@ export type Check =
    *  GET-only probe cannot. CONSERVATIVE: if the POST is not 2xx (we couldn't form a valid write)
    *  it records `skipped`, never a fail — so a healthy app is never false-RED'd. */
   | { kind: 'roundTrip'; name: string; path: string }
+  /** AUTH-GUARD check: a spec that explicitly says a `path` is protected (returns 401/403
+   *  WITHOUT a session) — GET it with NO cookie and pass ONLY on 401/403. A 2xx means the guard
+   *  is missing (a real security gap → fail); anything else (404/5xx/redirect) is `skipped`
+   *  (couldn't establish the guard) — so a healthy app is never false-RED'd. Node-service only,
+   *  derived ONLY from an explicit unauthenticated-context signal (never inferred loosely). */
+  | { kind: 'authRequired'; name: string; path: string }
   /** No mechanical check derivable — recorded as a bounded `skipped` scenario, never a pass. */
   | { kind: 'skipped'; name: string; reason: string }
 
@@ -51,6 +57,12 @@ const INPUT_VERB = /\b(types?|typing|enters?|fills?|writes?)\b/i
  *  inner `'/api/notes'` became a bodyContains the static page legitimately lacked → false "missing
  *  literal". Skipping it falls through to the path/render/skipped signal — never to a pass. */
 const CODE_STEP = /\b(devtools|console)\b|\bfetch\s*\(|\b(call|invoke|run|execute|eval)s?\b[^.]{0,16}[`'"]/i
+/** A criterion about an AUTH-PROTECTED route (401/403 without a session). A protected route is
+ *  SUPPOSED to 4xx unauthenticated, so the generic pathStatus probe (<400) would FALSE-FAIL it.
+ *  Such a criterion is recorded `skipped` here; the flag-gated auth-guard check (bootSmoke
+ *  deriveAuthChecks) does the correct "expect 401/403" probe. Standalone correctness fix — it
+ *  removes a false-RED on protected routes even when the auth-guard flag is off. */
+const AUTH_SIGNAL = /\b(without\s+(?:logging\s+in|signing\s+in|a\s+session|auth(?:entication)?|a\s+token|credentials)|unauthenticated|not\s+(?:logged|signed)\s+in|anonymous(?:ly)?|requires?\s+(?:login|sign[\s-]?in|auth(?:entication)?|a\s+session))\b/i
 /** A quote immediately preceded by a data noun (`task "X"`, `note "X"`) names a DYNAMIC
  *  data item the user created — same impossible-probe class as typed input. */
 const DATA_NOUN = /\b(tasks?|notes?|todos?|items?|entr(?:y|ies)|görev(?:i|ler)?|not(?:u|lar)?)\s*$/i
@@ -82,6 +94,10 @@ export function deriveChecks(spec: SpecArtifact | undefined): Check[] {
     // literal/path/verb signal more reliably than the truncated scenario name alone.
     const text = sc.steps.join(' ')
     const name = boundName(sc.name || text)
+
+    // An auth-protected-route criterion is SUPPOSED to 4xx unauthenticated → never a pathStatus
+    // (<400) probe. Skip here; the flag-gated auth-guard check probes it correctly (expect 401/403).
+    if (AUTH_SIGNAL.test(text)) return { kind: 'skipped', name, reason: 'auth-guarded route (covered by the auth-guard check)' }
 
     const literal = staticLiteral(sc.steps)
     if (literal) return { kind: 'bodyContains', name, path: '/', literal }

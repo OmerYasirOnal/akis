@@ -95,3 +95,19 @@ describe('criteria: a DevTools/fetch code-call literal is not a bodyContains (fa
     expect(checks.every(c => c.kind === 'render' || c.kind === 'skipped' || c.kind === 'pathStatus')).toBe(true)
   })
 })
+
+describe('criteria: an auth-protected-route criterion is skipped, not a pathStatus (false-RED fix)', () => {
+  it('a "401 without logging in" criterion does NOT become a pathStatus that 401 would false-fail', () => {
+    const checks = deriveChecks({ title: 'T', body: '- Given a user, When I GET /api/secret without logging in, Then I receive 401 unauthorized' })
+    expect(checks.some(c => c.kind === 'pathStatus')).toBe(false)
+    expect(checks.every(c => c.kind === 'skipped')).toBe(true)
+  })
+})
+
+describe('criteria: tightened AUTH_SIGNAL keeps coverage on benign page copy (gate-keeper note)', () => {
+  it('a bare "403"/"unauthorized" as page TEXT is NOT treated as an auth route (keeps its probe)', () => {
+    const checks = deriveChecks({ title: 'T', body: '- Given the error page, When it loads, Then it shows "403 Forbidden" and the page renders' })
+    // No strong unauth phrase ⇒ not skipped-as-auth; it still derives a real check (render/bodyContains).
+    expect(checks.every(c => c.kind === 'skipped')).toBe(false)
+  })
+})
