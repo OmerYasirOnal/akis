@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { ChatThread } from './ChatThread.js'
+import { ChatThread, RecoveryBubble } from './ChatThread.js'
 import { ChatStudio } from './ChatStudio.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { ApiClient } from '../api/client.js'
@@ -32,6 +32,23 @@ describe('ChatThread', () => {
     render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
     expect(screen.queryByRole('button', { name: 'Approve spec' })).toBeNull()
     expect(screen.getByText(/Shipped/)).toBeInTheDocument()
+  })
+})
+
+describe('RecoveryBubble', () => {
+  it('an AWAITING critic resolution shows Proceed/Abandon wired to the handlers', async () => {
+    const onProceed = vi.fn(); const onAbandon = vi.fn()
+    render(wrap(<RecoveryBubble m={{ id: 'r', kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' }}
+      onProceed={onProceed} onAbandon={onAbandon} onRetry={() => {}} onConfirm={() => {}} />))
+    await userEvent.click(screen.getByRole('button', { name: 'Proceed' }))
+    expect(onProceed).toHaveBeenCalled()
+    await userEvent.click(screen.getByRole('button', { name: 'Abandon' }))
+    expect(onAbandon).toHaveBeenCalled()
+  })
+  it('a RESOLVED recovery renders nothing (the flow moved on — the next bubble carries the outcome)', () => {
+    const { container } = render(wrap(<RecoveryBubble m={{ id: 'r', kind: 'recovery', recovery: 'critic_resolution', state: 'resolved' }}
+      onProceed={() => {}} onAbandon={() => {}} onRetry={() => {}} onConfirm={() => {}} />))
+    expect(container).toBeEmptyDOMElement()
   })
 })
 

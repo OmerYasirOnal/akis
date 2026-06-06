@@ -56,6 +56,20 @@ export function RunBlock({
   const { t } = useI18n()
   const live = useLiveChat(sessionId, idea, api, baseUrl, makeClient, terminal)
 
+  // RECOVERY driving for the inline RecoveryBubble (the action surface that used to live on the
+  // retired pipeline strip). GATE-SAFE: these POST to the owner-scoped recovery routes — the server
+  // re-runs REAL verification and never bypasses a structural gate. `recovering` guards a double-fire.
+  const [recovering, setRecovering] = useState(false)
+  const drive = (fn: (id: string) => Promise<unknown>) => (): void => {
+    if (recovering) return
+    setRecovering(true)
+    void Promise.resolve(fn(sessionId)).catch(() => { /* the SSE stream reflects the outcome */ }).finally(() => setRecovering(false))
+  }
+  const onProceed = drive(id => api.resolveCritic(id, 'proceed'))
+  const onAbandon = drive(id => api.resolveCritic(id, 'abandon'))
+  const onRetry = drive(id => api.retryRun(id))
+  const acting = busy || recovering
+
   // Per-run stale-session detection: a run marker persists only sessionId+idea, so on reload the
   // server may have lost the session (restart wiped the in-memory store / external deletion) →
   // GET /sessions/:id 404s. ONLY a 404 flags it (transient network/500 stays silent), mirroring
@@ -103,11 +117,10 @@ export function RunBlock({
       {/* COMPACT pipeline-strip HEADER: RunPipeline verbatim (TrustLedger + spec/push gates +
           critic/verify/push recovery + Stop), so all the load-bearing gate/recovery wiring stays
           where it has been live-verified. Gates call the same bare onApprove/onConfirm (server-minted). */}
+      {/* SLIM run header: trust headline + ledger + Stop + transport banners only. The per-stage
+          status + gate/recovery ACTIONS are inline bubbles below (the "sade sohbet" redesign). */}
       <RunPipeline
         view={live.view}
-        onApprove={onApprove}
-        onConfirm={onConfirm}
-        busy={busy}
         api={api}
         sessionGone={sessionGone}
         compact
@@ -119,7 +132,8 @@ export function RunBlock({
       {live.messages.length > 0 && (
         <div className="mt-3 flex flex-col gap-4">
           {live.messages.map(m => (
-            <ChatBubble key={m.id} m={m} onApprove={onApprove} onConfirm={onConfirm} busy={busy} />
+            <ChatBubble key={m.id} m={m} onApprove={onApprove} onConfirm={onConfirm}
+              onProceed={onProceed} onAbandon={onAbandon} onRetry={onRetry} busy={acting} />
           ))}
         </div>
       )}

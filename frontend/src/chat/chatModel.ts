@@ -1,19 +1,23 @@
-import type { AkisEvent, Role, GateState } from '@akis/shared'
+import type { AkisEvent, Role, GateState, AgentMetrics } from '@akis/shared'
 
 /** One bubble/card in the AKIS conversation thread. Agent turns, gate/verify/preview
  *  cards are mutated in place as the run streams; user/narration/error/done append. */
 export interface UserMsg { id: string; kind: 'user'; text: string }
 export interface NarrationMsg { id: string; kind: 'narration'; agent: Role; text: string }
 export interface ToolLine { tool: string; ok?: boolean }
-export interface AgentMsg { id: string; kind: 'agent'; agent: Role; tools: ToolLine[]; notes: string[]; done: boolean; ok?: boolean; attempts: number }
+export interface AgentMsg { id: string; kind: 'agent'; agent: Role; tools: ToolLine[]; notes: string[]; done: boolean; ok?: boolean; attempts: number; metrics?: AgentMetrics }
 export interface GateMsg { id: string; kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: GateState }
 export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passed: boolean }
 /** Read-only critic code-review verdict card (automatic, NOT a human gate). Structured only. */
 export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: boolean; findings: number; critical: boolean; iteration: number }
+/** A parked run awaiting a HUMAN recovery decision — the inline actionable card (proceed/abandon a
+ *  stuck critic, retry a failed verify/push). NOT a structural gate: the server never bypasses
+ *  verify/push. A singleton per recovery-kind, flipped awaiting→resolved as the user acts. */
+export interface RecoveryMsg { id: string; kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed' | 'push_failed'; state: 'awaiting' | 'resolved' }
 export interface PreviewMsg { id: string; kind: 'preview'; url?: string; ready: boolean; error?: { status: 'failed' | 'unsupported'; reason?: string } }
 export interface ErrorMsg { id: string; kind: 'error'; text: string }
 export interface DoneMsg { id: string; kind: 'done'; verified: boolean; provider?: string }
-export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMsg | CodeReviewMsg | PreviewMsg | ErrorMsg | DoneMsg
+export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMsg | CodeReviewMsg | RecoveryMsg | PreviewMsg | ErrorMsg | DoneMsg
 
 /**
  * Project ONE run's ordered AkisEvent stream into inline chronological bubbles for its
@@ -32,6 +36,7 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
   const openTurn = new Map<string, AgentMsg>()           // by laneId (the currently-open turn)
   const byAgent = new Map<Role, AgentMsg>()              // by role — COALESCE an agent's re-runs
   const gates = new Map<string, GateMsg>()
+  const recoveries = new Map<string, RecoveryMsg>()  // by recovery-kind (singleton, awaiting→resolved)
   let verifyMsg: VerifyMsg | undefined
   let codeReviewMsg: CodeReviewMsg | undefined
   let previewMsg: PreviewMsg | undefined
@@ -56,7 +61,10 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
         break
       }
       case 'agent_end': {
-        const m = openTurn.get(e.laneId); if (m) { m.done = true; m.ok = e.ok }
+        // Carry the honest per-agent cost (tokens · tools · time) onto the bubble — the transparency
+        // badge that used to ride the retired pipeline strip's step. ADDITIVE: an old agent_end with
+        // no metrics folds exactly as before (metrics stays undefined → no badge).
+        const m = openTurn.get(e.laneId); if (m) { m.done = true; m.ok = e.ok; if (e.metrics) m.metrics = e.metrics }
         openTurn.delete(e.laneId)
         break
       }
@@ -87,6 +95,16 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
         // Singleton read-only card updated in place across iterations (last verdict wins).
         if (codeReviewMsg) { codeReviewMsg.approved = e.approved; codeReviewMsg.findings = e.findings; codeReviewMsg.critical = e.critical; codeReviewMsg.iteration = e.iteration }
         else { codeReviewMsg = { id, kind: 'code_review', approved: e.approved, findings: e.findings, critical: e.critical, iteration: e.iteration }; items.push(codeReviewMsg) }
+        break
+      }
+      case 'recovery': {
+        // Singleton per recovery-kind, updated in place (awaiting→resolved) so the inline card
+        // shows its action while parked and goes quiet once the user acts (the next bubble — a
+        // re-run, a verify, a done — carries the outcome). The action surface is now the bubble,
+        // not the retired pipeline strip.
+        const r = recoveries.get(e.recovery)
+        if (r) r.state = e.state
+        else { const m: RecoveryMsg = { id, kind: 'recovery', recovery: e.recovery, state: e.state }; recoveries.set(e.recovery, m); items.push(m) }
         break
       }
       case 'preview':

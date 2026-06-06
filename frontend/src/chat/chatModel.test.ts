@@ -67,6 +67,25 @@ describe('foldRunBubbles', () => {
     expect(gateCards[0]!.state).toBe('satisfied')
   })
 
+  it('folds a recovery into a singleton card that flips awaiting → resolved in place', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'resolved' }),
+    ])
+    const recs = msgs.filter(m => m.kind === 'recovery')
+    expect(recs).toHaveLength(1)
+    expect(recs[0]).toMatchObject({ kind: 'recovery', recovery: 'critic_resolution', state: 'resolved' })
+  })
+
+  it('carries the per-agent metrics from agent_end onto the agent bubble (honest cost transparency)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', metrics: { usage: { inTokens: 8000, outTokens: 4345 }, durationMs: 42_000, toolCalls: 1 } }),
+    ])
+    const turn = msgs.find(m => m.kind === 'agent') as AgentMsg
+    expect(turn.metrics).toMatchObject({ durationMs: 42_000, toolCalls: 1 })
+  })
+
   it('renders a read-only code_review card and updates it in place (last verdict wins)', () => {
     const msgs = foldRunBubbles([
       ev({ kind: 'code_review', approved: false, findings: 3, critical: false, iteration: 1, agent: 'critic' }),

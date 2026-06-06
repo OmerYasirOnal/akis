@@ -34,16 +34,16 @@ function okFetch(log: SeqEvent[] = []): (path: string) => Promise<Response> {
   }
 }
 
-describe('RunBlock — inline run-block (strip header + chronological bubbles)', () => {
-  it('renders the pipeline-strip HEADER (5 stages + trust ledger) AND the inline chronological bubbles', async () => {
+describe('RunBlock — inline run-block (slim header + chronological bubbles)', () => {
+  it('renders the SLIM header (trust ledger, NO 5-stage strip) AND the inline chronological bubbles', async () => {
     FakeStream.created = []
     const api = new ApiClient('', vi.fn(okFetch()))
     render(wrap(<RunBlock sessionId="s1" idea="# Todo App" active api={api}
       onApprove={() => {}} onConfirm={() => {}} onNewBuild={() => {}} makeClient={() => new FakeStream() as unknown as EventStreamClient} />))
 
-    // The HEADER is RunPipeline verbatim: the 5 fixed stages + the trust ledger.
-    for (const label of ['Spec', 'Build', 'Review', 'Verify', 'Ship']) expect(screen.getByText(label)).toBeInTheDocument()
+    // The header is the SLIM run header: the trust ledger (proof), but NOT the retired 5-stage strip.
     expect(screen.getByLabelText('Trust ledger')).toBeInTheDocument()
+    expect(screen.queryByText('· Independent verifier')).toBeNull() // the strip's per-stage trust roles are gone
     // The run-block title is the idea's first heading.
     expect(screen.getByText('Todo App')).toBeInTheDocument()
 
@@ -54,14 +54,13 @@ describe('RunBlock — inline run-block (strip header + chronological bubbles)',
       live.emit(ev({ kind: 'verify', testsRun: 3, passed: true, agent: 'trace', laneId: 'verify' }), 2)
       live.emit(ev({ kind: 'done', verified: true, provider: 'anthropic' }), 3)
     })
-    // A Scribe agent bubble (the roster/step also says Scribe, hence >=1), a verify card, a done card.
-    // "3 tests" appears in BOTH the inline VerifyBubble AND the pipeline summary line (>=1).
-    await waitFor(() => expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(1))
-    await waitFor(() => expect(screen.getAllByText(/3 tests/).length).toBeGreaterThanOrEqual(1))
+    // A Scribe agent bubble, a verify card ("3 tests"), a done card ("Shipped") — all inline.
+    await waitFor(() => expect(screen.getByText('Scribe')).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(/3 tests/)).toBeInTheDocument())
     expect(screen.getByText(/Shipped/)).toBeInTheDocument()
   })
 
-  it('an INLINE gate bubble Approve button calls the injected onApprove — minting nothing client-side', async () => {
+  it('the SOLE gate surface is ONE inline gate bubble (no strip duplicate); Approve calls onApprove, minting nothing', async () => {
     FakeStream.created = []
     const onApprove = vi.fn()
     // Spy the whole API surface: a gate click must NOT hit any session-mutating route — it only
@@ -73,14 +72,25 @@ describe('RunBlock — inline run-block (strip header + chronological bubbles)',
     const live = FakeStream.created[FakeStream.created.length - 1]!
     act(() => { live.emit(ev({ kind: 'gate', gate: 'spec_approval', state: 'awaiting' }), 1) })
 
-    // Both the strip-header spec step AND the inline gate bubble surface "Approve spec".
+    // EXACTLY ONE "Approve spec" — the inline gate bubble (the strip duplicate is gone; no redundant CTA).
     const approves = await screen.findAllByRole('button', { name: 'Approve spec' })
-    expect(approves.length).toBeGreaterThanOrEqual(1)
-    await userEvent.click(approves[approves.length - 1]!)
+    expect(approves).toHaveLength(1)
+    await userEvent.click(approves[0]!)
     expect(onApprove).toHaveBeenCalled()
     // GATE-SAFE: clicking the gate minted NOTHING — no approve/run/confirm POST was issued.
     const mutating = fetchFn.mock.calls.filter(c => /\/approve|\/run|\/confirm/.test(String(c[0])))
     expect(mutating).toHaveLength(0)
+  })
+
+  it('a SATISFIED gate renders NO bubble (the trust ledger carries it — no duplicate)', async () => {
+    FakeStream.created = []
+    const api = new ApiClient('', vi.fn(okFetch()))
+    render(wrap(<RunBlock sessionId="s1" idea="# App" active api={api}
+      onApprove={() => {}} onConfirm={() => {}} onNewBuild={() => {}} makeClient={() => new FakeStream() as unknown as EventStreamClient} />))
+    const live = FakeStream.created[FakeStream.created.length - 1]!
+    act(() => { live.emit(ev({ kind: 'gate', gate: 'spec_approval', state: 'satisfied' }), 1) })
+    // No gate CTA for a satisfied gate; the ledger's "Spec approved ✓" is the sole indicator.
+    expect(screen.queryByRole('button', { name: 'Approve spec' })).toBeNull()
   })
 
   it('a RECOVERY button (verify retry) drives the injected api.retryRun — no client mint', async () => {
