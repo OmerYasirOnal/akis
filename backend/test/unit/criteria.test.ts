@@ -83,3 +83,15 @@ describe('deriveChecks', () => {
     expect(checks[0]!.name.length).toBeLessThanOrEqual(60)
   })
 })
+
+describe('criteria: a DevTools/fetch code-call literal is not a bodyContains (false-RED guard, caught live)', () => {
+  it('skips the JS-call literal and falls through to the /api path check, never a bodyContains', () => {
+    const spec = { title: 'Notes', body: "- Given the page has loaded, When I open browser DevTools and call `fetch('/api/notes')`, Then I receive JSON" }
+    const checks = deriveChecks(spec)
+    // The inner '/api/notes' must NOT become a bodyContains the served HTML can never contain
+    // (the false-RED). With no statically-assertable literal, it falls through to the render
+    // signal ('page has loaded') — a probe a genuinely-served app PASSES, not a wrong-reason fail.
+    expect(checks.some(c => c.kind === 'bodyContains')).toBe(false)
+    expect(checks.every(c => c.kind === 'render' || c.kind === 'skipped' || c.kind === 'pathStatus')).toBe(true)
+  })
+})

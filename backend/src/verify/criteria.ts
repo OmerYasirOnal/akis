@@ -45,6 +45,12 @@ const QUOTED = /["“”']([^"“”']{1,80})["“”']/g
  *  client-rendered app injects it via JS, so the SERVED body can never contain it and a
  *  bodyContains probe would be an impossible claim (the live "missing literal" failure). */
 const INPUT_VERB = /\b(types?|typing|enters?|fills?|writes?)\b/i
+/** A step describing a CODE/devtools interaction (`open DevTools and call \`fetch('/x')\``,
+ *  `console.log(...)`) — the quoted text is a JS expression / API call, NOT served page chrome,
+ *  so the SERVED HTML can never contain it. Caught LIVE: a `fetch('/api/notes')` criterion whose
+ *  inner `'/api/notes'` became a bodyContains the static page legitimately lacked → false "missing
+ *  literal". Skipping it falls through to the path/render/skipped signal — never to a pass. */
+const CODE_STEP = /\b(devtools|console)\b|\bfetch\s*\(|\b(call|invoke|run|execute|eval)s?\b[^.]{0,16}[`'"]/i
 /** A quote immediately preceded by a data noun (`task "X"`, `note "X"`) names a DYNAMIC
  *  data item the user created — same impossible-probe class as typed input. */
 const DATA_NOUN = /\b(tasks?|notes?|todos?|items?|entr(?:y|ies)|görev(?:i|ler)?|not(?:u|lar)?)\s*$/i
@@ -101,6 +107,7 @@ export function deriveChecks(spec: SpecArtifact | undefined): Check[] {
 function staticLiteral(steps: string[]): string | undefined {
   for (const step of steps) {
     if (INPUT_VERB.test(step)) continue // typed text — input, not chrome
+    if (CODE_STEP.test(step)) continue // a JS/devtools call — code, not served page chrome
     QUOTED.lastIndex = 0
     for (const m of step.matchAll(QUOTED)) {
       const before = step.slice(0, m.index)
