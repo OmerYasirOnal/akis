@@ -74,10 +74,16 @@ function AppFrame({ api }: { api: ApiClient }) {
     : path === '/' ? <ChatStudio api={api} baseUrl={BASE} />
     : <Navigate to="/" />
 
+  // ROUTE-AWARE FRAME WIDTH (live UX feedback): the studio is a WORKSPACE (chat + live preview
+  // side by side) — capping it at max-w-6xl left huge dead margins on wide screens and squeezed
+  // the preview. It now breathes up to 120rem; the content pages (docs/history/settings…) keep
+  // the comfortable reading cap they were designed for.
+  const isStudio = path === '/'
+
   return (
     <div className="relative min-h-screen text-slate-100">
       <CosmicBackground />
-      <div className="relative z-10 mx-auto max-w-6xl px-4 py-6 sm:px-6">
+      <div className={`relative z-10 mx-auto px-4 py-6 sm:px-6 ${isStudio ? 'max-w-[120rem] lg:px-8 2xl:px-10' : 'max-w-6xl'}`}>
         <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <Brand />
           <nav className="order-3 flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto">

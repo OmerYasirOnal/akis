@@ -341,10 +341,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const hasRun = !!activeSessionId
   return (
     <div className="flex min-h-[32rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
-      <div className={`grid min-h-0 flex-1 gap-6 ${hasRun ? (previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_minmax(30rem,42%)] xl:grid-cols-[minmax(0,1fr)_minmax(34rem,46%)]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]') : 'grid-cols-1'}`}>
+      {/* WIDER SPLIT (live UX feedback): with the studio frame now using the viewport, the
+          preview earns real width — 46/48/50% at lg/xl/2xl — so the embedded app renders like an
+          actual app instead of a phone-width strip. Below lg everything stacks (grid-cols-1). */}
+      <div className={`grid min-h-0 flex-1 gap-6 ${hasRun ? (previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_minmax(30rem,46%)] xl:grid-cols-[minmax(0,1fr)_minmax(36rem,48%)] 2xl:grid-cols-[minmax(0,1fr)_minmax(42rem,50%)]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]') : 'grid-cols-1'}`}>
         <section className="flex min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm">
           {header}
-          <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl' : 'max-w-3xl xl:max-w-4xl'}`}>
+          <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>
             {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
             {editsBaseBadge}
             <div className="min-h-0 flex-1">{chat}</div>
