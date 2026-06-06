@@ -169,6 +169,13 @@ export class ApiClient {
     if (!res.ok) throw new ApiError(res.status, `report failed (${res.status})`, 'ReportUnavailable')
     return res.text()
   }
+  /** The Build Provenance Attestation (Move 3) as a self-contained Markdown artifact a user hands
+   *  a client — the signed passport wrapped in gate/verification context (owner-scoped). */
+  async getAttestationMarkdown(id: string): Promise<string> {
+    const res = await this.fetchFn(`${this.baseUrl}/sessions/${id}/attestation?format=md`, { credentials: 'include' })
+    if (!res.ok) throw new ApiError(res.status, `attestation failed (${res.status})`, 'AttestationUnavailable')
+    return res.text()
+  }
   approve(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/approve`) }
   run(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/run`) }
   confirm(id: string): Promise<SessionState> { return this.post(`/sessions/${id}/confirm`) }

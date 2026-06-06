@@ -29,12 +29,20 @@ export function TrustReportCard({ sessionId, api }: { sessionId: string; api: Ap
     if (!md) return
     try { await navigator.clipboard.writeText(md); setCopied(true); setTimeout(() => setCopied(false), 1500) } catch { /* clipboard denied */ }
   }
-  const download = (): void => {
-    if (!md) return
-    const url = URL.createObjectURL(new Blob([md], { type: 'text/markdown' }))
+  const saveMd = (text: string, name: string): void => {
+    const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown' }))
     const a = document.createElement('a')
-    a.href = url; a.download = `trust-report-${sessionId}.md`; a.click()
+    a.href = url; a.download = name; a.click()
     URL.revokeObjectURL(url)
+  }
+  const download = (): void => { if (md) saveMd(md, `trust-report-${sessionId}.md`) }
+  // The Build Provenance Attestation (Move 3) — the signed, offline-verifiable artifact a user
+  // hands a client. Fetched on demand (separate from the report) and downloaded.
+  const [attState, setAttState] = useState<'idle' | 'loading' | 'error'>('idle')
+  const downloadAttestation = async (): Promise<void> => {
+    setAttState('loading')
+    try { saveMd(await api.getAttestationMarkdown(sessionId), `akis-attestation-${sessionId}.md`); setAttState('idle') }
+    catch { setAttState('error') }
   }
 
   return (
@@ -67,6 +75,12 @@ export function TrustReportCard({ sessionId, api }: { sessionId: string; api: Ap
                 </button>
                 <button type="button" onClick={download} className="rounded border border-white/15 px-2 py-1 text-[11px] text-slate-200 hover:bg-white/[0.06]">
                   {t('report.download')}
+                </button>
+                {/* The signed, offline-verifiable provenance artifact (Move 3) — the handable deliverable. */}
+                <button type="button" onClick={() => void downloadAttestation()} disabled={attState === 'loading'}
+                  title={t('report.attestation.hint')}
+                  className="rounded border border-teal-400/30 bg-teal-400/[0.06] px-2 py-1 text-[11px] text-teal-200 hover:bg-teal-400/15 disabled:opacity-40">
+                  🔏 {attState === 'loading' ? t('report.loading') : attState === 'error' ? t('report.retry') : t('report.attestation')}
                 </button>
               </div>
               <pre className="max-h-[60vh] overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/40 p-3 text-[11px] leading-relaxed text-slate-300">{md}</pre>

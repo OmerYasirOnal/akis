@@ -91,6 +91,8 @@ export const STRINGS = {
     'report.copy': 'Copy Markdown',
     'report.copied': 'Copied ✓',
     'report.download': 'Download .md',
+    'report.attestation': 'Attestation',
+    'report.attestation.hint': 'Signed, offline-verifiable Build Provenance Attestation — hand it to a client',
     // TERMINAL: reconnects exhausted — live updates stopped; a reload re-syncs from /log.
     'live.connectionGone': 'Connection lost — live updates stopped. Reload to re-sync.',
     'live.reload': 'Reload',
@@ -794,6 +796,8 @@ export const STRINGS = {
     'report.copy': 'Markdown kopyala',
     'report.copied': 'Kopyalandı ✓',
     'report.download': '.md indir',
+    'report.attestation': 'Sertifika',
+    'report.attestation.hint': 'İmzalı, çevrimdışı doğrulanabilir Build Provenance Attestation — müşteriye verebilirsin',
     // TERMİNAL: yeniden bağlanma hakları bitti — canlı güncellemeler durdu; yenileme /log'dan eşitler.
     'live.connectionGone': 'Bağlantı koptu — canlı güncellemeler durdu. Yeniden eşitlemek için sayfayı yenileyin.',
     'live.reload': 'Yenile',
