@@ -49,6 +49,8 @@ import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore
 import { workflowToAgentModels, workflowToAgentSkills, workflowCustomAgents } from '../workflow/resolve.js'
 import type { WorkflowConfig, SessionState } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
+import { McpSessionPool } from '../agent/mcp/McpSessionPool.js'
+import { StdioDockerTransport } from '../agent/mcp/StdioDockerTransport.js'
 import { Orchestrator } from '../orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../store/MockSessionStore.js'
 import { JsonFileSessionStore } from '../store/JsonFileSessionStore.js'
@@ -185,6 +187,17 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const publisher: SessionPublisher | undefined =
     deps.publisher ?? (env0.NODE_ENV !== 'test' ? makeRealPublisher() : undefined)
 
+  // SP1: ONE shared GitHub-MCP transport pool (finding #10) injected into BOTH buildServices calls
+  // (default + every per-workflow makeOrchestrator), so a per-workflow run never spins up a second,
+  // UNTRACKED pool whose docker children could never be torn down. A single pool ⇒ a single
+  // closeAll() at shutdown covers every orchestrator. Constructed only under the SAME guard
+  // buildServices uses (connections + env + NODE_ENV!=='test'), so tests never build a real pool.
+  // When host-injected services bypass buildServices, this is simply unused.
+  const sharedMcpEnabled = !!(env.NODE_ENV !== 'test' && process.env.NODE_ENV !== 'test')
+  const sharedMcpPool: McpSessionPool | undefined = sharedMcpEnabled
+    ? new McpSessionPool({ factory: ({ token }) => new StdioDockerTransport({ token }) })
+    : undefined
+
   // Build Passport signer (the durable, third-party-verifiable proof of a verified build).
   // From AKIS_PASSPORT_PRIVATE_KEY when configured (Ed25519 PKCS#8 PEM); otherwise a clearly
   // DEV keypair persisted OUTSIDE the repo (AKIS_PASSPORT_KEY_PATH, default ~/.config/akis/
@@ -250,6 +263,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Per-user GitHub push override (TIGHTEN-ONLY): a session owner's own connected repo
       // is preferred when present; absent it, the env/mock adapter is used unchanged.
       connections,
+      // SP1: the ONE shared GitHub-MCP pool (finding #10) — reused by both this default
+      // orchestrator and every per-workflow one, so a single closeAll() covers all.
+      ...(sharedMcpPool ? { mcpPool: sharedMcpPool } : {}),
       // Opt-in REAL verification: with the boot adapter, Trace BOOTS the produced app and
       // probes the running server (boot-smoke, PR2) — "verified" means it genuinely served.
       ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true, verifyBoot: lazyVerifyBoot } : {}),
@@ -338,6 +354,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     env,
     // Same per-user GitHub override on per-workflow orchestrators (one shared store).
     connections,
+    // SP1 (finding #10): inject the SAME shared MCP pool so a per-workflow run reuses it instead
+    // of minting a second, untracked pool whose docker children could never be torn down.
+    ...(sharedMcpPool ? { mcpPool: sharedMcpPool } : {}),
     ...(useMock ? { provider: new MockProvider() } : {}),
     ...(demoVerify ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
     agentModels: workflowToAgentModels(wf),
@@ -730,6 +749,31 @@ async function buildPgStores(connectionString: string, embeddingDim: number, usa
   }
 }
 
+/**
+ * Best-effort graceful-shutdown teardown of the GitHub-MCP transport pool: close EVERY live
+ * StdioDockerTransport (SIGTERM→SIGKILL its `docker run` child) so a token-bearing container can
+ * never outlive the parent. BOUNDED by a short race because closeAll() awaits the SDK
+ * client.close() with NO per-call timeout — a single wedged transport must not consume the whole
+ * 10s shutdown grace (that backstop is the outer guard; this keeps the inner drain moving). Absent
+ * pool (MCP not wired) ⇒ a no-op resolve. Errors are swallowed (best-effort, like stopAll above).
+ * Exported + injectable timer so the "shutdown closes the pool, even when one transport hangs"
+ * contract is unit-testable without a real server/Docker.
+ */
+export async function closeMcpPoolBestEffort(
+  pool: { closeAll(): Promise<void> } | undefined,
+  opts: { timeoutMs?: number; setTimer?: (cb: () => void, ms: number) => { unref?: () => void } } = {},
+): Promise<void> {
+  if (!pool) return
+  const timeoutMs = opts.timeoutMs ?? 5_000
+  const setTimer = opts.setTimer ?? ((cb, ms) => setTimeout(cb, ms))
+  try {
+    await Promise.race([
+      pool.closeAll(),
+      new Promise<void>(resolve => { setTimer(resolve, timeoutMs).unref?.() }),
+    ])
+  } catch { /* best-effort */ }
+}
+
 /** Production entry: build a JSON-file KeyStore from env + listen. */
 export async function start(): Promise<void> {
   const master = process.env.AI_KEY_ENCRYPTION_KEY ?? ''
@@ -817,12 +861,19 @@ export async function start(): Promise<void> {
       // errors) so it can't block the rest of a clean shutdown.
       const previewRegistry = (app as FastifyInstance & { akisPreviewRegistry?: PreviewRegistry }).akisPreviewRegistry
       try { await previewRegistry?.stopAll() } catch { /* best-effort */ }
+      const services = (app as FastifyInstance & { akisServices?: OrchestratorServices }).akisServices
+      // Close the per-session GitHub-MCP transport pool (kill its `docker run -i --rm … stdio`
+      // children, each holding the decrypted owner token in the container env) BEFORE the pool
+      // closes — mirroring previewRegistry.stopAll() right above. Without this, a transport in
+      // its 60s idle window OR an in-flight one at SIGTERM is never close()d, orphaning a
+      // token-bearing github-mcp-server container past process exit (the exact spawned-child
+      // leak class this repo has fought).
+      await closeMcpPoolBestEffort(services?.mcpPool)
       // Drain the ingest queue FIRST so a chunk enqueued just before shutdown (e.g. the
       // post-push repo auto-ingest) finishes embed→upsert and reaches the write-through
       // chain — otherwise its upsert would run later against an already-closed pool and be
       // lost. THEN settle the write-through, THEN close the pool. Both are best-effort so a
       // stuck ingest/write can never block a clean shutdown.
-      const services = (app as FastifyInstance & { akisServices?: OrchestratorServices }).akisServices
       try { await services?.ragQueue?.drain() } catch { /* best-effort */ }
       if (pg?.vectorStore) {
         // eslint-disable-next-line no-console

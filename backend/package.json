@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@akis/shared": "workspace:*",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@fastify/multipart": "^8.3.1",
     "@fastify/static": "^7.0.4",
     "fastify": "^4.28.0",

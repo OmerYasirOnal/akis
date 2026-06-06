@@ -10,6 +10,13 @@ export type ToolName =
   | 'push_to_github'
   | 'retrieve_knowledge' // read-only RAG grounding; NOT a gate tool (see GATE_TOOLS)
   | 'ask' | 'chat'
+  // SP1: read-only GitHub-via-MCP bridge surfaces an OPEN, runtime-discovered family of tools,
+  // each namespaced `github_<server_tool>` (see McpToolBridge NS). Their names can't be enumerated
+  // as literals — they come from the MCP server's advertised toolset. This is a DISPLAY/correlation
+  // identifier on tool_call/tool_result events ONLY; it carries ZERO gate authority (gate caps live
+  // in GATE_TOOLS, untouched). The fixed core literals above stay intact so the roster keeps its
+  // exhaustiveness/autocomplete; the template member just admits the bridge's namespaced names.
+  | `github_${string}`
 
 /** The code-defined core roster (F2-AC2). The gates key on these; they're
  *  configurable (model/skills/prompt variant) but not redefinable/removable. */

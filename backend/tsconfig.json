@@ -1,6 +1,12 @@
 {
   "extends": "../tsconfig.base.json",
   "comment": "Typecheck-only project: tests/scripts run via vitest/tsx, nothing consumes compiled output. noEmit prevents a bare `tsc` from emitting .js/.d.ts INTO src and shadowing the .ts sources under vitest's bundler resolution.",
-  "compilerOptions": { "noEmit": true, "declaration": false },
+  "comment2": "Resolve @akis/shared from its in-repo SOURCE (sibling shared/) rather than the node_modules workspace link. In a git worktree that link is shared with the MAIN checkout, so it must keep pointing at main's shared/; this source mapping is what lets THIS worktree typecheck against its own (possibly-ahead) shared/src. Post-merge in main the path resolves to main's shared identically, so the mapping stays correct.",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "baseUrl": ".",
+    "paths": { "@akis/shared": ["../shared/src/index.ts"] }
+  },
   "include": ["src", "test", "scripts"]
 }
