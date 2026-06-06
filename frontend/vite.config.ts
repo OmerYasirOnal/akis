@@ -4,6 +4,27 @@ import tailwind from '@tailwindcss/vite'
 
 export default defineConfig({
   plugins: [react(), tailwind()],
+  build: {
+    // CODE-SPLIT (audit bigger-bet): the build used to emit ONE ~600KB chunk. Split the heavy,
+    // rarely-changing vendor groups into their own cacheable chunks so they're fetched in parallel
+    // + cached across deploys, and the markdown stack (react-markdown + the ~69 micromark/unified
+    // transitive pkgs — the single biggest dep) is isolated. Lazy routes (App.tsx) handle the
+    // "don't download the authed app on the login path" half.
+    rollupOptions: {
+      output: {
+        // rolldown (vite 8) wants the FUNCTION form. Group the markdown stack (react-markdown +
+        // its ~69 micromark/unified/mdast/hast transitive pkgs — the biggest dep) and the react
+        // runtime into their own cacheable chunks; everything else falls through to the default
+        // route-based splitting (App.tsx lazy()).
+        manualChunks(id: string) {
+          if (!id.includes('node_modules')) return undefined
+          if (/[\\/]node_modules[\\/](react-markdown|remark-|micromark|mdast-|hast-|unist-|unified|decode-named|character-entities|property-information|space-separated|comma-separated|zwitch|html-url-attributes|trim-lines|vfile|bail|is-plain-obj|trough|ccount|escape-string-regexp|markdown-table|devlop|estree-util)/.test(id)) return 'markdown'
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/.test(id)) return 'react-vendor'
+          return undefined
+        },
+      },
+    },
+  },
   server: {
     // Dev: proxy API + SSE to the backend so the FE is same-origin in prod and dev.
     proxy: {

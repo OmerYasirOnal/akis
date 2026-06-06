@@ -1,13 +1,17 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useState, lazy, Suspense, type ReactNode } from 'react'
 import { ApiClient } from '../api/client.js'
-import { ChatStudio } from '../chat/ChatStudio.js'
 import { CosmicBackground } from '../components/CosmicBackground.js'
 import { AkisLogo } from '../components/AkisLogo.js'
-import { AnalyticsPage } from '../pages/AnalyticsPage.js'
-import { HistoryPage } from '../pages/HistoryPage.js'
-import { DocsPage } from '../pages/DocsPage.js'
-import { SettingsPage } from '../pages/SettingsPage.js'
-import { WorkflowsPage } from '../workflows/WorkflowsPage.js'
+// CODE-SPLIT (audit bigger-bet): the studio + the secondary authed pages are lazy so a logged-out
+// visitor on Landing/Login never downloads the full app, and each authed route loads on demand
+// (its own chunk, cached). The pre-auth pages (Login/Signup/Landing/…) stay EAGER — they are the
+// critical first-paint path and must not flash a fallback. Rendered inside a <Suspense>.
+const ChatStudio = lazy(() => import('../chat/ChatStudio.js').then(m => ({ default: m.ChatStudio })))
+const AnalyticsPage = lazy(() => import('../pages/AnalyticsPage.js').then(m => ({ default: m.AnalyticsPage })))
+const HistoryPage = lazy(() => import('../pages/HistoryPage.js').then(m => ({ default: m.HistoryPage })))
+const DocsPage = lazy(() => import('../pages/DocsPage.js').then(m => ({ default: m.DocsPage })))
+const SettingsPage = lazy(() => import('../pages/SettingsPage.js').then(m => ({ default: m.SettingsPage })))
+const WorkflowsPage = lazy(() => import('../workflows/WorkflowsPage.js').then(m => ({ default: m.WorkflowsPage })))
 import { Login } from '../pages/Login.js'
 import { Signup } from '../pages/Signup.js'
 import { Landing } from '../pages/Landing.js'
@@ -107,7 +111,7 @@ function AppFrame({ api }: { api: ApiClient }) {
             </button>
           </div>
         </header>
-        {page}
+        <Suspense fallback={<PageFallback />}>{page}</Suspense>
       </div>
     </div>
   )
@@ -149,7 +153,19 @@ function PublicDocs() {
         </Link>
         <Link to="/login" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-slate-200 hover:border-white/20">{t('landing.cta.signin')}</Link>
       </header>
-      <DocsPage />
+      <Suspense fallback={<PageFallback />}><DocsPage /></Suspense>
+    </div>
+  )
+}
+
+/** Lightweight in-frame fallback for a lazy route chunk (the page frame is already painted). */
+function PageFallback() {
+  const { t } = useI18n()
+  return (
+    <div className="grid min-h-[40vh] place-items-center">
+      <div className="flex items-center gap-3 text-slate-400">
+        <span className="h-5 w-5 animate-spin rounded-full border-2 border-[#07D1AF]/40 border-t-[#07D1AF]" />{t('common.loading')}
+      </div>
     </div>
   )
 }
