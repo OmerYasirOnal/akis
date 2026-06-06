@@ -46,6 +46,12 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   const activeTab = tab === 'code' && fileCount === 0 ? 'preview' : tab === 'trust' && !hasTrust ? 'preview' : tab
   const showTablist = fileCount > 0 || hasTrust
   const url = view.preview.url
+  // IFRAME PAINT GATE (review HIGH: blank white flash): `preview.starting=false` means the SERVER
+  // process is up, NOT that the iframe document has painted — so the bare bg-white iframe used to
+  // flash a featureless WHITE rectangle inside the dark shell while it fetched + rendered the app.
+  // Track the iframe's own load and keep a dark themed spinner over it until it paints, then fade in.
+  const [loaded, setLoaded] = useState(false)
+  useEffect(() => { setLoaded(false) }, [url]) // re-arm on every (re)run / new session
   const previewError = view.preview.error
   const artifact = view.preview.artifactUrl
   const embeddable = !!url && url.startsWith('/preview/')
@@ -130,17 +136,32 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
             <span className="h-2 w-2 rounded-full bg-amber-300/70" />
             <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
           </span>
-          <span className="truncate text-[10px] text-slate-400">{embeddable ? url : t('preview.attribution')}</span>
+          {/* Friendly URL label (review): the raw internal /preview/:id/ path read as a debug
+              artifact — show a readable label, keep the real path as a hover title. */}
+          <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-slate-400" title={embeddable ? url : undefined}>
+            {embeddable ? <><span aria-hidden>🌐</span> <span className="truncate">{t('preview.urlLabel')}</span></> : t('preview.attribution')}
+          </span>
         </div>
 
-        <div className="relative flex-1 overflow-hidden">
+        <div className="relative flex-1 overflow-hidden bg-slate-950">
           {embeddable && !previewError ? (
             // The framed app is UNTRUSTED agent-generated code served same-origin from
             // /preview/:id/. Deliberately NO allow-same-origin: that would let it reach
             // the AKIS origin (session cookie, parent DOM). allow-scripts in an opaque
             // origin is enough to run a self-contained app. (Apps needing real same-origin
             // storage are a deferred cross-origin-preview hardening.)
-            <iframe title="preview" src={url} className="h-full w-full bg-white" sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
+            <>
+              <iframe title="preview" src={url} onLoad={() => setLoaded(true)}
+                className={`h-full w-full bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
+              {/* Dark themed skeleton over the iframe until it actually PAINTS — no white flash. */}
+              {!loaded && (
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950">
+                  <span className="h-6 w-6 animate-spin rounded-full border-2 border-teal-400/40 border-t-teal-300" />
+                  <span className="text-xs text-slate-500">{t('preview.rendering')}</span>
+                </div>
+              )}
+            </>
           ) : previewError ? (
             // A failed/unsupported boot is a RECOVERABLE failure — never a silent collapse to the
             // empty state. Show a rose card with the backend's reason as TEXT (XSS-safe, no HTML)

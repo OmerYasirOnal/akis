@@ -12,7 +12,9 @@ export function TestStats({ stats }: { stats: Stats }) {
       <div className={`text-lg font-semibold ${tone}`}>{value}</div>
     </div>
   )
-  if (!stats.ran) return <p className="text-sm text-slate-400">{t('tests.empty')}</p>
+  // Empty state renders the SAME 4-cell grid with '—' placeholders (review: a bare one-line
+  // paragraph shoved the layout when results filled in). Stats now fill IN PLACE — no jump.
+  const ran = stats.ran
   return (
     <div className="space-y-2">
       {/* P1-CORE-1: a simulated (mock-runner) verification is flagged AT THE RESULT, so a demo
@@ -23,11 +25,12 @@ export function TestStats({ stats }: { stats: Stats }) {
           <span aria-hidden>⚠</span>{t('result.demo.badge')}
         </span>
       )}
-      <div className="grid grid-cols-4 gap-2">
-        {cell(t('tests.run'), String(stats.testsRun), 'text-[#07D1AF]')}
-        {cell(t('tests.result'), stats.passed ? t('tests.pass') : t('tests.fail'), stats.passed ? 'text-emerald-300' : 'text-rose-300')}
-        {cell(t('tests.scenarios'), stats.scenariosBuilt !== undefined ? `${stats.scenariosRunning ?? 0}/${stats.scenariosBuilt}` : '—')}
-        {cell(t('tests.p95'), stats.p95Ms !== undefined ? `${stats.p95Ms}ms` : '—')}
+      {/* Responsive (review): falls to 2×2 on a narrow panel instead of clipping the labels. */}
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+        {cell(t('tests.run'), ran ? String(stats.testsRun) : '—', ran ? 'text-[#07D1AF]' : 'text-slate-500')}
+        {cell(t('tests.result'), ran ? (stats.passed ? t('tests.pass') : t('tests.fail')) : '—', ran ? (stats.passed ? 'text-emerald-300' : 'text-rose-300') : 'text-slate-500')}
+        {cell(t('tests.scenarios'), ran && stats.scenariosBuilt !== undefined ? `${stats.scenariosRunning ?? 0}/${stats.scenariosBuilt}` : '—')}
+        {cell(t('tests.p95'), ran && stats.p95Ms !== undefined ? `${stats.p95Ms}ms` : '—')}
       </div>
     </div>
   )
