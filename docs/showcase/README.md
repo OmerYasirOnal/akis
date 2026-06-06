@@ -7,31 +7,36 @@ nothing is called "verified" unless it passed **independent verification**, and 
 This folder is a **real build** produced by the live AKIS instance — idea → spec → code → verify →
 push — and the cryptographic attestation it earned. Don't trust us; **verify it yourself**.
 
-## The build
+## The builds
 
-- **What:** a tiny static tip calculator (vanilla JS, single `index.html`).
-- **How:** AKIS's multi-agent pipeline (Scribe → Proto → Critic → Trace) behind 4 **structural,
-  server-minted** gates that config can't loosen.
-- **Verification:** **real boot-smoke** — Trace actually *booted the produced app and HTTP-probed the
-  running server* (no mock, `demo: false`). 4 checks passed; 2 dynamic-input criteria were honestly
-  recorded as *skipped* (not faked green).
-- **Result:** all three human/structural gates satisfied — spec approved ✅, independently verified ✅,
-  deploy approved ✅ — and an **Ed25519-signed Build Provenance Attestation** minted.
+Two real builds, each behind AKIS's multi-agent pipeline (Scribe → Proto → Critic → Trace) and 4
+**structural, server-minted** gates that config can't loosen. Both verified with **real boot-smoke**
+— Trace actually *booted the produced app and HTTP-probed the running server* (`demo: false`) — and
+each earned an **Ed25519-signed Build Provenance Attestation** with all three gates satisfied
+(spec approved ✅, independently verified ✅, deploy approved ✅).
 
-The artifact: [`tip-calculator.attestation.md`](./tip-calculator.attestation.md) (human-readable) ·
-[`tip-calculator.attestation.json`](./tip-calculator.attestation.json) (the signed passport).
+**1. A notes REST API** (node:http, zero deps) — *the differentiator.* Beyond "did it boot?", AKIS
+ran a **behavioral round-trip**: it `POST`ed a unique marker to `/api/notes`, `GET` it back, and
+passed **only because the write actually persisted**. That catches a "Potemkin backend" — one that
+returns `200` but stores nothing — which a GET-only check waves through. 5 checks passed (incl.
+`round-trip /api/notes`); 2 dynamic criteria honestly *skipped*.
+→ [`notes-api.attestation.md`](./notes-api.attestation.md) · [`.json`](./notes-api.attestation.json)
+
+**2. A static tip calculator** (vanilla JS, single `index.html`) — the simple case. 4 checks passed;
+2 dynamic-input criteria *skipped* (not faked green).
+→ [`tip-calculator.attestation.md`](./tip-calculator.attestation.md) · [`.json`](./tip-calculator.attestation.json)
 
 ## Verify it yourself (zero dependencies, zero AKIS code)
 
 ```bash
-node verify-attestation.mjs tip-calculator.attestation.json
+node verify-attestation.mjs notes-api.attestation.json
 ```
 
 It uses only Node's standard `crypto` to check the Ed25519 signature over the exact facts attested:
 
 ```
 gates   : {"specApproved":true,"verified":true,"deployApproved":true}
-testsRun: 4 (real boot-smoke verification)
+testsRun: 5 (real boot-smoke verification)
 signature valid: true
 tampered (testsRun=999) valid: false   ← change ANY fact and the signature breaks
 ```
