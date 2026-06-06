@@ -8,6 +8,7 @@ import type { PublishProfileStore, PublishProfile } from '../keys/PublishProfile
 import { WrongStatusError } from '../orchestrator/Orchestrator.js'
 import { sseEvent, sseControl, sseComment } from './sse.js'
 import { verifyPassport } from '../verify/passport.js'
+import { buildAttestation, attestationMarkdown } from '../verify/attestation.js'
 import { buildTrustReport, renderTrustReportMarkdown } from '../report/trustReport.js'
 import type { UsageStorePort } from '../usage/UsageStore.js'
 import { checkQuota, type QuotaPolicy } from '../usage/quota.js'
@@ -188,6 +189,25 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     // embedded key (self-check). NEVER return/echo the private key — only the public key.
     const verified = trustedKey ? verifyPassport(s.passport, trustedKey) : verifyPassport(s.passport)
     return reply.send({ passport: s.passport, verified, ...(trustedKey ? { publicKey: trustedKey } : {}) })
+  })
+
+  // BUILD PROVENANCE ATTESTATION (Move 3): a portable, SLSA/in-toto-aligned export wrapping the
+  // SIGNED passport with the build's gate/verification context — the artifact a user hands a client.
+  // Owner-scoped + read-only (mirrors /passport); 404 when no signed passport exists. ?format=md
+  // downloads a human-readable rendering; default returns JSON. Mints nothing, holds no capability.
+  app.get<{ Params: { id: string }; Querystring: { format?: string } }>('/sessions/:id/attestation', async (req, reply) => {
+    const id = req.params.id
+    const s = await accessibleSession(req, id)
+    if (!s) return notFound(reply, id)
+    const att = buildAttestation(s)
+    if (!att) return reply.code(404).send({ error: 'no attestation — this build has no signed passport', code: 'NoAttestation' })
+    if (req.query.format === 'md') {
+      return reply
+        .type('text/markdown; charset=utf-8')
+        .header('content-disposition', `attachment; filename="akis-attestation-${id.replace(/[^A-Za-z0-9._-]/g, '_')}.md"`)
+        .send(attestationMarkdown(att))
+    }
+    return reply.send(att)
   })
 
   const TERMINAL = new Set(['done', 'failed', 'cancelled'])
