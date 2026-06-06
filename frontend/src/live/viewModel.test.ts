@@ -76,7 +76,7 @@ describe('foldSessionView (pure live view-model)', () => {
       ev({ kind: 'test_stats', built: 4, running: 4, passed: 4, failed: 0, durationMs: 1200 }),
       ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
     ])
-    expect(v.preview).toEqual({ ready: true, starting: false, url: '/preview/s1/' })
+    expect(v.preview).toEqual({ ready: true, starting: false, stopped: false, url: '/preview/s1/' })
     expect(v.tests.ran).toBe(true)
     expect(v.tests.scenariosBuilt).toBe(4)
     expect(v.tests.scenariosRunning).toBe(4)

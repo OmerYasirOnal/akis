@@ -70,6 +70,11 @@ export interface PreviewState {
    *  Carried by the `preview_status` event; `reason` is the backend's short human label. Cleared
    *  on the next 'starting'/'ready' frame (a retry's spinner/iframe supersedes the failure). */
   error?: { status: 'failed' | 'unsupported'; reason?: string }
+  /** The local run was STOPPED (preview_status 'stopped' — concurrency-cap eviction, stopAll, or a
+   *  clean teardown). Distinct from never-run: a stopped preview reads as a recoverable PAUSE
+   *  ("Preview stopped · Run again") rather than the blank first-run empty state. Recomputed each
+   *  frame, so a re-run's 'starting'/'ready' clears it. */
+  stopped?: boolean
 }
 
 /** The critic's READ-ONLY code-review verdict (a status card, NOT a human gate).

@@ -76,8 +76,13 @@ code, pre, .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regu
   100% { transform: translate3d(6%, 3%, 0) rotate(8deg); opacity: 1; }
 }
 
+/* Gentle mount fade for swapped surfaces (preview state branches) — eases abrupt cut-overs. */
+@keyframes akis-fade-in { from { opacity: 0; } to { opacity: 1; } }
+.akis-fade-in { animation: akis-fade-in 200ms ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
   .akis-stars, .akis-stars::after, .akis-aurora { animation: none; }
+  .akis-fade-in { animation: none; }
 }
 
 /* Visible keyboard focus on interactive controls (WCAG 2.4.7). Tailwind's Preflight

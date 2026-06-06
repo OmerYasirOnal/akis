@@ -129,7 +129,11 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
         <TrustReport evidence={testEvidence} codeReview={view.codeReview} demo={view.tests.demo} />
       ) : (
       <>
-      <div className="relative flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset] sm:min-h-[22rem] lg:min-h-[28rem]">
+      {/* Height (review): below lg the layout STACKS with no definite ancestor height, so flex-1 is
+          inert and the band fell to a short fixed floor — dead space on a tall portrait/narrow window.
+          A viewport-relative clamp lets the stacked band grow with the screen (floor 16rem, up to 42rem);
+          on lg the fixed-height wrapper's flex-1 fills and the 28rem is just a floor. */}
+      <div className="relative flex min-h-[clamp(16rem,55vh,42rem)] flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset] lg:min-h-[28rem]">
         {/* Intentional browser-chrome header so the framed area never reads as dead space —
             traffic-light dots, an agent attribution, and (when live) the preview path. */}
         <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5">
@@ -172,7 +176,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
             // empty state. Show a rose card with the backend's reason as TEXT (XSS-safe, no HTML)
             // plus an explicit Retry. The Retry is shown even when !canRun: a boot that already ran
             // proves the session is runnable, so the human can always try again.
-            <div role="alert" className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+            <div role="alert" className="akis-fade-in flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
               <div className="max-w-md rounded-lg border border-rose-500/30 bg-rose-500/10 px-4 py-3 text-rose-300 sm:max-w-lg">
                 <div className="text-sm font-semibold">
                   {t(previewError.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed')}
@@ -189,7 +193,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
               )}
             </div>
           ) : view.preview.starting ? (
-            <div className="flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
+            <div className="akis-fade-in flex h-full flex-col items-center justify-center gap-3 p-4 text-center">
               <span className="h-6 w-6 animate-spin rounded-full border-2 border-teal-400/40 border-t-teal-300" />
               <span className="text-xs text-slate-400">{t('preview.booting')}</span>
               {/* Boot watchdog: a still-running boot past the threshold gets a non-blocking note +
@@ -206,8 +210,21 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
                 </div>
               )}
             </div>
+          ) : view.preview.stopped ? (
+            // STOPPED ≠ never-run (review): a stopped preview (cap eviction / stopAll / teardown)
+            // reads as a recoverable PAUSE in muted slate, not the blank first-run empty state.
+            <div className="akis-fade-in flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+              <span aria-hidden className="text-lg text-slate-500">⏸</span>
+              <span className="text-sm text-slate-400">{t('preview.stopped')}</span>
+              {onRun && canRun && (
+                <button onClick={onRun} disabled={busy}
+                  className="mt-1 rounded-lg border border-teal-400/30 bg-teal-400/10 px-3 py-1.5 text-sm font-semibold text-teal-200 hover:bg-teal-400/20 disabled:opacity-40">
+                  ▶ {t('preview.run')}
+                </button>
+              )}
+            </div>
           ) : (
-            <div className="flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
+            <div className="akis-fade-in flex h-full flex-col items-center justify-center gap-2 p-4 text-center">
               <span className="text-sm text-slate-500">{t('preview.empty')}</span>
               {onRun && canRun && (
                 <button onClick={onRun} disabled={busy}

@@ -122,6 +122,7 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
           ...prevPreview,
           ready: e.status === 'ready',
           starting: e.status === 'starting',
+          stopped: e.status === 'stopped', // recomputed each frame → a re-run's starting/ready clears it
           ...(e.status === 'ready' && e.url !== undefined ? { url: e.url } : {}),
           ...(e.demo ? { demo: true } : {}),
           ...(failed ? { error: { status: e.status as 'failed' | 'unsupported', ...(e.reason ? { reason: e.reason } : {}) } } : {}),
