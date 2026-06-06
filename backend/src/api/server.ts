@@ -269,7 +269,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       ...(sharedMcpPool ? { mcpPool: sharedMcpPool } : {}),
       // Opt-in REAL verification: with the boot adapter, Trace BOOTS the produced app and
       // probes the running server (boot-smoke, PR2) — "verified" means it genuinely served.
-      ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true, verifyBoot: lazyVerifyBoot } : {}),
+      ...(flag(env.AKIS_REAL_TESTS) ? { realTests: true, verifyBoot: lazyVerifyBoot, ...(flag(env.AKIS_ROUNDTRIP_VERIFY) ? { roundTripVerify: true } : {}) } : {}),
       // RAG on → also thread env so a configured AKIS_GITHUB_TOKEN selects the real reader.
       ...(flag(env.AKIS_RAG) ? { rag: true } : {}),
       // Durable corpus: a hydrated PgVectorStore when DATABASE_URL is set (only effective with
@@ -383,7 +383,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(wf.rag && deps.bm25 ? { bm25: deps.bm25 } : {}),
     // rerank: the workflow's per-run knob wins (issue #7 AC3); else the env default.
     ...(wf.rerank !== undefined ? { rerank: wf.rerank } : rerankDefault() !== undefined ? { rerank: rerankDefault()! } : {}),
-    ...(realTests ? { realTests: true, verifyBoot: lazyVerifyBoot } : {}),
+    ...(realTests ? { realTests: true, verifyBoot: lazyVerifyBoot, ...(flag(env.AKIS_ROUNDTRIP_VERIFY) ? { roundTripVerify: true } : {}) } : {}),
     // Same passport signer as the default orchestrator — one server key signs every run.
     passportSigner,
   }))

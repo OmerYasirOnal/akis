@@ -133,6 +133,10 @@ export interface BuildServicesOptions {
    *  so 'verified' means the app genuinely served — the credible path for GENERATED apps
    *  (the bare `real` runner shells out to repo test suites a generated app doesn't have). */
   verifyBoot?: import('../verify/bootSmoke.js').BootSmokeDeps['boot']
+  /** Opt-in (AKIS_ROUNDTRIP_VERIFY): with the boot-smoke verifier, also run the behavioral
+   *  round-trip probe (POST→GET persistence) on node-service apps — deepens 'verified' beyond a
+   *  GET probe. Default OFF ⇒ the boot-smoke check set is byte-identical. */
+  roundTripVerify?: boolean
   /** Sandbox for the real runner (default LocalDirectSandbox; injectable for tests). */
   sandbox?: Sandbox
   /** Per-run iterate budget (a workflow may tighten it below the default 3). */
@@ -261,7 +265,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     opts.testRunner ? { kind: 'runner', runner: opts.testRunner }
       // realTests + a boot adapter → the boot-smoke verifier (PR2): Trace boots the produced
       // app and probes the running server. Preferred over bare 'real' for generated apps.
-      : opts.realTests && opts.verifyBoot ? { kind: 'boot', boot: opts.verifyBoot }
+      : opts.realTests && opts.verifyBoot ? { kind: 'boot', boot: opts.verifyBoot, ...(opts.roundTripVerify ? { roundTrip: true } : {}) }
       : opts.realTests ? { kind: 'real', sandbox: opts.sandbox ?? new LocalDirectSandbox() }
       : { kind: 'mock' }
 

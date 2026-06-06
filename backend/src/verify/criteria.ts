@@ -22,6 +22,12 @@ export type Check =
   | { kind: 'bodyContains'; name: string; path: string; literal: string }
   /** GET the explicit `path` and assert status < 500 (the route exists / doesn't 5xx). */
   | { kind: 'pathStatus'; name: string; path: string }
+  /** BEHAVIORAL round-trip against a writable API `path` (node-service shapes only): GET a
+   *  baseline, POST a unique marker, GET again — pass ONLY if the write persisted (the marker
+   *  appears OR the body grew). Catches the "Potemkin backend" (POST 200 but nothing stored) a
+   *  GET-only probe cannot. CONSERVATIVE: if the POST is not 2xx (we couldn't form a valid write)
+   *  it records `skipped`, never a fail — so a healthy app is never false-RED'd. */
+  | { kind: 'roundTrip'; name: string; path: string }
   /** No mechanical check derivable — recorded as a bounded `skipped` scenario, never a pass. */
   | { kind: 'skipped'; name: string; reason: string }
 

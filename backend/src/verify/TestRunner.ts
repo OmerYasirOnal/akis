@@ -175,6 +175,8 @@ export interface BootSmokeRunnerDeps {
    *  the REAL session id arrives per-run via {@link RunOptions.sessionId} (createVerifier
    *  forwards the verify() session id), and per-run wins. */
   sessionId?: string
+  /** Opt-in (AKIS_ROUNDTRIP_VERIFY) — also run the behavioral round-trip probe on node-service apps. */
+  roundTrip?: boolean
 }
 
 /**
@@ -204,6 +206,7 @@ export function createBootSmokeRunner(deps: BootSmokeRunnerDeps): TestRunner {
         ...(spec ? { spec } : {}),
         ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
         ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
+        ...(deps.roundTrip ? { roundTrip: true } : {}),
       })
       // ADDITIVE observability — same path as the real runner. `passed` is the run's REAL
       // outcome for display; it cannot influence the branded result below.

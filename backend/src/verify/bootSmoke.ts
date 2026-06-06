@@ -15,6 +15,10 @@ export type BootResult = { url: string; teardown: () => Promise<void> } | { fail
 /** Minimal HTTP probe result — only what a mechanical check asserts on. */
 export interface ProbeResponse { status: number; body: string }
 
+/** Optional request shape for a probe (the round-trip check needs POST + a JSON body). Absent ⇒
+ *  a plain GET, so every existing GET-only fetchImpl + fake stays source-compatible. */
+export interface ProbeInit { method?: string; body?: string; headers?: Record<string, string> }
+
 /**
  * Injected dependencies for {@link runBootSmoke}. Everything that touches the world (booting
  * the app, fetching URLs) is a dep so the runner is pure-logic + unit-testable with fakes:
@@ -27,9 +31,13 @@ export interface ProbeResponse { status: number; body: string }
 export interface BootSmokeDeps {
   boot: (sessionId: string, files: RepoFile[]) => Promise<BootResult>
   spec?: SpecArtifact
-  fetchImpl?: (url: string) => Promise<ProbeResponse>
+  fetchImpl?: (url: string, init?: ProbeInit) => Promise<ProbeResponse>
   timeoutMs?: number
   sessionId: string
+  /** Opt-in (AKIS_ROUNDTRIP_VERIFY): also run a BEHAVIORAL round-trip probe on a writable API path
+   *  of a node-service app (POST a marker → GET → assert it persisted). Default OFF, so the boot is
+   *  byte-identical to the GET-only smoke run unless explicitly enabled. */
+  roundTrip?: boolean
 }
 
 // 180s (was 120): the budget covers INSTALL + boot + probes, and a cold `npm install` for a
@@ -44,9 +52,13 @@ function boundName(s: string): string {
 
 /** Default probe: a real node fetch of a fully-qualified URL → {status, body}. A network error
  *  surfaces as status 0 + empty body, so the asserting check fails CLOSED (never a vacuous pass). */
-const defaultFetch = async (url: string): Promise<ProbeResponse> => {
+const defaultFetch = async (url: string, init?: ProbeInit): Promise<ProbeResponse> => {
   try {
-    const res = await fetch(url)
+    const reqInit: RequestInit = {}
+    if (init?.method) reqInit.method = init.method
+    if (init?.body !== undefined) reqInit.body = init.body
+    if (init?.headers) reqInit.headers = init.headers
+    const res = await fetch(url, reqInit)
     return { status: res.status, body: await res.text() }
   } catch {
     return { status: 0, body: '' }
@@ -84,20 +96,67 @@ export function deriveAssetChecks(files: RepoFile[]): Check[] {
 }
 
 /**
+ * Derive a BEHAVIORAL round-trip check per distinct writable `/api/...` path the spec names —
+ * gated by the caller to node-service apps (the writable-backend shape) and the AKIS_ROUNDTRIP_VERIFY
+ * flag. Pure (string scan), deduped, bounded to 5. No `/api` path named ⇒ no round-trip check (the
+ * GET probes still run) — conservative by construction.
+ */
+const API_PATH = /\/api\/[A-Za-z0-9][A-Za-z0-9_\-./]*/g
+export function deriveRoundTripChecks(spec: SpecArtifact | undefined): Check[] {
+  if (!spec) return []
+  const seen = new Set<string>()
+  const checks: Check[] = []
+  for (const m of spec.body.matchAll(API_PATH)) {
+    const path = m[0].replace(/[.,;:!?)]+$/, '')
+    if (seen.has(path) || checks.length >= 5) continue
+    seen.add(path)
+    checks.push({ kind: 'roundTrip', name: `round-trip ${path}`.slice(0, 60), path })
+  }
+  return checks
+}
+
+/**
+ * BEHAVIORAL round-trip probe (catches the "Potemkin backend"): GET a baseline, POST a unique
+ * marker (shotgunned across common field names so SOME schema accepts it), GET again — PASS only
+ * if the write PERSISTED (the marker appears OR the body grew). CONSERVATIVE to never false-RED a
+ * healthy app: if the POST is not 2xx (we couldn't establish a valid write) it records `skipped`,
+ * not a fail. A real ≥1-test PASS via this probe means the app actually stored + served back data.
+ */
+async function probeRoundTrip(check: Extract<Check, { kind: 'roundTrip' }>, baseUrl: string, fetchImpl: (url: string, init?: ProbeInit) => Promise<ProbeResponse>): Promise<E2eScenario> {
+  const name = boundName(check.name)
+  const url = joinUrl(baseUrl, check.path)
+  const marker = `akis-rt-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  const pre = await fetchImpl(url)
+  const payload = JSON.stringify(Object.fromEntries(
+    ['title', 'text', 'name', 'content', 'value', 'todo', 'task', 'note', 'body', 'description'].map(k => [k, marker]),
+  ))
+  const post = await fetchImpl(url, { method: 'POST', body: payload, headers: { 'content-type': 'application/json' } })
+  // Couldn't establish a valid write (strict schema 400 / method not allowed / server hiccup on our
+  // synthetic body) ⇒ SKIP, never a fail — a healthy app must not be punished for our blind payload.
+  if (post.status < 200 || post.status >= 300) return { name, passed: false, outcome: 'skipped' }
+  const after = await fetchImpl(url)
+  if (after.status >= 400 || after.status === 0 || after.status === 304) return { name, passed: false, outcome: `read ${after.status}` }
+  const persisted = after.body.includes(marker) || after.body.length > pre.body.length
+  return persisted ? { name, passed: true } : { name, passed: false, outcome: 'not persisted' }
+}
+
+/**
  * Run a check against the booted app and report a structured pass/fail (NEVER prose). The
  * assertion per kind:
  *   - smoke/render → status < 400 AND a non-empty body (the page actually rendered)
  *   - bodyContains → status < 400 AND the body contains the literal
  *   - pathStatus   → status < 400 (the route exists and answers)
+ *   - roundTrip    → POST a marker then GET it back; pass only if it persisted (see probeRoundTrip)
  * 4xx FAILS (PR #94 review): a node-service with no `/` route 404s with a non-empty error
  * body — under a <500 rule that would smoke-"pass" an app whose front door doesn't exist,
  * and "verified" must never over-claim. 3xx is fine (a redirecting app is serving).
  * A failure records a bounded outcome label only (status / 'empty body' / 'missing literal').
  */
-async function probe(check: Check, baseUrl: string, fetchImpl: (url: string) => Promise<ProbeResponse>): Promise<E2eScenario> {
+async function probe(check: Check, baseUrl: string, fetchImpl: (url: string, init?: ProbeInit) => Promise<ProbeResponse>): Promise<E2eScenario> {
   const name = boundName(check.name)
   // A skipped check makes NO request — it is recorded as a skipped (non-pass, non-fail) scenario.
   if (check.kind === 'skipped') return { name, passed: false, outcome: 'skipped' }
+  if (check.kind === 'roundTrip') return probeRoundTrip(check, baseUrl, fetchImpl)
 
   const path = check.kind === 'bodyContains' || check.kind === 'render' || check.kind === 'pathStatus' ? check.path : '/'
   const res = await fetchImpl(joinUrl(baseUrl, path))
@@ -198,6 +257,10 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
       { kind: 'render', name: 'app boots and serves /', path: '/' },
       ...deriveAssetChecks(files),
       ...deriveChecks(deps.spec),
+      // OPT-IN behavioral round-trip — ONLY for a node-service (writable backend) when enabled.
+      // Additive: a pass adds a genuinely-behavioral test; a fail is a real Potemkin; a non-2xx
+      // POST self-skips. Default OFF ⇒ the check set is byte-identical to before.
+      ...(deps.roundTrip && detectAppType(files) === 'node-service' ? deriveRoundTripChecks(deps.spec) : []),
     ]
     const scenarios: E2eScenario[] = []
     for (const c of checks) scenarios.push(await probe(c, boot.url, fetchImpl))
