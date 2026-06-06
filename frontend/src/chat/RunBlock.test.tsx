@@ -127,6 +127,29 @@ describe('RunBlock — inline run-block (slim header + chronological bubbles)', 
     expect(FakeStream.created).toHaveLength(0) // no live subscription for a terminal run
   })
 
+  it('push_failed retry on a NON-active run confirms ITS OWN session + re-activates it (functional-review pins)', async () => {
+    FakeStream.created = []
+    // A terminal (non-active) run-block whose /log ends at push_failed → a RecoveryBubble with a retry.
+    const log: SeqEvent[] = [
+      { seq: 1, event: ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' } as Partial<AkisEvent> & { kind: AkisEvent['kind'] }) },
+    ]
+    const api = new ApiClient('', vi.fn(okFetch(log)))
+    vi.spyOn(api, 'getSessionLog').mockImplementation((async () => log.map(s => s)) as never)
+    const confirm = vi.spyOn(api, 'confirm').mockResolvedValue({ id: 's1' } as never)
+    const onConfirm = vi.fn() // the studio's ACTIVE-run confirm — must NOT be called for a non-active run
+    const onReactivate = vi.fn()
+    const onActionError = vi.fn()
+    render(wrap(<RunBlock sessionId="s1" idea="# Old Run" api={api} terminal
+      onApprove={() => {}} onConfirm={onConfirm} onReactivate={onReactivate} onActionError={onActionError}
+      onNewBuild={() => {}} makeClient={() => new FakeStream() as unknown as EventStreamClient} />))
+    const btn = await screen.findByRole('button', { name: /Push failed/i })
+    await userEvent.click(btn)
+    expect(confirm).toHaveBeenCalledWith('s1')   // its OWN session, not the active one (the wrong-session bug)
+    expect(onReactivate).toHaveBeenCalledWith('s1') // re-activated so the result streams in
+    expect(onConfirm).not.toHaveBeenCalled()     // the active-run confirm is never used for a non-active run
+    expect(onActionError).not.toHaveBeenCalled() // a successful confirm surfaces no error
+  })
+
   it('a GONE session (getSession 404) shows the honest recovery card, not a blank block', async () => {
     FakeStream.created = []
     const fetchFn = vi.fn(async (path: string) => {
