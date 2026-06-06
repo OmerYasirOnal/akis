@@ -393,14 +393,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
               <button
                 type="button"
                 onClick={() => setPreviewOpen(true)}
-                className="flex min-h-28 w-full flex-col items-center justify-center gap-2 rounded-xl border border-white/10 bg-black/30 px-2 text-center text-xs text-slate-300 hover:border-teal-400/30 hover:text-teal-200"
+                title={t('preview.expand')}
+                className="flex min-h-40 w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/10 bg-black/30 px-1 py-3 text-center text-xs text-slate-300 hover:border-teal-400/30 hover:text-teal-200"
               >
-                <span aria-hidden>▣</span>
-                <span>{t('preview.collapsed')}</span>
+                <span aria-hidden className="text-base">▣</span>
+                {/* Vertical label (review): a horizontal word wraps/clips in the 4rem rail, worst in
+                    Turkish — read it down the narrow column instead. */}
+                <span className="[writing-mode:vertical-rl] tracking-wide">{t('preview.collapsed')}</span>
                 {activeView.verified !== undefined && (
-                  <span className={activeView.verified ? 'text-emerald-300' : 'text-slate-400'}>
-                    {activeView.verified ? t('preview.verified') : t('preview.unverified')}
-                  </span>
+                  <span aria-hidden title={activeView.verified ? t('preview.verified') : t('preview.unverified')}
+                    className={`h-1.5 w-1.5 rounded-full ${activeView.verified ? 'bg-emerald-400' : 'bg-slate-500'}`} />
                 )}
               </button>
             )}
