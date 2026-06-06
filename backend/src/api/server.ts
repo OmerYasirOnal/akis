@@ -16,6 +16,7 @@ import { JsonFileUserStore } from '../auth/JsonFileUserStore.js'
 import { createPgUserStoreWithClient } from '../auth/PgUserStore.js'
 import { createPgPool, runMigrations, ensurePgVectorColumn } from '../store/pg.js'
 import { PgSessionStore } from '../store/PgSessionStore.js'
+import { PgAuditStore, attachAuditLog } from '../audit/AuditLog.js'
 import { PgWorkflowStore } from '../workflow/PgWorkflowStore.js'
 import { PgVectorStore } from '../knowledge/store/PgVectorStore.js'
 import { Bm25Index } from '../knowledge/store/Bm25Index.js'
@@ -102,6 +103,9 @@ export interface ServerDeps {
   /** Session store (MockSessionStore by default; a PgSessionStore when DATABASE_URL is
    *  set). Injected so the durable store flows through buildServices unchanged. */
   sessionStore?: SessionStore
+  /** Durable audit ledger (Move 3a; a PgAuditStore when DATABASE_URL is set). Present ⇒ a bus.tap
+   *  persists every event to audit_events + GET /sessions/:id/audit reads it. Absent ⇒ no tap. */
+  auditStore?: import('../audit/AuditLog.js').AuditStore
   /** Durable RAG vector store (a hydrated PgVectorStore when DATABASE_URL is set; absent it
    *  buildServices uses the in-memory default). Only consulted when RAG is on (AKIS_RAG);
    *  the keyless/in-memory default path is byte-for-byte unchanged. */
@@ -428,6 +432,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const usageStore: UsageStorePort = deps.usage
     ?? (env.NODE_ENV !== 'production' && !isTestEnv ? new JsonFileUsageStore(quota.periodMs) : new UsageStore({ periodMs: quota.periodMs }))
   new UsageCollector(usageStore).attach(services.bus)
+  // DURABLE AUDIT LEDGER (Move 3a): persist every event to audit_events for a restart-durable,
+  // queryable trail. Only when a durable store is wired (DATABASE_URL); best-effort, never blocks.
+  if (deps.auditStore) attachAuditLog(services.bus, deps.auditStore)
 
   const cookie = cookieConfigFromEnv(env)
   // A valid-session guard reused to protect provider-key writes.
@@ -465,6 +472,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // profile store AND the publish seam are wired. Absent ⇒ POST /sessions/:id/publish 409s.
     publishProfiles,
     ...(publisher ? { publisher } : {}),
+    ...(deps.auditStore ? { auditStore: deps.auditStore } : {}),
   })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   // Ship-time preview PREWARM (perceived latency): boot the preview on the `done` event so
@@ -731,6 +739,8 @@ interface PgStores {
    *  hybrid retrieval survives a restart too (it was previously rebuilt empty on boot — a
    *  silent correctness bug that degraded RRF to vector-only). */
   bm25: Bm25Index
+  /** Durable audit ledger (Move 3a) over the same shared pool. */
+  auditStore: import('../audit/AuditLog.js').AuditStore
   pool: SqlClient
 }
 
@@ -775,6 +785,7 @@ async function buildPgStores(connectionString: string, embeddingDim: number, usa
       usageStore: createPgUsageStoreWithClient(pool, usagePeriodMs),
       vectorStore,
       bm25,
+      auditStore: new PgAuditStore(pool),
       pool,
     }
   } catch (e) {
@@ -874,7 +885,7 @@ export async function start(): Promise<void> {
     connections,
     publishProfiles,
     persistence: pg ? 'postgres' : 'memory',
-    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, usage: pg.usageStore, vectorStore: pg.vectorStore, bm25: pg.bm25 } : {}),
+    ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, usage: pg.usageStore, vectorStore: pg.vectorStore, bm25: pg.bm25, auditStore: pg.auditStore } : {}),
     ...(dbPing ? { dbPing } : {}),
   })
   const port = Number(process.env.PORT ?? 3000)

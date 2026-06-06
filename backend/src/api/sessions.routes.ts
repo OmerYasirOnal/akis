@@ -48,6 +48,10 @@ export interface SessionsDeps {
   /** The publish seam (deploy to the owner's own server). Present ALONGSIDE publishProfiles ⇒
    *  publish works; absent ⇒ the action is unavailable. NON-GATING (see SessionPublisher). */
   publisher?: SessionPublisher
+  /** Durable audit ledger (Move 3a; present when DATABASE_URL is set). Enables GET
+   *  /sessions/:id/audit — the owner-scoped, restart-durable chronological event trail. Absent ⇒
+   *  the route falls back to the in-memory bus replay (today's behavior, just not durable). */
+  auditStore?: import('../audit/AuditLog.js').AuditStore
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -208,6 +212,21 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
         .send(attestationMarkdown(att))
     }
     return reply.send(att)
+  })
+
+  // DURABLE AUDIT TRAIL (Move 3a): the build's chronological event ledger, owner-scoped. Reads the
+  // restart-durable audit_events table when present; falls back to the in-memory bus replay
+  // otherwise (still owner-scoped). Read-only observability — no capability, mints nothing.
+  app.get<{ Params: { id: string } }>('/sessions/:id/audit', async (req, reply) => {
+    const id = req.params.id
+    const s = await accessibleSession(req, id)
+    if (!s) return notFound(reply, id)
+    if (deps.auditStore) {
+      const entries = await deps.auditStore.listBySession(id)
+      return reply.send({ durable: true, entries })
+    }
+    const { events } = services.bus.replaySince(id, 0)
+    return reply.send({ durable: false, entries: events.map(e => ({ seq: e.seq, kind: e.event.kind, payload: e.event })) })
   })
 
   const TERMINAL = new Set(['done', 'failed', 'cancelled'])

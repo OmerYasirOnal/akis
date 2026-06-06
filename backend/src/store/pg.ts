@@ -169,6 +169,26 @@ CREATE TABLE IF NOT EXISTS user_usage (
   window_start  timestamptz NOT NULL DEFAULT now()
 )`
 
+/**
+ * APPEND-ONLY audit ledger (Move 3a): one durable row per emitted bus event, so a build's full
+ * chronological trail survives a restart in a QUERYABLE form (vs. the in-memory replay buffer / the
+ * dev bus-snapshot file). UNIQUE(session_id, seq) makes the writer idempotent — a replayed event
+ * with the same seq is a no-op (ON CONFLICT DO NOTHING), never a duplicate. Read owner-scoped via
+ * the session. Holds NO gate capability — pure observability/provenance evidence.
+ */
+export const CREATE_AUDIT_EVENTS_TABLE = `
+CREATE TABLE IF NOT EXISTS audit_events (
+  id          bigserial PRIMARY KEY,
+  session_id  text NOT NULL,
+  seq         integer NOT NULL,
+  ts          timestamptz NOT NULL DEFAULT now(),
+  kind        text NOT NULL,
+  payload     jsonb,
+  UNIQUE (session_id, seq)
+)`
+export const CREATE_AUDIT_EVENTS_SESSION_INDEX =
+  `CREATE INDEX IF NOT EXISTS audit_events_session_idx ON audit_events (session_id, seq)`
+
 /** Every migration statement, in apply order. CREATE TABLE IF NOT EXISTS + idempotent
  *  ALTERs, so running this repeatedly (e.g. on every boot) is safe. */
 const MIGRATIONS: readonly string[] = [
@@ -187,6 +207,8 @@ const MIGRATIONS: readonly string[] = [
   CREATE_VECTOR_CHUNKS_TABLE,
   CREATE_VECTOR_CHUNKS_TENANT_INDEX,
   CREATE_USER_USAGE_TABLE,
+  CREATE_AUDIT_EVENTS_TABLE,
+  CREATE_AUDIT_EVENTS_SESSION_INDEX,
 ]
 
 /**
