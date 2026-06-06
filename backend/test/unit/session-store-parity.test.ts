@@ -21,6 +21,17 @@ function fakeSessionsTable(): SqlClient {
     return m ? Number(m[1]) : -1
   }
 
+  // FAITHFUL pg jsonb modelling: the store now hands pg JSON STRINGS for jsonb columns (toJson
+  // stringifies — the chat-array fix), and real pg returns those columns already PARSED on read.
+  // Mirror that here: parse the jsonb columns back to JS values on SELECT, so the round-trip the
+  // parity suite asserts (write object/array → get() returns the same) reflects real pg behaviour.
+  const JSONB = new Set(['spec', 'approval', 'code', 'verify_token', 'test_evidence', 'passport', 'publish', 'chat', 'base'])
+  const hydrate = (r: Record<string, unknown>): Record<string, unknown> => {
+    const out = { ...r }
+    for (const c of JSONB) if (typeof out[c] === 'string') out[c] = JSON.parse(out[c] as string)
+    return out
+  }
+
   return {
     async query(text, params = []) {
       const sql = text.trim()
@@ -39,11 +50,11 @@ function fakeSessionsTable(): SqlClient {
             .map(id => rows.get(id)!)
             .filter(r => r.owner_id === owner)
             .reverse() // newest-first
-          return { rows: out.map(r => ({ ...r })) }
+          return { rows: out.map(r => hydrate(r)) }
         }
         const id = params[0] as string
         const r = rows.get(id)
-        return { rows: r ? [{ ...r }] : [] }
+        return { rows: r ? [hydrate(r)] : [] }
       }
       if (sql.startsWith('UPDATE')) {
         const id = params[params.length - 2] as string // ... WHERE id = $n AND version = $n+1
@@ -57,7 +68,7 @@ function fakeSessionsTable(): SqlClient {
           if (i >= 1) next[col] = params[i - 1]
         }
         rows.set(id, next)
-        return { rows: [{ ...next }] }
+        return { rows: [hydrate(next)] }
       }
       return { rows: [] }
     },

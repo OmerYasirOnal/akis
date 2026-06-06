@@ -156,8 +156,14 @@ export class PgSessionStore implements SessionStore {
 /** Serialize a nested artifact/token to a jsonb value (or null when absent). Branded
  *  tokens serialize as plain JSON; the brand is a compile-time-only symbol with no
  *  runtime footprint, so it round-trips losslessly through jsonb. */
-function toJson(v: unknown): unknown {
-  return v == null ? null : v
+/** Serialize a value for a jsonb column. EXPLICITLY JSON.stringify (not pass-through): node-pg
+ *  renders a JS OBJECT as json (so the object columns spec/code/passport/publish worked), but a JS
+ *  ARRAY as a Postgres ARRAY LITERAL `{…}` — invalid for jsonb. `chat` (ChatTurn[]) is the first
+ *  jsonb ARRAY column and hit exactly that ("invalid input syntax for type json", caught LIVE).
+ *  Stringifying makes EVERY jsonb param an explicit JSON string — correct for objects and arrays
+ *  alike; reads (toSession) get the parsed value back either way, so it's behaviour-preserving. */
+export function toJson(v: unknown): unknown {
+  return v == null ? null : JSON.stringify(v)
 }
 
 /** The raw `sessions` row shape as returned by Postgres (snake_case, jsonb columns
