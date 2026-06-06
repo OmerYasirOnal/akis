@@ -478,8 +478,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // When a real mailer is configured the reset LINK is emailed (dev-echo suppressed); the
   // emailed link uses PUBLIC_BASE_URL so it is clickable.
   const mailer = deps.mailer ?? selectMailer(env)
+  // FAIL-CLOSED REGISTRATION: AKIS runs generated code on the host with NO isolation boundary, so
+  // open signup is RCE-for-anyone. Refuse signup when AKIS_DISABLE_SIGNUP is set OR (in production)
+  // unless AKIS_ALLOW_SIGNUP=1 explicitly opts in — mirroring the demo-in-prod fail-closed guard.
+  // A fresh self-host is now safe BY CODE, not only by a network-edge block.
+  const signupDisabled = resolveSignupDisabled(env)
   registerAuthRoutes(app, {
-    users: userStore, secret: authSecret, cookie, devEcho: env.NODE_ENV !== 'production', mailer,
+    users: userStore, secret: authSecret, cookie, devEcho: env.NODE_ENV !== 'production', mailer, signupDisabled,
     ...(trustedOrigin ? { publicBaseUrl: trustedOrigin } : {}),
   })
   registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env })
@@ -686,6 +691,14 @@ export function resolveDemoMode(env: Record<string, string | undefined>): { mode
  *  explicit AKIS_ALLOW_DEMO_IN_PROD acknowledgment must refuse to boot. */
 export function demoModeFatalInProd(env: Record<string, string | undefined>): boolean {
   return resolveDemoMode(env).fatal
+}
+
+/** FAIL-CLOSED registration policy: AKIS executes generated code on the host with no isolation
+ *  boundary, so open signup is RCE-for-anyone. Signup is refused when AKIS_DISABLE_SIGNUP is set,
+ *  OR (in production) unless AKIS_ALLOW_SIGNUP=1 explicitly opts in — so a fresh self-host is closed
+ *  by default, by code, not only by a network-edge block. Pure + exported for direct testing. */
+export function resolveSignupDisabled(env: Record<string, string | undefined>): boolean {
+  return flag(env.AKIS_DISABLE_SIGNUP) || (env.NODE_ENV === 'production' && !flag(env.AKIS_ALLOW_SIGNUP))
 }
 
 /**

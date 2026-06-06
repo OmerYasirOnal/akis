@@ -7,8 +7,9 @@ survive restarts.
 
 > [!CAUTION]
 > **AKIS runs AI-generated code as ordinary child processes on the host — there
-> is NO sandbox.** Previews, real Playwright/Cucumber verification, and any tool
-> the model invokes execute with the same privileges as the AKIS process, sharing
+> is NO sandbox.** Previews, real boot-smoke verification (the produced app is
+> booted and HTTP-probed), and any tool the model invokes execute with the same
+> privileges as the AKIS process, sharing
 > your kernel and filesystem. Node's permission model is **not** a security
 > boundary; neither is a container (see [`THREAT-MODEL.md`](../THREAT-MODEL.md)).
 > Therefore AKIS self-host is **SINGLE-USER**. **Do NOT expose it to untrusted

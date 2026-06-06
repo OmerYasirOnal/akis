@@ -25,6 +25,14 @@ function sessionCookie(res: { headers: Record<string, unknown> }): string {
 }
 
 describe('auth routes', () => {
+  it('signup is REFUSED (403 SignupDisabled) when AKIS_DISABLE_SIGNUP is set — fail-closed registration', async () => {
+    const keyStore = new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z')
+    const server = buildServer({ keyStore, env: { AUTH_JWT_SECRET: 'integration-secret', AKIS_DISABLE_SIGNUP: '1' }, userStore: new UserStore() })
+    const res = await server.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Mallory', email: 'm@akis.dev', password: 'hunter2hunter' } })
+    expect(res.statusCode).toBe(403)
+    expect(res.json().code).toBe('SignupDisabled')
+  })
+
   it('signup → sets an httpOnly cookie and returns the public user (no hash)', async () => {
     const res = await app().inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'ada@akis.dev', password: 'hunter2hunter' } })
     expect(res.statusCode).toBe(201)

@@ -24,6 +24,12 @@ export interface AuthDeps {
   publicBaseUrl?: string
   /** Injectable per-route limiters (tests). Defaults are created inside registerAuthRoutes. */
   rateLimits?: { login?: RateLimiter; signup?: RateLimiter; forgot?: RateLimiter }
+  /** FAIL-CLOSED registration: when true, POST /auth/signup is refused (403) at the CODE level.
+   *  AKIS runs generated code on the host with NO isolation boundary (see THREAT-MODEL), so an
+   *  open-registration instance is RCE-for-anyone. The hosted box blocked signup only at the
+   *  network edge (Caddy) — a fresh self-host was open by default. server.ts now defaults this ON
+   *  in production (opt back in with AKIS_ALLOW_SIGNUP=1) and honours AKIS_DISABLE_SIGNUP anywhere. */
+  signupDisabled?: boolean
 }
 
 export class UnauthorizedError extends Error { constructor() { super('unauthorized'); this.name = 'UnauthorizedError' } }
@@ -73,6 +79,9 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     return true
   }
   app.post<{ Body: { name?: unknown; email?: unknown; password?: unknown } }>('/auth/signup', async (req, reply) => {
+    // FAIL-CLOSED registration (code-level, not just the network edge): a fresh self-host must not
+    // be open-signup, because AKIS executes generated code on the host with no isolation boundary.
+    if (deps.signupDisabled) return reply.code(403).send({ error: 'registration is disabled on this instance', code: 'SignupDisabled' })
     if (overLimit(limits.signup, req, reply)) return
     const name = isStr(req.body?.name) ? req.body.name.trim() : ''
     const email = isStr(req.body?.email) ? req.body.email.trim() : ''
