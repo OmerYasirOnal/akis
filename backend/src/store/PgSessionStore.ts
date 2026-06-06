@@ -1,4 +1,4 @@
-import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken, TestEvidence, BuildPassport, PublishRecord } from '@akis/shared'
+import type { SessionState, SessionStatus, SpecArtifact, CodeArtifact, ApprovalToken, VerifyToken, TestEvidence, BuildPassport, PublishRecord, ChatTurn } from '@akis/shared'
 import type { SessionStore, SessionPatch } from './SessionStore.js'
 import type { SqlClient } from './pg.js'
 
@@ -24,12 +24,13 @@ export class PgSessionStore implements SessionStore {
     // `base` (Phase B.5 edit-mode seed) is written ONLY here — it is set at session creation
     // by the controlled API path and is NOT in PATCH_COLUMNS, so it is immutable thereafter.
     await this.db.query(
-      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, base, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
       [
         s.id, s.status, s.idea, s.ownerId ?? null,
         toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken), toJson(s.testEvidence), toJson(s.passport),
         toJson(s.publish),
+        toJson(s.chat),
         toJson(s.base),
         s.version,
       ],
@@ -63,10 +64,14 @@ export class PgSessionStore implements SessionStore {
     // normal patch path (NOT a gate method), so it does NOT widen the gate-write surface — EXACTLY
     // like `passport`/`testEvidence`. Without this entry the field is silently dropped on Postgres.
     ['publish', 'publish'],
+    // ADDITIVE, NON-GATE (the F5 fix): the persisted AKIS-chat conversation (`chat` jsonb). On the
+    // normal patch path — conversation text only, it can never write a gate column. Without this
+    // entry the turns are silently dropped on Postgres and the FE rehydrate finds nothing.
+    ['chat', 'chat'],
   ]
 
   /** Columns whose value is a nested object stored as jsonb (must be passed through toJson). */
-  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport', 'publish'])
+  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport', 'publish', 'chat'])
 
   async update(id: string, patch: SessionPatch, expectedVersion: number): Promise<SessionState> {
     const sets: string[] = []
@@ -137,7 +142,7 @@ function toJson(v: unknown): unknown {
  *  already parsed by `pg` into JS objects). */
 interface SessionRow {
   id: unknown; status: unknown; idea: unknown; owner_id: unknown
-  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; publish: unknown; base: unknown; version: unknown
+  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; publish: unknown; chat: unknown; base: unknown; version: unknown
 }
 
 /**
@@ -170,6 +175,9 @@ function toSession(raw: Record<string, unknown>): SessionState {
     // (data only — no capability; the SSH key never enters this record), so the FE PublishButton
     // surfaces the live URL / honest failure reason on Postgres too, not just the in-memory store.
     ...(r.publish != null ? { publish: r.publish as PublishRecord } : {}),
+    // ADDITIVE, NON-GATE (the F5 fix): the persisted conversation round-trips as plain jsonb
+    // (text only — no capability), so the FE thread rehydrate works on Postgres too.
+    ...(r.chat != null ? { chat: r.chat as ChatTurn[] } : {}),
     // ADDITIVE, NON-GATE, set-only-at-create: the Phase B.5 edit-mode seed round-trips as
     // plain jsonb (data only — no capability), so edit-mode builds survive a Pg restart.
     ...(r.base != null ? { base: r.base as NonNullable<SessionState['base']> } : {}),

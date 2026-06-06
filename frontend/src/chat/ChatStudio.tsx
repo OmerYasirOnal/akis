@@ -15,7 +15,7 @@ import { AgentRoster } from '../components/AgentRoster.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
-import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord } from '@akis/shared'
+import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord, SessionState } from '@akis/shared'
 
 /** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
  *  done/failed/cancelled are final, and verify_failed/push_failed are parked-but-finished
@@ -113,16 +113,34 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (typeof window !== 'undefined') window.history.replaceState({}, '', `${window.location.pathname}?s=${id}`)
   }
 
-  /** Seed the spine with a clean greeting + a SINGLE run marker, then remount AkisChat so it loads
-   *  it. Used by BOTH History doors (HistoryMenu + the /?s= deep-link): a reopened build shows a
-   *  CLEAN chat (never an unrelated inherited conversation) plus its one run-block, which replays
-   *  the server /log to rebuild the transcript. */
-  const seedRun = (id: string, idea: string): void => {
-    const nodes: ThreadNode[] = [{ role: 'assistant', content: t('akis.greeting') }, { role: 'run', sessionId: id, idea: idea.trim() }]
+  /** Seed the spine with a clean greeting + a SINGLE run marker (+ the build's PERSISTED
+   *  conversation when given), then remount AkisChat so it loads it. Used by BOTH History doors
+   *  (HistoryMenu + the /?s= deep-link): a reopened build shows ITS OWN conversation (rehydrated
+   *  from session.chat — the F5 fix: localStorage alone got clobbered by exactly this seed) plus
+   *  its one run-block, which replays the server /log to rebuild the transcript. The run marker
+   *  sits right after the greeting; the restored turns follow it (the common case — questions
+   *  asked about a build — reads chronologically under its run-block). */
+  const seedRun = (id: string, idea: string, chat?: SessionState['chat']): void => {
+    const restored: ThreadNode[] = (chat ?? [])
+      .filter(turn => turn.content.trim().length > 0)
+      .map(turn => ({ role: turn.role, content: turn.content }))
+    const nodes: ThreadNode[] = [
+      { role: 'assistant', content: t('akis.greeting') },
+      { role: 'run', sessionId: id, idea: idea.trim() },
+      ...restored,
+    ]
     saveThread(nodes)
     setThreadKey(k => k + 1)
     setActiveSessionId(id); setActiveIdea(idea); setActiveView(emptyView(id))
     setBackendStatus(undefined); setActionError(undefined); setStartingSpec(undefined); setSessionGone(false)
+  }
+
+  /** Open a session WITH its persisted conversation: fetch session.chat first (the F5 rehydrate),
+   *  fall back to a bare seed when the read fails (network/404 — the run-block surfaces those). */
+  const openWithChat = (id: string, fallbackIdea: string): void => {
+    void api.getSession(id)
+      .then(s => seedRun(id, s.idea || fallbackIdea, s.chat))
+      .catch(() => seedRun(id, fallbackIdea))
   }
 
   // Prefer server-backed per-user history (persists across devices); fall back to the
@@ -136,12 +154,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       if (id) {
         deepLinkId.current = undefined
         const hit = list.find(s => s.id === id)
-        seedRun(id, hit?.idea ?? '')
+        openWithChat(id, hit?.idea ?? '')
       }
     }).catch(() => {
       // Even if the list fails, still honor a deep-link by id (replay rebuilds the transcript).
       const id = deepLinkId.current
-      if (id) { deepLinkId.current = undefined; seedRun(id, '') }
+      if (id) { deepLinkId.current = undefined; openWithChat(id, '') }
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api])
@@ -203,7 +221,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
 
   /** Re-open a past build (BOTH History doors route here). Seeds a one-run thread + clean greeting;
    *  the run-block replays /log + /events. */
-  const openSession = (b: RecentBuild): void => { seedRun(b.id, b.idea) }
+  const openSession = (b: RecentBuild): void => { openWithChat(b.id, b.idea) }
 
   // Stable across renders, so the gate callbacks keep a stable identity.
   const act = useCallback(async (fn: () => Promise<unknown>): Promise<void> => {
@@ -254,10 +272,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   }, [activeSessionId, status, api])
 
   const canRun = !!activeSessionId && (status === 'done' || activeView.verified !== undefined)
-  // BUILD-AWARE CHAT context key: the ACTIVE session id ONLY when it produced code (so the persona
-  // can answer about — and route edits to — the current app). SEPARATE from chat-only overrides;
-  // never reaches a build. No code yet ⇒ stateless chat (byte-identical request).
-  const buildContextSessionId = activeSessionId && codeFiles?.length ? activeSessionId : undefined
+  // BUILD-AWARE CHAT context key: ALWAYS the active session id. It used to be gated on
+  // codeFiles?.length, which made every turn before the code snapshot landed (a reopen/F5 race) —
+  // and every turn about a code-less/failed build — STATELESS, so AKIS confidently answered
+  // "the build hasn't started" about a build that ran and failed (the live-caught bug). The server
+  // snapshot handles a code-less session fine (idea/spec/status/verify lines, files only when
+  // present). SEPARATE from chat-only overrides; never reaches a build.
+  const buildContextSessionId = activeSessionId || undefined
 
   const startingWorkflowCard = startingSpec ? (
     <section role="status" className="rounded-2xl border border-teal-400/25 bg-teal-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(7,209,175,0.1)]">

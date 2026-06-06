@@ -274,6 +274,95 @@ describe('buildSessionContext — read-only, contents-free snapshot', () => {
   })
 })
 
+describe('POST /api/chat — persisted conversation (the F5 fix, chatAppend seam)', () => {
+  function persistApp(opts?: { rejectAppend?: boolean }) {
+    const { provider, calls } = spyProvider()
+    const appended: { sessionId: string; turns: { role: string; content: string; at: string }[] }[] = []
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, {
+      provider,
+      sessionRead: async () => builtSession(),
+      chatAppend: async (_req, sessionId, turns) => {
+        if (opts?.rejectAppend) throw new Error('store down')
+        appended.push({ sessionId, turns })
+      },
+    })
+    return { f, calls, appended }
+  }
+
+  it('persists the {user, assistant} turn pair AFTER a successful reply (sessionId present)', async () => {
+    const { f, appended } = persistApp()
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'why did tests fail?', sessionId: 's-built' } })
+    expect(res.statusCode).toBe(200)
+    expect(appended).toHaveLength(1)
+    expect(appended[0]!.sessionId).toBe('s-built')
+    expect(appended[0]!.turns).toHaveLength(2)
+    expect(appended[0]!.turns[0]).toMatchObject({ role: 'user', content: 'why did tests fail?' })
+    expect(appended[0]!.turns[1]).toMatchObject({ role: 'assistant', content: 'ok' })
+    // ISO timestamps so the FE can render the rehydrated thread in order.
+    expect(Number.isNaN(Date.parse(appended[0]!.turns[0]!.at))).toBe(false)
+  })
+
+  it('no sessionId ⇒ chatAppend is never called (the stateless turn is byte-identical)', async () => {
+    const { f, appended } = persistApp()
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'hello' } })
+    expect(res.statusCode).toBe(200)
+    expect(appended).toHaveLength(0)
+  })
+
+  it('a REJECTING chatAppend never breaks the turn — the reply still lands (persistence is best-effort)', async () => {
+    const { f } = persistApp({ rejectAppend: true })
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'hello', sessionId: 's-built' } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json().reply).toBe('ok')
+  })
+})
+
+describe('POST /api/chat — server wiring persists turns onto the session (the F5 fix, end to end)', () => {
+  async function serverWithSession(over: Partial<SessionState> = {}) {
+    const { MockSessionStore } = await import('../../src/store/MockSessionStore.js')
+    const { initialSession } = await import('@akis/shared')
+    const store = new MockSessionStore()
+    // An ANONYMOUS session (no ownerId) is readable/appendable without auth — exactly the
+    // sessionRead owner-scope semantics the chatAppend wiring must mirror.
+    await store.create({ ...initialSession('s-chat', 'todo app'), ...over })
+    const srv = buildServer({ sessionStore: store, keyStore: new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z') })
+    return { srv, store }
+  }
+
+  it('a turn lands in session.chat (user + assistant, capped order preserved)', async () => {
+    const { srv, store } = await serverWithSession()
+    const res = await srv.inject({ method: 'POST', url: '/api/chat', payload: { message: 'merhaba', sessionId: 's-chat' } })
+    expect(res.statusCode).toBe(200)
+    const s = await store.get('s-chat')
+    expect(s?.chat).toHaveLength(2)
+    expect(s?.chat?.[0]).toMatchObject({ role: 'user', content: 'merhaba' })
+    expect(s?.chat?.[1]?.role).toBe('assistant')
+    expect((s?.chat?.[1]?.content ?? '').length).toBeGreaterThan(0)
+  })
+
+  it('an OWNED session is NOT writable by an anonymous caller (owner-scope mirrors sessionRead)', async () => {
+    const { srv, store } = await serverWithSession({ ownerId: 'u-owner' })
+    const res = await srv.inject({ method: 'POST', url: '/api/chat', payload: { message: 'merhaba', sessionId: 's-chat' } })
+    expect(res.statusCode).toBe(200) // the turn itself still succeeds (stateless fallback)
+    const s = await store.get('s-chat')
+    expect(s?.chat).toBeUndefined() // but NOTHING was persisted cross-user
+  })
+
+  it('the persisted conversation is CAPPED — oldest turns drop, newest survive', async () => {
+    const { CHAT_TURNS_MAX } = await import('@akis/shared')
+    const full = Array.from({ length: CHAT_TURNS_MAX }, (_, i) => ({ role: 'user' as const, content: `old-${i}`, at: '2026-06-06T00:00:00.000Z' }))
+    const { srv, store } = await serverWithSession({ chat: full })
+    const res = await srv.inject({ method: 'POST', url: '/api/chat', payload: { message: 'yeni mesaj', sessionId: 's-chat' } })
+    expect(res.statusCode).toBe(200)
+    const s = await store.get('s-chat')
+    expect(s?.chat).toHaveLength(CHAT_TURNS_MAX)               // capped, never grows past the max
+    expect(s?.chat?.[0]?.content).toBe('old-2')                // the 2 oldest dropped for the new pair
+    expect(s?.chat?.at(-1)?.role).toBe('assistant')            // newest pair survives at the tail
+    expect(s?.chat?.at(-2)?.content).toBe('yeni mesaj')
+  })
+})
+
 describe('POST /api/chat — build-aware sessionId injection (owner-scoped)', () => {
   it('an OWNED sessionId injects the spec title + file PATHS + verify into the provider system — but NOT file contents', async () => {
     const { app, calls, reads } = buildAwareApp({ reader: async (_req, id) => id === 's-built' ? builtSession() : undefined })
@@ -359,11 +448,12 @@ describe('POST /api/chat/stream — build-aware sessionId injection', () => {
 })
 
 describe('Build-aware chat — gate-safety contract (server-level)', () => {
-  it('the FULL server wires sessionRead, and a build-aware turn never moves session status or mints', async () => {
+  it('the FULL server wires sessionRead, and a build-aware turn moves ONLY session.chat — never status/spec/code, never mints', async () => {
     // Drive the build-aware chat through the REAL buildServer (which wires the owner-scoped
-    // sessionRead). With no authenticated owner, an ANONYMOUS session (no ownerId) is readable —
-    // but reading it can only SHAPE the reply, never change it. We assert the chat turn succeeds
-    // and the session is untouched (status/version) afterwards.
+    // sessionRead + the chatAppend persistence). With no authenticated owner, an ANONYMOUS session
+    // (no ownerId) is readable. The contract since the F5 fix: the turn may write EXACTLY ONE
+    // additive, non-gate field — `chat` (the persisted conversation) — and ABSOLUTELY nothing
+    // else: same status, same spec/code, no approval, no verifyToken.
     const a = app()
     // Start an anonymous session via the public route (no spec → composing), then chat about it.
     const started = await a.inject({ method: 'POST', url: '/sessions', payload: { idea: 'a note app' } })
@@ -378,10 +468,17 @@ describe('Build-aware chat — gate-safety contract (server-level)', () => {
 
     const after = await a.inject({ method: 'GET', url: `/sessions/${session.id}` })
     const afterState = after.json() as SessionState
-    // The build-aware turn moved NOTHING: same status, same version (no mint, no gate, no write).
+    // GATE-SAFETY UNCHANGED: status never moves, nothing mints, spec/code untouched.
     expect(afterState.status).toBe(beforeState.status)
-    expect(afterState.version).toBe(beforeState.version)
     expect(afterState.approval).toBeUndefined()
     expect(afterState.verifyToken).toBeUndefined()
+    expect(afterState.spec).toEqual(beforeState.spec)
+    expect(afterState.code).toEqual(beforeState.code)
+    // THE ONLY delta is the persisted conversation (the F5 fix): the {user, assistant} pair
+    // landed in session.chat, and the version bumped exactly once for that single write.
+    expect(afterState.chat).toHaveLength(2)
+    expect(afterState.chat?.[0]).toMatchObject({ role: 'user', content: 'what does this app do?' })
+    expect(afterState.chat?.[1]?.role).toBe('assistant')
+    expect(afterState.version).toBe(beforeState.version + 1)
   })
 })

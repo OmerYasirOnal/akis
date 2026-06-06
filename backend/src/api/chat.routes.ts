@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
-import type { SessionState } from '@akis/shared'
+import type { SessionState, ChatTurn } from '@akis/shared'
 import { isVerified } from '@akis/shared'
 import type { LlmProvider } from '../agent/LlmProvider.js'
 import { sseControl } from './sse.js'
@@ -123,6 +123,14 @@ export interface ChatDeps {
    *  lets the persona SEE the current build (a contents-free snapshot) so it can route an edit
    *  request to a fresh akis-spec card. Absent ⇒ no build-awareness (byte-identical to today). */
   sessionRead?: (req: FastifyRequest, id: string) => Promise<SessionState | undefined>
+  /** PERSISTED CONVERSATION (the F5 fix): append the turn's {user, assistant} pair to the
+   *  session's ADDITIVE, NON-GATE `chat` field AFTER a successful reply, so the thread survives a
+   *  refresh/another device. The implementation is owner-scoped EXACTLY like `sessionRead` (a
+   *  foreign/unknown id is a silent no-op) and writes through the generic patch — which
+   *  structurally excludes every gate column — so the chat route STAYS strictly conversational:
+   *  it can record text but never approve/run/verify/push/mint. Failures are swallowed at the
+   *  call site (persistence must never break a successful turn). Absent ⇒ byte-identical. */
+  chatAppend?: (req: FastifyRequest, sessionId: string, turns: ChatTurn[]) => Promise<void>
 }
 
 /**
@@ -296,6 +304,16 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
     return `${AKIS_PERSONA}\n\n${buildSessionContext(s)}`
   }
 
+  /** The persisted {user, assistant} pair for one completed turn (see ChatDeps.chatAppend).
+   *  One shared timestamp — the pair is atomic; ordering inside the array carries the sequence. */
+  const turnPair = (userMsg: string, assistantReply: string): ChatTurn[] => {
+    const at = new Date().toISOString()
+    return [
+      { role: 'user', content: userMsg, at },
+      { role: 'assistant', content: assistantReply, at },
+    ]
+  }
+
   app.post<{ Body: { message?: unknown; history?: unknown; provider?: unknown; model?: unknown; effort?: unknown; sessionId?: unknown } }>('/api/chat', async (req, reply) => {
     const message = isStr(req.body?.message) ? req.body.message.trim() : ''
     if (!message) return reply.code(400).send({ error: 'message required', code: 'BadRequest' })
@@ -323,9 +341,14 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       const res = await resolved.chat({ system, messages, maxTokens: mapEffortToTokens(effort) })
       // Account the turn's REAL spend (the sole chat path; {0,0}/absent adds nothing).
       chargeUsage(gate.ownerKey, res.usage)
+      const replyText = (res.text ?? '').trim()
+      // PERSISTED CONVERSATION (the F5 fix): record the pair on the bound session AFTER the
+      // successful turn. Awaited so a refresh right after the reply still finds it persisted;
+      // errors swallowed — persistence must never break a turn the user already paid for.
+      if (sessionId && deps.chatAppend) await deps.chatAppend(req, sessionId, turnPair(message, replyText)).catch(() => {})
       // Return the reply verbatim (trimmed). An empty reply is surfaced HONESTLY as '' so the
       // UI can show a real "empty reply" notice — never disguised as a friendly '…' answer.
-      return reply.send({ reply: (res.text ?? '').trim() })
+      return reply.send({ reply: replyText })
     } catch (err) {
       return reply.code(502).send({ error: err instanceof Error ? err.message : 'chat failed', code: 'ProviderError' })
     }
@@ -401,6 +424,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       // Prefer the assembled stream text; fall back to the result text (single-shot path).
       const finalReply = (full || res.text || '').trim()
       safeWrite(sseControl('done', { reply: finalReply }))
+      // PERSISTED CONVERSATION (the F5 fix): record the pair with the ASSEMBLED reply — exactly
+      // what the user saw stream in. After the `done` frame so persistence never delays the UI;
+      // errors swallowed (best-effort, never breaks the turn).
+      if (sessionId && deps.chatAppend) await deps.chatAppend(req, sessionId, turnPair(message, finalReply)).catch(() => {})
     } catch (err) {
       safeWrite(sseControl('error', { message: err instanceof Error ? err.message : 'chat failed', code: 'ProviderError' }))
     } finally {

@@ -192,8 +192,28 @@ export interface SessionState {
    * `{ok:false}` while LEAVING status `done`. Absent until the owner publishes a `done` session.
    */
   publish?: PublishRecord
+  /**
+   * ADDITIVE, NON-GATE persisted conversation — the AKIS chat turns BOUND to this build, so the
+   * thread survives a refresh/another device (the FE rehydrates from it instead of trusting
+   * localStorage, which the ?s= deep-link seed used to clobber). Written on the NORMAL
+   * (generic-patch) update path via a NARROW append seam that touches only THIS field — EXACTLY
+   * like `passport`/`testEvidence` it never widens the gate-write surface. Conversation text
+   * only: it can never approve/verify/push/mint anything; the chat route stays strictly
+   * conversational. Capped (oldest dropped) so it stays bounded.
+   */
+  chat?: ChatTurn[]
   version: number               // optimistic lock
 }
+
+/** One persisted AKIS-chat turn (see `SessionState.chat`). `at` is an ISO timestamp. */
+export interface ChatTurn {
+  role: 'user' | 'assistant'
+  content: string
+  at: string
+}
+
+/** Hard cap on persisted chat turns per session — oldest dropped first (bounded jsonb row). */
+export const CHAT_TURNS_MAX = 200
 
 /** Derived verification state — the single source of truth the outside world reads. */
 export function isVerified(s: SessionState): boolean {

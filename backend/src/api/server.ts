@@ -47,7 +47,8 @@ import type { SessionPublisher } from './sessions.routes.js'
 import { configuredProviders } from '../auth/oauth.js'
 import { WorkflowStore, type WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import { workflowToAgentModels, workflowToAgentSkills, workflowCustomAgents } from '../workflow/resolve.js'
-import type { WorkflowConfig, SessionState } from '@akis/shared'
+import type { WorkflowConfig, SessionState, ChatTurn } from '@akis/shared'
+import { CHAT_TURNS_MAX } from '@akis/shared'
 import { buildServices, type OrchestratorServices } from '../di/services.js'
 import { McpSessionPool } from '../agent/mcp/McpSessionPool.js'
 import { StdioDockerTransport } from '../agent/mcp/StdioDockerTransport.js'
@@ -506,7 +507,22 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     if (s.ownerId && (await userIdOf(req)) !== s.ownerId) return undefined // owner-scope: no cross-user read
     return s
   }
-  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ownerOf: userIdOf, sessionRead })
+  // PERSISTED CONVERSATION (the F5 fix): chatAppend reuses sessionRead's owner-scoping (a
+  // foreign/unknown id is a silent no-op), then appends through the GENERIC patch — which
+  // structurally excludes every gate column — under the CHAT_TURNS_MAX cap. ONE optimistic-conflict
+  // retry (a concurrent build write bumps the version); a second conflict drops the turns
+  // (best-effort: a lost chat turn is recoverable, a broken chat reply is not).
+  const chatAppend = async (req: FastifyRequest, id: string, turns: ChatTurn[]): Promise<void> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const s = await sessionRead(req, id)
+      if (!s) return
+      try {
+        await services.store.update(id, { chat: [...(s.chat ?? []), ...turns].slice(-CHAT_TURNS_MAX) }, s.version)
+        return
+      } catch { /* version conflict — re-read once, then give up silently */ }
+    }
+  }
+  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ownerOf: userIdOf, sessionRead, chatAppend })
   // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
   // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
   // them the route is never registered (404) and there is no behavior change when RAG off.

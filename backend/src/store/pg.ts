@@ -95,6 +95,12 @@ export const ADD_PASSPORT = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS passp
  *  (live URL / honest failure reason) — without it the field is silently dropped on Postgres. */
 export const ADD_PUBLISH = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS publish jsonb`
 
+/** Idempotent migration (the F5 fix): add the additive, NON-GATE `chat` jsonb column (nullable) —
+ *  the persisted AKIS-chat conversation bound to the session, so the thread survives a
+ *  refresh/another device. Without it the field is silently dropped on Postgres and the FE
+ *  rehydrate would find nothing. */
+export const ADD_CHAT = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chat jsonb`
+
 /** Newest-first per-owner history listing (listByOwner) is the hot read path. */
 export const CREATE_SESSIONS_OWNER_INDEX = `CREATE INDEX IF NOT EXISTS sessions_owner_id_idx ON sessions (owner_id, created_at DESC)`
 
@@ -174,6 +180,7 @@ const MIGRATIONS: readonly string[] = [
   ADD_TEST_EVIDENCE,
   ADD_PASSPORT,
   ADD_PUBLISH,
+  ADD_CHAT,
   ADD_BASE,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,

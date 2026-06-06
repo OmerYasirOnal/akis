@@ -49,6 +49,38 @@ function parseSse(raw: string): { event: string; data: unknown }[] {
   return out
 }
 
+describe('POST /api/chat/stream — persisted conversation (the F5 fix, chatAppend seam)', () => {
+  it('persists the {user, assistant} pair with the ASSEMBLED stream reply after `done`', async () => {
+    const appended: { sessionId: string; turns: { role: string; content: string; at: string }[] }[] = []
+    const a = Fastify()
+    registerChatRoutes(a, {
+      provider: streamingProvider(['Hel', 'lo']),
+      chatAppend: async (_req, sessionId, turns) => { appended.push({ sessionId, turns }) },
+    })
+    await a.ready()
+    const res = await a.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'hi', sessionId: 's1' } })
+    expect(res.statusCode).toBe(200)
+    expect(appended).toHaveLength(1)
+    expect(appended[0]!.sessionId).toBe('s1')
+    expect(appended[0]!.turns[0]).toMatchObject({ role: 'user', content: 'hi' })
+    // The persisted assistant turn is the ASSEMBLED stream text (what the user actually saw).
+    expect(appended[0]!.turns[1]).toMatchObject({ role: 'assistant', content: 'Hello' })
+  })
+
+  it('no sessionId ⇒ chatAppend never called on the stream path either', async () => {
+    const appended: unknown[] = []
+    const a = Fastify()
+    registerChatRoutes(a, {
+      provider: streamingProvider(['x']),
+      chatAppend: async () => { appended.push(1) },
+    })
+    await a.ready()
+    const res = await a.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'hi' } })
+    expect(res.statusCode).toBe(200)
+    expect(appended).toHaveLength(0)
+  })
+})
+
 describe('POST /api/chat/stream', () => {
   it('streams text deltas as SSE `delta` frames then a `done` frame', async () => {
     const a = await app(streamingProvider(['Hel', 'lo ', 'there']))

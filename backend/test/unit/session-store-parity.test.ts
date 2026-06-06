@@ -26,8 +26,8 @@ function fakeSessionsTable(): SqlClient {
       const sql = text.trim()
       if (sql.startsWith('INSERT INTO sessions')) {
         // params are positional in the column list order used by PgSessionStore.create.
-        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, base, version] = params
-        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, base, version }
+        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, version] = params
+        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, version }
         rows.set(id as string, r)
         order.push(id as string)
         return { rows: [] }
@@ -52,7 +52,7 @@ function fakeSessionsTable(): SqlClient {
         if (!cur || cur.version !== expected) return { rows: [] } // optimistic miss
         const next: Record<string, unknown> = { ...cur, version: (cur.version as number) + 1 }
         // apply whichever known columns this UPDATE set (by placeholder index).
-        for (const col of ['status', 'idea', 'owner_id', 'spec', 'code', 'approval', 'verify_token', 'test_evidence', 'passport', 'publish']) {
+        for (const col of ['status', 'idea', 'owner_id', 'spec', 'code', 'approval', 'verify_token', 'test_evidence', 'passport', 'publish', 'chat']) {
           const i = num(sql, col)
           if (i >= 1) next[col] = params[i - 1]
         }
@@ -151,6 +151,24 @@ function paritySuite(name: string, make: () => SessionStore) {
       const got = await store.get('s1')
       expect(got?.passport).toEqual(passport) // survives on the Pg backend, not just Mock (the fix-first finding)
       // passport is NON-GATE: writing it never sets a gate token.
+      expect(isVerified(got!)).toBe(false)
+      expect(got?.approval).toBeUndefined()
+    })
+
+    it('persists ADDITIVE chat turns on the NORMAL update path and round-trips them via get() (durable on Pg too)', async () => {
+      const store = make()
+      await store.create(seed())
+      // The persisted conversation (the F5 fix): the FE rehydrates the thread from this, so it
+      // must survive the Pg backend — a silently-dropped column would resurrect the lost-chat bug.
+      const chat = [
+        { role: 'user' as const, content: 'Neden testler geçmiyor?', at: '2026-06-06T08:00:00.000Z' },
+        { role: 'assistant' as const, content: 'Doğrulama başarısız — 0 test üretildi.', at: '2026-06-06T08:00:05.000Z' },
+      ]
+      const next = await store.update('s1', { chat }, 0)
+      expect(next.version).toBe(1)
+      const got = await store.get('s1')
+      expect(got?.chat).toEqual(chat)
+      // chat is NON-GATE: writing it never sets a gate token.
       expect(isVerified(got!)).toBe(false)
       expect(got?.approval).toBeUndefined()
     })

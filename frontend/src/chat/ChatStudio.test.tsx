@@ -36,6 +36,27 @@ function deepLinkFetch(id: string, getStatus: number, getBody: unknown = {}): (p
   }
 }
 
+describe('ChatStudio F5/deep-link rehydrate — the persisted conversation survives a refresh', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/?s=schat') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  it('restores session.chat turns into the thread (F5 used to clobber them via the seed)', async () => {
+    const body = {
+      id: 'schat', status: 'verify_failed', idea: 'todo app', version: 4,
+      chat: [
+        { role: 'user', content: 'Neden testler geçmiyor?', at: '2026-06-06T08:00:00.000Z' },
+        { role: 'assistant', content: 'Doğrulama 0 test üretti — retry ile yeniden dene.', at: '2026-06-06T08:00:05.000Z' },
+      ],
+    }
+    const api = new ApiClient('', vi.fn(deepLinkFetch('schat', 200, body)))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    // Both persisted turns are rehydrated into the visible thread — the F5 fix, end to end.
+    await waitFor(() => expect(screen.getByText('Neden testler geçmiyor?')).toBeInTheDocument())
+    expect(screen.getByText(/Doğrulama 0 test üretti/)).toBeInTheDocument()
+  })
+})
+
 describe('ChatStudio stale deep-link recovery', () => {
   beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/?s=sgone') })
   afterEach(() => { window.history.replaceState({}, '', '/') })
