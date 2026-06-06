@@ -81,3 +81,8 @@ tmp/
 akis-*.jpeg
 output/
 sweep-*.png
+
+# Claude Code: ignore session RUNTIME (worktrees, local settings, workflow runs, locks);
+# TRACK the project-scoped agent definitions so the team shares the AKIS agent roster.
+.claude/*
+!.claude/agents/
