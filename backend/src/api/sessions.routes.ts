@@ -207,7 +207,19 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
 
   app.post<{ Params: { id: string } }>('/sessions/:id/approve', action(id => orchestratorFor(id).approve(id)))
   app.post<{ Params: { id: string } }>('/sessions/:id/run', action(id => orchestratorFor(id).runToVerification(id)))
-  app.post<{ Params: { id: string } }>('/sessions/:id/confirm', action(id => orchestratorFor(id).confirmPush(id)))
+  // PUSH is the one NON-idempotent gate action (it can create a repo / open a PR). confirmPush
+  // already rejects a SEQUENTIAL re-confirm (status→done→AlreadyPushedError), but two CONCURRENT
+  // confirms both read status:awaiting_push_confirm before either persists done → a double push.
+  // A narrow per-session in-flight guard closes that window (the FE button is also disabled while
+  // busy; this is the server-side backstop). Scoped to confirm only, so it can never interfere with
+  // the legitimately-sequential approve→run handoff.
+  const confirming = new Set<string>()
+  app.post<{ Params: { id: string } }>('/sessions/:id/confirm', action(async id => {
+    if (confirming.has(id)) throw new Error('push already in progress')
+    confirming.add(id)
+    try { return await orchestratorFor(id).confirmPush(id) }
+    finally { confirming.delete(id) }
+  }))
 
   // Run control: STOP/CANCEL an in-flight run — a clean TERMINAL abandon (owner-scoped,
   // version-safe via the orchestrator's store update). It refuses from a terminal status

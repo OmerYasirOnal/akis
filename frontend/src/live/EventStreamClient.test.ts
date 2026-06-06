@@ -5,6 +5,7 @@ import type { AkisEvent } from '@akis/shared'
 /** A controllable fake EventSource. */
 class FakeEventSource implements EventSourceLike {
   onmessage: ((ev: { data: string; lastEventId: string }) => void) | null = null
+  onopen: ((ev: unknown) => void) | null = null
   onerror: ((ev: unknown) => void) | null = null
   private named = new Map<string, (ev: { data: string }) => void>()
   closed = false

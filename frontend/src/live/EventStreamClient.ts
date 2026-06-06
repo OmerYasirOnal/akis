@@ -4,6 +4,7 @@ import type { AkisEvent } from '@akis/shared'
  *  follows the EventSource spec: 0 CONNECTING, 1 OPEN, 2 CLOSED. */
 export interface EventSourceLike {
   onmessage: ((ev: { data: string; lastEventId: string }) => void) | null
+  onopen: ((ev: unknown) => void) | null
   onerror: ((ev: unknown) => void) | null
   readonly readyState: number
   addEventListener(type: string, fn: (ev: { data: string }) => void): void
@@ -17,6 +18,9 @@ export interface ConnectHandlers {
   /** Called on a transport error. `closed` is true when the EventSource is CLOSED and will
    *  NOT auto-retry (e.g. a non-retriable 404) — the consumer must reconnect manually. */
   onError?: (info: { closed: boolean }) => void
+  /** Called when the connection OPENS. Lets the consumer clear a "reconnecting" banner even at a
+   *  QUIESCENT session (a parked approval gate) where no event/reset follows the resume. */
+  onOpen?: () => void
 }
 
 /**
@@ -47,6 +51,7 @@ export class EventStreamClient {
     // EventSource fires onerror on BOTH transient drops (readyState CONNECTING — it auto-retries
     // via Last-Event-ID) and permanent failures (readyState CLOSED — it gives up). Surface which,
     // so the consumer can manually reconnect a CLOSED stream instead of "reconnecting" forever.
+    if (handlers.onOpen) es.onopen = () => handlers.onOpen?.()
     if (handlers.onError) es.onerror = () => handlers.onError?.({ closed: es.readyState === 2 })
   }
 

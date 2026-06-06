@@ -92,13 +92,18 @@ export function GateBubble({ m, onApprove, onConfirm, busy }: { m: GateMsg; onAp
   if (m.state !== 'awaiting') return null
   const isSpec = m.gate === 'spec_approval'
   return (
+    // COHESIVE inline gate (UX feedback): a COMPACT fit-content bubble that reads as part of the
+    // conversation flow right under the result it gates — not a full-width detached panel. The
+    // label + state + action sit on one tight row so it "sticks" to the thread above it.
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
-      <div className="w-full max-w-[80%] rounded-2xl rounded-tl-sm border border-teal-400/20 bg-teal-400/[0.04] px-4 py-3">
-        <div className="text-xs uppercase tracking-widest text-slate-500">{t('chat.gate.label')} · {t(`chat.gate.${m.gate}`)}</div>
-        <div className="mb-2 text-sm text-amber-300">{t(`gate.state.${m.state}`)}</div>
+      <div className="inline-flex w-fit max-w-md items-center gap-3 rounded-2xl rounded-tl-sm border border-teal-400/25 bg-teal-400/[0.05] px-3.5 py-2">
+        <div className="min-w-0">
+          <div className="text-[10px] uppercase tracking-widest text-slate-500">{t('chat.gate.label')} · {t(`chat.gate.${m.gate}`)}</div>
+          <div className="text-sm text-amber-300">{t(`gate.state.${m.state}`)}</div>
+        </div>
         <button onClick={isSpec ? onApprove : onConfirm} disabled={busy}
-          className="rounded bg-teal-500/90 px-3 py-1 text-sm font-medium text-slate-900 disabled:opacity-40">
+          className="shrink-0 rounded-md bg-teal-500/90 px-3 py-1 text-sm font-medium text-slate-900 hover:bg-teal-400 disabled:opacity-40">
           {t(isSpec ? 'chat.approve' : 'chat.confirm')}
         </button>
       </div>
@@ -119,7 +124,7 @@ export function RecoveryBubble({ m, onProceed, onAbandon, onRetry, onConfirm, bu
   return (
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
-      <div className="w-full max-w-[80%] rounded-2xl rounded-tl-sm border border-amber-400/30 bg-amber-400/[0.06] px-4 py-3">
+      <div className="w-fit max-w-md rounded-2xl rounded-tl-sm border border-amber-400/30 bg-amber-400/[0.06] px-3.5 py-2.5">
         <div className="mb-2 text-sm text-amber-200">{t(hint)}</div>
         {m.recovery === 'critic_resolution' && (
           <div className="flex flex-wrap gap-1.5">

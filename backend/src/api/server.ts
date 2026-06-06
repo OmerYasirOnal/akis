@@ -290,12 +290,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // ADDITIVE: a verified build signs a durable Build Passport over its already-minted facts.
       passportSigner,
     })
-  // DEV EVENT PERSISTENCE (pairs with the session store above): the bus buffers are what
-  // the FE rebuilds its view from (/log replay) — without them a restored session opens as
-  // an empty pipeline. Hydrate at boot, persist DEBOUNCED on every emit (buffers are
-  // per-session capped, so the file is bounded), and flush once more on close. Best-effort
-  // everywhere; only active when the default dev stores are in play (never under tests).
-  if (devPersist && !deps.services) {
+  // EVENT PERSISTENCE (pairs with the session store above): the bus buffers are what the FE
+  // rebuilds its view from (/log replay) — without them a restored session opens as an empty
+  // pipeline AND a gate-parked build loses its action button (the HIGH lifecycle finding: a server
+  // restart at an approval gate left the user unable to approve/confirm). Hydrate at boot, persist
+  // DEBOUNCED on every emit (buffers are LRU-capped, so the file is bounded), flush once more on
+  // close. Now enabled in PRODUCTION too (decoupled from the dev STORE choice): the snapshot lands
+  // in the persisted akis_home volume, so a container restart restores the live transcript + gate.
+  // Skipped only when an external services stack is injected (tests/host-injection own persistence).
+  if (!deps.services && !isTestEnv) {
     const eventsFile = join(homedir(), '.akis', 'dev-events.json')
     try {
       const raw = JSON.parse(readFileSync(eventsFile, 'utf8')) as Parameters<typeof services.bus.hydrate>[0]

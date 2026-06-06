@@ -88,6 +88,10 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
         // A delivered event means the stream is live again → clear the reconnecting flag + reset
         // the backoff. The event is keyed by seq, so a resumed/replayed event is deduped.
         onEvent: (e, seq) => { attempts = 0; lostRef.current = false; goneRef.current = false; bySeq.current.set(seq, e); scheduleRefold() },
+        // A successful (re)connect clears the reconnecting banner even when NO event/reset follows —
+        // the quiescent-gate case: a build parked awaiting approval emits nothing after the resume,
+        // so without this the "reconnecting…" banner pulsed forever despite a healthy stream.
+        onOpen: () => { attempts = 0; if (lostRef.current || goneRef.current) { lostRef.current = false; goneRef.current = false; refold() } },
         onReset: () => {
           lostRef.current = false; bySeq.current = new Map()
           // The /log re-sync must not fail SILENTLY (audit gap): one retry after 2s; if that

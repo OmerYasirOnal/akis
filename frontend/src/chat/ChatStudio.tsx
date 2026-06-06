@@ -133,6 +133,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     setThreadKey(k => k + 1)
     setActiveSessionId(id); setActiveIdea(idea); setActiveView(emptyView(id))
     setBackendStatus(undefined); setActionError(undefined); setStartingSpec(undefined); setSessionGone(false)
+    // Point the address bar at the reopened build so a refresh reloads THIS session, not the
+    // previously-deep-linked one (the in-studio HistoryMenu reopen used to leave ?s= stale → F5
+    // reopened the wrong/none session). Also clears any previous run's snapshot bleed below.
+    syncUrl(id)
+    setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setPublishRecord(undefined)
   }
 
   /** Open a session WITH its persisted conversation: fetch session.chat first (the F5 rehydrate),
@@ -262,7 +267,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Auto-run the local preview once a build ships, so the app appears live with no extra click.
   const autoRan = useRef<string | undefined>(undefined)
   useEffect(() => {
-    if (activeSessionId && status === 'done' && autoRan.current !== activeSessionId) {
+    if (activeSessionId && (status === 'done' || backendStatus === 'done') && autoRan.current !== activeSessionId) {
       autoRan.current = activeSessionId
       void api.startPreview(activeSessionId)
         .then(e => { if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e)) })
@@ -271,7 +276,17 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, status, api])
 
-  const canRun = !!activeSessionId && (status === 'done' || activeView.verified !== undefined)
+  // AUTHORITATIVE done-ness: the SSE-derived activeView.status OR the persisted backendStatus
+  // (from getSession). EITHER may know first — the live stream flips to 'done' immediately on a
+  // fresh build, while a REOPENED build whose replay buffer was LRU-evicted (or wiped by a server
+  // restart) arrives with an empty live view (status:'unknown') but backendStatus:'done'. Driving
+  // the rail/preview/run off this union (not activeView.status alone) is the fix for the HIGH
+  // lifecycle finding: a finished, verified build no longer reads as a blank/broken run-block
+  // after a reopen — the trust card, publish button, auto-preview and Run all surface from the
+  // durable status. (The inline agent-stage bubbles still come from the live view; only the
+  // result-rail is made resilient.)
+  const isDone = status === 'done' || backendStatus === 'done'
+  const canRun = !!activeSessionId && (isDone || activeView.verified !== undefined)
   // BUILD-AWARE CHAT context key: ALWAYS the active session id. It used to be gated on
   // codeFiles?.length, which made every turn before the code snapshot landed (a reopen/F5 race) —
   // and every turn about a code-less/failed build — STATELESS, so AKIS confidently answered
@@ -369,9 +384,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
             </div>
             {previewOpen ? (
               <>
-                {activeSessionId && !sessionGone && status === 'done' && <TrustReportCard sessionId={activeSessionId} api={api} />}
+                {activeSessionId && !sessionGone && isDone && <TrustReportCard sessionId={activeSessionId} api={api} />}
                 {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING. */}
-                {activeSessionId && !sessionGone && status === 'done' && <PublishButton sessionId={activeSessionId} api={api} initialRecord={publishRecord} />}
+                {activeSessionId && !sessionGone && isDone && <PublishButton sessionId={activeSessionId} api={api} initialRecord={publishRecord} />}
                 <PreviewPanel view={activeView} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
               </>
             ) : (

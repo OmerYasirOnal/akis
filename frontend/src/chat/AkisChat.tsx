@@ -186,6 +186,10 @@ export function AkisChat({
   // or a failed fetch) — the meter is pure observability, never blocks the chat.
   const [usage, setUsage] = useState<UsageInfo | null>(null)
   const [pickerOpen, setPickerOpen] = useState(false)
+  // SCROLL-TO-LATEST (UX feedback): when the user has scrolled UP to read history, a floating
+  // "jump to latest" pill appears so new content below is one click away (and the auto-scroll
+  // stays paused — we never yank them down mid-read).
+  const [atBottom, setAtBottom] = useState(true)
   // The last user message we tried to send — drives Retry (resends it, untouched).
   const lastUser = useRef<string | undefined>(undefined)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -228,7 +232,8 @@ export function AkisChat({
   // Auto-scroll to the latest message/card — UNLESS the user scrolled up to read history.
   useEffect(() => {
     const el = scrollRef.current
-    if (el && stickToBottom.current) el.scrollTop = el.scrollHeight
+    if (el && stickToBottom.current) { el.scrollTop = el.scrollHeight; setAtBottom(true) }
+    else if (el) setAtBottom(isNearBottom(el)) // new content arrived while scrolled up → reveal the pill
   }, [nodes, busy])
 
   // The set of spec texts that ALREADY started a build — derived from the run markers in the spine
@@ -265,7 +270,19 @@ export function AkisChat({
 
   const onScroll = (): void => {
     const el = scrollRef.current
-    if (el) stickToBottom.current = isNearBottom(el) // follow only while at the bottom
+    if (!el) return
+    const near = isNearBottom(el)
+    stickToBottom.current = near // follow only while at the bottom
+    setAtBottom(near)
+  }
+
+  /** Jump to the newest content + re-arm auto-follow (the scroll-to-latest pill). */
+  const scrollToLatest = (): void => {
+    const el = scrollRef.current
+    if (!el) return
+    el.scrollTop = el.scrollHeight
+    stickToBottom.current = true
+    setAtBottom(true)
   }
 
   // Turn a thrown error into the row text we show (401 routes globally; ApiError vs network).
@@ -408,7 +425,8 @@ export function AkisChat({
 
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
-      <div ref={scrollRef} onScroll={onScroll} aria-live="polite" aria-atomic="false" aria-relevant="additions" className="flex-1 space-y-3 overflow-y-auto">
+      <div className="relative min-h-0 flex-1">
+      <div ref={scrollRef} onScroll={onScroll} aria-live="polite" aria-atomic="false" aria-relevant="additions" className="h-full space-y-3 overflow-y-auto">
         {nodes.map((m, i) => {
           // A RUN MARKER renders its build INLINE at this exact slot (the single composition seam):
           // its own RunBlock mounts a per-run useLiveChat, the compact pipeline-strip header, and
@@ -480,6 +498,15 @@ export function AkisChat({
           </div>
         )}
         {busy && <div className="ml-11 text-xs text-teal-300">{t('akis.thinking')}</div>}
+      </div>
+        {/* SCROLL-TO-LATEST pill — floats over the scroll area only when the user is scrolled up,
+            so new content below is one click away (theme: cosmic teal/violet, matches the composer). */}
+        {!atBottom && (
+          <button type="button" onClick={scrollToLatest} aria-label={t('chat.jumpToLatest')}
+            className="absolute bottom-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-1.5 rounded-full border border-teal-400/30 bg-slate-900/85 px-3 py-1.5 text-xs font-medium text-teal-100 shadow-[0_4px_24px_rgba(7,209,175,0.25)] backdrop-blur hover:border-teal-300/60 hover:bg-slate-800/90">
+            <span aria-hidden className="text-sm leading-none">↓</span>{t('chat.jumpToLatest')}
+          </button>
+        )}
       </div>
       {/* Tappable quick-reply chips parsed from AKIS's latest reply (an `akis-suggest` block):
           the user picks one and it sends DIRECTLY — no typing. Hidden while busy/streaming. */}

@@ -8,6 +8,7 @@ import type { AkisEvent } from '@akis/shared'
 /** A controllable fake EventSource (mirrors useLiveSession.test). */
 class FakeEventSource implements EventSourceLike {
   onmessage: ((ev: { data: string; lastEventId: string }) => void) | null = null
+  onopen: ((ev: unknown) => void) | null = null
   onerror: ((ev: unknown) => void) | null = null
   private named = new Map<string, (ev: { data: string }) => void>()
   closed = false
@@ -15,6 +16,7 @@ class FakeEventSource implements EventSourceLike {
   constructor(readonly url: string) {}
   addEventListener(type: string, fn: (ev: { data: string }) => void): void { this.named.set(type, fn) }
   close(): void { this.closed = true; this.readyState = 2 }
+  open(): void { this.onopen?.({}) } // connection established (clears the reconnecting banner)
   msg(event: object, seq: number): void { this.onmessage?.({ data: JSON.stringify(event), lastEventId: String(seq) }) }
   err(): void { this.onerror?.({}) } // transient: readyState stays OPEN (browser auto-retries)
 }
@@ -47,6 +49,17 @@ describe('useLiveChat — SSE-drop reconnecting overlay', () => {
     await waitFor(() => expect(hook.result.current.view.connectionLost).toBe(true))
     // It's a transport flag, NOT a terminal failure: status is unchanged (still running).
     expect(hook.result.current.view.status).not.toBe('failed')
+  })
+
+  it('a successful (re)connect OPEN clears the reconnecting banner even with NO following event (quiescent gate)', async () => {
+    const { hook, es } = setup()
+    act(() => { es().msg(E('gate', { gate: 'push_confirm', state: 'awaiting' }), 1) })
+    act(() => { es().err() }) // stream drops at a parked gate
+    await waitFor(() => expect(hook.result.current.view.connectionLost).toBe(true))
+    // The reconnect establishes but the gate is quiescent — nothing more is emitted. onOpen alone
+    // must clear the banner (previously it pulsed forever waiting for an event/reset that never came).
+    act(() => { es().open() })
+    await waitFor(() => expect(hook.result.current.view.connectionLost).toBeFalsy())
   })
 
   it('manually reconnects a CLOSED stream (closes the old, opens a new) with capped backoff', () => {
