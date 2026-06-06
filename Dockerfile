@@ -56,6 +56,12 @@ WORKDIR /app
 # only (the builder never spawns ssh). The spawned ssh runs as the non-root `node` user,
 # writing the transient 0600 key into a 0700 per-run dir under os.tmpdir() (writable by node).
 RUN apk add --no-cache tini openssh-client
+# pnpm in the RUNTIME stage (corepack is enabled only in the builder): REAL verification boots a
+# node-service / fullstack produced app via `pnpm install` then `node .` (preview Runner), and the
+# PreviewRegistry fail-closes with "pnpm not found — enable corepack" without it. Pinned to match
+# the root packageManager. (Static apps — the common Proto output — boot-smoke-verify with an
+# in-process http server and need NO browser/chromium; this only unblocks the node-service shapes.)
+RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
 
 COPY --from=builder --chown=node:node /app/node_modules          ./node_modules
 # pdf-parse DEAD-WEIGHT prune (audit quick-win): the package bundles FOUR pdf.js builds plus 4.8MB
