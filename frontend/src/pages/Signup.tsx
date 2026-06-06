@@ -22,7 +22,9 @@ export function Signup({ api }: { api: ApiClient }) {
     if (password.length < 8) { setErr(t('auth.pwTooShort')); return }
     setBusy(true); setErr(undefined)
     try { await signup(name, email, password); navigate('/') }
-    catch (e) { setErr(ApiError.is(e) ? e.message : String(e)) }
+    // A 403 is the intentional signup block (this is a single-user instance — the edge/code both
+    // 403 /auth/signup). Show a clear, localized message instead of the raw "HTTP 403".
+    catch (e) { setErr(ApiError.is(e) && e.status === 403 ? t('auth.signup.disabled') : ApiError.is(e) ? e.message : String(e)) }
     finally { setBusy(false) }
   }
 
