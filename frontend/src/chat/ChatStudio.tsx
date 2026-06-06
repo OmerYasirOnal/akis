@@ -361,6 +361,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       baseUrl={baseUrl}
       {...(makeClient ? { makeClient } : {})}
       building={busy}
+      buildStarting={!!startingSpec}
       onBuild={startBuild}
       {...(activeSessionId ? { activeSessionId } : {})}
       {...(buildContextSessionId ? { buildContextSessionId } : {})}

@@ -135,7 +135,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
 })
 
 export function AkisChat({
-  api, onBuild, building, starting,
+  api, onBuild, building, buildStarting, starting,
   activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView, onReactivate, onActionError,
   baseUrl = '', makeClient,
 }: {
@@ -145,6 +145,10 @@ export function AkisChat({
    *  (and the akis-chat tests) working — no run marker is appended then. */
   onBuild?: (spec: string) => void | string | undefined | Promise<string | undefined | void>
   building?: boolean
+  /** A BUILD-START is in flight (functional fix): drives the SpecCard Approve disable INSTEAD of the
+   *  shared `busy` — so approving a gate / running the preview on the active run no longer greys out
+   *  every other spec card's Approve. Only a concurrent build-START disables the cards. */
+  buildStarting?: boolean
   /** A transient "Workflow is starting…" card rendered at the tail WHILE a session is being
    *  created (after Approve, before its run marker appears). NOT the run itself — that is an
    *  inline RunBlock at the run marker's slot. */
@@ -495,7 +499,7 @@ export function AkisChat({
               content={m.content}
               streaming={isStreaming(m)}
               onBuild={onBuild ? handleBuild : undefined}
-              building={building}
+              building={buildStarting ?? building}
               isSpecStarted={isSpecStarted}
             />
           )
