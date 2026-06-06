@@ -20,7 +20,9 @@ export function ideaTitle(idea: string): string {
 }
 
 const KEY = 'akis_recent_builds'
-const MAX = 8
+/** Cap on retained recent builds — exported so the studio's live-state merge uses the SAME bound. */
+export const RECENT_MAX = 8
+const MAX = RECENT_MAX
 
 /** Load recent builds (newest first). Safe against malformed/absent storage. */
 export function loadRecentBuilds(store: Pick<Storage, 'getItem'> = localStorage): RecentBuild[] {

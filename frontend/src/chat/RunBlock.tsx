@@ -68,6 +68,9 @@ export function RunBlock({
   const onProceed = drive(id => api.resolveCritic(id, 'proceed'))
   const onAbandon = drive(id => api.resolveCritic(id, 'abandon'))
   const onRetry = drive(id => api.retryRun(id))
+  // push_failed RETRY must confirm THIS run's session (not the studio's active-run confirm) — a
+  // non-active run's retry would otherwise push the wrong session. Bound to sessionId via drive().
+  const onConfirmRecovery = drive(id => api.confirm(id))
   const acting = busy || recovering
 
   // Per-run stale-session detection: a run marker persists only sessionId+idea, so on reload the
@@ -132,7 +135,7 @@ export function RunBlock({
       {live.messages.length > 0 && (
         <div className="mt-3 flex flex-col gap-4">
           {live.messages.map(m => (
-            <ChatBubble key={m.id} m={m} onApprove={onApprove} onConfirm={onConfirm}
+            <ChatBubble key={m.id} m={m} onApprove={onApprove} onConfirm={onConfirm} onConfirmRecovery={onConfirmRecovery}
               onProceed={onProceed} onAbandon={onAbandon} onRetry={onRetry} busy={acting} />
           ))}
         </div>

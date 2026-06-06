@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
-import { ChatThread, RecoveryBubble } from './ChatThread.js'
+import { ChatThread, RecoveryBubble, ChatBubble } from './ChatThread.js'
 import { ChatStudio } from './ChatStudio.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { ApiClient } from '../api/client.js'
@@ -44,6 +44,14 @@ describe('RecoveryBubble', () => {
     expect(onProceed).toHaveBeenCalled()
     await userEvent.click(screen.getByRole('button', { name: 'Abandon' }))
     expect(onAbandon).toHaveBeenCalled()
+  })
+  it('push_failed RETRY uses onConfirmRecovery (this run\'s session), NOT the active-run onConfirm', async () => {
+    const onConfirm = vi.fn(); const onConfirmRecovery = vi.fn()
+    render(wrap(<ChatBubble m={{ id: 'r', kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }}
+      onApprove={() => {}} onConfirm={onConfirm} onConfirmRecovery={onConfirmRecovery} />))
+    await userEvent.click(screen.getByRole('button'))
+    expect(onConfirmRecovery).toHaveBeenCalled()
+    expect(onConfirm).not.toHaveBeenCalled() // the run-block's own session is confirmed, never the active one
   })
   it('a RESOLVED recovery renders nothing (the flow moved on — the next bubble carries the outcome)', () => {
     const { container } = render(wrap(<RecoveryBubble m={{ id: 'r', kind: 'recovery', recovery: 'critic_resolution', state: 'resolved' }}

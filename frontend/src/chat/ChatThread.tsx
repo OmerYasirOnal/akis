@@ -221,10 +221,13 @@ export function DoneBubble({ m }: { m: DoneMsg }) {
 
 /** Render ONE folded bubble by kind — the shared dispatcher reused by both ChatThread (below)
  *  and RunBlock (inline). Narration is suppressed (returns null). */
-export function ChatBubble({ m, onApprove, onConfirm, onProceed, onAbandon, onRetry, busy }: {
+export function ChatBubble({ m, onApprove, onConfirm, onConfirmRecovery, onProceed, onAbandon, onRetry, busy }: {
   m: ChatMessage; onApprove: () => void; onConfirm: () => void
-  /** Recovery handlers — only the 'recovery' bubble uses them; optional so non-recovery callers omit. */
-  onProceed?: () => void; onAbandon?: () => void; onRetry?: () => void; busy?: boolean
+  /** Recovery handlers — only the 'recovery' bubble uses them; optional so non-recovery callers omit.
+   *  `onConfirmRecovery` is the push_failed RETRY: it must target THIS run's session (bound by the
+   *  caller), NOT the active-run confirm `onConfirm` uses for the push_confirm GATE — a non-active
+   *  run's retry would otherwise confirm the wrong (active) session. Falls back to onConfirm. */
+  onConfirmRecovery?: () => void; onProceed?: () => void; onAbandon?: () => void; onRetry?: () => void; busy?: boolean
 }) {
   const noop = (): void => {}
   switch (m.kind) {
@@ -232,7 +235,7 @@ export function ChatBubble({ m, onApprove, onConfirm, onProceed, onAbandon, onRe
     case 'narration': return <NarrationBubble />
     case 'agent': return <AgentBubble m={m} />
     case 'gate': return <GateBubble m={m} onApprove={onApprove} onConfirm={onConfirm} {...(busy !== undefined ? { busy } : {})} />
-    case 'recovery': return <RecoveryBubble m={m} onProceed={onProceed ?? noop} onAbandon={onAbandon ?? noop} onRetry={onRetry ?? noop} onConfirm={onConfirm} {...(busy !== undefined ? { busy } : {})} />
+    case 'recovery': return <RecoveryBubble m={m} onProceed={onProceed ?? noop} onAbandon={onAbandon ?? noop} onRetry={onRetry ?? noop} onConfirm={onConfirmRecovery ?? onConfirm} {...(busy !== undefined ? { busy } : {})} />
     case 'verify': return <VerifyBubble m={m} />
     case 'code_review': return <CodeReviewBubble m={m} />
     case 'preview': return <PreviewBubble m={m} />

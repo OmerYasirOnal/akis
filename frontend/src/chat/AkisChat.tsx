@@ -217,7 +217,11 @@ export function AkisChat({
         // a non-array, and `first.id` on undefined would crash the whole chat).
         const list = Array.isArray(raw) ? raw : []
         setProviders(list)
-        const first = list[0]
+        // Seed from the first AVAILABLE provider, not list[0] (functional fix): seeding an
+        // UNAVAILABLE provider made every chat request 400 (NoKey) on an instance whose default/
+        // shared key is on a DIFFERENT provider. If none is available, leave it empty so
+        // chatOverrides() omits provider/model and the server picks its own configured default.
+        const first = list.find(p => p.available !== false)
         if (!first) return
         setModelPref(prev => (prev.provider ? prev : { ...prev, provider: first.id, model: first.defaultModel }))
       })

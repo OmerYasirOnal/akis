@@ -32,7 +32,12 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
   const [model, setModel] = useState(selected.model)
   const [effort, setEffort] = useState<Effort>(selected.effort)
 
+  // Don't let a stale/unavailable provider selection be committed (functional fix): applying one
+  // would make every request 400 (NoKey). The Apply button is disabled when the chosen provider is
+  // unavailable, and apply() guards as a backstop.
+  const chosenAvailable = providers.find(p => p.id === provider)?.available !== false
   const apply = (): void => {
+    if (!chosenAvailable) return
     onSelect({ provider, model, effort })
     onClose?.()
   }
@@ -174,7 +179,9 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
           <button
             type="button"
             onClick={apply}
-            className="rounded-lg bg-[#07D1AF] px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-[#07D1AF]/90"
+            disabled={!chosenAvailable}
+            title={chosenAvailable ? undefined : t('chat.picker.noKey')}
+            className="rounded-lg bg-[#07D1AF] px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-[#07D1AF]/90 disabled:opacity-40"
           >
             {t('chat.picker.apply')}
           </button>

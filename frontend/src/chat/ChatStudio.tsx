@@ -5,7 +5,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import { specSeedFromMarkdown } from './buildSpec.js'
 import { AkisChat } from './AkisChat.js'
 import { clearThread, saveThread, type ThreadNode } from './akisThread.js'
-import { loadRecentBuilds, recordRecentBuild, type RecentBuild } from './recentBuilds.js'
+import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
@@ -121,6 +121,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
    *  sits right after the greeting; the restored turns follow it (the common case — questions
    *  asked about a build — reads chronologically under its run-block). */
   const seedRun = (id: string, idea: string, chat?: SessionState['chat']): void => {
+    // Reopening a build REPLACES the spine, so an in-flight active run would be orphaned (its
+    // run-block unmounts; it keeps running headless server-side). Cancel it first — mirrors newChat /
+    // startBuild. Skip when reopening the SAME id, and on a terminal run (409s, caught = no-op).
+    if (activeSessionId && activeSessionId !== id && !isTerminalStatus(backendStatus)) {
+      void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient */ })
+    }
     const restored: ThreadNode[] = (chat ?? [])
       .filter(turn => turn.content.trim().length > 0)
       .map(turn => ({ role: turn.role, content: turn.content }))
@@ -217,8 +223,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // The NEW build becomes the active run. codeFiles reset to the new session's snapshot effect;
       // editsBase reflects the new session (the snapshot effect re-reads it).
       setActiveSessionId(s.id); setActiveIdea(idea); setActiveView(emptyView(s.id)); setStartingSpec(undefined)
+      // SYNCHRONOUS reset of the PRIOR run's snapshot-derived state (mirrors seedRun) — the new
+      // active run's snapshot effect repopulates from getSession(s.id). Without this, the prior run's
+      // backendStatus/codeFiles linger until that async fetch lands, and in that window a rapid 2nd
+      // approval (a) reads a stale terminal backendStatus and so does NOT cancel this in-flight run
+      // (orphaned, token-burning), and (b) base-merges onto the wrong run; the rail also bleeds the
+      // prior result onto this fresh build. Clearing here closes the cross-run race.
+      setBackendStatus(undefined); setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setPublishRecord(undefined)
       syncUrl(s.id)
-      setRecent(recordRecentBuild({ id: s.id, idea, ts: Date.now() }))
+      setRecent(prev => [{ id: s.id, idea, ts: Date.now() }, ...prev.filter(b => b.id !== s.id)].slice(0, RECENT_MAX))
+      recordRecentBuild({ id: s.id, idea, ts: Date.now() }) // persist to localStorage (return ignored — we merge into live state above)
       return s.id
     } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)); setStartingSpec(undefined); return undefined }
     finally { setBusy(false); startingRef.current = false }
