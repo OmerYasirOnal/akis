@@ -11,7 +11,11 @@ export interface ProvidersDeps {
 }
 
 function envKeyPresent(env: Record<string, string | undefined>, provider: Exclude<ProviderId, 'mock'>): boolean {
-  return CATALOG[provider].keyEnvVars.some(v => !!env[v])
+  // HONESTY FIX: also honour the generic AI_API_KEY fallback that createProvider resolves
+  // (firstPresentKey ?? AI_API_KEY ?? keyStore). Without this, a self-host whose only key is the
+  // generic AI_API_KEY (the common shared/ready-key case) ran real builds while the model chip
+  // falsely showed "NO KEY" — the env key the server is actually using was invisible to the UI.
+  return CATALOG[provider].keyEnvVars.some(v => !!env[v]) || !!env.AI_API_KEY
 }
 
 /**

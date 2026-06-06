@@ -37,6 +37,13 @@ describe('provider endpoints', () => {
     expect(res.json().find((p: { id: string }) => p.id === 'anthropic').available).toBe(true)
   })
 
+  it('reports available=true under the GENERIC AI_API_KEY fallback (the chip must not show NO KEY while real builds run on it)', async () => {
+    const res = await app({ AI_API_KEY: 'sk-generic-x' }).inject({ method: 'GET', url: '/api/providers' })
+    // createProvider resolves AI_API_KEY as the key for the selected real provider, so the chip
+    // must report it available — otherwise the UI says "NO KEY" while the server builds for real.
+    expect(res.json().find((p: { id: string }) => p.id === 'anthropic').available).toBe(true)
+  })
+
   it('PUT stores a key (last4 only, never echoes), GET then shows available, DELETE removes', async () => {
     const a = app(); const cookie = await authCookie(a)
     const put = await a.inject({ method: 'PUT', url: '/api/providers/anthropic/key', payload: { apiKey: 'sk-ant-12345' }, headers: { cookie } })
