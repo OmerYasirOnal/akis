@@ -4,6 +4,8 @@ Clean rebuild of [AKIS](../akis-platform) — an AI agent orchestration engine w
 
 > **Status: implemented (MVP, evolving).** The end-to-end agentic core runs today — idea → spec → human approval → code → real test → critic → human push-confirm — on a mock provider by default and on real LLMs (Claude/OpenAI/OpenRouter/Gemini) when a key is configured. Backend + frontend + live preview are built and tested. (`backend` + `frontend` + `shared` pnpm workspace; backend `pnpm test` is the gate.)
 
+> 🔏 **See a real, verifiable build:** [`docs/showcase/`](docs/showcase/) holds an actual AKIS build's **signed Build Provenance Attestation** — verify its Ed25519 signature yourself with `node docs/showcase/verify-attestation.mjs` (zero deps, zero AKIS code). This is what a *provable* AI build looks like.
+
 ## One-line thesis
 
 Not "more *agentic*" for its own sake — **agentic, but bounded and verifiable.** A main orchestrator agent ("AKIS") decides which sub-agents (Scribe / Proto / Trace / Critic) to dispatch, and the thesis is held by **3 inviolable structural safeguards** (which surface as the 4 properties below), not a rigid FSM:
