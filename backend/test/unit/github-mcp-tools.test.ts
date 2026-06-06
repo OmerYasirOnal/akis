@@ -9,6 +9,10 @@ import { EventBus } from '../../src/events/bus.js'
 import type { KnowledgePort, RetrieveQuery } from '../../src/knowledge/KnowledgePort.js'
 import type { LlmProvider, ChatResult } from '../../src/agent/LlmProvider.js'
 import type { KnowledgeChunk, AkisEvent } from '@akis/shared'
+import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
+import { mintApprovedSpec } from '../../src/gates/specGate.js'
+import { approveSpec } from '../helpers/tokens.js'
+import { initialSession } from '@akis/shared'
 
 /**
  * Unit tests for the READ-ONLY GitHub-via-MCP TOOL-BUILD layer: githubMcpTools.ts
@@ -469,6 +473,96 @@ describe('ScribeAgent github-mcp integration (RAG-on tool loop)', () => {
     expect(out.type).toBe('spec')
     // Degraded to today's RAG-on prompt: github hint absent.
     expect(lastSystem()).not.toMatch(/github_\* tools/i)
+  })
+})
+
+describe('ScribeAgent github-mcp WITHOUT RAG (the ungate)', () => {
+  it('surfaces github_ tools with RAG OFF (no knowledge port): github hint present, retrieve_knowledge never registered', async () => {
+    const bus = new EventBus()
+    const seen = collect(bus, 's1')
+    const { provider, lastSystem } = toolThenSpecProvider('github_get_file_contents')
+    const t = new FakeTransport({ advertise: [READ_TOOL], callResult: () => ({ text: 'FILE', isError: false }) })
+    const { pool } = poolWith(t)
+    // RAG OFF: no ragEnabled, no knowledge port. Pre-ungate, Scribe would have gone single-shot with
+    // NO tools, so github could never surface. This pins the headline of the change.
+    const scribe = new ScribeAgent({ bus, provider })
+    const out = await scribe.run({
+      sessionId: 's1', laneId: 'main', idea: 'a todo app',
+      githubMcp: { pool, ownerId: 'o', token: SECRET },
+    })
+    expect(out.type).toBe('spec')
+    expect(t.callLog.map(c => c.name)).toEqual(['get_file_contents']) // github tool ran via the live transport
+    expect(lastSystem()).toMatch(/github_\* tools/i)                  // github hint present
+    expect(lastSystem()).not.toMatch(/retrieve_knowledge/i)          // RAG hint absent (RAG off → no rag tool)
+    expect(JSON.stringify(seen)).not.toContain(SECRET)
+  })
+})
+
+describe('ProtoAgent github-mcp gather (SP1 Proto wiring)', () => {
+  function approvedFor(): ReturnType<typeof mintApprovedSpec> {
+    const spec = { title: 'T', body: 'B' }
+    return mintApprovedSpec({ ...initialSession('s1', 'x'), spec, approval: approveSpec(spec) })
+  }
+
+  it('gathers read-only repo context and appends it (untrusted) to the code prompt; returns it for caching', async () => {
+    const bus = new EventBus()
+    const seen = collect(bus, 's1')
+    const t = new FakeTransport({ advertise: [READ_TOOL], callResult: () => ({ text: 'const x = 1', isError: false }) })
+    const { pool } = poolWith(t)
+    let codeUser = ''
+    let turn = 0
+    const provider: LlmProvider = {
+      name: 'fake', model: 'fake',
+      async chat(req): Promise<ChatResult> {
+        turn++
+        if (turn === 1) return { toolCalls: [{ name: 'github_get_file_contents', args: { path: 'README.md' }, id: 'g1' }] } // gather: read
+        if (turn === 2) return { text: 'Stack: vanilla JS; key file index.html.' }                                          // gather: summary
+        codeUser = String((req.messages.find(m => m.role === 'user')?.content) ?? '')                                        // code production
+        return { text: '{"files":[{"filePath":"index.html","content":"<h1>hi</h1>"}]}' }
+      },
+    }
+    const proto = new ProtoAgent({ bus, provider })
+    const out = await proto.run({ sessionId: 's1', laneId: 'main', approved: approvedFor(), githubMcp: { pool, ownerId: 'o', token: SECRET } })
+    expect(out.files.map(f => f.filePath)).toEqual(['index.html'])
+    expect(t.callLog.map(c => c.name)).toEqual(['get_file_contents'])  // the gather hit the live read-only transport
+    expect(codeUser).toMatch(/CONNECTED-REPO CONTEXT/)                 // untrusted-context header reached the code prompt
+    expect(codeUser).toMatch(/untrusted REFERENCE/i)
+    expect(codeUser).toMatch(/Stack: vanilla JS/)                     // the gathered summary itself
+    expect(out.repoContext).toMatch(/CONNECTED-REPO CONTEXT/)         // returned so the orchestrator can cache it
+    expect(JSON.stringify(seen)).not.toContain(SECRET)               // the token never reaches the bus
+  })
+
+  it('graceful-degrade: a McpUnavailable connection ⇒ Proto still returns files, NO repo header', async () => {
+    const bus = new EventBus()
+    const t = new FakeTransport({ onInit: () => { throw new McpUnavailableError('docker missing') } })
+    const { pool } = poolWith(t)
+    let codeUser = ''
+    const provider: LlmProvider = {
+      name: 'fake', model: 'fake',
+      async chat(req): Promise<ChatResult> { codeUser = String((req.messages.find(m => m.role === 'user')?.content) ?? ''); return { text: '{"files":[{"filePath":"index.html","content":"x"}]}' } },
+    }
+    const proto = new ProtoAgent({ bus, provider })
+    const out = await proto.run({ sessionId: 's1', laneId: 'main', approved: approvedFor(), githubMcp: { pool, ownerId: 'o', token: SECRET } })
+    expect(out.files.map(f => f.filePath)).toEqual(['index.html'])
+    expect(codeUser).not.toMatch(/CONNECTED-REPO CONTEXT/)
+    expect(out.repoContext).toBe('')
+  })
+
+  it('pre-provided repoContext ⇒ Proto does NOT re-gather (the per-iterate caching path)', async () => {
+    const bus = new EventBus()
+    const t = new FakeTransport({ advertise: [READ_TOOL] })
+    const { pool } = poolWith(t)
+    let codeUser = ''
+    const provider: LlmProvider = {
+      name: 'fake', model: 'fake',
+      async chat(req): Promise<ChatResult> { codeUser = String((req.messages.find(m => m.role === 'user')?.content) ?? ''); return { text: '{"files":[{"filePath":"a.js","content":"1"}]}' } },
+    }
+    const proto = new ProtoAgent({ bus, provider })
+    const out = await proto.run({ sessionId: 's1', laneId: 'main', approved: approvedFor(), githubMcp: { pool, ownerId: 'o', token: SECRET }, repoContext: '\nPREGATHERED\n' })
+    expect(out.files.map(f => f.filePath)).toEqual(['a.js'])
+    expect(t.callLog).toHaveLength(0)        // NO github read — the pre-provided context skipped the gather entirely
+    expect(codeUser).toContain('PREGATHERED')
+    expect(out.repoContext).toBe('\nPREGATHERED\n')
   })
 })
 

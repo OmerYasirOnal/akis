@@ -308,13 +308,23 @@ export class Orchestrator {
     // (which describes the candidate) and the files Proto sees stay consistent. A fresh
     // build (no base) keeps today's full-regeneration iterate semantics, byte-identical.
     let baseFiles = session.base?.files
+    // SP1: resolve the per-owner READ-ONLY github handle ONCE for the whole build loop (the same
+    // githubMcpFor the Scribe draft uses). When a connection resolves, Proto runs a bounded
+    // github-read gather pass before each code attempt; absent ⇒ Proto is byte-identical to today.
+    const githubMcp = session.ownerId ? this.s.githubMcpFor?.(session.ownerId) : undefined
+    // Proto gathers the bounded github repo context ONCE on attempt 0 and returns it; we cache it
+    // here and thread it back on every iterate round so the github read pass never re-runs per attempt.
+    let repoContext: string | undefined
     for (;;) {
       const protoCtx = await this.ctx(id, `${approved.spec.title}\n${approved.spec.body}`)
       const proto = await this.s.proto.run({
         sessionId: id, laneId: 'main', approved, ctx: protoCtx,
         ...(feedback !== undefined ? { feedback } : {}),
         ...(baseFiles?.length ? { baseFiles } : {}),
+        ...(githubMcp ? { githubMcp } : {}),
+        ...(repoContext !== undefined ? { repoContext } : {}),
       })
+      repoContext = proto.repoContext // cache the (gathered-once) context for the next iterate round
       const candidate = mergeFiles(baseFiles, proto.files)
       lastFiles = candidate
 

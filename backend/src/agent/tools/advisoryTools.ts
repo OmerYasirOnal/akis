@@ -13,10 +13,13 @@ import { buildGithubMcpTools, type GithubMcpDeps } from './githubMcpTools.js'
  */
 export function buildAdvisoryTools(
   capabilities: ReadonlySet<string>,
-  deps: { knowledge: KnowledgePort; sessionId: string },
+  // `knowledge` is OPTIONAL: it is consulted ONLY for the retrieve_knowledge capability. A
+  // github-only caller (RAG off) passes no knowledge port and gets a registry with no RAG tool —
+  // so a producer can surface read-only github_ tools WITHOUT RAG being enabled.
+  deps: { knowledge?: KnowledgePort; sessionId: string },
 ): ToolRegistry {
   const tools = new ToolRegistry()
-  if (capabilities.has('retrieve_knowledge')) {
+  if (capabilities.has('retrieve_knowledge') && deps.knowledge) {
     tools.register(retrieveKnowledgeTool({ knowledge: deps.knowledge, sessionId: deps.sessionId }))
   }
   return tools
@@ -55,7 +58,7 @@ export interface AdvisoryToolsWithGithub {
  */
 export async function buildAdvisoryToolsWithGithub(
   capabilities: ReadonlySet<string>,
-  deps: { knowledge: KnowledgePort; sessionId: string; githubMcp?: GithubMcpDeps },
+  deps: { knowledge?: KnowledgePort; sessionId: string; githubMcp?: GithubMcpDeps },
 ): Promise<AdvisoryToolsWithGithub> {
   const ragOnly = buildAdvisoryTools(capabilities, deps)
   if (!deps.githubMcp) return { registry: ragOnly, release: NOOP_RELEASE }

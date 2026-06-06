@@ -181,36 +181,39 @@ export class ScribeAgent {
     const { sessionId, laneId } = input
     const userMsg = input.idea + renderKnowledge(input.ctx)
 
-    if (!this.deps.ragEnabled || !this.deps.knowledge) {
-      // RAG OFF — single-shot dispatch (no tools advertised). `this.base` is SCRIBE_SYSTEM
+    // The tool-loop path runs when RAG is on (retrieve_knowledge) OR the owner has a connected
+    // GitHub repo (read-only github_ tools) — the two are INDEPENDENT (github no longer requires
+    // AKIS_RAG=1). When NEITHER applies it's the byte-identical single-shot default.
+    const wantRag = !!(this.deps.ragEnabled && this.deps.knowledge)
+    const wantGithub = !!input.githubMcp
+    if (!wantRag && !wantGithub) {
+      // No tools — single-shot dispatch (byte-identical to today). `this.base` is SCRIBE_SYSTEM
       // unless the DI layer injected a skill-composed prompt. A single non-streaming chat with an
       // explicit output budget so a full spec never truncates mid-JSON.
       return this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: userMsg }], maxTokens: 8192 })
     }
 
-    // RAG ON — reuse the advisory choke point + bounded loop. The registry holds
-    // ONLY retrieve_knowledge (read-only, zero gate authority); the loop's turn cap
-    // bounds it. The system prompt gains the retrieve_knowledge hint ONLY here, so
-    // the RAG-off prompt above is untouched. Skill injection (if any) is already
-    // folded into `this.base`, so it flows into BOTH branches.
-    // SP1: when the owner has a connected GitHub repo, ALSO surface read-only github_ tools via
-    // the same single allow-list choke point. buildAdvisoryToolsWithGithub fails closed — any
-    // MCP failure (no Docker / bad token / server error) returns the RAG-only registry, so this
-    // path degrades to today's RAG-on behavior, never a crash. github_ tools register ONLY here.
+    // Reuse the single allow-list choke point + the bounded loop. The registry holds ONLY
+    // retrieve_knowledge (when RAG) and/or the allow-listed read-only github_ tools — zero gate
+    // authority; the loop's turn cap bounds it. buildAdvisoryToolsWithGithub FAILS CLOSED — any MCP
+    // failure (no Docker / bad token / server error) drops github tools, so this path degrades to
+    // the RAG-only (or, RAG-off, the no-tools) shape, never a crash. Skill injection is already in
+    // `this.base`, so it flows into every branch.
+    const caps: ReadonlySet<string> = wantRag ? new Set(['retrieve_knowledge']) : new Set<string>()
     const { registry: tools, release } = await buildAdvisoryToolsWithGithub(
-      new Set(['retrieve_knowledge']),
+      caps,
       {
-        knowledge: this.deps.knowledge,
+        ...(this.deps.knowledge ? { knowledge: this.deps.knowledge } : {}),
         sessionId,
         ...(input.githubMcp ? { githubMcp: input.githubMcp } : {}),
       },
     )
-    // Extend the hint for github ONLY when a github_ tool actually registered (so a degraded/
-    // absent connection leaves the prompt at the byte-identical RAG-on prompt).
+    // Hints are additive + conditional: the RAG hint ONLY when RAG is on, the github hint ONLY when
+    // a github_ tool actually registered (a degraded/absent connection adds nothing). With neither
+    // hint the prompt is just `this.base` (the github-off + a non-registering connection case).
     const hasGithub = tools.specs().some(s => s.name.startsWith('github_'))
-    const system = hasGithub
-      ? `${this.base}\n${SCRIBE_RAG_HINT}\n${SCRIBE_GITHUB_HINT}`
-      : `${this.base}\n${SCRIBE_RAG_HINT}`
+    const hints = [wantRag ? SCRIBE_RAG_HINT : '', hasGithub ? SCRIBE_GITHUB_HINT : ''].filter(Boolean).join('\n')
+    const system = hints ? `${this.base}\n${hints}` : this.base
     // REF-HELD-ACROSS-LOOP (findings #4/#6): buildGithubMcpTools holds the pool ref for the
     // ENTIRE tool loop (not just the build), so the pool's 60s idle timer can never fire and
     // close the live Docker child WHILE a github_ handler still holds the captured transport
