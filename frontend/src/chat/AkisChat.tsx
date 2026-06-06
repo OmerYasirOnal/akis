@@ -136,7 +136,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
 
 export function AkisChat({
   api, onBuild, building, starting,
-  activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView,
+  activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView, onReactivate, onActionError,
   baseUrl = '', makeClient,
 }: {
   api: ApiClient
@@ -163,6 +163,10 @@ export function AkisChat({
   onNewBuild?: () => void
   /** The ACTIVE run reports its folded view up so the studio rail/header track it. */
   onActiveView?: (view: SessionView) => void
+  /** Re-activate a non-active run (a recovery/gate action on an older block makes it live again). */
+  onReactivate?: (id: string) => void
+  /** Surface a run-block recovery/gate action failure to the studio's error banner. */
+  onActionError?: (msg: string) => void
   baseUrl?: string
   makeClient?: () => EventStreamClient
 }) {
@@ -452,6 +456,8 @@ export function AkisChat({
                 baseUrl={baseUrl}
                 {...(makeClient ? { makeClient } : {})}
                 {...(isActive && onActiveView ? { onView: onActiveView } : {})}
+                {...(onReactivate ? { onReactivate } : {})}
+                {...(onActionError ? { onActionError } : {})}
               />
             )
           }

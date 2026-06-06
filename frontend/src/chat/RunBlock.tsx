@@ -29,10 +29,17 @@ import { ideaTitle } from './recentBuilds.js'
  */
 export function RunBlock({
   sessionId, idea, terminal = false, api, onApprove, onConfirm, onNewBuild,
-  baseUrl = '', makeClient, onView, active = false, busy = false,
+  baseUrl = '', makeClient, onView, active = false, busy = false, onReactivate, onActionError,
 }: {
   sessionId: string
   idea: string
+  /** Re-activate THIS run (make it the studio's live, streaming active run) — called before a
+   *  recovery/gate action on a NON-active block so its result streams in instead of silently
+   *  no-op'ing on a frozen, one-shot-folded block. */
+  onReactivate?: (id: string) => void
+  /** Surface a recovery/gate action failure to the studio's error banner (drive() used to swallow
+   *  every failure, leaving a stuck action with no feedback). 409s (a gate refusal) stay quiet. */
+  onActionError?: (msg: string) => void
   /** True for an older/reopened run: fold the /log once then close (only the active run streams). */
   terminal?: boolean
   api: ApiClient
@@ -62,8 +69,15 @@ export function RunBlock({
   const [recovering, setRecovering] = useState(false)
   const drive = (fn: (id: string) => Promise<unknown>) => (): void => {
     if (recovering) return
+    // Re-activate a NON-active run BEFORE firing, so its result streams in live (a terminal block
+    // folds /log once + never reconnects — the action would otherwise fire with no visible outcome).
+    if (!active) onReactivate?.(sessionId)
     setRecovering(true)
-    void Promise.resolve(fn(sessionId)).catch(() => { /* the SSE stream reflects the outcome */ }).finally(() => setRecovering(false))
+    void Promise.resolve(fn(sessionId))
+      // Surface a real failure (the SSE stream reflects a SUCCESS, but a rejected POST had no
+      // feedback). A 409 is an expected gate/precondition refusal → stay quiet, like the studio.
+      .catch((e: unknown) => { if (!(ApiError.is(e) && e.status === 409)) onActionError?.(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) })
+      .finally(() => setRecovering(false))
   }
   const onProceed = drive(id => api.resolveCritic(id, 'proceed'))
   const onAbandon = drive(id => api.resolveCritic(id, 'abandon'))

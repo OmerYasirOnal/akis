@@ -257,6 +257,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     void api.run(activeSessionId).catch(e => setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)))
   }), [act, api, activeSessionId])
   const confirm = useCallback((): Promise<void> => act(async () => { if (activeSessionId) await api.confirm(activeSessionId) }), [act, api, activeSessionId])
+  // Re-activate an OLDER run (a recovery/gate action fired on a non-active, one-shot-folded block):
+  // make it the live active run so its result streams in. Resets the snapshot-derived state for the
+  // switch (the snapshot effect repopulates from getSession). Same reset discipline as startBuild/seedRun.
+  const reactivateRun = useCallback((id: string): void => {
+    if (id === activeSessionId) return
+    setActiveSessionId(id); setActiveView(emptyView(id)); setActionError(undefined)
+    setBackendStatus(undefined); setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setPublishRecord(undefined); setSessionGone(false)
+    syncUrl(id)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSessionId])
   // Localized note for a failed/unsupported preview boot (carries the backend's short reason).
   const previewFailNote = (e: { status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; reason?: string }): string =>
     t(e.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed') + (e.reason ? `: ${e.reason}` : '')
@@ -358,6 +368,8 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       onConfirm={confirm}
       onNewBuild={newChat}
       onActiveView={setActiveView}
+      onReactivate={reactivateRun}
+      onActionError={setActionError}
       starting={startingWorkflowCard}
     />
   )
