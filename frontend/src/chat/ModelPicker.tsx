@@ -81,6 +81,13 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
                         {t('chat.picker.noKey')}
                       </span>
                     )}
+                    {/* #18 managed-key honesty: show WHOSE key backs an available provider so a
+                        user knows they're on the instance's shared key (vs their own). */}
+                    {p.available !== false && p.keySource && p.keySource !== 'none' && (
+                      <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] font-medium text-slate-400">
+                        {t(p.keySource === 'user' ? 'chat.picker.keySource.user' : 'chat.picker.keySource.shared')}
+                      </span>
+                    )}
                   </div>
                   <div className="space-y-1.5">
                     {p.models.map(m => {

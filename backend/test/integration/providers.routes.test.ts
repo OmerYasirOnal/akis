@@ -30,11 +30,14 @@ describe('provider endpoints', () => {
     expect(Array.isArray(body)).toBe(true)
     expect(body.find((p: { id: string }) => p.id === 'anthropic')).toBeTruthy()
     expect(body.every((p: { available: boolean }) => p.available === false)).toBe(true) // no keys
+    expect(body.every((p: { keySource: string }) => p.keySource === 'none')).toBe(true) // #18: honest key source
   })
 
-  it('reports available=true when an env key is present', async () => {
+  it('reports available=true + keySource "shared" when an env key is present (managed-key honesty)', async () => {
     const res = await app({ ANTHROPIC_API_KEY: 'sk-ant-x' }).inject({ method: 'GET', url: '/api/providers' })
-    expect(res.json().find((p: { id: string }) => p.id === 'anthropic').available).toBe(true)
+    const anthropic = res.json().find((p: { id: string }) => p.id === 'anthropic')
+    expect(anthropic.available).toBe(true)
+    expect(anthropic.keySource).toBe('shared') // running on the instance's server key
   })
 
   it('reports available=true under the GENERIC AI_API_KEY fallback (the chip must not show NO KEY while real builds run on it)', async () => {
@@ -52,7 +55,9 @@ describe('provider endpoints', () => {
     expect(JSON.stringify(put.json())).not.toContain('sk-ant-12345')
 
     const after = (await a.inject({ method: 'GET', url: '/api/providers' })).json()
-    expect(after.find((p: { id: string }) => p.id === 'anthropic').available).toBe(true)
+    const anthropic = after.find((p: { id: string }) => p.id === 'anthropic')
+    expect(anthropic.available).toBe(true)
+    expect(anthropic.keySource).toBe('user') // the caller's OWN key now backs it (not shared)
 
     const del = await a.inject({ method: 'DELETE', url: '/api/providers/anthropic/key', headers: { cookie } })
     expect(del.statusCode).toBe(200)

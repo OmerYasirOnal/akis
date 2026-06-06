@@ -91,6 +91,9 @@ export interface ProviderInfo {
   id: string
   label: string
   available: boolean
+  /** Whose key backs this provider (#18 managed-key honesty): 'user' = the caller's own key;
+   *  'shared' = the instance's server/env key (managed); 'none' = no key available. */
+  keySource?: 'user' | 'shared' | 'none'
   defaultModel: string
   models: ModelOption[]
   last4?: string

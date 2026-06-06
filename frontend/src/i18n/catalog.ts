@@ -179,6 +179,8 @@ export const STRINGS = {
     'chat.chip.demo': 'DEMO',
     'chat.chip.nokey': 'NO KEY',
     'chat.picker.noKey': 'no API key — add one in Settings',
+    'chat.picker.keySource.user': 'Your key',
+    'chat.picker.keySource.shared': 'Shared key',
     'akis.error.noKey': 'The selected provider has no API key configured. Add one in Settings → Providers, or switch the model from the chip below.',
     // ── Per-user token quota (multi-tenant safety) ──
     'akis.error.quota': 'You’ve reached your token quota for this period.',
@@ -879,6 +881,8 @@ export const STRINGS = {
     'chat.chip.demo': 'DEMO',
     'chat.chip.nokey': 'ANAHTAR YOK',
     'chat.picker.noKey': 'API anahtarı yok — Ayarlar’dan ekleyin',
+    'chat.picker.keySource.user': 'Senin anahtarın',
+    'chat.picker.keySource.shared': 'Paylaşımlı anahtar',
     'akis.error.noKey': 'Seçili sağlayıcının API anahtarı yapılandırılmamış. Ayarlar → Sağlayıcılar’dan ekleyin ya da aşağıdaki çipten modeli değiştirin.',
     // ── Kullanıcı başına token kotası (çok kiracılı güvenlik) ──
     'akis.error.quota': 'Bu dönem için token kotana ulaştın.',

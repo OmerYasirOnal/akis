@@ -29,10 +29,15 @@ export async function registerProviderRoutes(app: FastifyInstance, deps: Provide
       const info = CATALOG[id]
       const status = deps.keyStore.status(id)
       const available = envKeyPresent(deps.env, id) || status.configured
+      // KEY SOURCE (managed-key honesty, #18): 'user' = the caller's own KeyStore key; 'shared' =
+      // running on the instance's server/env key (the common managed case — transparent so a user
+      // knows whose key + quota they're on, and can bring their own); 'none' = unavailable.
+      const keySource: 'user' | 'shared' | 'none' = status.configured ? 'user' : envKeyPresent(deps.env, id) ? 'shared' : 'none'
       return {
         id,
         label: info.label,
         available,
+        keySource,
         defaultModel: info.defaultModel,
         models: info.models,
         ...(status.last4 ? { last4: status.last4 } : {}),
