@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import type { FastifyInstance } from 'fastify'
-import { buildServer, persistenceRequired, resolveDemoMode, demoModeFatalInProd } from '../../src/api/server.js'
+import { buildServer, persistenceRequired, resolveDemoMode, demoModeFatalInProd, demoRunnerEnabled } from '../../src/api/server.js'
 import type { KeyStore } from '../../src/keys/KeyStore.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { initialSession } from '@akis/shared'
@@ -47,6 +47,21 @@ describe('resolveDemoMode (B1: demo fail-closed in prod)', () => {
     expect(resolveDemoMode({ NODE_ENV: 'production', AKIS_ALLOW_MOCK: '1', AKIS_ALLOW_DEMO_IN_PROD: '1' }))
       .toEqual({ mode: 'demo', fatal: false })
     expect(demoModeFatalInProd({ NODE_ENV: 'production', AKIS_DEMO_VERIFY: '1', AKIS_ALLOW_DEMO_IN_PROD: '1' })).toBe(false)
+  })
+})
+
+describe('demoRunnerEnabled (audit #43: AKIS_REAL_TESTS overrides a demo flag)', () => {
+  it('a demo flag alone enables the mock test runner', () => {
+    expect(demoRunnerEnabled({ AKIS_ALLOW_MOCK: '1' })).toBe(true)
+    expect(demoRunnerEnabled({ AKIS_DEMO_VERIFY: '1' })).toBe(true)
+  })
+  it('AKIS_REAL_TESTS OVERRIDES the demo flag → mock runner NOT injected (real verification wins)', () => {
+    expect(demoRunnerEnabled({ AKIS_ALLOW_MOCK: '1', AKIS_REAL_TESTS: '1' })).toBe(false)
+    expect(demoRunnerEnabled({ AKIS_DEMO_VERIFY: '1', AKIS_REAL_TESTS: '1' })).toBe(false)
+  })
+  it('no demo flag → no mock runner', () => {
+    expect(demoRunnerEnabled({})).toBe(false)
+    expect(demoRunnerEnabled({ AKIS_REAL_TESTS: '1' })).toBe(false)
   })
 })
 

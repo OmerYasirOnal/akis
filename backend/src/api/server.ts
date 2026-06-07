@@ -293,11 +293,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       // Keyless DEMO: run the loop on the deterministic mock provider (no API key).
       // Gated by `useMock` so a configured real key wins over the demo flag.
       ...(useMock ? { provider: new MockProvider() } : {}),
-      // Demo verification: a passing mock test runner so a session reaches done+preview
-      // WITHOUT real browsers — useful with REAL keys (real Claude output + a complete
-      // loop). Implied by AKIS_ALLOW_MOCK. Explicit opt-in only; the default stays
-      // fail-closed (real verification still needs AKIS_REAL_TESTS / a real >=1-test pass).
-      ...(flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY) ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
+      // Demo verification: a passing mock test runner so a session reaches done+preview WITHOUT real
+      // browsers — useful with REAL keys (real Claude output + a complete loop). Implied by
+      // AKIS_ALLOW_MOCK, BUT AKIS_REAL_TESTS OVERRIDES it (demoRunnerEnabled): a leftover/fallback
+      // demo flag can never silently bypass real verification (audit #43). Default stays fail-closed.
+      ...(demoRunnerEnabled(env) ? { testRunner: createMockTestRunner({ testsRun: 2, passed: true }) } : {}),
       // ADDITIVE: a verified build signs a durable Build Passport over its already-minted facts.
       passportSigner,
     })
@@ -716,6 +716,14 @@ export function resolveDemoMode(env: Record<string, string | undefined>): { mode
  *  explicit AKIS_ALLOW_DEMO_IN_PROD acknowledgment must refuse to boot. */
 export function demoModeFatalInProd(env: Record<string, string | undefined>): boolean {
   return resolveDemoMode(env).fatal
+}
+
+/** Whether to inject the passing MOCK test runner (demo verification). A demo flag
+ *  (AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY) turns it on — BUT `AKIS_REAL_TESTS` OVERRIDES it: real
+ *  verification must NEVER be silently bypassed by a leftover/fallback demo flag (audit #43). With
+ *  AKIS_REAL_TESTS the mock runner is not injected, so the real boot-smoke verifier is selected. */
+export function demoRunnerEnabled(env: Record<string, string | undefined>): boolean {
+  return (flag(env.AKIS_ALLOW_MOCK) || flag(env.AKIS_DEMO_VERIFY)) && !flag(env.AKIS_REAL_TESTS)
 }
 
 /** FAIL-CLOSED registration policy: AKIS executes generated code on the host with no isolation
