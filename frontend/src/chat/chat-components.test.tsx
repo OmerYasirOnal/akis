@@ -126,7 +126,8 @@ describe('ChatStudio', () => {
     act(() => fake.emit(ev({ kind: 'done', verified: true, provider: 'mock' }), 1))
     await userEvent.click(screen.getByRole('button', { name: 'Collapse preview' }))
     expect(screen.getByRole('button', { name: 'Expand preview' })).toBeInTheDocument()
-    expect(screen.getByText('Preview')).toBeInTheDocument()
+    // The collapsed-rail vertical label (a <span>, not the mobile Chat/Preview tab <button>).
+    expect(screen.getByText('Preview', { selector: 'span' })).toBeInTheDocument()
   })
 
   it('a follow-up approved spec EDITS the prior app: startSession carries baseSessionId once the prior session produced code', async () => {

@@ -187,6 +187,65 @@ describe('ChatStudio — P0-1 single spec approval (chat-approved spec seed)', (
   })
 })
 
+// ── MOBILE 390px: the preview rail must be reachable via a Chat/Preview tab toggle ──
+describe('ChatStudio — mobile chat/preview tab toggle', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  /** A studio fetch that creates a session for one approval whose getSession resolves DONE with code
+   *  files. The realistic state: code files make PreviewPanel's inner Preview⇄Code tablist render, so
+   *  the test pins that the OUTER mobile pane-switcher coexists with (and stays distinct from) it. */
+  function runFetch(): (path: string, init?: RequestInit) => Promise<Response> {
+    const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
+    return async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && init?.method === 'POST') return { ok: true, status: 201, json: async () => ({ id: 'sm', status: 'running', idea: '# TODO App\nA list.', version: 1 }), text: async () => '' } as unknown as Response
+      // DONE + code files → codeFiles non-empty → PreviewPanel's inner tablist (showTablist) renders.
+      if (path.endsWith('/sessions/sm')) return { ok: true, status: 200, json: async () => ({ id: 'sm', status: 'done', code: { files: [{ filePath: 'index.html', content: '<html/>' }] }, version: 2 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sm/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  it('once a code-producing run exists, the mobile "View" switcher coexists with PreviewPanel\'s inner tablist; its "Live view" tab stays uniquely findable and toggling works', async () => {
+    const api = new ApiClient('', vi.fn(runFetch()))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    // Idle: no mobile tablist yet (the toggle only matters once there's a preview rail to reach).
+    expect(screen.queryByRole('tablist', { name: /view/i })).toBeNull()
+
+    // Start a build → hasRun becomes true, and getSession resolves DONE-with-code.
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+
+    // Wait for the realistic coexistence: TWO tablists — the outer mobile "View" switcher AND
+    // PreviewPanel's inner "Live preview" tablist (which only appears once code files exist).
+    await waitFor(() => expect(screen.getAllByRole('tablist')).toHaveLength(2))
+    // The two tablists are distinguishable by accessible name for a screen reader (must-fix 1).
+    expect(screen.getByRole('tablist', { name: 'View' })).toBeInTheDocument()
+    expect(screen.getByRole('tablist', { name: 'Live preview' })).toBeInTheDocument()
+
+    // The mobile switcher's preview tab is "Live view" — distinct from PreviewPanel's inner "Preview"
+    // tab, so it stays UNIQUELY findable even while both tablists are mounted (must-fix 2).
+    const liveTab = screen.getByRole('tab', { name: 'Live view' })
+    const chatTab = screen.getByRole('tab', { name: 'Chat' })
+    // PreviewPanel's inner "Preview" tab also exists, and it does NOT match the mobile switcher.
+    expect(screen.getByRole('tab', { name: 'Preview' })).not.toBe(liveTab)
+    // Default lands on Chat (chat-first design).
+    expect(chatTab).toHaveAttribute('aria-selected', 'true')
+    expect(liveTab).toHaveAttribute('aria-selected', 'false')
+
+    // Tapping the mobile "Live view" tab selects it — the rail is now the foreground mobile pane.
+    await userEvent.click(liveTab)
+    expect(liveTab).toHaveAttribute('aria-selected', 'true')
+    expect(chatTab).toHaveAttribute('aria-selected', 'false')
+  })
+})
+
 // ── ANCHORED MULTI-RUN: two approvals → two inline run-blocks in ONE scroll ──
 describe('ChatStudio — anchored multi-run transcript', () => {
   beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })

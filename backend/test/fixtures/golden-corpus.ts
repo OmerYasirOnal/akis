@@ -8,9 +8,17 @@
  *
  * Each document is short (< 800 chars) so it stays a SINGLE chunk (see ingest/chunk.ts),
  * which lets the eval identify the expected chunk unambiguously by its `id` (the stable
- * sourceId stamped at ingest, surfaced as `provenance.sourceId`). Queries are paraphrases
- * — they deliberately AVOID copying the doc verbatim so the eval measures real retrieval
- * (semantic + lexical fusion), not string equality.
+ * sourceId stamped at ingest, surfaced as `provenance.sourceId`).
+ *
+ * HONEST NOTE ON QUERY VOCABULARY (corrected after review): the offline embedder is the
+ * deterministic, signed feature-hash LocalEmbeddingProvider — it is LARGELY LEXICAL (no
+ * learned semantics), so its vector half and the BM25 half are correlated, not
+ * complementary. Most pairs therefore still SHARE a topical keyword with their doc; that is
+ * an honest property of the offline embedder, not a flaw of the eval. The pairs marked
+ * "low-overlap" below deliberately use synonyms/paraphrase with little or no shared
+ * vocabulary (e.g. "speed up finding documents by the words they contain" → the inverted
+ * index doc) to exercise retrieval where literal string-overlap is weak; they were each
+ * verified to still land top-5 through the real hybrid path with this offline embedder.
  */
 
 export interface CorpusDoc {
@@ -20,10 +28,13 @@ export interface CorpusDoc {
 }
 
 export interface GoldenPair {
-  /** Natural-language query (a paraphrase, never the doc verbatim). */
+  /** Natural-language query (a paraphrase of the topic, not a copy of the doc sentence). */
   query: string
   /** The sourceId of the single document that should rank in the top-k. */
   expectedId: string
+  /** True for pairs whose query shares LITTLE or NO vocabulary with the doc (synonym /
+   *  paraphrase). Documented so the eval's lexical-vs-reworded balance is legible. */
+  lowOverlap?: boolean
 }
 
 /** Fixture corpus: 20 distinct, topical documents (one chunk each). */
@@ -51,10 +62,12 @@ export const GOLDEN_CORPUS: CorpusDoc[] = [
 ]
 
 /**
- * Golden query→expected-chunk pairs (≥20). Queries paraphrase the topic in everyday words,
- * stressing BOTH halves of hybrid retrieval: some lean lexical (shared keywords → BM25),
- * some lean semantic-ish (reworded → the bag-of-words vector still overlaps), and a few
- * are intentionally HARD (sparse keyword overlap) so the gate is meaningful, not trivial.
+ * Golden query→expected-chunk pairs. Queries paraphrase the topic in everyday words rather
+ * than copying the doc sentence. Most still share ONE topical keyword with their doc — an
+ * honest consequence of the offline feature-hash embedder being largely lexical (see the
+ * header). The pairs flagged `lowOverlap: true` deliberately use genuinely different
+ * vocabulary (synonyms/paraphrase) with little-to-no shared terms; each was verified to
+ * still land top-5 through the real hybrid+rerank path with the offline embedder.
  */
 export const GOLDEN_PAIRS: GoldenPair[] = [
   { query: 'how do I change my database schema with ordered reversible steps', expectedId: 'doc-postgres-migrations' },
@@ -79,4 +92,13 @@ export const GOLDEN_PAIRS: GoldenPair[] = [
   { query: 'browser policy deciding if a page may call an api on another origin', expectedId: 'doc-cors-policy' },
   { query: 'apply alter table column changes through a migration runner', expectedId: 'doc-postgres-migrations' },
   { query: 'third party app authorization code grant for access tokens', expectedId: 'doc-oauth-flow' },
+  // ---- low-overlap pairs (genuinely different vocabulary; synonyms / paraphrase) ----
+  // No shared term "inverted/index/search"; carried by BM25 on "documents/words/fast".
+  { query: 'speed up finding documents by the words they contain', expectedId: 'doc-elasticsearch-index', lowOverlap: true },
+  // "scramble ... so nobody can read it" instead of "encrypt"; doc shares only browser/server.
+  { query: 'scramble data sent between a web browser and a website so nobody can read it', expectedId: 'doc-tls-https', lowOverlap: true },
+  // "keep frequently read data in fast memory" instead of "in-memory cache"; reworded.
+  { query: 'keep frequently read data in fast memory so the app responds quicker', expectedId: 'doc-redis-cache', lowOverlap: true },
+  // "pictures and backups in cloud buckets" — no "object/storage/S3/durable" verbatim.
+  { query: 'save uploaded pictures and backups in cloud buckets', expectedId: 'doc-s3-object-storage', lowOverlap: true },
 ]

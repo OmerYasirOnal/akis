@@ -7,24 +7,41 @@ import { GOLDEN_CORPUS, GOLDEN_PAIRS } from '../fixtures/golden-corpus.js'
 /**
  * Golden-eval retrieval quality gate — the M1 exit criterion F1-AC8 (docs/roadmap.md).
  *
- * Ingests a small fixture corpus through the REAL hybrid retrieval path (vector + BM25
- * fused by RRF) using the OFFLINE, deterministic LocalEmbeddingProvider — no network, no
- * key, fully reproducible in the normal vitest suite (NODE_ENV=test pins buildRag to Local).
- * Then it runs ≥20 natural-language query→expected-chunk pairs and measures the top-5
- * hit-rate (a query "hits" when its expected chunk appears in the top-5 results).
+ * WHAT THIS GATE GUARDS (stated honestly): end-to-end retrieval HIT-RATE through the real
+ * hybrid path. It ingests a small fixture corpus through the REAL pipeline (vector + BM25
+ * fused by RRF, then the second-stage reranker) using the OFFLINE, deterministic
+ * LocalEmbeddingProvider — no network, no key, fully reproducible in the normal vitest suite
+ * (NODE_ENV=test pins buildRag to Local). It then runs natural-language query→expected-chunk
+ * pairs and measures the top-5 hit-rate (a query "hits" when its expected chunk appears in
+ * the top-5 results). A drop in top-5 hit-rate — from a regression ANYWHERE on that path
+ * (embedding, vector search, BM25, RRF, or rerank) — trips the gate.
  *
- * GATE: the F1-AC8 target is top-5 ≥80%. The offline (feature-hashing bag-of-words) embedder
- * actually CLEARS it — measured 22/22 = 100% top-5 over this corpus through the full hybrid
- * path. We therefore gate at 0.85: comfortably above the F1-AC8 floor (0.80) and below the
- * measured rate, so the gate is meaningful (a real fusion/ranking regression trips it) without
- * being brittle to a single borderline pair. Bump the threshold UP (never down) if the
- * corpus/embedder improves; if a future change drops it below 0.80, report the real number and
- * treat it as a regression, not a reason to weaken the gate.
+ * WHAT THIS GATE DOES NOT GUARD (corrected after review): it is NOT a fusion-specific
+ * discriminator. The reviewer proved that vector-only (BM25 stubbed) and full hybrid both
+ * score the same on this corpus, so the gate would NOT specifically catch a fusion/ranking
+ * regression that leaves single-modality recall intact. The reason is structural: the offline
+ * LocalEmbeddingProvider is a signed feature-HASH (largely lexical, no learned semantics), so
+ * its vector half is CORRELATED with the BM25 half rather than complementary. We probed for
+ * "fusion-teeth" pairs (a target that only reaches top-5 when BOTH halves fuse) and could NOT
+ * construct a stable one offline: in every case where one half missed top-5, the OTHER half
+ * already ranked the target at top-1..3 alone, so fusion never DID the discriminating work.
+ * Per the honesty rule we did NOT fabricate such a pair. A genuinely fusion-specific guard
+ * would require the semantic API embedder (text-embedding-3-small), which is out of scope for
+ * an offline, no-key, deterministic gate.
+ *
+ * GATE THRESHOLD: the F1-AC8 target is top-5 ≥80%. The offline embedder CLEARS it — measured
+ * 26/26 = 100% top-5 over this corpus through the full hybrid+rerank path (including 4
+ * low-overlap synonym/paraphrase pairs; see golden-corpus.ts). We gate at 0.85: above the
+ * F1-AC8 floor (0.80) and below the measured rate, so the gate is meaningful (a real
+ * end-to-end recall regression trips it) without being brittle to a single borderline pair.
+ * Bump the threshold UP (never down) if the corpus/embedder improves; if a future change
+ * drops it below 0.80, report the real number and treat it as a regression, not a reason to
+ * weaken the gate.
  */
 
 // Measured top-5 hit-rate of the offline LocalEmbeddingProvider over this corpus is 1.00
-// (22/22). We gate at 0.85 — above the F1-AC8 floor (0.80), below the measured rate — so the
-// gate is meaningful (a real ranking regression trips it) without being flaky.
+// (26/26). We gate at 0.85 — above the F1-AC8 floor (0.80), below the measured rate — so the
+// gate is meaningful (a real end-to-end recall regression trips it) without being flaky.
 const HIT_RATE_GATE = 0.85
 const TOP_K = 5
 
@@ -49,7 +66,7 @@ describe('Golden-eval retrieval quality gate (F1-AC8, offline LocalEmbeddingProv
     for (const p of GOLDEN_PAIRS) expect(ids.has(p.expectedId)).toBe(true)
   })
 
-  it(`achieves top-${TOP_K} hit-rate ≥ ${HIT_RATE_GATE * 100}% through real hybrid (vector+BM25+RRF)`, async () => {
+  it(`achieves end-to-end top-${TOP_K} hit-rate ≥ ${HIT_RATE_GATE * 100}% through the real retrieval path (vector+BM25+RRF+rerank)`, async () => {
     let hits = 0
     const misses: string[] = []
     for (const { query, expectedId } of GOLDEN_PAIRS) {
