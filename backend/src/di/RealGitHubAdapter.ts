@@ -1,6 +1,26 @@
 import type { GitHubAdapter, RepoFile } from './MockGitHubAdapter.js'
 
 /**
+ * A KNOWN GitHub delivery failure: the configured push target rejected the request
+ * (missing/invalid repo → 404, bad/expired token → 401, forbidden/rate-limited → 403/429,
+ * unprocessable → 422). This is a CLIENT-side misconfiguration of the delivery target, not
+ * an AKIS internal fault, so the route maps it to a 4xx with the stable `GitHubDeliveryError`
+ * code instead of a raw 500 — the FE then shows a localized "push destination" message rather
+ * than leaking the raw English provider string. The message stays TOKEN-FREE (status only,
+ * never the response body) exactly like the plain errors it replaces. Gate-neutral: the push
+ * gate already parks the run `push_failed` (retryable) on any throw; this only reshapes the
+ * thrown error, never whether/how the push is authorized.
+ */
+export class GitHubDeliveryError extends Error {
+  /** Stable error code surfaced to the FE (drives the i18n key). */
+  readonly code = 'GitHubDeliveryError'
+  constructor(message: string, readonly status: number) {
+    super(message)
+    this.name = 'GitHubDeliveryError'
+  }
+}
+
+/**
  * Real GitHub-backed push adapter (P1-CORE-2) — the opt-in counterpart to
  * MockGitHubAdapter, selected ONLY when AKIS_GITHUB_PUSH_TOKEN + AKIS_GITHUB_PUSH_REPO
  * are both set (and never under NODE_ENV=test). It implements the SAME `GitHubAdapter`
@@ -203,10 +223,12 @@ export class RealGitHubAdapter implements GitHubAdapter {
     }
   }
 
-  /** A token-free HTTP error: STATUS only, never the response body. */
-  private httpError(path: string, status: number): Error {
-    if (status === 403 || status === 429) return new Error(`github: rate limited or forbidden (HTTP ${status})`)
-    return new Error(`github: request to ${path || '/'} failed (HTTP ${status})`)
+  /** A token-free, STRUCTURED HTTP error: STATUS only, never the response body. Returns a
+   *  GitHubDeliveryError so the route can map a known delivery-target failure to a 4xx +
+   *  stable code (the FE localizes it) instead of leaking the raw provider string as a 500. */
+  private httpError(path: string, status: number): GitHubDeliveryError {
+    if (status === 403 || status === 429) return new GitHubDeliveryError(`github: rate limited or forbidden (HTTP ${status})`, status)
+    return new GitHubDeliveryError(`github: request to ${path || '/'} failed (HTTP ${status})`, status)
   }
 }
 

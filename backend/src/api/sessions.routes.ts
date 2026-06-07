@@ -81,6 +81,12 @@ function sendError(reply: FastifyReply, err: unknown): FastifyReply {
   // so an unrelated provider error (e.g. "model not found") never mismaps to 404.
   if (/^session .+ not found$/.test(message)) return reply.code(404).send({ error: message, code: 'NotFound' })
   if (CONFLICT_ERRORS.has(name)) return reply.code(409).send({ error: message, code: name })
+  // KNOWN GitHub delivery-target failure (missing/invalid repo, bad token, rate-limit): a client-side
+  // misconfiguration of the push destination, NOT an AKIS internal fault. Map it to a 4xx with the
+  // stable `GitHubDeliveryError` code (the FE localizes it via push.deliveryFailed) instead of leaking
+  // the raw English provider string as a 500. Gate-neutral: confirmPush already parked the run
+  // push_failed (retryable) before re-throwing — see Orchestrator.confirmPush.
+  if (name === 'GitHubDeliveryError') return reply.code(422).send({ error: message, code: 'GitHubDeliveryError' })
   return reply.code(500).send({ error: message, code: 'Internal' }) // message only, never internals/keys
 }
 

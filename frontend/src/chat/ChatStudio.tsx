@@ -3,6 +3,7 @@ import type { StringKey } from '../i18n/catalog.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { specSeedFromMarkdown } from './buildSpec.js'
+import { actionErrorText } from './actionError.js'
 import { AkisChat } from './AkisChat.js'
 import { clearThread, saveThread, type ThreadNode } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
@@ -234,7 +235,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       setRecent(prev => [{ id: s.id, idea, ts: Date.now() }, ...prev.filter(b => b.id !== s.id)].slice(0, RECENT_MAX))
       recordRecentBuild({ id: s.id, idea, ts: Date.now() }) // persist to localStorage (return ignored — we merge into live state above)
       return s.id
-    } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)); setStartingSpec(undefined); return undefined }
+    } catch (e) { setActionError(actionErrorText(e, t)); setStartingSpec(undefined); return undefined }
     finally { setBusy(false); startingRef.current = false }
   }
 
@@ -245,8 +246,8 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Stable across renders, so the gate callbacks keep a stable identity.
   const act = useCallback(async (fn: () => Promise<unknown>): Promise<void> => {
     setBusy(true); setActionError(undefined)
-    try { await fn() } catch (e) { setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) } finally { setBusy(false) }
-  }, [])
+    try { await fn() } catch (e) { setActionError(actionErrorText(e, t)) } finally { setBusy(false) }
+  }, [t])
   // Gate callbacks target the ACTIVE run (only the active run ever shows an awaiting gate). A
   // seeded chat build auto-satisfies the spec gate server-side, so approve is the LEGACY non-seeded
   // path (kept for compat); it never mints client-side. Fire-and-forget the /run so a slow pipeline
@@ -254,8 +255,8 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const approve = useCallback((): Promise<void> => act(async () => {
     if (!activeSessionId) return
     await api.approve(activeSessionId)
-    void api.run(activeSessionId).catch(e => setActionError(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)))
-  }), [act, api, activeSessionId])
+    void api.run(activeSessionId).catch(e => setActionError(actionErrorText(e, t)))
+  }), [act, api, activeSessionId, t])
   const confirm = useCallback((): Promise<void> => act(async () => { if (activeSessionId) await api.confirm(activeSessionId) }), [act, api, activeSessionId])
   // Re-activate an OLDER run (a recovery/gate action fired on a non-active, one-shot-folded block):
   // make it the live active run so its result streams in. Resets the snapshot-derived state for the
