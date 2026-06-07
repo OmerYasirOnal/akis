@@ -1,3 +1,4 @@
+import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.js'
 import type { McpToolInfo, McpToolResult, McpTransport } from './McpTransport.js'
 import { McpUnavailableError } from './McpTransport.js'
 import type { McpClientLike, McpConnection } from './StdioDockerTransport.js'
@@ -26,17 +27,35 @@ import type { McpClientLike, McpConnection } from './StdioDockerTransport.js'
 export interface HttpMcpTransportOptions {
   /** The remote MCP server URL (e.g. the Atlassian Remote MCP endpoint). */
   url: string
-  /** The decrypted OAuth access token. Flows ONLY into the Authorization header; never argv/log. */
-  token: string
+  /** SSE (legacy `/v1/sse`, default) or Streamable HTTP (the modern endpoint, e.g. Atlassian
+   *  `/v1/mcp/authv2`). Both implement the same McpTransport seam above. */
+  kind?: 'sse' | 'streamable-http'
+  /** STATIC bearer (a PAT / Atlassian API-token / legacy path). Flows ONLY into the Authorization
+   *  header; never argv/log. Exactly ONE of token / authProvider must be given. */
+  token?: string
+  /** The SDK OAuthClientProvider (browser OAuth + DCR + auto-refresh — see StoreBackedOAuthProvider).
+   *  When given, the SDK owns auth: it attaches the bearer from the provider's tokens and refreshes
+   *  on 401. Exactly ONE of token / authProvider must be given. */
+  authProvider?: OAuthClientProvider
   /** A short client label for the MCP handshake (non-secret). */
   clientName?: string
   /** INTEGRATION/TEST boundary: build + connect an MCP client. Default = real SDK via dynamic import. */
-  connect?: (url: string, token: string, clientName: string) => Promise<McpConnection>
+  connect?: (args: ConnectArgs) => Promise<McpConnection>
   /** APP-LEVEL bound on the connect handshake. Default 10_000ms — a remote server that accepts the
    *  socket but never answers `initialize` must not stall the caller for the SDK's own ~60s. */
   initTimeoutMs?: number
   /** Injectable timer (tests). Default setTimeout (unref'd). */
   setTimer?: (cb: () => void, ms: number) => { clear: () => void }
+}
+
+/** What the (injectable) connect factory receives. Carries the auth method + transport kind so the
+ *  default connect can pick the SDK transport + auth wiring. */
+export interface ConnectArgs {
+  url: string
+  kind: 'sse' | 'streamable-http'
+  token?: string
+  authProvider?: OAuthClientProvider
+  clientName: string
 }
 
 const defaultSetTimer = (cb: () => void, ms: number): { clear: () => void } => {
@@ -47,17 +66,25 @@ const defaultSetTimer = (cb: () => void, ms: number): { clear: () => void } => {
 
 export class HttpMcpTransport implements McpTransport {
   private readonly url: string
-  private readonly token: string
+  private readonly kind: 'sse' | 'streamable-http'
+  private readonly token: string | undefined
+  private readonly authProvider: OAuthClientProvider | undefined
   private readonly clientName: string
-  private readonly connectFn: (url: string, token: string, clientName: string) => Promise<McpConnection>
+  private readonly connectFn: (args: ConnectArgs) => Promise<McpConnection>
   private readonly initTimeoutMs: number
   private readonly setTimer: (cb: () => void, ms: number) => { clear: () => void }
   private conn: McpConnection | undefined
   private closed = false
 
   constructor(opts: HttpMcpTransportOptions) {
+    // Exactly one auth method — a transport with neither (or both) is a wiring bug, caught early.
+    if (!opts.token === !opts.authProvider) {
+      throw new Error('HttpMcpTransport: provide exactly one of { token, authProvider }')
+    }
     this.url = opts.url
+    this.kind = opts.kind ?? 'sse'
     this.token = opts.token
+    this.authProvider = opts.authProvider
     this.clientName = opts.clientName ?? 'akis-remote-mcp'
     this.connectFn = opts.connect ?? defaultConnect
     this.initTimeoutMs = opts.initTimeoutMs ?? 10_000
@@ -71,7 +98,11 @@ export class HttpMcpTransport implements McpTransport {
     // reap a late-resolving connection so no token-bearing client leaks.
     let timer: { clear: () => void } | undefined
     let timedOut = false
-    const connectPromise = this.connectFn(this.url, this.token, this.clientName)
+    const connectPromise = this.connectFn({
+      url: this.url, kind: this.kind, clientName: this.clientName,
+      ...(this.token !== undefined ? { token: this.token } : {}),
+      ...(this.authProvider ? { authProvider: this.authProvider } : {}),
+    })
     connectPromise.then(
       conn => { if (timedOut) void closeConnQuietly(conn) },
       () => { /* connect rejected — nothing to reap */ },
@@ -160,17 +191,29 @@ export function withBearer(initHeaders: HeadersInit | undefined, token: string):
   return headers
 }
 
-const defaultConnect = async (url: string, token: string, clientName: string): Promise<McpConnection> => {
+const defaultConnect = async (args: ConnectArgs): Promise<McpConnection> => {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
-  const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js')
-  // Inject the bearer on EVERY request (SSE GET + message POSTs), PRESERVING the SDK's own headers.
-  const bearerFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
-    fetch(input, { ...init, headers: withBearer(init?.headers, token) })
-  const transport = new SSEClientTransport(new URL(url), { fetch: bearerFetch } as unknown as ConstructorParameters<typeof SSEClientTransport>[1])
-  const client = new Client({ name: clientName, version: '1.0.0' }, { capabilities: {} })
+  const url = new URL(args.url)
+  // AUTH wiring: with an authProvider, the SDK owns auth (bearer from provider.tokens + refresh on
+  // 401). With a static token, inject the bearer on EVERY request via a custom fetch that PRESERVES
+  // the SDK's own headers (withBearer). Either way the token never reaches argv/logs.
+  const bearerFetch = args.token === undefined ? undefined : (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+    fetch(input, { ...init, headers: withBearer(init?.headers, args.token as string) })
+  const opts: Record<string, unknown> = {}
+  if (args.authProvider) opts.authProvider = args.authProvider
+  if (bearerFetch) opts.fetch = bearerFetch
+  let transport: unknown
+  if (args.kind === 'streamable-http') {
+    const { StreamableHTTPClientTransport } = await import('@modelcontextprotocol/sdk/client/streamableHttp.js')
+    transport = new StreamableHTTPClientTransport(url, opts as ConstructorParameters<typeof StreamableHTTPClientTransport>[1])
+  } else {
+    const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js')
+    transport = new SSEClientTransport(url, opts as ConstructorParameters<typeof SSEClientTransport>[1])
+  }
+  const client = new Client({ name: args.clientName, version: '1.0.0' }, { capabilities: {} })
   // SDK-boundary cast: the SDK transport's optional fields trip exactOptionalPropertyTypes against
   // the Client.connect param; this is the dynamic-import seam where SDK types are opaque (mirrors
   // StdioDockerTransport's `as unknown as McpClientLike`).
-  await client.connect(transport as unknown as Parameters<typeof client.connect>[0])
+  await client.connect(transport as Parameters<typeof client.connect>[0])
   return { client: client as unknown as McpClientLike }
 }
