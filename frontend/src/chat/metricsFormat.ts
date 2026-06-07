@@ -7,6 +7,13 @@ export function fmtTokens(n: number): string {
   return String(n)
 }
 
+/** Format an ESTIMATED USD cost compactly: "<$0.01" → "<$0.01"; "<$1" → "$0.42"; else "$1.23".
+ *  Always prefixed by the caller's "est." label so it never reads as an exact charge. */
+export function fmtUsd(usd: number): string {
+  if (usd > 0 && usd < 0.01) return '<$0.01'
+  return `$${usd.toFixed(2)}`
+}
+
 /** Format a wall-clock duration: "<60s" → "42s"; otherwise "1m 33s". */
 export function fmtDuration(ms: number): string {
   const totalSec = Math.round(ms / 1000)

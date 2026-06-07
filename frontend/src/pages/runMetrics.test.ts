@@ -74,4 +74,23 @@ describe('aggregateRunMetrics (pure per-run cost)', () => {
     expect(m.totalTokens).toBeUndefined()
     expect(m.perAgent[0]?.tok).toBeUndefined()
   })
+
+  it('estimates cost from each agent model+tokens (#16): priced models sum; an unknown model never fabricates a cost', () => {
+    const events: AkisEvent[] = [
+      ev({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId: 'main', metrics: { usage: { inTokens: 1_000_000, outTokens: 1_000_000 }, model: 'claude-opus-4-8', durationMs: 1_000, toolCalls: 0 } }),
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { usage: { inTokens: 1_000, outTokens: 1_000 }, model: 'an-unlisted-model', durationMs: 1_000, toolCalls: 0 } }),
+    ]
+    const m = aggregateRunMetrics(foldSessionView('s1', events))
+    expect(m.totalUsd).toBe(30) // Opus 1M in ($5) + 1M out ($25); the unlisted model is not priced
+    expect(m.perAgent.find(a => a.role === 'scribe')?.usd).toBe(30)
+    expect(m.perAgent.find(a => a.role === 'proto')?.usd).toBeUndefined() // unknown model → no fabricated $
+  })
+
+  it('usage WITHOUT a model (all-unknown) → totalUsd UNDEFINED (dash), tokens still summed', () => {
+    const m = aggregateRunMetrics(foldSessionView('s1', fullRunEvents())) // metrics carry usage but no model
+    expect(m.totalUsd).toBeUndefined()
+    expect(m.totalTokens).toBe(1850)
+  })
 })

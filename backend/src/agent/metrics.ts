@@ -24,11 +24,14 @@ export function buildAgentMetrics(
   usage: { inTokens: number; outTokens: number } | undefined,
   startedAt: number,
   toolCalls: number,
+  model?: string,
 ): AgentMetrics {
   const durationMs = Date.now() - startedAt
   const realUsage = usage !== undefined && !(usage.inTokens === 0 && usage.outTokens === 0)
   return {
     ...(realUsage ? { usage: { inTokens: usage.inTokens, outTokens: usage.outTokens } } : {}),
+    // The model rides ALONGSIDE real usage only — it is meaningless to price without a token spend.
+    ...(realUsage && model ? { model } : {}),
     durationMs,
     toolCalls,
   }

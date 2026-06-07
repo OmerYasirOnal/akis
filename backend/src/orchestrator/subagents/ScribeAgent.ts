@@ -177,7 +177,7 @@ export class ScribeAgent {
     // NOT summed across tool-loop turns (unlike chatWithContinuation) — so a multi-turn RAG-on
     // Scribe reports an HONEST LOWER BOUND, not a fabrication. The {0,0}→absent rule (mock
     // provider) is applied in buildAgentMetrics, so a keyless demo renders "—", never "0 tok".
-    const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls)
+    const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls, this.deps.provider.model)
     this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, metrics, agent: 'scribe', laneId, sessionId, ts: nextTs() })
     return outcome
   }

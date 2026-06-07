@@ -25,6 +25,10 @@ export interface AgentMetrics {
   usage?: { inTokens: number; outTokens: number }
   durationMs?: number
   toolCalls?: number
+  /** ADDITIVE + OPTIONAL: the model id this agent ran on (e.g. 'claude-opus-4-8') so analytics can
+   *  ESTIMATE cost from `usage` + the dated price table. Absent on LLM-free agents (Trace) or an old
+   *  event. Pure observability — never a gate input; folds exactly like `usage`. */
+  model?: string
 }
 
 export type AkisEvent =

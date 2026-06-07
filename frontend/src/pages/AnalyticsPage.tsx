@@ -5,7 +5,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import { agentName } from '../agents/names.js'
 import { foldSessionView } from '../live/viewModel.js'
 import { aggregateRunMetrics, type RunMetrics } from './runMetrics.js'
-import { fmtTokens, fmtDuration } from '../chat/metricsFormat.js'
+import { fmtTokens, fmtDuration, fmtUsd } from '../chat/metricsFormat.js'
 
 const pct = (n: number): string => `${Math.round(n * 100)}%`
 
@@ -103,6 +103,7 @@ export function AnalyticsPage({ api }: { api: ApiClient }) {
                     </div>
                     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-slate-400 tabular-nums">
                       <span>{t('analytics.perRun.totalTokens')}: <span className="text-slate-200">{metrics.totalTokens !== undefined ? fmtTokens(metrics.totalTokens) : DASH}</span></span>
+                      <span>{t('analytics.perRun.estCost')}: <span className="text-slate-200">{metrics.totalUsd !== undefined ? fmtUsd(metrics.totalUsd) : DASH}</span></span>
                       <span>{t('analytics.perRun.totalTime')}: <span className="text-slate-200">{fmtDuration(metrics.totalMs)}</span></span>
                     </div>
                     {metrics.perAgent.length > 0 && (

@@ -423,7 +423,7 @@ describe('agent metrics on agent_end (observability)', () => {
     bus.subscribe('s1', e => seen.push(e))
     const scribe = new ScribeAgent({ bus, provider })
     await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'todo' })
-    expect(endMetrics(seen, 'scribe')).toEqual({ usage: { inTokens: 90, outTokens: 40 }, durationMs: 250, toolCalls: 1 })
+    expect(endMetrics(seen, 'scribe')).toEqual({ usage: { inTokens: 90, outTokens: 40 }, model: 'fake', durationMs: 250, toolCalls: 1 })
   })
 
   it('a MockProvider-backed agent_end shows ABSENT usage (no usage key), NOT {0,0} (the headline honesty fix)', async () => {

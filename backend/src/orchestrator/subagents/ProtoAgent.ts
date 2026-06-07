@@ -159,7 +159,7 @@ export class ProtoAgent {
     // res.usage is the continuation-ACCUMULATED multi-round total (chatWithContinuation sums
     // across rounds), so this is the real cost of the whole app generation. {0,0}→absent (mock)
     // is handled in buildAgentMetrics.
-    const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls)
+    const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls, this.deps.provider.model)
     this.deps.bus.emit({ kind: 'agent_end', role: 'proto', ok: parsed, metrics, agent: 'proto', laneId, sessionId, ts: nextTs() })
     // Return the (possibly just-gathered) repoContext so the orchestrator can cache it across
     // iterate attempts and avoid re-running the bounded github pass each round.
