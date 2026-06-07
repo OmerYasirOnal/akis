@@ -5,13 +5,13 @@
 # ONE port (default 3000). One Node major is pinned across the Dockerfile + CI;
 # do NOT float `lts`.
 #
-# The backend runs UNCOMPILED TypeScript via `tsx src/main.ts` (there is no
-# backend build step, and @akis/shared resolves to shared/src/index.ts directly),
-# so the runtime image must retain `tsx` plus the full pnpm-workspace node_modules
-# graph. We carry the builder's frozen, fully-linked node_modules into the final
-# stage. tsx is now a backend RUNTIME dependency (not a devDependency) — the
-# prerequisite for a future prune — but the actual dev-toolchain prune is still
-# DESIGN-PENDING (audit #25; see the note after the build step + docs/SELF_HOSTING.md).
+# The backend runs UNCOMPILED TypeScript via `tsx src/main.ts` (there is no backend
+# build step, and @akis/shared resolves to shared/src/index.ts directly), so the
+# runtime image retains `tsx` (a RUNTIME dependency, not devDependency) + its esbuild.
+# After the frontend build, the builder PRUNES the dev/build toolchain from the
+# node_modules it hands to the runtime (audit #25, ~-115MB — see the IMAGE PRUNE step
+# below); the prune lives in the builder because an rm after the runtime COPY would
+# only whiteout, never shrink the image.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Stage 1: builder — frozen install + build the frontend (→ frontend/dist) ───
@@ -38,16 +38,26 @@ COPY backend  ./backend
 COPY frontend ./frontend
 RUN pnpm -r build
 
-# NOTE (audit #25 — image slim, DESIGN-PENDING): the dev/build toolchain (typescript ~23MB, @rolldown
-# ~38MB, lightningcss ~17MB, jsdom, playwright, vite ~100MB+) still rides into the runtime. tsx is now
-# a RUNTIME dependency (above) — the prerequisite that lets a prune keep it — BUT a plain
-# `pnpm prune --prod` was MEASURED to leave those packages in the workspace `.pnpm` store (it does not
-# prune workspace importers' devDeps here), so it bought ~0. The two effective fixes both need their
-# own verification pass and are deliberately deferred (see docs/SELF_HOSTING.md "Image size"):
-#   (a) `pnpm deploy --prod` of the backend into a self-contained dir — must prove the tsx CMD + the
-#       source-resolved `@akis/shared` alias survive the deploy bundle; or
-#   (b) a targeted `rm -rf` of the build-toolchain `.pnpm` dirs (the existing pdf-parse pattern) —
-#       must NOT remove esbuild, which is a tsx RUNTIME dependency (two esbuild versions coexist here).
+# IMAGE PRUNE (audit #25, measured ~-115MB). Done HERE in the builder, BEFORE the runtime stage COPYs
+# node_modules — an `rm` AFTER a COPY only adds a whiteout layer and never shrinks the image (the
+# deleted bytes stay in the underlying COPY layer). Drop the dev/build packages that are NEVER imported
+# by the runtime: tsx EXECUTES the server (kept, WITH its esbuild — deliberately not removed), and
+# REAL-test verification runs in the GENERATED app's own deps (`pnpm exec`), not AKIS's node_modules.
+# Also collapse pdf-parse's dead weight (3 extra pdf.js builds + test fixtures; the one call site loads
+# only v1.10.100). Name-globbed (version-agnostic) so a dependency bump no-ops cleanly (rm -f); the
+# /health boot-smoke is the safety net — a glob that ever caught a runtime module fails the boot.
+RUN rm -rf node_modules/.pnpm/typescript@* \
+           node_modules/.pnpm/@rolldown+* \
+           node_modules/.pnpm/lightningcss@* node_modules/.pnpm/lightningcss-* \
+           node_modules/.pnpm/jsdom@* \
+           node_modules/.pnpm/playwright@* node_modules/.pnpm/playwright-core@* \
+           node_modules/.pnpm/vite@* \
+           node_modules/.pnpm/vitest@* node_modules/.pnpm/@vitest+* \
+           node_modules/.pnpm/rollup@* node_modules/.pnpm/@rollup+* \
+           node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/test \
+           node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v1.10.88 \
+           node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v1.9.426 \
+           node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v2.0.550
 
 # ─── Stage 2: runtime — node:22-alpine, NON-ROOT, tsx-in-prod retained ──────────
 FROM node:22-alpine AS runtime
@@ -75,16 +85,10 @@ RUN apk add --no-cache tini openssh-client
 # in-process http server and need NO browser/chromium; this only unblocks the node-service shapes.)
 RUN corepack enable && corepack prepare pnpm@9.0.0 --activate
 
+# node_modules arrives ALREADY PRUNED from the builder (see the IMAGE PRUNE step there) — the dev/build
+# toolchain + pdf-parse dead weight are gone, so this COPY layer is ~115MB lighter. The prune MUST be
+# upstream of this COPY: an rm in the runtime stage would only whiteout, never shrink the image.
 COPY --from=builder --chown=node:node /app/node_modules          ./node_modules
-# pdf-parse DEAD-WEIGHT prune (audit quick-win): the package bundles FOUR pdf.js builds plus 4.8MB
-# of test fixtures, but the single call site (knowledge/ingest/parse/parseUpload.ts) imports
-# lib/pdf-parse.js, whose default loads ONLY ./pdf.js/v1.10.100 — so ~26MB of dead weight rode in
-# every image. pdf-parse is exact-pinned (1.1.1) so these paths are stable; a version bump
-# revisits this line by design (the rm simply no-ops on a changed layout thanks to -f).
-RUN rm -rf ./node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/test \
-           ./node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v1.10.88 \
-           ./node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v1.9.426 \
-           ./node_modules/.pnpm/pdf-parse@1.1.1/node_modules/pdf-parse/lib/pdf.js/v2.0.550
 COPY --from=builder --chown=node:node /app/package.json          ./package.json
 COPY --from=builder --chown=node:node /app/pnpm-workspace.yaml   ./pnpm-workspace.yaml
 COPY --from=builder --chown=node:node /app/tsconfig.base.json    ./tsconfig.base.json

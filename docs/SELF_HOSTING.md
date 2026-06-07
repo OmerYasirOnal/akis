@@ -71,18 +71,16 @@ docker inspect -f '{{ json .Config.Labels }}' akis:local
 ```
 
 > [!NOTE]
-> **Image size (design-pending, audit #25).** The runtime currently carries the full pnpm-workspace
-> `node_modules`, including the dev/build toolchain (TypeScript, Vite/@rolldown, lightningcss, jsdom,
-> Playwright — ~100MB+) that it does not need at runtime. As a prerequisite, `tsx` is now a backend
-> **runtime** dependency (it executes the uncompiled server), so a prune can keep it. A plain
-> `pnpm prune --prod` after the build was **measured to buy ~0** here — it does not prune the workspace
-> importers' devDeps from the `.pnpm` store. The two effective fixes are deferred, each needing its own
-> verification pass: **(a)** `pnpm deploy --prod` of the backend into a self-contained dir — must prove
-> the `tsx` start command and the source-resolved `@akis/shared` alias survive the deploy bundle; or
-> **(b)** a targeted `rm -rf` of the build-toolchain `.pnpm` dirs (the existing `pdf-parse` pattern) —
-> must **not** remove `esbuild`, which is a `tsx` runtime dependency (two esbuild versions coexist).
-> The runtime's own `pnpm`/Playwright needs are unaffected: real-test verification runs in the
-> **generated app's** own dependency tree (`pnpm exec`), not AKIS's.
+> **Image size (audit #25 — done, ~−198MB measured).** `tsx` is a backend **runtime** dependency (it
+> executes the uncompiled server), so after the frontend build the **builder** prunes the dev/build
+> toolchain (TypeScript, Vite/@rolldown, lightningcss, jsdom, Playwright, Vitest, Rollup) from the
+> `node_modules` it hands to the runtime — measured **638MB → 440MB** on a native build (verified by a
+> /health boot-smoke + a `GET /` SPA fetch). The prune lives in the **builder, before** the runtime
+> `COPY`: an `rm` after the COPY only adds a whiteout layer and never shrinks the image (this is why the
+> earlier `pnpm prune --prod` attempt bought ~0). `esbuild` is **kept** (a `tsx` runtime dependency).
+> Nothing the runtime needs is touched: real-test verification runs in the **generated app's** own
+> dependency tree (`pnpm exec`), not AKIS's. The globs are version-agnostic, so a dependency bump
+> no-ops cleanly; if one ever caught a runtime module, the boot-smoke fails closed rather than shipping.
 
 > [!IMPORTANT]
 > The bundled `AUTH_JWT_SECRET` default is **insecure and shared** — it exists only
