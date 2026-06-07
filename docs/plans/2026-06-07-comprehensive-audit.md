@@ -11,30 +11,34 @@ AKIS is NOT "fully done top-to-bottom," but it is much closer than its own docs 
 
 Tracking against the shipped tree. Items below the backlog are tagged `✅ CLOSED (<hash>)` inline; this section is the index.
 
-**Closed since the audit (18 of 54)** — verified in code + tests, `pnpm test` PASS (BE 1411/5-skip · FE 435):
+**Closed (47 of 54)** — verified in code + tests; final `pnpm test` PASS (BE 1427/5-skip · FE 440 · tsc shared/be/fe clean · i18n EN/TR parity). The PR1–10 chain is complete; each branch was ≤300 LoC, ff-merged + pushed, gate-safe.
 
-| Commit | Closed findings |
-|---|---|
-| `1bc133d` | #1 #2 #3 #4 #5 #6 #7 #8 #11 #14 — P1 batch (#1 content-type · #2 preview IDOR · #3 confirm stale-version · #4 SPA false-RED · #5 attestation demo-marker · #6 owner-scope test · #7 README · #8 confirm i18n) + #11 chat demo chip + #14 connect-tile i18n |
-| `38958b3` | #12 #13 — #12 externalWrites parity round-trip · #13 migration assertion (+ create-INSERT) |
-| `a405f51` | #18 #19 #20 #21 — #18 THREAT-MODEL 5th gate · #19 ARCHITECTURE MCP+gate · #20 NEXT golden-eval DONE · #21 product-spec CI-claim honesty |
-| `bed8815` | #22 #34 — #22 payload visibility · #34 SPA Link |
+| Commit | PR | Closed findings |
+|---|---|---|
+| `1bc133d` | P1 batch | #1 #2 #3 #4 #5 #6 #7 #8 #11 #14 (content-type · preview IDOR · confirm stale-version · SPA false-RED · attestation demo-marker · owner-scope test · README · confirm i18n · chat demo chip · connect-tile i18n) |
+| `38958b3` | — | #12 #13 (externalWrites parity round-trip · migration assertion) |
+| `a405f51` | docs | #18 #19 #20 #21 (THREAT-MODEL 5th gate · ARCHITECTURE MCP+gate · NEXT golden-eval · product-spec CI honesty) |
+| `bed8815` | — | #22 #34 (payload visibility · SPA Link) |
+| `1dcaf68` | PR2 | #23 #24 #26 #27 (deploy-box script · compose mem/pids/log limits · amd64 caveat · deploy runbook) |
+| `9ef46fd` | PR3 | #33 (OAuth callback `state` CSRF/flow-integrity) |
+| `0634eb3` | PR4 | #29 (opt-in `AKIS_REQUIRE_AUTH_FOR_BUILDS` — anonymous-session gap) |
+| `48d3922` `ff783d8` `8dad4a4` | PR5a/b/c | #30 #43 #44 #46 #47 (at-most-once `executing` guard · demo→evidenceDigest · per-language validation · AKIS_REAL_TESTS overrides demo) |
+| `c28596c` | PR6 | #16 (estimated per-build cost — dated price table + AgentMetrics.model + AnalyticsPage) |
+| `cb41841` | PR7 | #17 #32 #45 (Atlassian read allow-list + provider-agnostic bridge + live-discovery harness) |
+| `bc50298` | PR8 | #10 #36 #37 #38 (ModelPicker modal Esc/focus · aria-live flood → status region · redundant aria removed + iframe i18n · fallback i18n) |
+| `4845ba7` `b8a9cab` | PR9a/b | #35 #40 #42 #50 #51 #54 (no-auto-boot-on-reopen · async bus snapshot · bounded orch map · rAF-coalescer test · audit-log SQL test · dead branch) |
+| `a0af43d` | PR10 | #15 (tsx → runtime dep — prune prerequisite) + #25 **design-PR** (see below) |
 
-**Remaining backlog** (controlled PR roadmap — one reviewable branch per slice, ≤300 LoC, gate-safe):
+**Open / not-closed (7):**
 
-- **PR2 — Deploy/Ops codify:** #23 #24 #26 #27
-- **PR3 — OAuth state hardening:** #33
-- **PR4 — Anonymous-session scope decision:** #29
-- **PR5 — Verify/trust honesty P3s:** #30 #43 #44 #46 #47
-- **PR6 — Cost analytics:** #16
-- **PR7 — Atlassian read grounding / tool-name pinning:** #9 #17 #31 #32 #45
-- **PR8 — FE a11y/i18n cleanup:** #10 #36 #37 #38 #39 #52
-- **PR9 — Perf/leak/test invariants:** #35 #40 #41 #42 #50 #51 #53 #54
-- **PR10 — Docker −190MB (deliberate, last):** #15 #25
+- **#25 — Docker image −190MB: DESIGN-PR (`a0af43d`).** tsx→deps shipped (prerequisite); a plain `pnpm prune --prod` was MEASURED to buy ~0 (does not prune the workspace `.pnpm` devDeps; image stayed 638MB). The two effective fixes (`pnpm deploy --prod` / targeted build-toolchain `rm`, keeping esbuild which tsx needs) are written up with verification gates in `docs/SELF_HOSTING.md` + the Dockerfile. Not shipped to avoid overclaiming a no-op.
+- **#39 #52 — dead i18n keys: DEFERRED (provable-dead rule).** NOT fully dead — `pipeline.editsBase` is live (so the `pipeline.*` namespace can't be bulk-deleted) and `workflows.title` is referenced by its own parity test; closing them needs a careful per-key render-audit, out of proportion for a P3.
+- **#41 — per-remount providers/health refetch: DEFERRED.** A safe fix needs a fetch-once providers context; a naive module cache would show STALE provider availability after a key is added in Settings.
+- **#53 — onReset `{head}`: WORKING-AS-INTENDED (not a bug).** `useLiveSession` + the client test use the `head`; `useLiveChat`'s full-`/log` re-sync is a valid simpler choice, not dead code.
+- **#28 — specs-quota note: cosmetic, deferred-by-design.**
+- **#9 #31 — Atlassian/GitHub tool-name pinning: partial.** The read SURFACE ships (PR7); the live tool-name pinning is owner/live-gated (below).
 
-**Owner-gated / live-gated** (need a live Atlassian/GitHub connection or org admin to fully verify; build the harness + mark live-pending): #9 #17 #31 #32 #45.
-
-**Deferred-by-design:** #15 #25 #28 — Docker −190MB is the riskiest ops change (tsx is required in prod), sequenced LAST (PR10); the specs-quota note is cosmetic.
+**Owner-gated / live-gated** (cannot be CI-proven without a live connection — NOT claimed as done): live Atlassian/GitHub connect (org-admin Rovo MCP + browser OAuth consent) → reconcile the real tool-NAMES/payloads against a live `listTools()` (#9 #31) → wire the read tools into the agent loop (#17 live half) → the external-write flow's live end-to-end (#32 #45 live half).
 
 ## Cross-cutting themes
 
