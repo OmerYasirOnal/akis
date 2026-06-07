@@ -47,7 +47,7 @@ export function AccountSettings({ api }: { api: ApiClient }) {
         <SectionTitle>{t('settings.profile.title')}</SectionTitle>
         <div className="text-sm text-slate-400">{user?.email}</div>
         <Field label={t('settings.profile.name')}>
-          <Input aria-label="display name" value={name} onChange={e => { setName(e.target.value); setNameSaved(false) }} />
+          <Input value={name} onChange={e => { setName(e.target.value); setNameSaved(false) }} />
         </Field>
         {nameErr && <ErrorNote>{nameErr}</ErrorNote>}
         <div className="flex items-center gap-3">
@@ -59,10 +59,10 @@ export function AccountSettings({ api }: { api: ApiClient }) {
       <form onSubmit={changePw} className="flex flex-col gap-3">
         <SectionTitle>{t('settings.password.title')}</SectionTitle>
         <Field label={t('settings.password.current')} hint={t('settings.password.currentHint')}>
-          <Input type="password" autoComplete="current-password" aria-label="current password" value={cur} onChange={e => setCur(e.target.value)} placeholder="••••••••" />
+          <Input type="password" autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} placeholder="••••••••" />
         </Field>
         <Field label={t('settings.password.new')} hint={t('auth.pwHint')}>
-          <Input type="password" autoComplete="new-password" aria-label="new password" value={next} onChange={e => setNext(e.target.value)} placeholder="••••••••" />
+          <Input type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} placeholder="••••••••" />
         </Field>
         {pwErr && <ErrorNote>{pwErr}</ErrorNote>}
         <div className="flex items-center gap-3">

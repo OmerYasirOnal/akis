@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { ProviderInfo } from '../api/client.js'
 import type { Effort } from './ModelChip.js'
@@ -42,8 +42,32 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
     onClose?.()
   }
 
+  // MODAL A11Y (#10): Escape closes; focus moves INTO the dialog on open + is RESTORED to the prior
+  // element on close; Tab is TRAPPED inside the dialog (it is aria-modal). Uses the existing
+  // role=dialog markup — no new modal lib.
+  const dialogRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
+    const panel = dialogRef.current
+    const focusables = (): HTMLElement[] =>
+      panel ? Array.from(panel.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')) : []
+    focusables()[0]?.focus() // focus the first control on open
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') { e.preventDefault(); onClose?.(); return }
+      if (e.key !== 'Tab') return
+      const f = focusables()
+      if (f.length === 0) return
+      const first = f[0]!, last = f[f.length - 1]!
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('keydown', onKey); prevFocus?.focus() }
+  }, [onClose])
+
   return (
     <div
+      ref={dialogRef}
       role="dialog"
       aria-modal="true"
       aria-label={t('chat.picker.title')}

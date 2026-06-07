@@ -435,10 +435,19 @@ export function AkisChat({
     void ask(lastUser.current)
   }
 
+  // A11Y (#36): the transcript itself is NOT a live region — token-by-token streaming + rapid build
+  // bubbles would FLOOD a screen reader. Instead a small polite status region announces a SHORT
+  // milestone ("AKIS responded") ONCE when streaming settles — not every token, and NOT the reply
+  // text (which would double the transcript). It clears to '' while busy, so each completed reply is
+  // a '' → "responded" change that re-announces.
+  const repliedReady = !busy && nodes.length > 0 && isMsg(nodes[nodes.length - 1]!) && (nodes[nodes.length - 1] as ChatMsg).role === 'assistant'
+  const liveStatus = repliedReady ? t('chat.aria.responded') : ''
+
   return (
     <div className="flex h-full min-h-0 flex-col gap-3">
+      <div role="status" aria-live="polite" className="sr-only">{liveStatus}</div>
       <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} onScroll={onScroll} aria-live="polite" aria-atomic="false" aria-relevant="additions" className="h-full space-y-3 overflow-y-auto">
+      <div ref={scrollRef} onScroll={onScroll} className="h-full space-y-3 overflow-y-auto">
         {nodes.map((m, i) => {
           // A RUN MARKER renders its build INLINE at this exact slot (the single composition seam):
           // its own RunBlock mounts a per-run useLiveChat, the compact pipeline-strip header, and

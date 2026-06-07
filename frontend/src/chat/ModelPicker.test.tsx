@@ -133,3 +133,17 @@ describe('ModelChip', () => {
     expect(onClick).toHaveBeenCalledTimes(1)
   })
 })
+
+describe('ModelPicker — modal a11y (#10)', () => {
+  it('moves focus INTO the dialog on open', () => {
+    renderPicker()
+    const dialog = screen.getByRole('dialog')
+    expect(dialog.contains(document.activeElement)).toBe(true) // not left on <body>
+  })
+
+  it('Escape closes the dialog (keyboard dismiss)', async () => {
+    const { onClose } = renderPicker()
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalled()
+  })
+})

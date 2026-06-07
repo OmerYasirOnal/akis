@@ -160,7 +160,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
               {/* LETTERBOX (review: wide-panel sprawl): cap the logical width + center on the dark
                   surface so an ultrawide panel frames the app (dark margins) instead of stretching it
                   edge-to-edge as a bare white slab. Narrow panels (< the cap) still fill full width. */}
-              <iframe title="preview" src={url} onLoad={() => setLoaded(true)}
+              <iframe title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
                 className={`mx-auto block h-full w-full max-w-[1100px] bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                 sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
               {/* Dark themed skeleton over the iframe until it actually PAINTS — no white flash. */}
