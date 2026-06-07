@@ -95,6 +95,18 @@ COPY --from=builder --chown=node:node /app/frontend/dist         ./frontend/dist
 RUN mkdir -p /home/node/.akis /home/node/.config/akis \
  && chown -R node:node /home/node/.akis /home/node/.config
 
+# Image provenance — stamp the standard OCI annotation keys so a live-box drift
+# check is one `docker inspect` (the 2026-06-07 drift audit had no labels and a
+# static version, and had to fall back to source inspection). Both arrive as
+# build-args from the caller (the release workflow passes the git sha + UTC build
+# time; a plain `docker build` without them simply leaves the labels empty rather
+# than failing). Placed in the runtime stage so they ride on the published image.
+ARG GIT_REVISION=""
+ARG BUILD_CREATED=""
+LABEL org.opencontainers.image.revision="${GIT_REVISION}" \
+      org.opencontainers.image.created="${BUILD_CREATED}" \
+      org.opencontainers.image.source="https://github.com/OmerYasirOnal/akis-platform-mvp"
+
 USER node
 EXPOSE 3000
 

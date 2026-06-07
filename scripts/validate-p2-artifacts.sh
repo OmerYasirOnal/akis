@@ -54,6 +54,22 @@ grep -q "anthropics/claude-code-action" "$ci" && fail "$ci must NOT duplicate th
 grep -qE '"packageManager":[[:space:]]*"pnpm@' package.json || fail "package.json must pin pnpm via packageManager"
 grep -qE "^\s*version:\s*9" "$ci" && fail "$ci must NOT set a pnpm/action-setup 'version:' input (conflicts with packageManager)" || true
 
+# ── 2b) Dockerfile: OCI image-provenance labels so live-box drift is one
+#       `docker inspect` (the 2026-06-07 drift audit had no labels / static 0.0.0
+#       and had to fall back to source inspection). The git sha + build timestamp
+#       arrive as build-args and are stamped as the standard OCI annotation keys.
+df=Dockerfile
+have "ARG GIT_REVISION"                          "$df"   # caller passes the git sha
+have "ARG BUILD_CREATED"                          "$df"   # …and the build timestamp
+have "org.opencontainers.image.revision"          "$df"   # → inspectable revision label
+have "org.opencontainers.image.created"           "$df"   # → inspectable build-date label
+
+# ── 2c) Release workflow: the published image MUST carry those labels, so the
+#       build step has to feed the args (else every release ships unlabeled again).
+rel=.github/workflows/release.yml
+have "GIT_REVISION="                              "$rel"
+have "BUILD_CREATED="                             "$rel"
+
 # ── 3) env template: self-host/DB block added, existing keys kept ────────────
 env=backend/.env.example
 have "postgres://akis:akis@db:5432/akis" "$env"   # compose default for DATABASE_URL
@@ -73,5 +89,6 @@ grep -qi "vector"        "$doc" || fail "$doc must document the vector/RAG-index
 grep -qi "backup"        "$doc" || fail "$doc must document the postgres volume backup/restore"
 grep -qi "sandbox"       "$doc" || fail "$doc must carry the no-sandbox security warning"
 grep -qi "single-user"   "$doc" || fail "$doc must state the single-user posture"
+grep -qi "org.opencontainers.image.revision" "$doc" || fail "$doc must document stamping the OCI provenance labels (build-args) so a local build is drift-inspectable"
 
 echo "P2 artifact validation OK (CI workflow + env template + self-host docs)"

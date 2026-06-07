@@ -45,6 +45,24 @@ use** (see [Run a real build](#run-a-real-build-optional) and the env table belo
 Stop it with `Ctrl-C` (or `docker compose down` if detached). Your data persists
 in named volumes across `down`/`up` — see [Persistence](#persistence) below.
 
+#### Stamp provenance labels on a local build (optional)
+
+A `docker compose up --build` (or a plain `docker build`) leaves the image's
+provenance labels **empty** — fine for local use. If you want a live-box drift
+check to be a single `docker inspect` (which commit + when), pass the git sha and
+a UTC build time as build-args; they're stamped as the standard OCI annotation
+keys `org.opencontainers.image.revision` and `org.opencontainers.image.created`
+(the published GHCR images already carry these — the release pipeline sets them):
+
+```bash
+docker build -t akis:local \
+  --build-arg GIT_REVISION="$(git rev-parse HEAD)" \
+  --build-arg BUILD_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
+
+# then, on the live box:
+docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' akis:local
+```
+
 > [!IMPORTANT]
 > The bundled `AUTH_JWT_SECRET` default is **insecure and shared** — it exists only
 > so the keyless demo boots zero-config. For anything beyond a throwaway local demo,
