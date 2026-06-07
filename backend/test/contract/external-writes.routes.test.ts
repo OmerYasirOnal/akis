@@ -30,14 +30,16 @@ function makeApp(opts: { owner?: string; connected?: boolean; slowMs?: number } 
     },
     close: async () => {},
   }
+  // Mutable identity so one store can be reached as different users (owner-scope tests).
+  let currentUser: string | undefined = opts.owner ?? 'owner1'
   const f = Fastify({ logger: false })
   registerSessionRoutes(f, {
     orchestrator: new Orchestrator(services), services,
-    userIdOf: async () => opts.owner ?? 'owner1',
+    userIdOf: async () => currentUser,
     mcpAuthStore: new MemoryRemoteMcpAuthStore(),
     mcpTransportFor: () => (opts.connected === false ? undefined : fakeTransport),
   })
-  return { f, services, calls }
+  return { f, services, calls, setUser: (u: string | undefined) => { currentUser = u } }
 }
 
 async function newSession(f: ReturnType<typeof makeApp>['f']): Promise<string> {
@@ -123,5 +125,17 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     const refused = a.statusCode === 409 ? a : b
     expect(refused.json().code).toBe('ConfirmInProgress')
     expect(calls).toHaveLength(1) // the EXTERNAL side effect fired exactly once
+  })
+
+  it('OWNER-SCOPED: a NON-owner cannot list/propose/confirm another user\'s external writes (404, nothing executed)', async () => {
+    const { f, calls, setUser } = makeApp({ connected: true })
+    const id = await newSession(f) // created as owner1
+    const { id: writeId, digest } = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: PROPOSAL })).json()
+    setUser('intruder') // a different authenticated user
+    const list = await f.inject({ method: 'GET', url: `/sessions/${id}/external-writes` })
+    const propose = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: PROPOSAL })
+    const confirm = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
+    expect([list.statusCode, propose.statusCode, confirm.statusCode]).toEqual([404, 404, 404]) // existence not even confirmed
+    expect(calls).toHaveLength(0) // no outward write fired on the intruder's behalf
   })
 })

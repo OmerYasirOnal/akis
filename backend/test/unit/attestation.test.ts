@@ -34,9 +34,16 @@ describe('buildAttestation', () => {
     expect(a.format).toBe('akis-build-provenance/v1')
     expect(a.subject).toEqual({ sessionId: 's1', idea: 'A notes API', codeDigest: 'codedig' })
     expect(a.gates).toEqual({ specApproved: true, verified: true, deployApproved: true })
-    expect(a.verification).toEqual({ testsRun: 3, codeDigest: 'codedig', evidenceDigest: 'evdig' })
+    expect(a.verification).toEqual({ testsRun: 3, codeDigest: 'codedig', evidenceDigest: 'evdig', simulated: false })
     // The embedded passport is the ORIGINAL signed artifact — still offline-verifiable.
     expect(verifyPassport(a.passport)).toBe(true)
+  })
+
+  it('HONESTY: a SIMULATED (demo) run is marked simulated in the attestation + its markdown (no silent over-claim)', () => {
+    const s = sessionWithPassport()
+    const a = buildAttestation({ ...s, testEvidence: { ...(s.testEvidence ?? {}), demo: true } } as SessionState)!
+    expect(a.verification.simulated).toBe(true)
+    expect(attestationMarkdown(a)).toMatch(/SIMULATED/)
   })
 
   it('gates reflect reality: a verified-but-not-pushed build is NOT deployApproved', () => {

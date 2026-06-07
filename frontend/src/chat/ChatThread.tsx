@@ -154,6 +154,8 @@ export function VerifyBubble({ m }: { m: VerifyMsg }) {
       <Avatar role="trace" />
       <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${m.passed ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200' : 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'}`}>
         {m.passed ? `✓ ${t('chat.verified')}` : `✗ ${t('chat.notVerified')}`} · {m.testsRun} {t(m.testsRun === 1 ? 'chat.test' : 'chat.tests')}
+        {/* HONESTY: a simulated (demo/mock) pass must never read as a real verification — same marker the Trust Report + /health carry. */}
+        {m.demo && <span className="ml-2 rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">{t('chat.chip.demo')}</span>}
       </div>
     </div>
   )

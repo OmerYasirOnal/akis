@@ -41,9 +41,11 @@ export function ExternalWriteCard({ sessionId, idea, files, api }: { sessionId: 
   const propose = async (): Promise<void> => {
     if (!mode || mode.step !== 'form' || !key.trim()) return
     setBusy(true); setErr(undefined)
+    // The human-confirm prompt (summary) is localized via the translatable verb prefix; title + key
+    // are user data (not translatable). The digest binds action/target/payload, not this text.
     const body = mode.kind === 'confluence'
-      ? { provider: 'atlassian', action: 'createPage', summary: `Create Confluence page “${title}” in ${key}`, target: { spaceKey: key.trim() }, payload: { title, body: readme } }
-      : { provider: 'atlassian', action: 'createJiraIssue', summary: `Create Jira issue “${title}” in ${key}`, target: { projectKey: key.trim() }, payload: { summary: title, description: readme } }
+      ? { provider: 'atlassian', action: 'createPage', summary: `${t('mcpwrite.toConfluence')}: “${title}” (${key.trim()})`, target: { spaceKey: key.trim() }, payload: { title, body: readme } }
+      : { provider: 'atlassian', action: 'createJiraIssue', summary: `${t('mcpwrite.toJira')}: “${title}” (${key.trim()})`, target: { projectKey: key.trim() }, payload: { summary: title, description: readme } }
     try {
       const r = await api.proposeExternalWrite(sessionId, body)
       setMode({ kind: mode.kind, step: 'review', id: r.id, digest: r.digest, summary: r.summary })

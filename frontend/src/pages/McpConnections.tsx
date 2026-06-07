@@ -5,9 +5,9 @@ import { useI18n } from '../i18n/I18nContext.js'
 
 /** The providers AKIS can connect over the remote-MCP browser-OAuth flow. `label` is display-only;
  *  `id` matches the server's REMOTE_MCP_PROVIDERS key + the /mcp/:provider/* routes. */
-const PROVIDERS: ReadonlyArray<{ id: string; label: string; blurb: string }> = [
-  { id: 'atlassian', label: 'Jira / Confluence', blurb: 'Create issues + pages (you confirm each write)' },
-  { id: 'github', label: 'GitHub (MCP)', blurb: 'Read repo context for grounding' },
+const PROVIDERS: ReadonlyArray<{ id: string; label: string; blurbKey: 'settings.mcp.blurb.atlassian' | 'settings.mcp.blurb.github' }> = [
+  { id: 'atlassian', label: 'Jira / Confluence', blurbKey: 'settings.mcp.blurb.atlassian' },
+  { id: 'github', label: 'GitHub (MCP)', blurbKey: 'settings.mcp.blurb.github' },
 ]
 
 type Banner = 'connected' | 'error' | 'denied' | 'unavailable' | 'unknown'
@@ -73,7 +73,7 @@ export function McpConnections({ api }: { api: ApiClient }) {
             <div key={p.id} className="flex items-center justify-between gap-4 rounded-xl border border-white/10 bg-white/[0.02] p-4">
               <div className="min-w-0">
                 <div className="font-semibold text-slate-100">{p.label}</div>
-                <div className="truncate text-sm text-slate-400">{connected ? t('settings.mcp.connected') : p.blurb}</div>
+                <div className="truncate text-sm text-slate-400">{connected ? t('settings.mcp.connected') : t(p.blurbKey)}</div>
               </div>
               {connected
                 ? <Button variant="ghost" onClick={() => void disconnect(p.id)} disabled={busy === p.id}>{t('settings.mcp.disconnect')}</Button>

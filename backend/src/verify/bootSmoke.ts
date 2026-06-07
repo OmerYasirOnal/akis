@@ -288,18 +288,27 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
     // (a) ALWAYS a smoke probe (the testsRun ≥ 1 floor) + (b) one probe per LOCAL asset
     // index.html references (Phase E: a missing ./app.js renders a blank page the smoke
     // probe alone would over-claim) + (c) one probe per derived acceptance criterion.
+    const appType = detectAppType(files)
+    // SPA (vite/next) served HTML is a JS SHELL: a spec literal is rendered CLIENT-side by JS that
+    // the boot-smoke fetch never executes, so a bodyContains-against-`/` probe would FALSE-RED a
+    // perfectly healthy app and the build could NEVER verify. Downgrade those to a render check
+    // (boots + serves `/`) — the honest mechanical floor for an SPA without a browser. A literal on
+    // an explicit non-`/` API path is left intact (a server response, not the JS shell). (Audit #4.)
+    const isSpa = appType === 'vite' || appType === 'next'
+    const specChecks = deriveChecks(deps.spec).map(c =>
+      isSpa && c.kind === 'bodyContains' && c.path === '/' ? { kind: 'render' as const, name: c.name, path: c.path } : c)
     const checks: Check[] = [
       { kind: 'render', name: 'app boots and serves /', path: '/' },
       ...deriveAssetChecks(files),
-      ...deriveChecks(deps.spec),
+      ...specChecks,
       // OPT-IN behavioral round-trip — ONLY for a node-service (writable backend) when enabled.
       // Additive: a pass adds a genuinely-behavioral test; a fail is a real Potemkin; a non-2xx
       // POST self-skips. Default OFF ⇒ the check set is byte-identical to before.
-      ...(deps.roundTrip && detectAppType(files) === 'node-service' ? deriveRoundTripChecks(deps.spec) : []),
+      ...(deps.roundTrip && appType === 'node-service' ? deriveRoundTripChecks(deps.spec) : []),
       // OPT-IN auth-guard checks (same flag + node-service gate): a 401/403-without-cookie probe for
       // any endpoint the spec EXPLICITLY says is protected. Conservative derivation → rarely fires,
       // never false-REDs a healthy app (a 2xx is a genuine missing-guard failure; else self-skips).
-      ...(deps.roundTrip && detectAppType(files) === 'node-service' ? deriveAuthChecks(deps.spec) : []),
+      ...(deps.roundTrip && appType === 'node-service' ? deriveAuthChecks(deps.spec) : []),
     ]
     const scenarios: E2eScenario[] = []
     for (const c of checks) scenarios.push(await probe(c, boot.url, fetchImpl))

@@ -268,11 +268,11 @@ export class ApiClient {
   // ── External writes (Jira/Confluence via MCP) — propose → human-confirm → execute ──
   /** Record a proposed external write for a build; returns the content digest the human confirms. */
   proposeExternalWrite(sessionId: string, body: { provider?: string; action: string; summary?: string; target?: Record<string, unknown>; payload?: Record<string, unknown> }): Promise<{ id: string; digest: string; summary: string }> {
-    return this.json(`/sessions/${sessionId}/external-writes`, { method: 'POST', body: JSON.stringify(body) })
+    return this.json(`/sessions/${sessionId}/external-writes`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) })
   }
   /** Confirm + EXECUTE a proposed external write (the only path that writes externally). */
   confirmExternalWrite(sessionId: string, writeId: string, digest: string): Promise<{ ok: boolean; status: string; result?: string }> {
-    return this.json(`/sessions/${sessionId}/external-writes/${writeId}/confirm`, { method: 'POST', body: JSON.stringify({ digest }) })
+    return this.json(`/sessions/${sessionId}/external-writes/${writeId}/confirm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ digest }) })
   }
   /** The build's external-write proposals + their outcomes (history) — never a token. */
   listExternalWrites(sessionId: string): Promise<{ writes: ExternalWriteSummary[] }> {

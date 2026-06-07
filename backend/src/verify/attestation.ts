@@ -28,8 +28,11 @@ export interface BuildProvenanceAttestation {
   builder: { id: 'akis-multi-agent'; pipeline: 'idea → spec → code → verify → push' }
   /** The 4 structural gates' outcomes (AKIS-asserted context, derived from session state). */
   gates: { specApproved: boolean; verified: boolean; deployApproved: boolean }
-  /** The REAL verification behind `verified` (mirrors the signed passport's facts). */
-  verification: { testsRun: number; codeDigest: string; evidenceDigest: string }
+  /** The REAL verification behind `verified` (mirrors the signed passport's facts). `simulated` is
+   *  the DURABLE honesty marker (from TestEvidence.demo): TRUE when the ≥1-test pass came from a
+   *  SIMULATED/mock runner, not a real test run — so a handed-off attestation can never silently
+   *  over-claim a real verification (the Trust Report + /health badge carry the same marker). */
+  verification: { testsRun: number; codeDigest: string; evidenceDigest: string; simulated: boolean }
   /** The Ed25519-SIGNED core — the offline-verifiable part. A recipient verifies THIS. */
   passport: BuildPassport
   /** ISO-8601 issuance time (the passport's). */
@@ -64,7 +67,7 @@ export function buildAttestation(s: SessionState): BuildProvenanceAttestation | 
       // Gate 4 (push confirm) — a confirmed push lands the build in the terminal `done` state.
       deployApproved: s.status === 'done',
     },
-    verification: { testsRun: passport.testsRun, codeDigest: passport.codeDigest, evidenceDigest: passport.evidenceDigest },
+    verification: { testsRun: passport.testsRun, codeDigest: passport.codeDigest, evidenceDigest: passport.evidenceDigest, simulated: s.testEvidence?.demo === true },
     passport,
     issuedAt: passport.issuedAt,
     howToVerify: HOW_TO_VERIFY,
@@ -85,10 +88,11 @@ export function attestationMarkdown(a: BuildProvenanceAttestation): string {
     '',
     '## Structural gates',
     `- ${yes(a.gates.specApproved)} Spec approved by a human`,
-    `- ${yes(a.gates.verified)} Independently verified — a real ≥1-test pass`,
+    `- ${yes(a.gates.verified)} Independently verified — a real ≥1-test pass${a.verification.simulated ? ' (⚠️ SIMULATED — demo mode, NOT a real test run)' : ''}`,
     `- ${yes(a.gates.deployApproved)} Deploy approved by a human`,
     '',
     '## Verification',
+    `- Mode: **${a.verification.simulated ? '🟡 SIMULATED (demo mode — mock runner, not a real test run)' : '🟢 REAL test run'}**`,
     `- Tests run: **${a.verification.testsRun}**`,
     `- Code digest: \`${a.verification.codeDigest}\``,
     `- Evidence digest: \`${a.verification.evidenceDigest}\``,

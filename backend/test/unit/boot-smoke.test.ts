@@ -11,6 +11,11 @@ const VITE_FILES: RepoFile[] = [
 const UNSUPPORTED_FILES: RepoFile[] = [
   { filePath: 'package.json', content: JSON.stringify({ name: 'db', dependencies: { pg: '^8' } }) },
 ]
+// A non-SPA (static) app: the served HTML IS the body, so a bodyContains literal probe is a
+// meaningful, server-checkable assertion (unlike an SPA shell — see the vite-downgrade test).
+const STATIC_FILES: RepoFile[] = [
+  { filePath: 'index.html', content: '<!doctype html><h1>App</h1>' },
+]
 
 /** A fake boot that succeeds with a fixed URL + a spy teardown. */
 function okBoot(url = 'http://127.0.0.1:9999'): { boot: () => Promise<BootResult>; teardown: ReturnType<typeof vi.fn> } {
@@ -78,12 +83,24 @@ describe('runBootSmoke', () => {
     expect(teardown).toHaveBeenCalledTimes(1)
   })
 
-  it('(d2) a missing literal → that probe fails closed (not a vacuous pass)', async () => {
+  it('(d2) a missing literal on a NON-SPA app → that probe fails closed (not a vacuous pass)', async () => {
     const { boot } = okBoot()
     const spec = { title: 'T', body: 'Then it shows "ABSENT TEXT"' }
-    const res = await runBootSmoke(VITE_FILES, { boot, spec, sessionId: 's6', fetchImpl: constFetch(OK_RES) })
+    // STATIC app: the served HTML is the body, so the literal probe genuinely applies + must fail.
+    const res = await runBootSmoke(STATIC_FILES, { boot, spec, sessionId: 's6', fetchImpl: constFetch(OK_RES) })
     expect(res.passed).toBe(false)
     expect(res.e2eScenarios.some(s => !s.passed && /missing literal/.test(s.outcome ?? ''))).toBe(true)
+  })
+
+  it('(d3) an SPA (vite/next) DOWNGRADES a content-literal probe to render — no false-RED on a healthy shell', async () => {
+    const { boot } = okBoot()
+    // The vite shell never serves a client-rendered literal; a bodyContains-against-/ would FALSE-RED
+    // every healthy SPA. The literal probe must become a render check (boots+serves), so a healthy
+    // SPA verifies — and the recorded scenario is NOT a "missing literal" failure. (Audit #4.)
+    const spec = { title: 'T', body: 'Then it shows "client-rendered heading"' }
+    const res = await runBootSmoke(VITE_FILES, { boot, spec, sessionId: 's6b', fetchImpl: constFetch(OK_RES) })
+    expect(res.passed).toBe(true)
+    expect(res.e2eScenarios.some(s => /missing literal/.test(s.outcome ?? ''))).toBe(false)
   })
 
   it('(e) whole-run TIMEOUT → fail-closed AND teardown runs (booted then exceeded budget)', async () => {

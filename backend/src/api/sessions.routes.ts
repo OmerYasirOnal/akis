@@ -315,8 +315,24 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       } finally {
         await transport.close().catch(() => {})
       }
-      const next = (s.externalWrites ?? []).map(w => (w.id === rec.id ? resolved : w))
-      await services.store.update(s.id, { externalWrites: next }, s.version)
+      // The outward write may have ALREADY executed; persist the outcome RESILIENTLY. The version
+      // captured at entry is STALE after the multi-second execute (a live chat turn / a second
+      // propose bumps it), so a single update at s.version would 500 and STRAND the proposal as
+      // 'proposed' — a retry would then RE-EXECUTE the Jira/Confluence write (double write). Re-read
+      // the latest version and retry only on optimistic-lock conflict; the per-writeId in-flight
+      // guard above already prevents a concurrent confirm of the SAME proposal.
+      for (let attempt = 0; ; attempt++) {
+        const cur = await services.store.get(s.id)
+        if (!cur) break // session vanished mid-confirm — nothing to persist onto
+        const already = (cur.externalWrites ?? []).find(w => w.id === rec.id)
+        if (already && already.status !== 'proposed') break // outcome already recorded elsewhere
+        const next = (cur.externalWrites ?? []).map(w => (w.id === rec.id ? resolved : w))
+        try { await services.store.update(s.id, { externalWrites: next }, cur.version); break }
+        catch (e) {
+          if (attempt >= 5 || !/version conflict/.test(e instanceof Error ? e.message : '')) throw e
+          // else: a concurrent write bumped the version — re-read + retry.
+        }
+      }
       return reply.send({ ok: resolved.status === 'executed', status: resolved.status, result: resolved.result })
     } finally {
       confirmingWrites.delete(inflightKey)

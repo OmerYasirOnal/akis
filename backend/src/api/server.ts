@@ -484,7 +484,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // per-provider transport; propose/list work without it.
     mcpAuthStore, env,
   })
-  registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
+  registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus, userIdOf })
   // Ship-time preview PREWARM (perceived latency): boot the preview on the `done` event so
   // the first "Run app" click finds it READY. Non-gating, fire-and-forget, kill switch:
   // AKIS_PREVIEW_PREWARM=0. Disabled under test env so route tests keep exact lifecycles.

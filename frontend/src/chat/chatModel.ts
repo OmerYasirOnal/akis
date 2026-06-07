@@ -7,7 +7,7 @@ export interface NarrationMsg { id: string; kind: 'narration'; agent: Role; text
 export interface ToolLine { tool: string; ok?: boolean }
 export interface AgentMsg { id: string; kind: 'agent'; agent: Role; tools: ToolLine[]; notes: string[]; done: boolean; ok?: boolean; attempts: number; metrics?: AgentMetrics }
 export interface GateMsg { id: string; kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: GateState }
-export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passed: boolean }
+export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passed: boolean; demo?: boolean }
 /** Read-only critic code-review verdict card (automatic, NOT a human gate). Structured only. */
 export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: boolean; findings: number; critical: boolean; iteration: number }
 /** A parked run awaiting a HUMAN recovery decision — the inline actionable card (proceed/abandon a
@@ -87,8 +87,8 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
         break
       }
       case 'verify': {
-        if (verifyMsg) { verifyMsg.testsRun = e.testsRun; verifyMsg.passed = e.passed }
-        else { verifyMsg = { id, kind: 'verify', testsRun: e.testsRun, passed: e.passed }; items.push(verifyMsg) }
+        if (verifyMsg) { verifyMsg.testsRun = e.testsRun; verifyMsg.passed = e.passed; if (e.demo) verifyMsg.demo = true }
+        else { verifyMsg = { id, kind: 'verify', testsRun: e.testsRun, passed: e.passed, ...(e.demo ? { demo: true } : {}) }; items.push(verifyMsg) }
         break
       }
       case 'code_review': {

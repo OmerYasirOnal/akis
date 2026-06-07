@@ -2,6 +2,7 @@ import http from 'node:http'
 import net from 'node:net'
 import type { FastifyInstance } from 'fastify'
 import type { SessionStore } from '../store/SessionStore.js'
+import type { SessionState } from '@akis/shared'
 import type { EventBus } from '../events/bus.js'
 import type { PreviewRegistry, PreviewEntry } from '../preview/PreviewRegistry.js'
 import { detectAppType } from '../preview/AppDetector.js'
@@ -12,6 +13,12 @@ export interface PreviewDeps {
   registry: PreviewRegistry
   store: SessionStore
   bus: EventBus
+  /** Resolve the authenticated user id from a request (same closure as the session routes). When
+   *  present, the session-control preview routes (boot/inspect/stop) are OWNER-SCOPED: an owned
+   *  session is private to its owner, so a non-owner can't boot-and-run another user's generated
+   *  code, stop their live preview, or inspect it. Absent (tests/host-injection) ⇒ open (today's
+   *  behavior). Anonymous (ownerId-less) sessions stay open for backward compat. */
+  userIdOf?: (req: import('fastify').FastifyRequest) => (string | undefined) | Promise<string | undefined>
   /** Upstream port resolver (defaults to the registry); injectable for tests. */
   portFor?: (sessionId: string) => number | undefined
 }
@@ -96,9 +103,20 @@ export function wirePreviewPrewarm(
 export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): void {
   const portFor = deps.portFor ?? ((id: string) => deps.registry.portFor(id))
 
+  // Owner-scope a session-control preview request: an owned session is PRIVATE to its owner, so a
+  // non-owner gets 404 (existence not even confirmed) — mirrors sessions.routes' accessibleSession.
+  // An anonymous (ownerId-less) session stays open. Returns the session when accessible, else null.
+  const accessiblePreviewSession = async (req: import('fastify').FastifyRequest, id: string): Promise<SessionState | null> => {
+    const session = await deps.store.get(id)
+    if (!session) return null
+    if (session.ownerId && (await deps.userIdOf?.(req)) !== session.ownerId) return null
+    return session
+  }
+
   app.post<{ Params: { id: string } }>('/sessions/:id/preview', async (req, reply) => {
     const id = req.params.id
-    const session = await deps.store.get(id)
+    // OWNER-SCOPED: booting RUNS the session's generated code — a non-owner must never reach it.
+    const session = await accessiblePreviewSession(req, id)
     if (!session) return reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
     const entry = await startPreviewForSession(deps.store, deps.registry, id)
     if (!entry) return reply.code(409).send({ error: 'no produced code to preview', code: 'NoCode' })
@@ -106,12 +124,16 @@ export function registerPreviewRoutes(app: FastifyInstance, deps: PreviewDeps): 
   })
 
   app.get<{ Params: { id: string } }>('/sessions/:id/preview', async (req, reply) => {
+    // OWNER-SCOPED: a non-owner can't inspect another user's preview status (404, like the POST).
+    if (!(await accessiblePreviewSession(req, req.params.id))) return reply.code(404).send({ error: 'no preview', code: 'NotFound' })
     const e = deps.registry.get(req.params.id)
     if (!e) return reply.code(404).send({ error: 'no preview', code: 'NotFound' })
     return reply.send(e)
   })
 
   app.delete<{ Params: { id: string } }>('/sessions/:id/preview', async (req, reply) => {
+    // OWNER-SCOPED: stopping another owner's live preview would be a cross-user DoS — 404 for them.
+    if (!(await accessiblePreviewSession(req, req.params.id))) return reply.code(404).send({ error: 'no preview', code: 'NotFound' })
     await deps.registry.stop(req.params.id)
     return reply.send({ stopped: true })
   })
