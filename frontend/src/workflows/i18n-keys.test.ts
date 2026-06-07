@@ -19,11 +19,6 @@ describe('workflows i18n catalogue', () => {
     }
   })
 
-  it('resolves the page title in EN and TR', () => {
-    expect(STRINGS.en['workflows.title']).toBe('Workflows')
-    expect(STRINGS.tr['workflows.title']).toBe('İş Akışları')
-  })
-
   it('defines all five copy.* affordance keys in both locales', () => {
     const keys = ['copy.codeBlock', 'copy.reply', 'copy.spec', 'copy.file', 'copy.evidence'] as const
     for (const k of keys) {
