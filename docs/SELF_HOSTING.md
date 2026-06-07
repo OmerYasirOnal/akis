@@ -16,6 +16,11 @@ survive restarts.
 > users or the public internet** without supplying your own isolation (a VM per
 > user, a microVM/Firecracker/gVisor isolate, a locked-down network). The default
 > stack publishes the port on `127.0.0.1` (loopback only) for exactly this reason.
+>
+> If you DO put AKIS behind auth for a small trusted group, also set
+> **`AKIS_REQUIRE_AUTH_FOR_BUILDS=1`** so a build can't be started anonymously — every
+> session is then owned + private to its owner (otherwise an unauthenticated build is
+> public-by-UUID). Leave it unset for the zero-login keyless demo. See `THREAT-MODEL.md`.
 
 ---
 

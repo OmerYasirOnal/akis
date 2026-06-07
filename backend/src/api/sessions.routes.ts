@@ -65,6 +65,11 @@ export interface SessionsDeps {
    *  OAuth-backed HttpMcpTransport for a connected provider). Typed to the McpTransport SEAM so a
    *  test can inject a fake; the real factory (returning HttpMcpTransport) satisfies it. */
   mcpTransportFor?: (opts: { userId: string; provider: string; store: import('../agent/mcp/StoreBackedOAuthProvider.js').RemoteMcpAuthStore; env: NodeJS.ProcessEnv }) => import('../agent/mcp/McpTransport.js').McpTransport | undefined
+  /** Refuse to START a build for an UNAUTHENTICATED caller (no ownerId). Default false = anonymous
+   *  builds allowed (the keyless-demo experience + today's behavior). Set true for a public/shared
+   *  deployment so a build is always owned (no public-by-UUID anonymous session). Owner-scoping of
+   *  EXISTING sessions is unchanged either way. */
+  requireAuthForBuilds?: boolean
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -172,6 +177,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     }
     try {
       const ownerId = await deps.userIdOf?.(req)
+      // Locked-down deployments require every build to be OWNED — refuse an anonymous (public-by-UUID)
+      // build. Default off so the keyless-demo + existing behavior is byte-identical. (Audit #29.)
+      if (deps.requireAuthForBuilds && !ownerId) return reply.code(401).send({ error: 'sign in to start a build', code: 'Unauthorized' })
       // Per-user token-quota PRE-CHECK (SACRED: start-only, fail-closed, never touches a gate or
       // an in-flight run). Only when BOTH usage + quota are injected; budget 0 ⇒ unlimited via
       // checkQuota's fast-path (no store read, byte-identical default). A blocked owner gets a

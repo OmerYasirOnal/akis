@@ -483,6 +483,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // External-write CONFIRM (Jira/Confluence MCP) needs the per-user OAuth store + env to build the
     // per-provider transport; propose/list work without it.
     mcpAuthStore, env,
+    // Opt-in: a public/shared deployment can require auth to START a build (no anonymous
+    // public-by-UUID session). Default off → keyless-demo + existing behavior unchanged.
+    requireAuthForBuilds: env.AKIS_REQUIRE_AUTH_FOR_BUILDS === '1',
   })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus, userIdOf })
   // Ship-time preview PREWARM (perceived latency): boot the preview on the `done` event so

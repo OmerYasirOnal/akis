@@ -54,6 +54,10 @@ User-supplied LLM API keys are handled with these guarantees:
 - **Missing master key** surfaces as a clear `EncryptionNotConfiguredError` (a settings error), not a stack trace; env-only keys do not require the master key.
 - **Residual:** a hostile in-tree first-party module in the same process can read decrypted keys in memory (same single-trust-domain limit as the gates). Self-hosted single-user posture accepts this; multi-user/remote would need process isolation + a secrets manager.
 
+### Session access (owner-scoping + anonymous sessions)
+
+A session started while authenticated carries an `ownerId` and is **private to that owner** — every session route resolves it and returns 404 to a non-owner (existence not even confirmed). A session started **unauthenticated** has no owner and is therefore **public-by-UUID**: anyone who knows the (unguessable `randomUUID`) id can read it. This is acceptable for the default single-user, `127.0.0.1`-bound, keyless-DEMO posture (and is what makes the zero-login demo work). For a **public or multi-user** exposure, set **`AKIS_REQUIRE_AUTH_FOR_BUILDS=1`** so a build cannot be started anonymously — every session is then owned and owner-scoped. Gate minting is unaffected by this flag.
+
 ## Preview + real-test execution (sub-project #6)
 
 `RealTestRunner` (opt-in) and the live preview run **agent-produced code as child
