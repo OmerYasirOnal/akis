@@ -52,6 +52,11 @@ describe('externalWriteGate — digest', () => {
     const b = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { items: [{ b: 2, a: 1 }, { d: 4, c: 3 }] } })
     expect(a).toBe(b)
   })
+  it('CHANGES when ARRAY ELEMENT order changes (element order IS content — reordering must not re-confirm)', () => {
+    const a = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { items: [{ a: 1 }, { b: 2 }] } })
+    const b = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { items: [{ b: 2 }, { a: 1 }] } })
+    expect(a).not.toBe(b)
+  })
   it('still CHANGES when a nested content byte changes', () => {
     const base = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { meta: { a: 1, b: 2 } } })
     expect(digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { meta: { a: 1, b: 3 } } })).not.toBe(base)
