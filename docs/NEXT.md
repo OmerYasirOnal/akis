@@ -59,7 +59,7 @@ Eight PRs were fresh-context reviewed and merged to `main` in that round (main w
 
 - **Shipped:** `ApiEmbeddingProvider` (`backend/src/knowledge/embedding/ApiEmbeddingProvider.ts`) is a real semantic embedder — OpenAI `text-embedding-3-small` (dim 1536), one batched `POST /v1/embeddings`, L2-normalized so cosine == dot. `selectEmbeddingProvider` picks it **only when an OpenAI key resolves** (env `OPENAI_API_KEY` → KeyStore `openai`, the SAME sources as the chat provider). So retrieval is **semantic when an embedding key is set, lexical feature-hash otherwise**.
 - **Still the default:** keyless and `NODE_ENV=test` stay on the offline `LocalEmbeddingProvider` (signed feature-hash, dim 256, no network/key) — the self-hostable, reproducible-out-of-the-box path is byte-for-byte unchanged. Combined with BM25 and fused via RRF (`retrieve/hybrid.ts`) either way.
-- **Still future:** an API **cross-encoder** behind the `Reranker` seam (`retrieve/Reranker.ts`) — today's reranker is the offline lexical-overlap `LocalReranker`/`NoopReranker`; and a **golden-eval retrieval quality gate** (§6) to actually measure that the semantic path improves top-k. There is no quality threshold yet.
+- **Still future:** an API **cross-encoder** behind the `Reranker` seam (`retrieve/Reranker.ts`) — today's reranker is the offline lexical-overlap `LocalReranker`/`NoopReranker`. (The **golden-eval retrieval quality gate** that measures top-k is now **built** — see §6.)
 
 ## 3. pgvector column + persisted BM25 — *BM25-persist + vector(N) column DONE (PR #63); ANN-as-ranking still TODO*
 
@@ -81,7 +81,7 @@ Eight PRs were fresh-context reviewed and merged to `main` in that round (main w
 
 ## 6. Quality + observability gates — *genuinely TODO*
 
-- **Golden-eval retrieval gate (F1-AC8):** **not built.** No `≥20 query→chunk` golden set with a top-5 ≥80% quality gate exists in `backend/test`; retrieval is covered by unit/contract tests but not a measured quality threshold. (Now more relevant: with semantic embeddings shipped (§2), this is the gate that would actually prove the keyed path improves top-k.)
+- **Golden-eval retrieval gate (F1-AC8):** **DONE.** `backend/test/unit/retrieval-golden-eval.test.ts` pins a golden query→expected-chunk set and gates on **top-5 hit-rate ≥ 80%** through the full hybrid+rerank path (fails the suite below the target); the offline embedder measures 26/26 = 100% over the corpus. F1-AC8's measured quality threshold now exists.
 - **OpenTelemetry observability (F2-AC15):** **partial.** RAG metrics are surfaced via `RagService.getMetrics` + `/api/knowledge` and run analytics exist (`backend/src/analytics`), but there is no OTel span/metric export.
 - **Critic skill injection (#65 follow-up):** **not wired.** Workflow-selected skills now shape the **Scribe/Proto** system prompts (`backend/src/di/services.ts` `composeFor('scribe'|'proto', …)`), but the Critic is constructed without a skill-composed prompt — folding selected skills into the Critic prompt is the out-of-scope follow-up to #65.
 

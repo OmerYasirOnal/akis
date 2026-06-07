@@ -1,6 +1,6 @@
 # AKIS — Architecture (2026-06-03)
 
-> The real, shipped architecture of the AKIS MVP — accurate, not aspirational. AKIS is a self-hostable agentic build studio whose thesis is **quality trust**: AI agents do the work, but nothing is marked *verified* or pushed until it passes **4 inviolable structural gates** with a human in the loop. This doc names the spine and where each piece lives; for current product state see `README.md`, for what's left see `docs/NEXT.md`, for the trust boundary see `THREAT-MODEL.md`.
+> The real, shipped architecture of the AKIS MVP — accurate, not aspirational. AKIS is a self-hostable agentic build studio whose thesis is **quality trust**: AI agents do the work, but nothing is marked *verified* or pushed until it passes **4 inviolable structural build gates** with a human in the loop — and any OUTWARD write (Jira/Confluence via MCP) passes a 5th, human-confirmed external-write gate. This doc names the spine and where each piece lives; for current product state see `README.md`, for what's left see `docs/NEXT.md`, for the trust boundary see `THREAT-MODEL.md`.
 
 pnpm workspace: `backend/` (Fastify + TS) · `frontend/` (React 19 + Vite + Tailwind v4) · `shared/` (`@akis/shared` types + brands). The backend test suite (`pnpm -C backend test` = `tsc --noEmit` strict + vitest) is the gate.
 
@@ -19,16 +19,22 @@ idea → Scribe (spec) → [GATE 1: human approval] → Proto (code)
 - **Critic** (`subagents/critic/CriticAgent.ts`) — spec + code review verdict (surfaced as a read-only status card).
 - Sub-agents read a single typed, read-only **SharedContext** (`backend/src/context/assemble.ts`); they hold **no** gate capability. Lanes are `laneId` labels on the event stream (`main`/`verify`), not a separate parallel-lanes module.
 
-## 2. The 4 gates + branded tokens (the moat)
+## 2. The 4 build gates + the external-write gate — branded tokens (the moat)
 
-Defined in `backend/src/gates/` (`specGate.ts`, `pushGate.ts`) and `@akis/shared`. Each gate is enforced **structurally**, not by convention:
+Defined in `backend/src/gates/` (`specGate.ts`, `pushGate.ts`, `externalWriteGate.ts`) and `@akis/shared`. Each gate is enforced **structurally**, not by convention.
+
+The **4 build gates** guard the idea→push pipeline:
 
 1. **Spec-approval** — code-write is denied until a human approves the spec (`ApprovedSpec` token, mintable only from an approval bound to the reviewed spec).
 2. **Producer ≠ verifier** — only the `trace` (verifier) role is handed a `Verifier` capability in DI; producers get none.
 3. **Verified = a real test** — a `VerifyToken` latches only on a verifier run with ≥1 executed + passing test (fail-closed); the token carries a runner-computed **digest** of the tested files, and the push gate requires pushed-code = verified-code.
 4. **Push gate** — a GitHub push needs an `ApprovedPush` token, mintable only when verified **and** human-confirmed.
 
-Tokens (`VerifyToken`, `ApprovalToken`, `ApprovedPush`, `TestRunResult`) are nominal **`unique symbol` brands** — cannot be written as a literal or satisfied with `as T`; the minting capabilities are module-private (a forging import is a compile error). The store's generic `update` patch type-excludes the gate fields. Proven by `@ts-expect-error` tripwires + a contract test driving the **real** orchestrator adversarially (`backend/test/contract/agentic-gates.contract.test.ts`).
+The **external-write gate** (the 5th branded token) guards OUTWARD writes — creating a Jira issue / Confluence page through a remote MCP server — which are distinct from the build pipeline:
+
+5. **External-write gate** — an agent/user only **proposes**; the write executes only behind an `ApprovedExternalWrite` token, minted **solely** when a **human confirms** the exact **digest-bound** content (`digestExternalWrite` over the proposal) of an **allow-listed** action (`ATLASSIAN_WRITE_ACTIONS`, re-checked at mint AND execute), on an **owner-scoped** session — never autonomously, never on a stage transition or inside the agent loop.
+
+Tokens (`VerifyToken`, `ApprovalToken`, `ApprovedPush`, `TestRunResult`, `ApprovedExternalWrite`) are nominal **`unique symbol` brands** — cannot be written as a literal or satisfied with `as T`; the minting capabilities are module-private (a forging import is a compile error). The store's generic `update` patch type-excludes the gate fields (and `externalWrites` rides that generic patch as plain, NON-gate data — it never widens the gate-write surface). Proven by `@ts-expect-error` tripwires + a contract test driving the **real** orchestrator adversarially (`backend/test/contract/agentic-gates.contract.test.ts`).
 
 **Honest boundary:** the gates give **integrity, not confidentiality** — in one OS process a first-party module can still reach a handed capability. There is **no sandbox isolation** (`LocalDirectSandbox` in `backend/src/exec/Sandbox.ts` is env-scrubbing + process-group kill, not a boundary). See `THREAT-MODEL.md`.
 
@@ -73,3 +79,9 @@ Ranking is still **brute-force JS cosine** over the in-memory index (the `PgVect
 `Dockerfile` + `docker-compose.yml` for self-hosting (`docs/SELF_HOSTING.md`). CI (`.github/workflows/ci.yml`) runs `tsc --noEmit` + vitest (backend) and a **v8 line-coverage gate** (≥80, ~86% today — frontend), a real-Postgres migration integration test, **boot-smokes the built image keyless against `/health`**, and a hermetic **chromium-only Playwright smoke** (`frontend/e2e/smoke.spec.ts` — loads the app, asserts the landing renders) in a separate `e2e` job.
 
 **Release pipeline** (`.github/workflows/release.yml`): on a `v*` tag push / manual dispatch it builds the image, **keyless `/health` smoke-gates the publish**, then pushes to **GHCR (`ghcr.io/omeryasironal/akis-platform-mvp`, version + `latest`)** and cuts a GitHub Release. By design this is **self-host-an-image** (Ollama-style) — there is **no** live-host deploy step. A **full browser-driven E2E** of the whole studio flow is still future (`docs/NEXT.md`).
+
+## 9. Remote MCP (Jira / Confluence / GitHub)
+
+One `McpTransport` seam (`agent/mcp/McpTransport.ts`) carries two server kinds: **stdio+Docker** (`StdioDockerTransport` — GitHub repo READ grounding) and **Streamable-HTTP/SSE** (`HttpMcpTransport` — remote servers). A user connects THEIR Atlassian/GitHub via **browser OAuth 2.1 + Dynamic Client Registration** (`StoreBackedOAuthProvider`, no app to register); tokens are AES-GCM-encrypted at rest per `(user, provider)` (`keys/JsonFileRemoteMcpAuthStore.ts`, AAD `akis:mcp-conn:`), never in the browser. Routes: `api/mcpConnect.routes.ts` (connect/callback/status/disconnect, owner-scoped) + a `mcpTransportFor` DI factory.
+
+**Shipped:** the transport + OAuth/DCR + encrypted store + connect routes + the external-write **propose→human-confirm→execute** flow (§2 gate 5) + FE connect tiles and the studio "Publish to Jira/Confluence" card. **Owner-credential / admin gated (not yet pinned):** a real Atlassian connection (the owner must enable Rovo MCP for their site + consent in the browser) and the live **tool-name + payload-shape pinning** — the write allow-list currently carries best-effort names, validated against the server's real `listTools()` once a live connection exists. **Read-for-grounding via remote MCP (agent auto-use)** is not wired yet; GitHub read grounding today still uses the stdio+Docker path.

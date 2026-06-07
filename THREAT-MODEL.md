@@ -1,4 +1,4 @@
-# AKIS MVP — Threat Model (sub-project #1: agentic core + 4 gates)
+# AKIS MVP — Threat Model (agentic core + the 4 build gates + the external-write gate)
 
 > **Thesis:** AKIS's value is *quality trust* — that a result marked **verified** really was produced through Scribe → human approval → Proto → Validator → Critic → Trace (a real test) → human push-confirm. This document states **exactly what the gates guarantee and what they do not**, so the claim is honest and defensible.
 >
@@ -19,6 +19,19 @@
 5. **Spec-approval and push are structural.** Code-write (`ProtoAgent.run`) requires an `ApprovedSpec`, mintable only from a session whose `approval` token (set only via `store.recordApproval`, from the orchestrator's `ApprovalAuthority`) is **bound to the session's reviewed spec** (spec-substitution rejected). Push requires an `ApprovedPush`, mintable only from a session's `VerifyToken`. The store's generic `update` patch **omits** `approval` and `verifyToken`, so neither gate field can be set through the ordinary mutation path (asserted at the type level).
 
 All five are covered by the contract test (`backend/test/contract/agentic-gates.contract.test.ts`) which drives the **real** orchestrator and tries to break each gate, plus the unit tripwires. `npm test` runs `tsc --noEmit && vitest run`, so the compile-time guarantees are part of the suite (not silently skipped).
+
+## The external-write gate (the 5th branded token — outward writes)
+
+Beyond the 4 build gates, a separate branded gate (`backend/src/gates/externalWriteGate.ts`) guards **outward writes** — creating a Jira issue / Confluence page through a remote MCP server. It is **propose-only for the agent**: an agent or user records a *proposal*; nothing leaves AKIS until a human confirms. The write executes only behind an **`ApprovedExternalWrite`** token (a module-private `unique symbol` brand, like the build tokens), minted **solely** when ALL hold:
+
+- **Human-confirmed** — the only caller of `mintApprovedExternalWrite`/`executeExternalWrite` is the `POST /sessions/:id/external-writes/:writeId/confirm` route; no agent/orchestrator/chat path can reach them, and the write never fires on a stage transition or inside the agent loop.
+- **Digest-bound** — mint throws unless the human-supplied digest equals `digestExternalWrite(proposal)` (a deep-canonical hash over `{provider, action, target, payload}`), so the executed bytes are exactly the confirmed bytes.
+- **Allow-listed** — the action must be on the frozen `ATLASSIAN_WRITE_ACTIONS` set, re-checked at **mint AND execute** (defense-in-depth); an off-list action is refused (fail-closed).
+- **Owner-scoped** — every propose/confirm route resolves `accessibleSession` (404 for a non-owner), and the executing transport is built from the **confirming user's own** encrypted MCP connection — never another user's.
+
+`externalWrites` is persisted as plain, NON-gate jsonb on the generic patch path, so it never widens the gate-write surface (it carries no token). Covered by `backend/test/contract/external-writes.routes.test.ts` (digest-mismatch → no write, off-list → 400, not-connected → 409, concurrent-confirm → single write, cross-user → 404) + `backend/test/unit/external-write-gate.test.ts`.
+
+> **Honest boundary (live pinning):** the gate's action allow-list + payload shapes are validated against the remote server's real `listTools()` only once a live Atlassian connection exists (owner-credential / admin gated). Until then the allow-list is fail-CLOSED — a write whose real tool name differs is *refused*, never silently mis-sent.
 
 ## What the gates do NOT guarantee (the honest boundary)
 

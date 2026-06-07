@@ -179,6 +179,34 @@ Enterprise). See [`backend/.env.example`](../backend/.env.example).
 
 ---
 
+### Connect Jira / Confluence / GitHub via remote MCP (optional)
+
+Connect **your own** Atlassian or GitHub account so AKIS can read context and **publish
+human-confirmed** writes (a Jira issue / Confluence page from a finished build) — from
+*Settings → Connected tools*. The flow is **browser OAuth 2.1 + Dynamic Client
+Registration**: you authorize in your own account; there is **no OAuth app to register**
+and **no token to paste**. Tokens are AES-256-GCM encrypted at rest, per `(user, provider)`,
+and never reach the browser.
+
+- **Required:** `AI_KEY_ENCRYPTION_KEY` (the same 32-byte master used by the KeyStore) —
+  it also encrypts the MCP connection store. Without it, *Connect* is unavailable
+  (fail-closed), not silently plaintext.
+- **Optional:** `AKIS_MCP_AUTH_STORE_PATH` (defaults to `~/.config/akis/mcp-auth.json`,
+  `0600`).
+
+**What's shipped vs. owner-gated.** The transport, OAuth/DCR, encrypted store, connect
+routes, and the external-write **propose → human-confirm → execute** flow (the 5th branded
+gate — see `THREAT-MODEL.md`) are all in place: an agent/user only *proposes*; nothing is
+written until you confirm the exact digest-bound, allow-listed content on your own session.
+**Owner-credential / admin gated:** a live Atlassian connection needs your org admin to
+enable the Atlassian Rovo MCP for the site + your browser consent; the write action
+**tool-name + payload shapes** are pinned against the server's real `listTools()` only once
+that live connection exists. Until then the allow-list is fail-CLOSED — an unrecognized tool
+name is refused, never mis-sent. Agent **auto-use of MCP reads** for grounding is not wired
+yet; GitHub read-grounding today uses the stdio+Docker path.
+
+---
+
 ### Publish to your own server (OCI free-tier) (optional)
 
 After a build reaches **`done`** (it passed the push gate), the owner can deploy that

@@ -61,7 +61,7 @@ Scope (multi-week → atoms-sized phased PRs) · capability proof E–G unverifi
 - Studio entry reads "What do you want to build?" with working template chips.
 - The 9-step pipeline is visible and labeled with trust copy; Builder/Verifier visually distinct.
 - Deploy gate is visually disabled until verification passes (reflecting the server-enforced rule).
-- A full-stack app (multi-file + backend, Phases E–G) builds → verifies → previews → ships through the gates, proven by CI boot tests.
-- Producer/verifier separation and the 3 structural safeguards remain intact and non-bypassable.
+- A full-stack app (multi-file + backend, Phases E–G) builds → verifies → previews → ships through the gates. Verification is real at the unit level — Trace **boot-smokes the generated app** and HTTP-probes it under `AKIS_REAL_TESTS` (the SPA literal-probe degrades to a render check, so a healthy SPA is never false-RED); CI boot-smokes the **built AKIS image** keyless against `/health` plus a chromium landing smoke. A **full browser-driven E2E** that drives the whole studio build→verify→preview→ship flow end-to-end is still TODO (`docs/NEXT.md` §7) — "CI boot tests" is not that proof.
+- Producer/verifier separation and the structural gate tokens remain intact and non-bypassable: the **4 build gates** (spec-approval, producer≠verifier, verified-real, push) plus the **external-write gate** (the 5th branded token — propose-only agent, human-confirmed, digest-bound, allow-listed, owner-scoped for Jira/Confluence MCP writes). Critic-resolution stays **advisory + recoverable**, never a gate.
 - Develop-in-chat: a follow-up message diffs over the persisted workspace without losing approved work.
 - Research note + this spec + README committed.
