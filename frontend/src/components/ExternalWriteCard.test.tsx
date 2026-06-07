@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { ExternalWriteCard } from './ExternalWriteCard.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
+import { RouterProvider } from '../router/router.js'
 import type { ApiClient, ExternalWriteSummary } from '../api/client.js'
 
 function makeApi(over: Partial<Record<keyof ApiClient, unknown>> = {}): ApiClient {
@@ -15,9 +16,11 @@ function makeApi(over: Partial<Record<keyof ApiClient, unknown>> = {}): ApiClien
 }
 
 const ui = (api: ApiClient) => render(
-  <I18nProvider>
-    <ExternalWriteCard sessionId="s1" idea="App" files={[{ filePath: 'README.md', content: '# App' }]} api={api} />
-  </I18nProvider>,
+  <RouterProvider>
+    <I18nProvider>
+      <ExternalWriteCard sessionId="s1" idea="App" files={[{ filePath: 'README.md', content: '# App' }]} api={api} />
+    </I18nProvider>
+  </RouterProvider>,
 )
 
 describe('ExternalWriteCard (connection-aware publish to Jira/Confluence)', () => {
@@ -37,6 +40,10 @@ describe('ExternalWriteCard (connection-aware publish to Jira/Confluence)', () =
     fireEvent.click(screen.getByRole('button', { name: /Review/ }))
     await waitFor(() => expect(screen.getByText(/Content digest/)).toBeInTheDocument())
     expect(api.proposeExternalWrite).toHaveBeenCalledWith('s1', expect.objectContaining({ action: 'createPage', target: { spaceKey: 'ENG' } }))
+    // #22: the human sees the EXACT target + payload bytes before confirming (not just a summary).
+    expect(screen.getByText(/Exactly what will be written/)).toBeInTheDocument()
+    expect(screen.getByText(/"spaceKey": "ENG"/)).toBeInTheDocument()
+    expect(screen.getByText(/"title": "App"/)).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button', { name: /Confirm \+ publish/ }))
     await waitFor(() => expect(api.confirmExternalWrite).toHaveBeenCalledWith('s1', 'w1', 'a'.repeat(64)))
     await waitFor(() => expect(screen.getByText(/PAGE-1/)).toBeInTheDocument())

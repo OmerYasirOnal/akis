@@ -5,13 +5,16 @@ import type { ReactNode } from 'react'
 import { ChatStudio } from './ChatStudio.js'
 import { RunPipeline } from './RunPipeline.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
+import { RouterProvider } from '../router/router.js'
 import { ApiClient } from '../api/client.js'
 import { EventStreamClient } from '../live/EventStreamClient.js'
 import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
 import type { AkisEvent } from '@akis/shared'
 
-const wrap = (ui: ReactNode) => <I18nProvider>{ui}</I18nProvider>
+// ChatStudio renders ExternalWriteCard (which links to /settings via the SPA Link) on a done build,
+// so the studio tree needs the router context the app always provides in production.
+const wrap = (ui: ReactNode) => <RouterProvider><I18nProvider>{ui}</I18nProvider></RouterProvider>
 
 /** A controllable fake stream client (EventStreamClient-shaped). The gone-card path is driven
  *  by getSession's 404, not by the SSE stream, so this stream stays inert in these tests. */

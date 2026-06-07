@@ -5,12 +5,14 @@ import type { ReactNode } from 'react'
 import { ChatThread, RecoveryBubble, ChatBubble } from './ChatThread.js'
 import { ChatStudio } from './ChatStudio.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
+import { RouterProvider } from '../router/router.js'
 import { ApiClient } from '../api/client.js'
 import { EventStreamClient } from '../live/EventStreamClient.js'
 import type { ChatMessage } from './chatModel.js'
 import type { AkisEvent } from '@akis/shared'
 
-const wrap = (ui: ReactNode) => <I18nProvider>{ui}</I18nProvider>
+// ChatStudio renders ExternalWriteCard (which SPA-links to /settings) on a done build → needs router.
+const wrap = (ui: ReactNode) => <RouterProvider><I18nProvider>{ui}</I18nProvider></RouterProvider>
 
 describe('ChatThread', () => {
   it('renders an awaiting gate card with an Approve button that fires onApprove', async () => {

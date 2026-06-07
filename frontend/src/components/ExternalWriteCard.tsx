@@ -4,13 +4,19 @@ import type { ApiClient, ExternalWriteSummary } from '../api/client.js'
 import { SectionTitle, Button, Input, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { ApiError } from '../api/client.js'
+import { Link } from '../router/router.js'
 
 /** Gate-safe external publishing for a finished build: PROPOSE a Jira issue / Confluence page, review
- *  the exact summary + digest, then CONFIRM to execute via the user's own MCP connection. The write
- *  never fires without this explicit human confirm. The card is CONNECTION-AWARE — if Atlassian isn't
- *  connected it guides the user to Settings instead of letting them hit a confirm-time 409 — and shows
- *  the history of past proposals + outcomes. */
-type Mode = { kind: 'confluence' | 'jira' } & ({ step: 'form' } | { step: 'review'; id: string; digest: string; summary: string } | { step: 'done'; result: string; ok: boolean })
+ *  the exact target + payload bytes + digest, then CONFIRM to execute via the user's own MCP
+ *  connection. The write never fires without this explicit human confirm. The card is CONNECTION-AWARE
+ *  — if Atlassian isn't connected it guides the user to Settings instead of letting them hit a
+ *  confirm-time 409 — and shows the history of past proposals + outcomes. */
+type Proposal = { target: Record<string, unknown>; payload: Record<string, unknown> }
+type Mode = { kind: 'confluence' | 'jira' } & (
+  | { step: 'form' }
+  | ({ step: 'review'; id: string; digest: string; summary: string } & Proposal)
+  | { step: 'done'; result: string; ok: boolean }
+)
 
 export function ExternalWriteCard({ sessionId, idea, files, api }: { sessionId: string; idea: string; files: CodeArtifact['files'] | undefined; api: ApiClient }) {
   const { t } = useI18n()
@@ -48,7 +54,9 @@ export function ExternalWriteCard({ sessionId, idea, files, api }: { sessionId: 
       : { provider: 'atlassian', action: 'createJiraIssue', summary: `${t('mcpwrite.toJira')}: “${title}” (${key.trim()})`, target: { projectKey: key.trim() }, payload: { summary: title, description: readme } }
     try {
       const r = await api.proposeExternalWrite(sessionId, body)
-      setMode({ kind: mode.kind, step: 'review', id: r.id, digest: r.digest, summary: r.summary })
+      // Carry the EXACT target + payload into review so the human authorizes the real bytes (these are
+      // what the server-side digest bound — the request body — so showing them never drifts from it).
+      setMode({ kind: mode.kind, step: 'review', id: r.id, digest: r.digest, summary: r.summary, target: body.target, payload: body.payload })
       loadHistory()
     } catch (e) { setErr(ApiError.is(e) ? e.message : String(e)) }
     finally { setBusy(false) }
@@ -75,7 +83,7 @@ export function ExternalWriteCard({ sessionId, idea, files, api }: { sessionId: 
       {/* CONNECTION-AWARE: not connected → guide to Settings instead of a confirm-time 409. */}
       {connected === false && (
         <div className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-sm text-amber-200">
-          {t('mcpwrite.notConnected')} <a href="/settings" className="font-semibold underline">{t('mcpwrite.goSettings')}</a>
+          {t('mcpwrite.notConnected')} <Link to="/settings" className="font-semibold underline">{t('mcpwrite.goSettings')}</Link>
         </div>
       )}
 
@@ -99,6 +107,10 @@ export function ExternalWriteCard({ sessionId, idea, files, api }: { sessionId: 
       {mode?.step === 'review' && (
         <div className="flex flex-col gap-2">
           <div className="text-sm text-slate-200">{mode.summary}</div>
+          {/* EXACT bytes the human authorizes — target + payload that the digest binds. The write
+              creates precisely this; nothing is sent that isn't shown here. */}
+          <div className="text-xs text-slate-500">{t('mcpwrite.willWrite')}</div>
+          <pre className="max-h-48 overflow-auto rounded-lg border border-white/10 bg-black/30 p-2 text-[11px] leading-relaxed text-slate-300 whitespace-pre-wrap break-words">{JSON.stringify({ target: mode.target, payload: mode.payload }, null, 2)}</pre>
           <div className="text-xs text-slate-500">{t('mcpwrite.digest')}: <code>{mode.digest.slice(0, 16)}…</code></div>
           <div className="flex gap-2">
             <Button onClick={() => void confirm()} disabled={busy}>{busy ? '…' : t('mcpwrite.confirm')}</Button>
