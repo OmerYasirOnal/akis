@@ -32,8 +32,18 @@ export default defineConfig({
       // ws:true so the backend's /preview WebSocket upgrade tunnel (vite HMR for a
       // RUNNING preview app) survives the dev proxy and reaches the backend.
       '/preview': { target: 'http://127.0.0.1:3000', ws: true },
-      '/auth': 'http://127.0.0.1:3000',
-      '/oauth': 'http://127.0.0.1:3000', '/health': 'http://127.0.0.1:3000',
+      // OAuth-base-sensitive routes (login + per-user GitHub/Atlassian connect): `xfwd: true` makes
+      // http-proxy forward `x-forwarded-host` = the browser origin (localhost:5173). The backend's
+      // baseUrl() reads that, so the OAuth `redirect_uri` + post-login redirect resolve to the
+      // FRONTEND origin (which vite proxies) instead of the proxy target 127.0.0.1:3000 — fixing the
+      // "redirect_uri is not associated" error + the bounce-back-to-studio on Connect. (Prod sets
+      // PUBLIC_BASE_URL=https://akisflow.com, which baseUrl() prefers over the header.)
+      '/auth': { target: 'http://127.0.0.1:3000', xfwd: true },
+      // Remote-MCP connect/callback/status/disconnect (Settings → Connect Jira/Confluence + GitHub-MCP).
+      // Without the proxy entry the dev FE's `<a href="/mcp/atlassian/connect">` fell through to the
+      // SPA fallback and bounced back to the studio instead of starting the vendor OAuth redirect.
+      '/mcp': { target: 'http://127.0.0.1:3000', xfwd: true },
+      '/oauth': { target: 'http://127.0.0.1:3000', xfwd: true }, '/health': 'http://127.0.0.1:3000',
       // Publish destination (Settings → deploy-to-your-own-server). Without this the dev FE's
       // /publish/profile fetch falls through to the SPA fallback (HTML), which the page used to
       // misread as "encryption not configured".
