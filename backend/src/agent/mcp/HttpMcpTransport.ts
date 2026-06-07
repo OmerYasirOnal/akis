@@ -64,6 +64,22 @@ const defaultSetTimer = (cb: () => void, ms: number): { clear: () => void } => {
   return { clear: () => clearTimeout(h) }
 }
 
+/**
+ * Return a copy of the SDK's `RequestInit` with the OAuth bearer set as the `Authorization` header.
+ *
+ * The header is normalized through `new Headers(init?.headers)` BEFORE setting Authorization, so a
+ * caller-supplied `Headers` instance or `[k,v][]` array (both valid `HeadersInit` shapes the SDK may
+ * pass) is preserved — an object-spread `{ ...init.headers }` would silently DROP those non-plain
+ * shapes, stripping any headers the SDK relies on (e.g. SSE `Accept`). The injected Authorization is
+ * authoritative (it `.set()`s last), so a stale caller value cannot shadow the real bearer. Non-header
+ * init fields (method/body/signal…) pass through untouched.
+ */
+export function buildBearerInit(token: string, init: RequestInit | undefined): RequestInit {
+  const headers = new Headers(init?.headers)
+  headers.set('Authorization', `Bearer ${token}`)
+  return { ...init, headers }
+}
+
 export class HttpMcpTransport implements McpTransport {
   private readonly url: string
   private readonly kind: 'sse' | 'streamable-http'
@@ -168,37 +184,23 @@ async function closeConnQuietly(conn: McpConnection): Promise<void> {
 }
 
 /**
- * The real connect: SDK Client + SSEClientTransport via DYNAMIC import (keeps the SDK out of every
- * other import graph). The Atlassian Remote MCP server speaks SSE (e.g. https://mcp.atlassian.com/
- * v1/sse), which this SDK version (1.29) provides; StreamableHTTP client is not in this SDK yet.
+ * The real connect: SDK Client + the SSE or Streamable-HTTP transport via DYNAMIC import (keeps the
+ * SDK out of every other import graph). SDK 1.29 ships both client transports; we pick by `kind`
+ * (legacy `/v1/sse` vs the modern `/v1/mcp/authv2`).
  *
- * AUTH: the OAuth access token travels ONLY as an `Authorization: Bearer` header, injected by a
- * custom `fetch` that the SDK uses for BOTH legs (the SSE GET stream + the recurring POSTs) — never
- * argv, never logged. Live-verify against the real Atlassian endpoint once OAuth creds are connected
- * (next slice: the Atlassian connection store + OAuth routes).
+ * AUTH: with an authProvider the SDK owns the bearer + auto-refresh; with a static token a custom
+ * `fetch` injects `Authorization: Bearer` on EVERY request via buildBearerInit (which preserves the
+ * SDK's own headers across Headers/array/plain shapes). The token travels header-only — never
+ * argv/log. Live-verify against the real endpoints once a user connects (the connect/callback routes).
  */
-/**
- * Merge `Authorization: Bearer <token>` into the request headers WITHOUT dropping the SDK's own.
- * The SDK passes a `Headers` INSTANCE to the custom fetch; object-spreading a Headers instance
- * yields {} (no own enumerable keys), which would strip `Accept: text/event-stream` (the SSE GET)
- * and `content-type: application/json` (the JSON-RPC POST) and break the real connection.
- * `new Headers(init)` copies a Headers instance OR a plain object/tuple list, so every SDK header
- * survives. EXPORTED so the header-preservation invariant is unit-testable without a live fetch.
- */
-export function withBearer(initHeaders: HeadersInit | undefined, token: string): Headers {
-  const headers = new Headers(initHeaders)
-  headers.set('Authorization', `Bearer ${token}`)
-  return headers
-}
-
 const defaultConnect = async (args: ConnectArgs): Promise<McpConnection> => {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
   const url = new URL(args.url)
   // AUTH wiring: with an authProvider, the SDK owns auth (bearer from provider.tokens + refresh on
   // 401). With a static token, inject the bearer on EVERY request via a custom fetch that PRESERVES
-  // the SDK's own headers (withBearer). Either way the token never reaches argv/logs.
+  // the SDK's own headers (buildBearerInit normalizes Headers/array/plain shapes). Token never logs.
   const bearerFetch = args.token === undefined ? undefined : (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
-    fetch(input, { ...init, headers: withBearer(init?.headers, args.token as string) })
+    fetch(input, buildBearerInit(args.token as string, init))
   const opts: Record<string, unknown> = {}
   if (args.authProvider) opts.authProvider = args.authProvider
   if (bearerFetch) opts.fetch = bearerFetch

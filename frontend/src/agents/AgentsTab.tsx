@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CORE_ROLES, type Role, type AgentConfig } from '@akis/shared'
 import { ApiClient, type ProviderInfo } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
+import { Select } from '../ui/kit.js'
 
 type Selection = Record<string, { providerId: string; modelId: string }>
 
@@ -64,18 +65,18 @@ export function AgentsTab({ api }: { api: ApiClient }) {
           return (
             <div key={role} className="grid grid-cols-3 items-center gap-2 px-3 py-2 text-sm">
               <span className="font-medium text-slate-200">{role}</span>
-              <select aria-label={`${role}-provider`} className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-slate-100"
+              <Select aria-label={`${role}-provider`} className="py-1.5 text-sm"
                 value={cur?.providerId ?? ''}
                 onChange={e => { const p = available.find(x => x.id === e.target.value); setAgent(role, e.target.value, p?.defaultModel ?? '') }}>
                 <option value="">{t('agents.default')}</option>
                 {available.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-              </select>
-              <select aria-label={`${role}-model`} className="rounded border border-white/10 bg-white/[0.04] px-2 py-1 text-slate-100"
+              </Select>
+              <Select aria-label={`${role}-model`} className="py-1.5 text-sm"
                 value={cur?.modelId ?? ''} disabled={!provider}
                 onChange={e => cur && setAgent(role, cur.providerId, e.target.value)}>
                 <option value="">{t('agents.default')}</option>
                 {provider?.models.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-              </select>
+              </Select>
             </div>
           )
         })}

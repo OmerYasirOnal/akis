@@ -71,6 +71,11 @@ export const STRINGS = {
     // GATED push (Gate 4 still mints from the VerifyToken) — a retry affordance, not a bypass.
     'recovery.push.hint': 'The build is verified, but pushing it failed. Retry the push — it still requires the verified push approval (the push gate is never bypassed).',
     'recovery.push.retry': 'Push failed — retry',
+    // Maps the backend GitHubDeliveryError code (a 422) to a friendly, localized message instead of
+    // leaking the raw English provider string ("github: request to /git/blobs failed (HTTP 404)").
+    // The push gate is untouched — the run parks push_failed and stays retryable.
+    'recovery.push.deliveryFailed': 'Could not reach the GitHub push destination — check that the configured repository exists and the connected account can write to it, then retry.',
+    'recovery.push.rateLimited': 'GitHub is rate-limiting requests right now — the destination is fine; wait a moment and retry the push.',
     // Stale deep-link recovery: a session that NO LONGER EXISTS (server restart wiped the
     // in-memory store, DB loss, or external deletion) makes GET /sessions/:id return 404. The
     // honest recovery is to start a NEW build — not to hang on a frozen view. Distinct from the
@@ -130,6 +135,8 @@ export const STRINGS = {
     'chat.jumpToLatest': 'Latest',
     'chat.verified': 'Verified',
     'chat.notVerified': 'Not verified',
+    // Singular/plural variants — EN pluralizes the verify-bubble count ("1 test" vs "3 tests").
+    'chat.test': 'test',
     'chat.tests': 'tests',
     'chat.tool.dispatch_scribe': 'Writing the spec',
     'chat.tool.dispatch_proto': 'Writing the code',
@@ -288,7 +295,7 @@ export const STRINGS = {
     'analytics.testsRun': 'Tests run',
     'analytics.verified': 'Verified runs',
     'analytics.activity': 'Agent activity',
-    'analytics.empty': 'No runs yet — build something on the Build tab.',
+    'analytics.empty': 'No runs yet — build something in the Studio.',
     'analytics.sub': 'Live aggregate stats across all your builds.',
     'analytics.provider': 'Provider',
     'analytics.ok': 'ok',
@@ -779,6 +786,8 @@ export const STRINGS = {
     // KAPILI push'u yeniden çalıştırır (Gate 4 yine VerifyToken'dan üretir) — atlatma değil.
     'recovery.push.hint': 'İnşa doğrulandı, ancak push başarısız oldu. Push\'u yeniden dene — yine doğrulanmış push onayını gerektirir (push kapısı asla atlanmaz).',
     'recovery.push.retry': 'Push başarısız — yeniden dene',
+    'recovery.push.deliveryFailed': 'GitHub push hedefine ulaşılamadı — yapılandırılan deponun var olduğunu ve bağlı hesabın yazma yetkisi olduğunu kontrol edip yeniden deneyin.',
+    'recovery.push.rateLimited': 'GitHub şu anda istekleri hız sınırına takıyor — hedefte sorun yok; biraz bekleyip push\'u yeniden deneyin.',
     // Eskimiş derin bağlantı kurtarma: ARTIK MEVCUT OLMAYAN bir oturum (sunucu yeniden başlaması
     // bellek deposunu sildi, DB kaybı ya da dış silme) GET /sessions/:id'in 404 dönmesine yol açar.
     // Dürüst kurtarma, donmuş bir görünümde takılmak değil YENİ bir geliştirme başlatmaktır. Geçici
@@ -833,6 +842,8 @@ export const STRINGS = {
     'chat.jumpToLatest': 'En alta in',
     'chat.verified': 'Doğrulandı',
     'chat.notVerified': 'Doğrulanmadı',
+    // Turkish does not pluralize a noun after a numeral, so singular == plural ("1 test", "3 test").
+    'chat.test': 'test',
     'chat.tests': 'test',
     'chat.tool.dispatch_scribe': 'Spec yazılıyor',
     'chat.tool.dispatch_proto': 'Kod yazılıyor',
@@ -995,7 +1006,7 @@ export const STRINGS = {
     'analytics.testsRun': 'Çalışan test',
     'analytics.verified': 'Doğrulanan',
     'analytics.activity': 'Ajan etkinliği',
-    'analytics.empty': 'Henüz çalışma yok — Geliştir sekmesinden bir şey üret.',
+    'analytics.empty': 'Henüz çalışma yok — Stüdyo’dan bir şey üret.',
     'analytics.sub': 'Tüm geliştirmelerin canlı toplu istatistikleri.',
     'analytics.provider': 'Sağlayıcı',
     'analytics.ok': 'başarılı',

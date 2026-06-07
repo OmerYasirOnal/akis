@@ -7,6 +7,7 @@ import { useLiveChat } from './useLiveChat.js'
 import { RunPipeline } from './RunPipeline.js'
 import { ChatBubble } from './ChatThread.js'
 import { ideaTitle } from './recentBuilds.js'
+import { actionErrorText } from './actionError.js'
 
 /**
  * ONE inline build, anchored at the array slot where its SpecCard was approved (the spine).
@@ -76,7 +77,7 @@ export function RunBlock({
     void Promise.resolve(fn(sessionId))
       // Surface a real failure (the SSE stream reflects a SUCCESS, but a rejected POST had no
       // feedback). A 409 is an expected gate/precondition refusal → stay quiet, like the studio.
-      .catch((e: unknown) => { if (!(ApiError.is(e) && e.status === 409)) onActionError?.(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) })
+      .catch((e: unknown) => { if (!(ApiError.is(e) && e.status === 409)) onActionError?.(actionErrorText(e, t)) })
       .finally(() => setRecovering(false))
   }
   const onProceed = drive(id => api.resolveCritic(id, 'proceed'))

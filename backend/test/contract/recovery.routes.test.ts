@@ -13,6 +13,7 @@ import { Orchestrator } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
+import { GitHubDeliveryError } from '../../src/di/RealGitHubAdapter.js'
 import type { KeyStore } from '../../src/keys/KeyStore.js'
 
 const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/skills/library')
@@ -69,6 +70,43 @@ describe('CONTRACT: recovery routes', () => {
     expect(retry.json().status).toBe('verify_failed') // still no real pass — Gate 3 intact
     // Push remains impossible (Gate 4): no verify token.
     expect((await app.inject({ method: 'POST', url: `/sessions/${s.id}/confirm` })).statusCode).toBe(409)
+  })
+
+  it('POST /sessions/:id/confirm with a missing/invalid GitHub delivery target → 422 + stable code (not raw 500), gate stays awaiting (retryable)', async () => {
+    const { app, services } = makeApp() // good spec, 2 passing tests → push-ready
+    // Swap the push seam for one that fails like a real GitHub delivery rejection (404 target).
+    services.github = {
+      createRepo: async () => 'https://github.com/me/gone',
+      read: () => [],
+      pushFiles: async () => { throw new GitHubDeliveryError('github: request to /git/blobs failed (HTTP 404)', 404) },
+    }
+    const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/approve` })
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/run` }) // → awaiting_push_confirm
+    const res = await app.inject({ method: 'POST', url: `/sessions/${s.id}/confirm` })
+    expect(res.statusCode).toBe(422) // a known delivery failure → 4xx, NOT a raw 500
+    expect(res.json().code).toBe('GitHubDeliveryError') // stable code the FE localizes
+    expect(res.json().error).not.toContain('ghp_') // never leaks a token
+    // Gate behavior unchanged: the run parks push_failed (retryable), never shipped.
+    const after = (await app.inject({ method: 'GET', url: `/sessions/${s.id}` })).json()
+    expect(after.status).toBe('push_failed')
+  })
+
+  it('POST /sessions/:id/confirm with an upstream 429 → forwarded as 429 (transient, NOT collapsed to 422), gate stays retryable', async () => {
+    const { app, services } = makeApp()
+    services.github = {
+      createRepo: async () => 'https://github.com/me/limited',
+      read: () => [],
+      pushFiles: async () => { throw new GitHubDeliveryError('github: rate limited or forbidden (HTTP 429)', 429) },
+    }
+    const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/approve` })
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/run` }) // → awaiting_push_confirm
+    const res = await app.inject({ method: 'POST', url: `/sessions/${s.id}/confirm` })
+    expect(res.statusCode).toBe(429) // back-off signal preserved end-to-end
+    expect(res.json().code).toBe('GitHubDeliveryError')
+    const after = (await app.inject({ method: 'GET', url: `/sessions/${s.id}` })).json()
+    expect(after.status).toBe('push_failed') // still parked retryable — gate untouched
   })
 
   it('POST /sessions/:id/retry from the wrong status → 409', async () => {

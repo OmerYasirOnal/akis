@@ -84,6 +84,20 @@ export class ExternalWriteActionNotAllowedError extends Error {
   }
 }
 
+export class ExternalWriteKeyCollisionError extends Error {
+  constructor(keys: readonly string[]) {
+    super(`External write proposal has overlapping target/payload keys: ${keys.join(', ')}`)
+    this.name = 'ExternalWriteKeyCollisionError'
+  }
+}
+
+/** The keys present in BOTH `target` and `payload` (own enumerable keys). The `{...target,...payload}`
+ *  merge in executeExternalWrite would let payload SILENTLY override any such key — so we reject a
+ *  colliding proposal at mint time rather than discover the ambiguity at the transport. */
+function collidingKeys(target: Record<string, unknown>, payload: Record<string, unknown>): string[] {
+  return Object.keys(target).filter(k => Object.prototype.hasOwnProperty.call(payload, k))
+}
+
 /**
  * POSITIVE write-action allow-list (mirrors readOnlyAllowlist.frozenReadOnlySet): a FROZEN set of
  * the ONLY MCP write-tool names an external-write proposal may invoke. This is the enforcement the
@@ -146,6 +160,11 @@ export type ApprovedExternalWrite = {
  */
 export function mintApprovedExternalWrite(proposal: ExternalWriteProposal, confirmedDigest: string): ApprovedExternalWrite {
   if (!isAllowedExternalWriteAction(proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
+  // DISJOINT-key invariant: executeExternalWrite merges `{...target,...payload}`; if a key appears in
+  // both, payload would silently override target with no signal to the confirming human. Refuse here
+  // so a proposal can only be approved when the merge is unambiguous.
+  const collisions = collidingKeys(proposal.target, proposal.payload)
+  if (collisions.length > 0) throw new ExternalWriteKeyCollisionError(collisions)
   const digest = digestExternalWrite(proposal)
   if (confirmedDigest !== digest) throw new ExternalWriteDigestMismatchError()
   return { writeId: proposal.id, digest } as unknown as ApprovedExternalWrite
@@ -172,6 +191,10 @@ export async function executeExternalWrite(
   if (token.writeId !== proposal.id || token.digest !== digestExternalWrite(proposal)) {
     throw new ExternalWriteDigestMismatchError()
   }
+  // Same defense-in-depth parity as the allow-list above: mint already refused colliding keys, but
+  // re-assert here so the unambiguous-merge property never rests on mint alone.
+  const collisions = collidingKeys(proposal.target, proposal.payload)
+  if (collisions.length > 0) throw new ExternalWriteKeyCollisionError(collisions)
   const res = await transport.callTool(proposal.action, { ...proposal.target, ...proposal.payload })
   return { ok: !res.isError, text: res.text }
 }

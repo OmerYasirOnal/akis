@@ -153,7 +153,7 @@ export function VerifyBubble({ m }: { m: VerifyMsg }) {
     <div className="flex items-start gap-3">
       <Avatar role="trace" />
       <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${m.passed ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200' : 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'}`}>
-        {m.passed ? `✓ ${t('chat.verified')}` : `✗ ${t('chat.notVerified')}`} · {m.testsRun} {t('chat.tests')}
+        {m.passed ? `✓ ${t('chat.verified')}` : `✗ ${t('chat.notVerified')}`} · {m.testsRun} {t(m.testsRun === 1 ? 'chat.test' : 'chat.tests')}
       </div>
     </div>
   )
