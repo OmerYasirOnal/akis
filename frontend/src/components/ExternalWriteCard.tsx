@@ -132,7 +132,7 @@ export function ExternalWriteCard({ sessionId, idea, files, api }: { sessionId: 
           <ul className="flex flex-col gap-1">
             {history.slice().reverse().map(w => (
               <li key={w.id} className="flex items-start gap-2 text-xs text-slate-400">
-                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-medium ${w.status === 'executed' ? 'bg-[#07D1AF]/15 text-[#07D1AF]' : w.status === 'failed' ? 'bg-rose-400/15 text-rose-300' : 'bg-white/10 text-slate-300'}`}>{t(`mcpwrite.st.${w.status}` as 'mcpwrite.st.proposed')}</span>
+                <span className={`mt-0.5 shrink-0 rounded px-1.5 py-0.5 font-medium ${w.status === 'executed' ? 'bg-[#07D1AF]/15 text-[#07D1AF]' : w.status === 'failed' ? 'bg-rose-400/15 text-rose-300' : w.status === 'executing' ? 'bg-amber-400/15 text-amber-200' : 'bg-white/10 text-slate-300'}`}>{t(`mcpwrite.st.${w.status}` as 'mcpwrite.st.proposed')}</span>
                 <span className="min-w-0 truncate">{w.summary}{w.result ? ` — ${w.result}` : ''}</span>
               </li>
             ))}

@@ -297,6 +297,25 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   // guard closes that window — the same pattern as the push `confirming` Set below
   // (gate-keeper HIGH, 2026-06-07).
   const confirmingWrites = new Set<string>()
+  // Version-RESILIENT, status-GUARDED patch of one external-write record. Re-reads the latest version
+  // (a live chat turn / a second propose bumps it during a multi-second confirm) and retries only on
+  // an optimistic-lock conflict. Applies the patch ONLY when the record is still at `from` — so a
+  // crash/retry can never re-drive a transition that already happened (at-most-once). Returns whether
+  // it wrote.
+  const patchExternalWrite = async (sessionId: string, writeId: string, from: ExternalWriteRecord['status'], to: ExternalWriteRecord): Promise<boolean> => {
+    for (let attempt = 0; ; attempt++) {
+      const cur = await services.store.get(sessionId)
+      if (!cur) return false // session vanished mid-confirm
+      const rec = (cur.externalWrites ?? []).find(w => w.id === writeId)
+      if (!rec || rec.status !== from) return false // already moved on (concurrent/retry) — do nothing
+      const next = (cur.externalWrites ?? []).map(w => (w.id === writeId ? to : w))
+      try { await services.store.update(sessionId, { externalWrites: next }, cur.version); return true }
+      catch (e) {
+        if (attempt >= 5 || !/version conflict/.test(e instanceof Error ? e.message : '')) throw e
+        // else: re-read + retry the optimistic update.
+      }
+    }
+  }
   app.post<{ Params: { id: string; writeId: string }; Body: { digest?: string } }>('/sessions/:id/external-writes/:writeId/confirm', async (req, reply) => {
     const s = await accessibleSession(req, req.params.id)
     if (!s) return notFound(reply, req.params.id)
@@ -313,34 +332,37 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       const transport = (deps.mcpTransportFor ?? mcpTransportFor)({ userId: ownerId, provider: rec.provider, store: deps.mcpAuthStore, env: deps.env ?? process.env })
       if (!transport) return reply.code(409).send({ error: `not connected to ${rec.provider} — connect it first`, code: 'NotConnected' })
       const proposal: ExternalWriteProposal = { id: rec.id, provider: rec.provider as ExternalWriteProposal['provider'], summary: rec.summary, action: rec.action, target: rec.target, payload: rec.payload }
+      const now = (): string => new Date().toISOString()
+      // 1. VALIDATE (digest + allow-list) BEFORE any state change or side effect — a mismatch is a
+      //    terminal 'failed' (nothing written), recorded resiliently from 'proposed'.
+      let token
+      try { token = mintApprovedExternalWrite(proposal, req.body?.digest ?? '') }
+      catch (e) {
+        await transport.close().catch(() => {})
+        await patchExternalWrite(s.id, rec.id, 'proposed', { ...rec, status: 'failed', result: e instanceof Error ? e.message : String(e), confirmedAt: now() })
+        return reply.send({ ok: false, status: 'failed', result: 'digest or allow-list mismatch' })
+      }
+      // 2. IN-DOUBT guard (#30): mark 'executing' DURABLY before the outward call, so a crash/retry
+      //    between the call and the outcome can NEVER re-execute — a retry reads status 'executing'
+      //    (≠ 'proposed') → 409 above. The single 'proposed'→'executing' transition is the at-most-
+      //    once gate; if it didn't win (a concurrent confirm already moved it), refuse.
+      if (!(await patchExternalWrite(s.id, rec.id, 'proposed', { ...rec, status: 'executing' }))) {
+        await transport.close().catch(() => {})
+        return reply.code(409).send({ error: 'proposal already resolved', code: 'AlreadyResolved' })
+      }
+      // 3. Execute exactly once.
       let resolved: ExternalWriteRecord
       try {
-        const token = mintApprovedExternalWrite(proposal, req.body?.digest ?? '') // throws on digest/allow-list mismatch
         const out = await executeExternalWrite(token, transport, proposal)
-        resolved = { ...rec, status: out.ok ? 'executed' : 'failed', result: out.text.slice(0, 500), confirmedAt: new Date().toISOString() }
+        resolved = { ...rec, status: out.ok ? 'executed' : 'failed', result: out.text.slice(0, 500), confirmedAt: now() }
       } catch (e) {
-        resolved = { ...rec, status: 'failed', result: e instanceof Error ? e.message : String(e), confirmedAt: new Date().toISOString() }
+        resolved = { ...rec, status: 'failed', result: e instanceof Error ? e.message : String(e), confirmedAt: now() }
       } finally {
         await transport.close().catch(() => {})
       }
-      // The outward write may have ALREADY executed; persist the outcome RESILIENTLY. The version
-      // captured at entry is STALE after the multi-second execute (a live chat turn / a second
-      // propose bumps it), so a single update at s.version would 500 and STRAND the proposal as
-      // 'proposed' — a retry would then RE-EXECUTE the Jira/Confluence write (double write). Re-read
-      // the latest version and retry only on optimistic-lock conflict; the per-writeId in-flight
-      // guard above already prevents a concurrent confirm of the SAME proposal.
-      for (let attempt = 0; ; attempt++) {
-        const cur = await services.store.get(s.id)
-        if (!cur) break // session vanished mid-confirm — nothing to persist onto
-        const already = (cur.externalWrites ?? []).find(w => w.id === rec.id)
-        if (already && already.status !== 'proposed') break // outcome already recorded elsewhere
-        const next = (cur.externalWrites ?? []).map(w => (w.id === rec.id ? resolved : w))
-        try { await services.store.update(s.id, { externalWrites: next }, cur.version); break }
-        catch (e) {
-          if (attempt >= 5 || !/version conflict/.test(e instanceof Error ? e.message : '')) throw e
-          // else: a concurrent write bumped the version — re-read + retry.
-        }
-      }
+      // 4. Record the outcome (from 'executing'). A crash HERE leaves an honest in-doubt 'executing'
+      //    record for manual resolution — never a silent re-execute (the digest/allow-list are unchanged).
+      await patchExternalWrite(s.id, rec.id, 'executing', resolved)
       return reply.send({ ok: resolved.status === 'executed', status: resolved.status, result: resolved.result })
     } finally {
       confirmingWrites.delete(inflightKey)

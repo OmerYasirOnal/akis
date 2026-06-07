@@ -223,7 +223,9 @@ export interface ExternalWriteRecord {
   action: string
   target: Record<string, unknown>
   payload: Record<string, unknown>
-  status: 'proposed' | 'executed' | 'failed'
+  /** 'executing' is the durable IN-DOUBT state set right before the outward call (at-most-once
+   *  guard): a crash/retry between the call and its outcome stays 'executing' — never re-executed. */
+  status: 'proposed' | 'executing' | 'executed' | 'failed'
   /** Execution outcome text (created page/issue ref or a short error) once confirmed. */
   result?: string
   proposedAt: string

@@ -123,7 +123,9 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     const codes = [a.statusCode, b.statusCode].sort()
     expect(codes).toEqual([200, 409]) // one wins, one is refused
     const refused = a.statusCode === 409 ? a : b
-    expect(refused.json().code).toBe('ConfirmInProgress')
+    // Either guard may win the race: the synchronous in-flight Set (ConfirmInProgress) or the durable
+    // 'proposed'→'executing' transition (AlreadyResolved). Both mean "refused, single execute".
+    expect(['ConfirmInProgress', 'AlreadyResolved']).toContain(refused.json().code)
     expect(calls).toHaveLength(1) // the EXTERNAL side effect fired exactly once
   })
 
@@ -137,5 +139,28 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     const confirm = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
     expect([list.statusCode, propose.statusCode, confirm.statusCode]).toEqual([404, 404, 404]) // existence not even confirmed
     expect(calls).toHaveLength(0) // no outward write fired on the intruder's behalf
+  })
+
+  it('IN-DOUBT guard (#30): the record is durably executing BEFORE the outward call → a retry never re-executes', async () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    const ref = { id: '' }
+    let statusAtCall: string | undefined
+    let calls = 0
+    const transport: McpTransport = {
+      initialize: async () => {}, listTools: async () => [],
+      callTool: async () => { calls++; statusAtCall = (await services.store.get(ref.id))?.externalWrites?.[0]?.status; return { text: 'created: PAGE-1', isError: false } },
+      close: async () => {},
+    }
+    const f = Fastify({ logger: false })
+    registerSessionRoutes(f, { orchestrator: new Orchestrator(services), services, userIdOf: async () => 'owner1', mcpAuthStore: new MemoryRemoteMcpAuthStore(), mcpTransportFor: () => transport })
+    ref.id = await newSession(f)
+    const { id: writeId, digest } = (await f.inject({ method: 'POST', url: `/sessions/${ref.id}/external-writes`, payload: PROPOSAL })).json()
+    const res = await f.inject({ method: 'POST', url: `/sessions/${ref.id}/external-writes/${writeId}/confirm`, payload: { digest } })
+    expect(res.json().status).toBe('executed')
+    expect(statusAtCall).toBe('executing') // the in-doubt mark was DURABLE before the side effect fired
+    // a retry on the now-resolved record → 409, NO second outward call (at-most-once)
+    const retry = await f.inject({ method: 'POST', url: `/sessions/${ref.id}/external-writes/${writeId}/confirm`, payload: { digest } })
+    expect(retry.statusCode).toBe(409)
+    expect(calls).toBe(1)
   })
 })

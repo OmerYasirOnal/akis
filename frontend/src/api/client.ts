@@ -125,7 +125,7 @@ export interface ExternalWriteSummary {
   provider: string
   summary: string
   action: string
-  status: 'proposed' | 'executed' | 'failed'
+  status: 'proposed' | 'executing' | 'executed' | 'failed'
   result?: string
   proposedAt: string
   confirmedAt?: string
