@@ -311,7 +311,7 @@ export function WorkflowBuilder({
                   <Field label={t('workflows.builder.model')}>
                     <Select
                       aria-label={`${role}-model`}
-                      className="text-sm disabled:opacity-50"
+                      className="text-sm"
                       value={d.modelId}
                       disabled={!provider}
                       onChange={e => setModel(role, e.target.value)}
@@ -423,7 +423,7 @@ export function WorkflowBuilder({
                   <Field label={t('workflows.builder.model')}>
                     <Select
                       aria-label={`custom-agent-${idx}-model`}
-                      className="text-sm disabled:opacity-50"
+                      className="text-sm"
                       value={c.modelId}
                       disabled={!provider}
                       onChange={e => updateCustomAgent(c.key, { modelId: e.target.value })}

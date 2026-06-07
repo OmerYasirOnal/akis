@@ -71,7 +71,7 @@ export function AgentsTab({ api }: { api: ApiClient }) {
                 <option value="">{t('agents.default')}</option>
                 {available.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
               </Select>
-              <Select aria-label={`${role}-model`} className="py-1.5 text-sm disabled:opacity-50"
+              <Select aria-label={`${role}-model`} className="py-1.5 text-sm"
                 value={cur?.modelId ?? ''} disabled={!provider}
                 onChange={e => cur && setAgent(role, cur.providerId, e.target.value)}>
                 <option value="">{t('agents.default')}</option>

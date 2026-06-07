@@ -66,13 +66,16 @@ const CHEVRON =
 export function Select({ className = '', ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
   return (
     <select
-      className={`w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] bg-no-repeat py-2.5 pl-3 pr-9 text-slate-100 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 ${className}`}
+      {...rest}
+      className={`w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] bg-no-repeat py-2.5 pl-3 pr-9 text-slate-100 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      // Merge AFTER the spread so a caller's `style` augments rather than clobbers the chevron +
+      // dark color-scheme (mirrors the `className` merge contract above).
       style={{
         colorScheme: 'dark',
         backgroundImage: CHEVRON,
         backgroundPosition: 'right 0.75rem center',
+        ...rest.style,
       }}
-      {...rest}
     />
   )
 }
