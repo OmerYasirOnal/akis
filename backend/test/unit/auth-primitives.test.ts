@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { createHmac } from 'node:crypto'
 import { signJwt, verifyJwt, signResetToken, verifyResetToken, JwtError } from '../../src/auth/jwt.js'
 import { hashPassword, verifyPassword } from '../../src/auth/password.js'
 import { serializeCookie, parseCookies, cookieConfigFromEnv } from '../../src/auth/cookie.js'
@@ -24,6 +25,36 @@ describe('jwt (HS256, Node crypto)', () => {
   it('rejects an expired token', () => {
     const t = signJwt({ sub: 'u1', email: 'a@b.com', name: 'A' }, secret, 10, 1000)
     expect(() => verifyJwt(t, secret, 2000)).toThrow(/expired/)
+  })
+  it('rejects a correctly-signed token whose body is not valid JSON (bad payload)', () => {
+    // Forge a token where the signature is VALID for the (garbage) body — the only thing
+    // standing between an attacker and a crash/forgery is the JSON.parse guard, which must
+    // fail closed with JwtError rather than throwing a raw SyntaxError into the caller.
+    const head = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+    const body = Buffer.from('not-json{').toString('base64url')
+    const sig = createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url')
+    expect(() => verifyJwt(`${head}.${body}.${sig}`, secret)).toThrow(JwtError)
+  })
+  it('rejects a session token missing the subject claim (no privilege without identity)', () => {
+    // Validly signed, unexpired, but sub is absent — must NOT yield an authenticated identity.
+    const head = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+    const body = Buffer.from(JSON.stringify({ email: 'a@b.com', name: 'A', iat: 1000, exp: 9999999999 })).toString('base64url')
+    const sig = createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url')
+    expect(() => verifyJwt(`${head}.${body}.${sig}`, secret, 1100)).toThrow(/no subject/)
+  })
+  it('rejects a session token with a non-string email/name claim (bad claims)', () => {
+    const head = Buffer.from(JSON.stringify({ alg: 'HS256', typ: 'JWT' })).toString('base64url')
+    const body = Buffer.from(JSON.stringify({ sub: 'u1', email: 42, name: 'A', iat: 1000, exp: 9999999999 })).toString('base64url')
+    const sig = createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url')
+    expect(() => verifyJwt(`${head}.${body}.${sig}`, secret, 1100)).toThrow(/bad claims/)
+    // Pin the OTHER arm of the OR guard independently — email valid, name non-string. Without
+    // this, a mutation dropping the name check would stay green (review follow-up).
+    const body2 = Buffer.from(JSON.stringify({ sub: 'u1', email: 'a@b.com', name: 42, iat: 1000, exp: 9999999999 })).toString('base64url')
+    const sig2 = createHmac('sha256', secret).update(`${head}.${body2}`).digest('base64url')
+    expect(() => verifyJwt(`${head}.${body2}.${sig2}`, secret, 1100)).toThrow(/bad claims/)
+  })
+  it('signing requires a secret (no silent unsigned tokens)', () => {
+    expect(() => signJwt({ sub: 'u1', email: 'a@b.com', name: 'A' }, '')).toThrow(/missing secret/)
   })
 
   it('reset token: round-trips, enforces purpose, and is not usable as a session', () => {
@@ -54,6 +85,26 @@ describe('password (scrypt)', () => {
   it('returns false (never throws) on a malformed hash record', async () => {
     expect(await verifyPassword('x', 'not-a-hash')).toBe(false)
     expect(await verifyPassword('x', 'scrypt$bad')).toBe(false)
+  })
+  it('rejects a record with a non-integer or out-of-range cost (no scrypt invocation)', async () => {
+    // A hostile/corrupt record could carry an absurd or non-numeric N. The cost guard must
+    // reject BEFORE handing it to scrypt, so it can neither crash nor be used as a CPU-DoS lever.
+    expect(await verifyPassword('x', 'scrypt$notnum$c2FsdA$aGFzaA')).toBe(false) // NaN cost
+    expect(await verifyPassword('x', 'scrypt$1$c2FsdA$aGFzaA')).toBe(false)       // cost < 2
+  })
+  it('rejects a record with an empty salt or empty hash segment', async () => {
+    // Empty base64url decodes to a 0-length buffer; verify must fail closed rather than
+    // run scrypt against an empty salt or timingSafeEqual against an empty digest.
+    expect(await verifyPassword('x', 'scrypt$16384$$aGFzaA')).toBe(false) // empty salt
+    expect(await verifyPassword('x', 'scrypt$16384$c2FsdA$')).toBe(false) // empty hash
+  })
+  it('returns false (never throws) when scrypt rejects the parameters', async () => {
+    // A record whose cost is a valid integer but not a power of two makes Node's scrypt throw.
+    // The try/catch must absorb it into a plain false — a bad record is a failed login, not a 500.
+    // NOTE: this relies on Node's scrypt validating N as a power of two (undocumented-ish invariant);
+    // if a future Node relaxes it, this flips to a plain wrong-password false — same observable
+    // result, but the try/catch arm would no longer be exercised by this case.
+    expect(await verifyPassword('x', 'scrypt$3$c2FsdA$aGFzaA')).toBe(false)
   })
 })
 
@@ -86,6 +137,21 @@ describe('cookie helpers', () => {
   it('parseCookies tolerates malformed percent-encoding (no throw on attacker input)', () => {
     expect(() => parseCookies('akis_session=%zz; x=ok')).not.toThrow()
     expect(parseCookies('akis_session=%zz; x=ok').x).toBe('ok')
+  })
+  it('threads AUTH_COOKIE_DOMAIN through config and into the Set-Cookie Domain attribute', () => {
+    // A misconfigured Domain scopes the session cookie to the wrong host (it can leak the
+    // session to sibling subdomains, or fail to send at all) — pin that the env value lands
+    // verbatim on both the config and the serialized header.
+    const cfg = cookieConfigFromEnv({ AUTH_COOKIE_DOMAIN: 'akisflow.com' })
+    expect(cfg.domain).toBe('akisflow.com')
+    expect(serializeCookie('akis_session', 'tok', cfg)).toContain('Domain=akisflow.com')
+  })
+  it('an ABSENT AUTH_COOKIE_DOMAIN yields no domain key and no Domain= attribute (fail-safe default)', () => {
+    // The inverse of the test above (review follow-up): host-only cookies are the safe default —
+    // a stray Domain= would widen the cookie to sibling subdomains.
+    const cfg = cookieConfigFromEnv({})
+    expect('domain' in cfg).toBe(false)
+    expect(serializeCookie('akis_session', 'tok', cfg)).not.toContain('Domain=')
   })
 })
 
