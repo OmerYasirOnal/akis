@@ -52,13 +52,19 @@ export function digestExternalWrite(p: Pick<ExternalWriteProposal, 'provider' | 
   return createHash('sha256').update(canonical).digest('hex')
 }
 
-/** Deterministic key ordering for a plain object (one level deep is enough for our flat payloads;
- *  nested objects are stringified by JSON in insertion order but we sort the top level which is
- *  where target/payload keys live). */
-function sortKeys(obj: Record<string, unknown>): Record<string, unknown> {
-  const out: Record<string, unknown> = {}
-  for (const k of Object.keys(obj).sort()) out[k] = obj[k]
-  return out
+/** Deterministic, DEEP key ordering: recursively sorts the keys of every nested plain object so
+ *  semantically-equal payloads digest identically regardless of insertion order — at any depth, and
+ *  inside arrays. Array element ORDER is preserved (it is content); only object keys are reordered.
+ *  Primitives (and null) pass through unchanged. */
+function sortKeys(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sortKeys)
+  if (value !== null && typeof value === 'object') {
+    const obj = value as Record<string, unknown>
+    const out: Record<string, unknown> = {}
+    for (const k of Object.keys(obj).sort()) out[k] = sortKeys(obj[k])
+    return out
+  }
+  return value
 }
 
 export class ExternalWriteDigestMismatchError extends Error {
