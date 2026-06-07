@@ -58,7 +58,10 @@ describe('Button (design-system)', () => {
     const cls = screen.getByRole('button', { name: 'Build' }).className
     expect(cls).toContain('focus-visible:outline-none')
     expect(cls).toContain('focus-visible:ring-2')
-    expect(cls).toContain('focus-visible:ring-[#07D1AF]')
+    // Pin the EXACT ring token (incl. the /60 opacity) and the offset that makes the ring
+    // visible on the dark surface — a substring-only check would let either silently weaken.
+    expect(cls).toContain('focus-visible:ring-[#07D1AF]/60')
+    expect(cls).toContain('ring-offset-slate-950')
   })
 
   it('keeps the focus-visible ring across every variant', () => {
