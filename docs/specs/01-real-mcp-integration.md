@@ -60,7 +60,17 @@ Secrets discipline (unchanged invariant): tokens + client secret encrypted at re
 
 ## 5. The tool surface — reads (now) + gated writes (new)
 
-- **Reads** flow through the existing `McpToolBridge` + a per-provider read allow-list (mirror `GITHUB_READONLY_TOOLS`): Jira search/read, Confluence list-spaces/get-page, GitHub repo/issue/PR reads. Admitted into the agent loop for grounding. (Atlassian "data access respects the user's permissions" — the server enforces; we still allow-list names.)
+> **STATUS (PR7, 2026-06-07):** the read SURFACE is built — `McpToolBridge` is now provider-agnostic
+> (`buildMcpReadTools` + `buildAtlassianMcpReadTools`, namespace `atlassian_`) and a FROZEN
+> `ATLASSIAN_READONLY_TOOLS` allow-list mirrors `GITHUB_READONLY_TOOLS`. **OWNER/LIVE-GATED next steps:**
+> (a) the allow-list names are the Atlassian-documented Rovo names PENDING validation against a live
+> `listTools()` — the bridge's dropped-tool diagnostic logs the server's real advertised names so the
+> owner reconciles the set on first connect (fail-closed until then: a stale name is inert, never
+> mis-called); (b) WIRING these read tools into the agent loop (the per-owner resolver, like the
+> github-stdio path) is the remaining live-gated step. Writes still flow ONLY through the
+> human-confirmed external-write gate — never a direct read-bridge call.
+
+- **Reads** flow through the now provider-agnostic `McpToolBridge` + a per-provider FROZEN read allow-list (`GITHUB_READONLY_TOOLS` / `ATLASSIAN_READONLY_TOOLS`): Jira search/read, Confluence list-spaces/get-page, GitHub repo/issue/PR reads. Admitted into the agent loop for grounding. (Atlassian "data access respects the user's permissions" — the server enforces; we still allow-list names.)
 - **Writes** NEVER auto-execute. A write tool surfaced by the server is bridged to a **propose** handler: it records an `ExternalWriteProposal {provider, action(=real MCP tool name), summary, target, payload}` (slice-1 gate) and returns "proposed — pending human confirmation" to the agent. The agent continues; the build never blocks on a remote write.
 - A separate per-provider WRITE allow-list (`create_issue`, `create_page`, GitHub `create_or_update_file`/`create_pull_request` IF we route writes via MCP — see §7) gates which tool names may be proposed at all.
 

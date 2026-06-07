@@ -188,7 +188,7 @@ describe('buildGithubMcpTools', () => {
     const { tools } = await buildGithubMcpTools({ pool, ownerId: 'o', token: SECRET })
 
     const out = await tools[0]!.handler({})
-    expect(out).toMatch(/error calling github tool/i)
+    expect(out).toMatch(/error calling github-mcp tool/i)
     expect(out).toContain('get_file_contents')
   })
 

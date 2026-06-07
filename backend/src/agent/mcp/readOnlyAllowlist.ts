@@ -31,10 +31,10 @@
  * instance (they throw) AND freeze the object — the `ReadonlySet` type plus this runtime lock
  * mean the set is immutable in fact, not just by convention.
  */
-function frozenReadOnlySet(names: readonly string[]): ReadonlySet<string> {
+function frozenReadOnlySet(names: readonly string[], label = 'read-only allow-list'): ReadonlySet<string> {
   const set = new Set<string>(names)
   const deny = (op: string) => (): never => {
-    throw new TypeError(`GITHUB_READONLY_TOOLS is immutable: cannot ${op}() the read-only allow-list`)
+    throw new TypeError(`${label} is immutable: cannot ${op}() the read-only allow-list`)
   }
   // Override the three mutators on THIS instance so they throw before touching internal slots.
   Object.defineProperties(set, {
@@ -61,10 +61,50 @@ export const GITHUB_READONLY_TOOLS: ReadonlySet<string> = frozenReadOnlySet([
   // ── Consolidated read dispatchers (read-only ALSO relies on GITHUB_READ_ONLY=1) ──
   'issue_read',
   'pull_request_read',
-])
+], 'GITHUB_READONLY_TOOLS')
 
 /** True iff `name` is on the positive read-only allow-list. The single predicate the
  *  bridge uses to admit a server-advertised tool. */
 export function isReadOnlyTool(name: string): boolean {
   return GITHUB_READONLY_TOOLS.has(name)
+}
+
+/**
+ * Atlassian Rovo Remote-MCP READ allow-list (Jira + Confluence grounding). FROZEN positive set —
+ * a write/mutation tool (createConfluencePage, updateConfluencePage, createJiraIssue, editJiraIssue,
+ * transitionJiraIssue, addCommentToJiraIssue, …) is structurally ABSENT, so it can NEVER surface to
+ * an agent as a read tool (those flow ONLY through the human-confirmed external-write gate).
+ *
+ * NAMES ARE OWNER/LIVE-GATED: these are the Atlassian-documented Rovo tool names as of 2026-06; they
+ * are PENDING validation against a live `listTools()` (an Atlassian connection needs the owner's org
+ * admin to enable Rovo MCP + browser consent). The bridge intersects listTools() ∩ this set, so a
+ * stale/renamed entry is simply INERT (fail-closed — never mis-calls), and the bridge's dropped-tool
+ * diagnostic logs the server's real advertised names so the owner can reconcile this set. (Audit
+ * #17/#32/#45 — read grounding prepared; agent auto-use wiring is the live-gated next step.)
+ */
+export const ATLASSIAN_READONLY_TOOLS: ReadonlySet<string> = frozenReadOnlySet([
+  // ── Account / resource discovery ──
+  'atlassianUserInfo',
+  'getAccessibleAtlassianResources',
+  // ── Confluence reads (get/search/list) ──
+  'getConfluenceSpaces',
+  'getConfluencePage',
+  'getPagesInConfluenceSpace',
+  'getConfluencePageAncestors',
+  'getConfluencePageFooterComments',
+  'getConfluencePageInlineComments',
+  'searchConfluenceUsingCql',
+  // ── Jira reads (get/search/list) ──
+  'getJiraIssue',
+  'getVisibleJiraProjects',
+  'getJiraProjectIssueTypesMetadata',
+  'searchJiraIssuesUsingJql',
+  'getJiraIssueRemoteIssueLinks',
+  'getTransitionsForJiraIssue',
+  'lookupJiraAccountId',
+], 'ATLASSIAN_READONLY_TOOLS')
+
+/** True iff `name` is on the Atlassian read allow-list (the predicate the Atlassian read bridge uses). */
+export function isAtlassianReadTool(name: string): boolean {
+  return ATLASSIAN_READONLY_TOOLS.has(name)
 }

@@ -4,7 +4,14 @@
 > build, and **write them to a user's Atlassian site only after an explicit human confirmation** of
 > the exact content — the same producer→human→server-executes discipline as the push gate.
 >
-> Status: living plan. Slices 1–3 are SHIPPED but **dormant** (no transport/route/agent wiring yet).
+> Status: living plan. **Update 2026-06-07:** connect/transport/store/routes + the external-write
+> propose→human-confirm→execute flow + FE tiles & studio card are SHIPPED + LIVE; the READ surface is
+> now prepared too (PR7: provider-agnostic `McpToolBridge` + a frozen `ATLASSIAN_READONLY_TOOLS`
+> allow-list + `buildAtlassianMcpReadTools`). Two **OWNER/LIVE-GATED** remainders: (1) reconcile the
+> tool-NAMES + payload shapes against a live `listTools()` (needs the org admin to enable Rovo MCP +
+> the owner's browser consent; the bridge's dropped-tool diagnostic surfaces the real names), and
+> (2) wire the read tools into the agent loop (per-owner resolver, mirroring the github-stdio path).
+> Until then the allow-lists are fail-closed — a stale name is inert, never mis-called.
 > This doc maps what exists, the wiring slices ahead, and the carry-over review notes that must be
 > closed before the track goes live.
 

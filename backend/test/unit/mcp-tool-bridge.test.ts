@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
-import { buildGithubMcpToolsFromTransport } from '../../src/agent/mcp/McpToolBridge.js'
+import { buildGithubMcpToolsFromTransport, buildAtlassianMcpReadTools } from '../../src/agent/mcp/McpToolBridge.js'
 import type { McpToolInfo, McpToolResult, McpTransport } from '../../src/agent/mcp/McpTransport.js'
-import { GITHUB_READONLY_TOOLS } from '../../src/agent/mcp/readOnlyAllowlist.js'
+import { GITHUB_READONLY_TOOLS, ATLASSIAN_READONLY_TOOLS } from '../../src/agent/mcp/readOnlyAllowlist.js'
 
 /**
  * GATE-SAFETY is the spine of this module, so the whole test uses a FAKE McpTransport —
@@ -176,7 +176,7 @@ describe('McpToolBridge.buildGithubMcpToolsFromTransport', () => {
     // The promise RESOLVES (never rejects) so the tool loop is never thrown into.
     const out = await tool!.handler({})
 
-    expect(out).toMatch(/^Error calling github tool 'list_commits'/)
+    expect(out).toMatch(/^Error calling github-mcp tool 'list_commits'/)
     expect(out).toContain('stdio pipe closed')
   })
 
@@ -194,7 +194,7 @@ describe('McpToolBridge.buildGithubMcpToolsFromTransport', () => {
     // Capped well below the raw payload, with an explicit, model-readable truncation marker.
     expect(out.length).toBeLessThan(huge.length)
     expect(out.length).toBeLessThanOrEqual(16_000 + 100) // budget + the short marker line
-    expect(out).toMatch(/truncated: github tool output exceeded 16000 chars/)
+    expect(out).toMatch(/truncated: tool output exceeded 16000 chars/)
   })
 
   it('finding #11: a SMALL tool result is returned verbatim (no truncation marker, no clipping)', async () => {
@@ -220,7 +220,7 @@ describe('McpToolBridge.buildGithubMcpToolsFromTransport', () => {
 
     const out = await tool!.handler({})
 
-    expect(out).toMatch(/^Error calling github tool 'list_issues'/)
+    expect(out).toMatch(/^Error calling github-mcp tool 'list_issues'/)
     expect(out).toContain('raw-string-failure')
   })
 
@@ -294,5 +294,42 @@ describe('McpToolBridge.buildGithubMcpToolsFromTransport', () => {
     }
     await buildGithubMcpToolsFromTransport(transport)
     expect(initCalled).toBe(false)
+  })
+})
+
+describe('McpToolBridge.buildAtlassianMcpReadTools (audit #17/#32/#45 — read grounding)', () => {
+  it('admits ONLY Atlassian read tools (atlassian_ namespace); write/mutation tools NEVER register', async () => {
+    const writeNames = ['createConfluencePage', 'updateConfluencePage', 'createJiraIssue', 'editJiraIssue', 'transitionJiraIssue', 'addCommentToJiraIssue']
+    const transport = fakeTransport({ tools: [info('getConfluencePage'), info('searchJiraIssuesUsingJql'), ...writeNames.map(n => info(n))] })
+    const tools = await buildAtlassianMcpReadTools(transport)
+    const surfaced = tools.map(t => t.spec.name).sort()
+    expect(surfaced).toEqual(['atlassian_getConfluencePage', 'atlassian_searchJiraIssuesUsingJql'])
+    for (const w of writeNames) {
+      expect(surfaced).not.toContain(`atlassian_${w}`)
+      expect(surfaced).not.toContain(w) // never under any namespacing
+    }
+  })
+
+  it('forwards the UNNAMESPACED server name + passes args through; bounds the result', async () => {
+    const transport = fakeTransport({
+      tools: [info('getConfluencePage')],
+      calls: { getConfluencePage: { kind: 'ok', result: { text: 'page body', isError: false } } },
+    })
+    const [tool] = await buildAtlassianMcpReadTools(transport)
+    const out = await tool!.handler({ pageId: '123' })
+    expect(out).toBe('page body')
+    expect(transport.callLog).toEqual([{ name: 'getConfluencePage', args: { pageId: '123' } }]) // unnamespaced
+  })
+
+  it('LIVE-DISCOVERY harness: the dropped-tool diagnostic logs the server\'s advertised names (token-free)', async () => {
+    const msgs: string[] = []
+    const transport = fakeTransport({ tools: [info('getJiraIssue'), info('createJiraIssue'), info('someBrandNewTool')] })
+    await buildAtlassianMcpReadTools(transport, m => msgs.push(m))
+    const joined = msgs.join('\n')
+    expect(joined).toMatch(/atlassian-mcp: dropped 2/)
+    // the real advertised (but unallowed) names appear → the owner can reconcile the allow-list
+    expect(joined).toContain('createJiraIssue')
+    expect(joined).toContain('someBrandNewTool')
+    expect(joined).toContain(`allow-list has ${ATLASSIAN_READONLY_TOOLS.size} read tools`)
   })
 })
