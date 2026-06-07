@@ -25,10 +25,28 @@ describe('PgAuditStore', () => {
     expect(typeof calls[0]!.params[3]).toBe('string') // jsonb payload stringified (the array-vs-json lesson)
     expect(JSON.parse(calls[0]!.params[3] as string)).toEqual({ kind: 'done', verified: true })
   })
-  it('listBySession: selects in seq order, bounded, maps rows', async () => {
-    const sql: SqlClient = { async query() { return { rows: [{ seq: 1, ts: 't', kind: 'agent_start', payload: { a: 1 } }] } } }
+  it('listBySession: orders by seq ASC, is BOUNDED (LIMIT), owner-scopes by session, maps rows in order', async () => {
+    let captured: { text: string; params: unknown[] | undefined } | undefined
+    const sql: SqlClient = {
+      async query(text: string, params?: unknown[]) {
+        captured = { text, params }
+        return { rows: [
+          { seq: 1, ts: 't1', kind: 'agent_start', payload: { a: 1 } },
+          { seq: 2, ts: 't2', kind: 'done', payload: { b: 2 } },
+        ] }
+      },
+    }
     const out = await new PgAuditStore(sql).listBySession('s1')
-    expect(out).toEqual([{ seq: 1, ts: 't', kind: 'agent_start', payload: { a: 1 } }])
+    // seq-order + bound + owner-scope are SQL-contract invariants (not incidental) — pin them.
+    expect(captured?.text).toMatch(/ORDER BY seq ASC/i)
+    expect(captured?.text).toMatch(/LIMIT \d+/i)
+    expect(captured?.text).toMatch(/WHERE session_id = \$1/i)
+    expect(captured?.params).toEqual(['s1'])
+    expect(out).toEqual([
+      { seq: 1, ts: 't1', kind: 'agent_start', payload: { a: 1 } },
+      { seq: 2, ts: 't2', kind: 'done', payload: { b: 2 } },
+    ])
+    expect(out.map(e => e.seq)).toEqual([1, 2]) // mapped in seq order
   })
 })
 

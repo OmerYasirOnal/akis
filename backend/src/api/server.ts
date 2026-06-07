@@ -2,6 +2,7 @@ import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify'
 import { homedir } from 'node:os'
 import { join, dirname, resolve } from 'node:path'
 import { readFileSync, writeFileSync, mkdirSync, chmodSync } from 'node:fs'
+import { writeFile, mkdir, chmod } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { JsonFileKeyStore, type KeyStore } from '../keys/KeyStore.js'
 import { JsonFileGitHubConnectionStore, GitHubConnectionMemoryStore, type GitHubConnectionStore } from '../keys/GitHubConnectionStore.js'
@@ -316,15 +317,18 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       if (raw && typeof raw === 'object') services.bus.hydrate(raw)
     } catch { /* first boot or unreadable — start empty */ }
     let timer: ReturnType<typeof setTimeout> | undefined
-    const persistEvents = (): void => {
+    // ASYNC (audit #40): the debounced snapshot write must NOT block the event loop — a sync
+    // writeFileSync of the whole event buffer stalled the server on every tap in production. Same
+    // best-effort dev-convenience + 0600 posture, now via fs/promises (no new infra).
+    const persistEvents = async (): Promise<void> => {
       try {
-        mkdirSync(dirname(eventsFile), { recursive: true })
-        writeFileSync(eventsFile, JSON.stringify(services.bus.snapshot()), { mode: 0o600 })
-        chmodSync(eventsFile, 0o600)
+        await mkdir(dirname(eventsFile), { recursive: true })
+        await writeFile(eventsFile, JSON.stringify(services.bus.snapshot()), { mode: 0o600 })
+        await chmod(eventsFile, 0o600)
       } catch { /* best-effort: dev convenience, never a crash */ }
     }
-    services.bus.tap(() => { if (timer) clearTimeout(timer); timer = setTimeout(persistEvents, 500); timer.unref?.() })
-    app.addHook('onClose', async () => { if (timer) clearTimeout(timer); persistEvents() })
+    services.bus.tap(() => { if (timer) clearTimeout(timer); timer = setTimeout(() => { void persistEvents() }, 500); timer.unref?.() })
+    app.addHook('onClose', async () => { if (timer) clearTimeout(timer); await persistEvents() })
   }
   const orchestrator = deps.orchestrator ?? new Orchestrator(services)
   // Expose the orchestrator services to the host (start()) so graceful shutdown can drain

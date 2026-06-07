@@ -125,7 +125,20 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const { orchestrator, services } = deps
   // Per-session orchestrator for workflow-bound runs (captured at start → immutable
   // for that run even if the workflow is later edited, F2-AC10). Default otherwise.
+  // BOUNDED (audit #42): entries are deleted on a TERMINAL action, but a run that PARKS
+  // non-terminally (verify_failed/awaiting_*) and is then ABANDONED would never be deleted.
+  // A FIFO size cap evicts the oldest abandoned binding; an evicted retry simply falls back to the
+  // default orchestrator (orchestratorFor) — degraded to default models, never a gate/correctness break.
+  const BOUND_ORCH_MAX = 64
   const bound = new Map<string, Orchestrator>()
+  const bindOrchestrator = (id: string, orch: Orchestrator): void => {
+    bound.set(id, orch)
+    while (bound.size > BOUND_ORCH_MAX) {
+      const oldest = bound.keys().next().value
+      if (oldest === undefined) break
+      bound.delete(oldest)
+    }
+  }
   const orchestratorFor = (id: string): Orchestrator => bound.get(id) ?? orchestrator
 
   // Owner-scope single-session access: a session that carries an `ownerId` (started
@@ -189,7 +202,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
         if (!decision.allowed) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt })
       }
       const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}) })
-      if (orch !== orchestrator) bound.set(s.id, orch)
+      if (orch !== orchestrator) bindOrchestrator(s.id, orch)
       return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }
   })

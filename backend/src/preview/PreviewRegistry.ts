@@ -267,7 +267,7 @@ export class PreviewRegistry {
     if (proc) { proc.kill(); this.procs.delete(sessionId) }
     const e = this.entries.get(sessionId)
     if (e?.port !== undefined) releasePort(e.port)
-    if (e) { this.set({ ...e, status: 'stopped', ...(e.port !== undefined ? {} : {}) }); await teardown(e.dir).catch(() => {}) }
+    if (e) { this.set({ ...e, status: 'stopped' }); await teardown(e.dir).catch(() => {}) }
   }
 
   /**
