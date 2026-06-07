@@ -97,6 +97,7 @@ jobs:
           build-args: |
             GIT_REVISION=${{ github.sha }}
             BUILD_CREATED=${{ steps.meta.outputs.created }}
+            IMAGE_VERSION=${{ steps.version.outputs.version }}
           # Pull cache from / push cache to the GitHub Actions cache to speed re-runs.
           cache-from: type=gha
           cache-to: type=gha,mode=max

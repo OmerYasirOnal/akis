@@ -49,18 +49,20 @@ in named volumes across `down`/`up` — see [Persistence](#persistence) below.
 
 A `docker compose up --build` (or a plain `docker build`) leaves the image's
 provenance labels **empty** — fine for local use. If you want a live-box drift
-check to be a single `docker inspect` (which commit + when), pass the git sha and
-a UTC build time as build-args; they're stamped as the standard OCI annotation
-keys `org.opencontainers.image.revision` and `org.opencontainers.image.created`
-(the published GHCR images already carry these — the release pipeline sets them):
+check to be a single `docker inspect` (which commit + when + which version), pass
+the git sha, a UTC build time and a version as build-args; they're stamped as the
+standard OCI annotation keys `org.opencontainers.image.revision`, `.created` and
+`.version` (the published GHCR images already carry these — the release pipeline
+sets them):
 
 ```bash
 docker build -t akis:local \
   --build-arg GIT_REVISION="$(git rev-parse HEAD)" \
-  --build-arg BUILD_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" .
+  --build-arg BUILD_CREATED="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --build-arg IMAGE_VERSION="$(git describe --tags --always)" .
 
-# then, on the live box:
-docker inspect -f '{{ index .Config.Labels "org.opencontainers.image.revision" }}' akis:local
+# then, on the live box — dump ALL provenance labels at once (revision + created + version):
+docker inspect -f '{{ json .Config.Labels }}' akis:local
 ```
 
 > [!IMPORTANT]

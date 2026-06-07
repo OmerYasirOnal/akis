@@ -103,8 +103,10 @@ RUN mkdir -p /home/node/.akis /home/node/.config/akis \
 # than failing). Placed in the runtime stage so they ride on the published image.
 ARG GIT_REVISION=""
 ARG BUILD_CREATED=""
+ARG IMAGE_VERSION=""
 LABEL org.opencontainers.image.revision="${GIT_REVISION}" \
       org.opencontainers.image.created="${BUILD_CREATED}" \
+      org.opencontainers.image.version="${IMAGE_VERSION}" \
       org.opencontainers.image.source="https://github.com/OmerYasirOnal/akis-platform-mvp"
 
 USER node

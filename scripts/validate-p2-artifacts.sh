@@ -61,13 +61,18 @@ grep -qE "^\s*version:\s*9" "$ci" && fail "$ci must NOT set a pnpm/action-setup 
 df=Dockerfile
 have "ARG GIT_REVISION"                          "$df"   # caller passes the git sha
 have "ARG BUILD_CREATED"                          "$df"   # …and the build timestamp
-have "org.opencontainers.image.revision"          "$df"   # → inspectable revision label
-have "org.opencontainers.image.created"           "$df"   # → inspectable build-date label
+have "ARG IMAGE_VERSION"                          "$df"   # …and the release version
+# Assert the labels are actually WIRED to the build-args (a hardcoded literal would
+# still contain the key but silently break provenance) — guard the interpolation.
+have 'image.revision="${GIT_REVISION}"'           "$df"   # → inspectable revision label
+have 'image.created="${BUILD_CREATED}"'           "$df"   # → inspectable build-date label
+have 'image.version="${IMAGE_VERSION}"'           "$df"   # → inspectable version label
 
 # ── 2c) Release workflow: the published image MUST carry those labels, so the
 #       build step has to feed the args (else every release ships unlabeled again).
 rel=.github/workflows/release.yml
 have "GIT_REVISION="                              "$rel"
+have "IMAGE_VERSION="                             "$rel"
 have "BUILD_CREATED="                             "$rel"
 
 # ── 3) env template: self-host/DB block added, existing keys kept ────────────
