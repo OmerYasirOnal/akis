@@ -43,4 +43,10 @@ describe('ScribeAgent.writeDocs (additive, fail-soft)', () => {
     const doc = await scribe(provider('# App\n\nTODO: describe the files once present.')).writeDocs({ spec, files: [] })
     expect(doc?.filePath).toBe('README.md')
   })
+
+  it('does NOT strip a README that starts AND ends with a bare ``` fence (only explicit ```markdown is unwrapped)', async () => {
+    const readme = '```\nconst x = 1\n```\n\nMiddle prose explaining the app.\n\n```\nmore code\n```'
+    const doc = await scribe(provider(readme)).writeDocs({ spec, files })
+    expect(doc?.content).toBe(readme) // bare fences preserved (the LOW-fix: language tag now required)
+  })
 })

@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { HttpMcpTransport } from '../../src/agent/mcp/HttpMcpTransport.js'
+import { describe, it, expect } from 'vitest'
+import { HttpMcpTransport, withBearer } from '../../src/agent/mcp/HttpMcpTransport.js'
 import { McpUnavailableError } from '../../src/agent/mcp/McpTransport.js'
 import type { McpClientLike, McpConnection } from '../../src/agent/mcp/StdioDockerTransport.js'
 
@@ -75,5 +75,20 @@ describe('HttpMcpTransport', () => {
   it('listTools before initialize throws (not initialized)', async () => {
     const t = new HttpMcpTransport({ url: 'u', token: 'tok', connect: async () => ({ client: fakeConn().client }) })
     await expect(t.listTools()).rejects.toBeInstanceOf(McpUnavailableError)
+  })
+})
+
+describe('withBearer — preserves the SDK headers + adds Authorization (HIGH-fix: Headers instance not dropped)', () => {
+  it('keeps a Headers INSTANCE (Accept/content-type the SDK sets on the SSE GET + POST) and adds the bearer', () => {
+    const sdkHeaders = new Headers({ Accept: 'text/event-stream', 'content-type': 'application/json' })
+    const out = withBearer(sdkHeaders, 'tok')
+    expect(out.get('Accept')).toBe('text/event-stream')       // object-spread would have dropped this
+    expect(out.get('content-type')).toBe('application/json')
+    expect(out.get('Authorization')).toBe('Bearer tok')
+  })
+  it('works with a plain-object headers init and with undefined', () => {
+    expect(withBearer({ 'x-custom': '1' }, 'tok').get('x-custom')).toBe('1')
+    expect(withBearer({ 'x-custom': '1' }, 'tok').get('Authorization')).toBe('Bearer tok')
+    expect(withBearer(undefined, 'tok').get('Authorization')).toBe('Bearer tok')
   })
 })

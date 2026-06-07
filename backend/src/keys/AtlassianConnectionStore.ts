@@ -59,7 +59,11 @@ interface StoredRow extends EncryptedSecret {
 function packTokens(t: AtlassianTokens): string { return JSON.stringify({ a: t.accessToken, r: t.refreshToken }) }
 function unpackTokens(s: string): AtlassianTokens {
   const o = JSON.parse(s) as { a?: string; r?: string }
-  return { accessToken: o.a ?? '', refreshToken: o.r ?? '' }
+  // Fail-closed: a decrypted-but-incomplete blob must NOT advertise as connected with an empty
+  // token — throw so getTokens()'s catch returns undefined (treated as absent), like the
+  // undecryptable path. (Unreachable today — set() always packs both — but hardens the invariant.)
+  if (!o.a || !o.r) throw new Error('atlassian-conn: incomplete token blob')
+  return { accessToken: o.a, refreshToken: o.r }
 }
 
 /**

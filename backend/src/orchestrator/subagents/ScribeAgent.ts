@@ -15,9 +15,11 @@ import type { McpSessionPool } from '../../agent/mcp/McpSessionPool.js'
  *  never invents features (matches AKIS's provenance posture). */
 const DOCS_SYSTEM = `You are AKIS Scribe writing the README for an app AKIS just built. Output ONE clean README.md in GitHub-flavored markdown: a title, a one-paragraph description of what the app does, a "Run it locally" section, and a "Features" list derived from the acceptance criteria. Be accurate and grounded — describe ONLY what the spec and the file list actually contain; never invent endpoints, scripts, or features. Where a detail is unknown, write a short "TODO:" line instead of guessing. Keep it concise (a few hundred words). Return ONLY the markdown.`
 
-/** Strip a single ```markdown … ``` fence the model may wrap the whole README in. */
+/** Strip a single ```markdown / ```md fence the model may wrap the WHOLE README in. The language
+ *  tag is REQUIRED (not optional) so a README that legitimately starts AND ends with a bare ```
+ *  code block is never mis-stripped + collapsed. */
 function stripWrappingFence(s: string): string {
-  const m = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/.exec(s.trim())
+  const m = /^```(?:markdown|md)\s*\n([\s\S]*?)\n```$/.exec(s.trim())
   return m?.[1] ? m[1].trim() : s
 }
 

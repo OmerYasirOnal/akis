@@ -146,14 +146,26 @@ async function closeConnQuietly(conn: McpConnection): Promise<void> {
  * argv, never logged. Live-verify against the real Atlassian endpoint once OAuth creds are connected
  * (next slice: the Atlassian connection store + OAuth routes).
  */
+/**
+ * Merge `Authorization: Bearer <token>` into the request headers WITHOUT dropping the SDK's own.
+ * The SDK passes a `Headers` INSTANCE to the custom fetch; object-spreading a Headers instance
+ * yields {} (no own enumerable keys), which would strip `Accept: text/event-stream` (the SSE GET)
+ * and `content-type: application/json` (the JSON-RPC POST) and break the real connection.
+ * `new Headers(init)` copies a Headers instance OR a plain object/tuple list, so every SDK header
+ * survives. EXPORTED so the header-preservation invariant is unit-testable without a live fetch.
+ */
+export function withBearer(initHeaders: HeadersInit | undefined, token: string): Headers {
+  const headers = new Headers(initHeaders)
+  headers.set('Authorization', `Bearer ${token}`)
+  return headers
+}
+
 const defaultConnect = async (url: string, token: string, clientName: string): Promise<McpConnection> => {
   const { Client } = await import('@modelcontextprotocol/sdk/client/index.js')
   const { SSEClientTransport } = await import('@modelcontextprotocol/sdk/client/sse.js')
-  // Inject the bearer on EVERY request (SSE GET + message POSTs). The SDK's `fetch` option is
-  // documented as "used for all network requests", so the token reaches both legs via the header
-  // channel only.
-  const bearerFetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
-    fetch(input as RequestInfo, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), Authorization: `Bearer ${token}` } })
+  // Inject the bearer on EVERY request (SSE GET + message POSTs), PRESERVING the SDK's own headers.
+  const bearerFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> =>
+    fetch(input, { ...init, headers: withBearer(init?.headers, token) })
   const transport = new SSEClientTransport(new URL(url), { fetch: bearerFetch } as unknown as ConstructorParameters<typeof SSEClientTransport>[1])
   const client = new Client({ name: clientName, version: '1.0.0' }, { capabilities: {} })
   // SDK-boundary cast: the SDK transport's optional fields trip exactOptionalPropertyTypes against
