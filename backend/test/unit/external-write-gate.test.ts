@@ -1,7 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import {
   digestExternalWrite, mintApprovedExternalWrite, executeExternalWrite,
-  ExternalWriteDigestMismatchError, type ExternalWriteProposal,
+  ExternalWriteDigestMismatchError, ExternalWriteActionNotAllowedError,
+  isAllowedExternalWriteAction, ATLASSIAN_WRITE_ACTIONS,
+  type ExternalWriteProposal,
 } from '../../src/gates/externalWriteGate.js'
 import type { McpTransport, McpToolResult } from '../../src/agent/mcp/McpTransport.js'
 
@@ -82,6 +84,42 @@ describe('externalWriteGate — execute requires the token + matching proposal',
     const token = mintApprovedExternalWrite(p, digestExternalWrite(p))
     const { t } = fakeTransport({ text: 'permission denied', isError: true })
     expect(await executeExternalWrite(token, t, p)).toEqual({ ok: false, text: 'permission denied' })
+  })
+})
+
+describe('externalWriteGate — positive write-action allow-list', () => {
+  it('the allow-list is the SINGLE predicate; admits known write actions, rejects everything else', () => {
+    expect(isAllowedExternalWriteAction('createPage')).toBe(true)
+    expect(isAllowedExternalWriteAction('createJiraIssue')).toBe(true)
+    // anything not on the positive set is rejected — including reads and unknown mutators
+    expect(isAllowedExternalWriteAction('deletePage')).toBe(false)
+    expect(isAllowedExternalWriteAction('getPage')).toBe(false)
+    expect(isAllowedExternalWriteAction('')).toBe(false)
+    expect(isAllowedExternalWriteAction('createpage')).toBe(false) // case-sensitive
+  })
+
+  it('the allow-list set is immutable in FACT — add/delete/clear throw (cannot be widened)', () => {
+    expect(() => (ATLASSIAN_WRITE_ACTIONS as Set<string>).add('deletePage')).toThrow(TypeError)
+    expect(() => (ATLASSIAN_WRITE_ACTIONS as Set<string>).delete('createPage')).toThrow(TypeError)
+    expect(() => (ATLASSIAN_WRITE_ACTIONS as Set<string>).clear()).toThrow(TypeError)
+    expect(ATLASSIAN_WRITE_ACTIONS.has('deletePage')).toBe(false)
+    expect(ATLASSIAN_WRITE_ACTIONS.has('createPage')).toBe(true)
+  })
+
+  it('mint REFUSES a proposal whose action is not on the allow-list (the doc-comment promise enforced)', () => {
+    const p = proposal({ action: 'deletePage' })
+    expect(() => mintApprovedExternalWrite(p, digestExternalWrite(p))).toThrow(ExternalWriteActionNotAllowedError)
+  })
+
+  it('execute REFUSES a proposal whose action is not on the allow-list (defense-in-depth at the bridge)', async () => {
+    const p = proposal()
+    const token = mintApprovedExternalWrite(p, digestExternalWrite(p))
+    const { t, calls } = fakeTransport()
+    // a post-mint swap to an off-list action with a re-derived matching digest must still be refused
+    const offList = { ...p, action: 'deletePage' } as ExternalWriteProposal
+    const offListToken = { ...token, digest: digestExternalWrite(offList) } as typeof token
+    await expect(executeExternalWrite(offListToken, t, offList)).rejects.toThrow(ExternalWriteActionNotAllowedError)
+    expect(calls).toHaveLength(0)
   })
 })
 

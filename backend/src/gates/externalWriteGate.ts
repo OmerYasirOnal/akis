@@ -18,6 +18,9 @@ import type { McpTransport } from '../agent/mcp/McpTransport.js'
  *    payload swapped between display and execution cannot be approved.
  *  - `executeExternalWrite` requires the token AND re-checks the digest, so the bytes that execute
  *    are exactly the bytes that were confirmed. There is no path to a write without the token.
+ *  - A POSITIVE write-action allow-list (`ATLASSIAN_WRITE_ACTIONS`, mirroring readOnlyAllowlist) is
+ *    enforced at BOTH mint and execute: only an action on the frozen set can be approved or run, so
+ *    a proposal naming an off-list (e.g. destructive) tool is refused regardless of its digest.
  *
  * This gate is ORTHOGONAL to the 4 structural BUILD gates (spec-approval, producer≠verifier,
  * verified-real, push) — it neither reads nor mints any of them.
@@ -68,6 +71,52 @@ export class ExternalWriteDigestMismatchError extends Error {
   }
 }
 
+export class ExternalWriteActionNotAllowedError extends Error {
+  constructor(action: string) {
+    super(`External write action "${action}" is not on the provider's write allow-list`)
+    this.name = 'ExternalWriteActionNotAllowedError'
+  }
+}
+
+/**
+ * POSITIVE write-action allow-list (mirrors readOnlyAllowlist.frozenReadOnlySet): a FROZEN set of
+ * the ONLY MCP write-tool names an external-write proposal may invoke. This is the enforcement the
+ * `ExternalWriteProposal.action` doc-comment promises ("Must be on the provider's write allow-list")
+ * — without it the gate bound only the CONTENT of a write, not WHICH write tool runs, so a proposal
+ * could name any server-advertised tool (e.g. a `deletePage`/destructive mutator) and still reach
+ * the transport once its content digest was confirmed. The allow-list is checked at BOTH mint and
+ * execute, so an off-list action can neither be approved nor (defense-in-depth) executed.
+ *
+ * As with the read-only set, `Object.freeze(new Set(...))` does NOT make the CONTENTS immutable —
+ * `add`/`delete`/`clear` are prototype mutators — so we neutralize them on THIS instance (they
+ * throw) and freeze the object, making the set immutable in fact, not merely by convention.
+ */
+function frozenWriteActionSet(names: readonly string[]): ReadonlySet<string> {
+  const set = new Set<string>(names)
+  const deny = (op: string) => (): never => {
+    throw new TypeError(`ATLASSIAN_WRITE_ACTIONS is immutable: cannot ${op}() the write allow-list`)
+  }
+  Object.defineProperties(set, {
+    add: { value: deny('add'), writable: false, configurable: false },
+    delete: { value: deny('delete'), writable: false, configurable: false },
+    clear: { value: deny('clear'), writable: false, configurable: false },
+  })
+  return Object.freeze(set) as ReadonlySet<string>
+}
+
+/** The ONLY Atlassian (Jira/Confluence) write-tool names a proposal may invoke. Keep this honest:
+ *  add a name ONLY when the provider advertises it AND a human-confirm flow exists for it. */
+export const ATLASSIAN_WRITE_ACTIONS: ReadonlySet<string> = frozenWriteActionSet([
+  'createPage',       // Confluence: create a page
+  'createJiraIssue',  // Jira: create an issue
+])
+
+/** True iff `action` is on the positive external-write allow-list. The single predicate the gate
+ *  uses to admit a proposed write tool. */
+export function isAllowedExternalWriteAction(action: string): boolean {
+  return ATLASSIAN_WRITE_ACTIONS.has(action)
+}
+
 /**
  * NOMINAL-branded approval token. The brand is a module-private `unique symbol`, so an
  * `ApprovedExternalWrite` cannot be written as a literal or fabricated with `as` outside this
@@ -87,6 +136,7 @@ export type ApprovedExternalWrite = {
  * (a swap/tamper between display and confirm), minting throws and no write can execute.
  */
 export function mintApprovedExternalWrite(proposal: ExternalWriteProposal, confirmedDigest: string): ApprovedExternalWrite {
+  if (!isAllowedExternalWriteAction(proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
   const digest = digestExternalWrite(proposal)
   if (confirmedDigest !== digest) throw new ExternalWriteDigestMismatchError()
   return { writeId: proposal.id, digest } as unknown as ApprovedExternalWrite
@@ -105,6 +155,7 @@ export async function executeExternalWrite(
   transport: McpTransport,
   proposal: ExternalWriteProposal,
 ): Promise<ExternalWriteResult> {
+  if (!isAllowedExternalWriteAction(proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
   if (token.writeId !== proposal.id || token.digest !== digestExternalWrite(proposal)) {
     throw new ExternalWriteDigestMismatchError()
   }
