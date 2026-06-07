@@ -35,13 +35,13 @@ The MCP/auth/routes/FE work is large + touches the live auth + agent loop. Build
 
 ### Phase 6 — Backlog (SPEC 03), schedulable independently
 - A. Cost analytics (model on AgentMetrics + pricing + Analytics) — MED, no creds, gate-keeper (event schema).
-- B. #18 usage history (after A); quota enforcement 🔶 (owner sets the number); paid tier 🔶 (owner: pricing+Stripe) — deferred.
+- B. #18 usage history (after A); quota enforcement ✅ mechanism SHIPPED (`AKIS_USER_TOKEN_BUDGET`/`_PERIOD` → fail-closed 429), 🔶 only the NUMBER is the owner's; paid tier 🔶 (owner: pricing+Stripe) — deferred.
 - C. #15 Docker −190MB — deliberate, boot-test in the worktree before any redeploy.
 
 ## What I need from the owner (decision/credential points) 🔶🔴
 1. 🔴 A fine-grained GitHub PAT (Contents + PR write) on the target repo — to make push REAL fastest (Phase 2). OR register one GitHub OAuth app (per-user path).
 2. 🔴 Atlassian: an admin enables the Rovo Remote MCP for the site + allowed domains; then you authorize in the browser (DCR = no app to register). For Phase 5.
-3. 🔶 Free-quota NUMBER + over-quota policy (Phase 6 B). 🔶 Paid-tier pricing + provider (deferred).
+3. 🔶 Free-quota NUMBER + over-quota policy (Phase 6 B) — the enforcement MECHANISM is shipped (`AKIS_USER_TOKEN_BUDGET`), only the number/policy is owner's. 🔶 Paid-tier pricing + provider (deferred).
 4. 🔶 Confirm: $ cost estimate shown vs tokens-only (Phase 6 A); keep the Docker github-mcp-server as a fallback or drop it (SPEC 01 §7).
 
 ## Invariants every phase keeps

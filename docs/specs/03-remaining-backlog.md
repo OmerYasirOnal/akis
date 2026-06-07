@@ -27,10 +27,10 @@ These are the items surfaced as options in earlier choices that were not picked 
 
 **Remaining spec:**
 1. **Usage analytics** (overlaps A): per-user token usage over time, per-build cost, against a budget. The `UsageInfo`/`/api/usage` projection + `UsageMeter` already exist; extend with history + cost (after A).
-2. **Free-quota enforcement** 🔶 OWNER BUSINESS DECISION (the number): how many free tokens/builds per user/period, and the over-quota behavior (block? degrade to "bring your own key"? upsell?). Code: a per-user quota check in the chat/build entry (the `budget`/`UsageStore` is already there); the NUMBER + policy is the owner's.
+2. **Free-quota enforcement** ✅ MECHANISM SHIPPED · 🔶 the NUMBER is the OWNER's business decision. The code is built + wired: `usage/quota.ts` (`resolveQuotaPolicy`/`checkQuota`/`QuotaExceededError`) runs as a fail-closed, start-only pre-check in `sessions.routes.ts` and refuses an over-budget build with `429 { code: 'QuotaExceeded', resetAt }` BEFORE any provider spend. Configured by `AKIS_USER_TOKEN_BUDGET` (integer tokens; `0`/unset ⇒ unlimited) + `AKIS_USER_TOKEN_PERIOD` (named tier or `<n>d`/`<n>h`/ms). Only the NUMBER + the over-quota PRODUCT policy (block vs degrade-to-BYO-key vs upsell) remain the owner's; the enforcement plumbing is done.
 3. **Paid tier** 🔶 OWNER: pricing + a payment provider (Stripe?) — a separate, larger effort; out of scope until the free/quota policy is set.
 
-**Effort:** usage-analytics MED (after A); quota enforcement SMALL once the number is decided; paid tier LARGE + owner-gated. **Recommendation:** do A (cost analytics) → usage history; defer quota/paid until the owner sets the business policy.
+**Effort:** usage-analytics MED (after A); quota enforcement ✅ DONE (mechanism) — only the NUMBER/policy is owner-pending; paid tier LARGE + owner-gated. **Recommendation:** do A (cost analytics ✅ shipped, PR6) → usage history; the quota MECHANISM is shipped (set `AKIS_USER_TOKEN_BUDGET` to switch it on), so only the business NUMBER + paid tier wait on the owner.
 
 ---
 
