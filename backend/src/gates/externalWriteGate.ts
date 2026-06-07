@@ -146,6 +146,12 @@ export type ApprovedExternalWrite = {
  */
 export function mintApprovedExternalWrite(proposal: ExternalWriteProposal, confirmedDigest: string): ApprovedExternalWrite {
   if (!isAllowedExternalWriteAction(proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
+  // target (WHERE) + payload (WHAT) MUST be disjoint: executeExternalWrite merges them into one
+  // tool-args object, so a shared key would silently collapse (payload wins) and the executed bytes
+  // would not match the digest (which binds target + payload as SEPARATE fields). Reject at mint.
+  for (const k of Object.keys(proposal.target)) {
+    if (k in proposal.payload) throw new ExternalWriteDigestMismatchError()
+  }
   const digest = digestExternalWrite(proposal)
   if (confirmedDigest !== digest) throw new ExternalWriteDigestMismatchError()
   return { writeId: proposal.id, digest } as unknown as ApprovedExternalWrite
