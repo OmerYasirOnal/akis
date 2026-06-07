@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import { initialSession, isVerified, type SessionState, type SpecArtifact } from '@akis/shared'
+import { languageFor } from '../validator/ValidatorTypes.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
 import { nextTs } from '../events/clock.js'
@@ -334,7 +335,9 @@ export class Orchestrator {
       lastFiles = candidate
 
       const validation = this.s.validator.validate({
-        files: candidate.map(f => ({ path: f.filePath, content: f.content, language: 'typescript' as const })),
+        // Language BY EXTENSION (audit #46): a generated README (.md), JSON, CSS, etc. must not all be
+        // syntax-balance-checked as TypeScript (which false-flagged non-code files like the Scribe doc).
+        files: candidate.map(f => ({ path: f.filePath, content: f.content, language: languageFor(f.filePath) })),
       })
       // TIGHTEN-ONLY deterministic guard (caught LIVE): a spec that explicitly demands user
       // accounts / a real backend must not ship as a STATIC localStorage simulation — the

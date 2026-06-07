@@ -49,6 +49,10 @@ export function digestEvidence(ev: TestEvidence): string {
   h.update(lp(`testsRun=${ev.testsRun}`))
   h.update(lp(`passed=${ev.passed}`))
   h.update(lp(`durationMs=${ev.durationMs}`))
+  // SIMULATED-vs-REAL is part of the attested truth: bind `demo` so the passport's tamper-evidence
+  // covers it — a demo (mock-runner) pass can never be silently re-presented as a real test pass by
+  // editing the evidence after signing. (Audit #44.)
+  h.update(lp(`demo=${ev.demo === true}`))
   // Aggregate counts for both suites — keyed + length-prefixed so a count swap is caught.
   h.update(lp(`bdd=${ev.bdd.built},${ev.bdd.run},${ev.bdd.passed},${ev.bdd.failed},${ev.bdd.skipped},${ev.bdd.durationMs}`))
   h.update(lp(`e2e=${ev.e2e.testsRun},${ev.e2e.passed},${ev.e2e.expected},${ev.e2e.unexpected},${ev.e2e.flaky},${ev.e2e.skipped},${ev.e2e.durationMs}`))

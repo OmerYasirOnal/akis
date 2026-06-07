@@ -55,6 +55,11 @@ describe('digestEvidence — collision-resistant digest of structured evidence',
   it('changes when the pass outcome flips (tamper-evident)', () => {
     expect(digestEvidence(evidence({ passed: true }))).not.toBe(digestEvidence(evidence({ passed: false })))
   })
+  it('changes when the demo (simulated) marker flips — a demo pass can not be re-presented as real (#44)', () => {
+    expect(digestEvidence(evidence({ demo: true }))).not.toBe(digestEvidence(evidence({ demo: false })))
+    // absent vs explicit-false hash the same (demo defaults to "not simulated").
+    expect(digestEvidence(evidence({}))).toBe(digestEvidence(evidence({ demo: false })))
+  })
   it('is collision-resistant via length-prefixing (boundary-ambiguous names do not collide)', () => {
     const a = evidence({ scenarios: [{ name: 'a', suite: 'bdd', passed: true }, { name: 'bc', suite: 'bdd', passed: true }] })
     const b = evidence({ scenarios: [{ name: 'ab', suite: 'bdd', passed: true }, { name: 'c', suite: 'bdd', passed: true }] })

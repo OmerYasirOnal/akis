@@ -9,7 +9,22 @@
 export interface ValidationFile {
   path: string;
   content: string;
-  language: 'typescript' | 'javascript' | 'json' | 'html' | 'css';
+  /** 'text' = a non-code file (.md/.txt/…) that must NOT be syntax-balance-checked as code (the
+   *  SyntaxCheck skips anything that isn't json/typescript/javascript). */
+  language: 'typescript' | 'javascript' | 'json' | 'html' | 'css' | 'text';
+}
+
+/** Map a file PATH to its validation language by extension, so a generated README (.md), JSON, CSS,
+ *  etc. are not all syntax-checked as TypeScript (which false-flagged balance on non-code files).
+ *  Unknown / non-code extensions → 'text' (skipped by the syntax check). (Audit #46.) */
+export function languageFor(path: string): ValidationFile['language'] {
+  const p = path.toLowerCase();
+  if (p.endsWith('.ts') || p.endsWith('.tsx')) return 'typescript';
+  if (p.endsWith('.js') || p.endsWith('.jsx') || p.endsWith('.mjs') || p.endsWith('.cjs')) return 'javascript';
+  if (p.endsWith('.json')) return 'json';
+  if (p.endsWith('.html') || p.endsWith('.htm')) return 'html';
+  if (p.endsWith('.css')) return 'css';
+  return 'text';
 }
 
 export interface ValidationInput {
