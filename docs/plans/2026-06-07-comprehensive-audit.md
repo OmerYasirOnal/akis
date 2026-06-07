@@ -11,7 +11,7 @@ AKIS is NOT "fully done top-to-bottom," but it is much closer than its own docs 
 
 Tracking against the shipped tree. Items below the backlog are tagged `✅ CLOSED (<hash>)` inline; this section is the index.
 
-**Closed (47 of 54)** — verified in code + tests; final `pnpm test` PASS (BE 1427/5-skip · FE 440 · tsc shared/be/fe clean · i18n EN/TR parity). The PR1–10 chain is complete; each branch was ≤300 LoC, ff-merged + pushed, gate-safe.
+**Closed (52 of 54)** — verified in code + tests; final `pnpm test` PASS (BE 1427/5-skip · FE 445 · tsc shared/be/fe clean · i18n EN/TR parity). The PR1–15 chain is complete; each branch was ≤300 LoC, ff-merged + pushed, gate-safe. (PR11–15 closed every previously-deferred CODE item: the Docker −190MB is now actually landed, the dead-i18n + refetch + quota-doc drifts are gone.)
 
 | Commit | PR | Closed findings |
 |---|---|---|
@@ -27,18 +27,18 @@ Tracking against the shipped tree. Items below the backlog are tagged `✅ CLOSE
 | `cb41841` | PR7 | #17 #32 #45 (Atlassian read allow-list + provider-agnostic bridge + live-discovery harness) |
 | `bc50298` | PR8 | #10 #36 #37 #38 (ModelPicker modal Esc/focus · aria-live flood → status region · redundant aria removed + iframe i18n · fallback i18n) |
 | `4845ba7` `b8a9cab` | PR9a/b | #35 #40 #42 #50 #51 #54 (no-auto-boot-on-reopen · async bus snapshot · bounded orch map · rAF-coalescer test · audit-log SQL test · dead branch) |
-| `a0af43d` | PR10 | #15 (tsx → runtime dep — prune prerequisite) + #25 **design-PR** (see below) |
+| `a0af43d` | PR10 | #15 (tsx → runtime dep — prune prerequisite) |
+| `1343b05` | PR11 | #39 #52 (73 verified-dead i18n keys removed, both locales — exhaustive per-key sweep) |
+| `164aa7f` | PR12 | #41 (per-ApiClient providers/mode cache — no per-remount refetch, invalidated on key change) |
+| `2660e5f` | PR14 | #25 (Docker dev/build-toolchain prune in the builder — **638MB → 440MB, −198MB**, boot-smoke verified) |
+| `7fbcdb2` | PR15 | #28 (token-quota mechanism marked shipped + AKIS_USER_TOKEN_BUDGET/_PERIOD documented) |
 
-**Open / not-closed (7):**
+**Not a defect:**
+- **#53 — onReset `{head}`: WORKING-AS-INTENDED.** `useLiveSession` + the client test use the `head`; `useLiveChat`'s full-`/log` re-sync is a valid simpler choice, not dead code. No change needed.
 
-- **#25 — Docker image −190MB: DESIGN-PR (`a0af43d`).** tsx→deps shipped (prerequisite); a plain `pnpm prune --prod` was MEASURED to buy ~0 (does not prune the workspace `.pnpm` devDeps; image stayed 638MB). The two effective fixes (`pnpm deploy --prod` / targeted build-toolchain `rm`, keeping esbuild which tsx needs) are written up with verification gates in `docs/SELF_HOSTING.md` + the Dockerfile. Not shipped to avoid overclaiming a no-op.
-- **#39 #52 — dead i18n keys: DEFERRED (provable-dead rule).** NOT fully dead — `pipeline.editsBase` is live (so the `pipeline.*` namespace can't be bulk-deleted) and `workflows.title` is referenced by its own parity test; closing them needs a careful per-key render-audit, out of proportion for a P3.
-- **#41 — per-remount providers/health refetch: DEFERRED.** A safe fix needs a fetch-once providers context; a naive module cache would show STALE provider availability after a key is added in Settings.
-- **#53 — onReset `{head}`: WORKING-AS-INTENDED (not a bug).** `useLiveSession` + the client test use the `head`; `useLiveChat`'s full-`/log` re-sync is a valid simpler choice, not dead code.
-- **#28 — specs-quota note: cosmetic, deferred-by-design.**
-- **#9 #31 — Atlassian/GitHub tool-name pinning: partial.** The read SURFACE ships (PR7); the live tool-name pinning is owner/live-gated (below).
-
-**Owner-gated / live-gated** (cannot be CI-proven without a live connection — NOT claimed as done): live Atlassian/GitHub connect (org-admin Rovo MCP + browser OAuth consent) → reconcile the real tool-NAMES/payloads against a live `listTools()` (#9 #31) → wire the read tools into the agent loop (#17 live half) → the external-write flow's live end-to-end (#32 #45 live half).
+**Owner-gated / live-gated (2 — genuinely require the owner; NOT a code gap).** The MCP servers are the OFFICIAL vendor services (GitHub `ghcr.io/github/github-mcp-server` + Remote `api.githubcopilot.com/mcp/`; Atlassian Rovo `mcp.atlassian.com/v1/mcp/authv2`), so connecting REQUIRES the owner's browser OAuth consent — it cannot be CI-proven or done without the owner's account:
+- **#9 #31 — live tool-NAME/payload pinning** against a real `listTools()` (the read allow-list ships + is fail-closed; the bridge's discovery diagnostic surfaces the real names on first connect).
+- **#17 live half — agent auto-use wiring** of the Atlassian read tools (the read foundation ships in PR7; the live transport resolver + the "when should an agent pull Jira/Confluence context" trigger are an owner connection + a product decision). **#32 #45 live half** — the external-write flow's live end-to-end (propose→confirm→execute against a real Atlassian site).
 
 ## Cross-cutting themes
 
