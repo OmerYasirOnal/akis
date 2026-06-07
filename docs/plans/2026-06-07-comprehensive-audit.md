@@ -7,6 +7,35 @@
 
 AKIS is NOT "fully done top-to-bottom," but it is much closer than its own docs admit, and its moat is genuinely intact: all four structural build gates plus the external-write gate were traced end-to-end as server-minted, module-private branded capability tokens with no bypass, client-mint, or autonomous-write path; signup stays closed, secrets are encrypted at rest, and remote-MCP content stays ephemeral. The headline reality is that the recently-shipped "real-MCP / external-write" batch is the weakest seam: the browser publish-to-Jira/Confluence flow is outright DEAD (missing content-type header), the Confluence tool name is wrong, the confirm route can double-write on a version conflict, the human-confirm prompt is English-only, and that whole path has no owner-scope/persistence regression tests — so the feature is "live" structurally but not actually usable or fully guarded. The other genuine gaps are a preview-route IDOR, a verifier false-RED that can block correct SPAs from ever verifying, a signed attestation that over-claims "verified" on demo runs, an uncodified production-deploy playbook, and a large band of canonical-doc drift (README/ARCHITECTURE/THREAT-MODEL never updated for the shipped MCP batch). No P0 (no sacred constraint is violated by shipped code); the work is a finite, executable P1/P2/P3 backlog.
 
+## Reconciliation status — updated 2026-06-07
+
+Tracking against the shipped tree. Items below the backlog are tagged `✅ CLOSED (<hash>)` inline; this section is the index.
+
+**Closed since the audit (18 of 54)** — verified in code + tests, `pnpm test` PASS (BE 1411/5-skip · FE 435):
+
+| Commit | Closed findings |
+|---|---|
+| `1bc133d` | #1 #2 #3 #4 #5 #6 #7 #8 #11 #14 — P1 batch (#1 content-type · #2 preview IDOR · #3 confirm stale-version · #4 SPA false-RED · #5 attestation demo-marker · #6 owner-scope test · #7 README · #8 confirm i18n) + #11 chat demo chip + #14 connect-tile i18n |
+| `38958b3` | #12 #13 — #12 externalWrites parity round-trip · #13 migration assertion (+ create-INSERT) |
+| `a405f51` | #18 #19 #20 #21 — #18 THREAT-MODEL 5th gate · #19 ARCHITECTURE MCP+gate · #20 NEXT golden-eval DONE · #21 product-spec CI-claim honesty |
+| `bed8815` | #22 #34 — #22 payload visibility · #34 SPA Link |
+
+**Remaining backlog** (controlled PR roadmap — one reviewable branch per slice, ≤300 LoC, gate-safe):
+
+- **PR2 — Deploy/Ops codify:** #23 #24 #26 #27
+- **PR3 — OAuth state hardening:** #33
+- **PR4 — Anonymous-session scope decision:** #29
+- **PR5 — Verify/trust honesty P3s:** #30 #43 #44 #46 #47
+- **PR6 — Cost analytics:** #16
+- **PR7 — Atlassian read grounding / tool-name pinning:** #9 #17 #31 #32 #45
+- **PR8 — FE a11y/i18n cleanup:** #10 #36 #37 #38 #39 #52
+- **PR9 — Perf/leak/test invariants:** #35 #40 #41 #42 #50 #51 #53 #54
+- **PR10 — Docker −190MB (deliberate, last):** #15 #25
+
+**Owner-gated / live-gated** (need a live Atlassian/GitHub connection or org admin to fully verify; build the harness + mark live-pending): #9 #17 #31 #32 #45.
+
+**Deferred-by-design:** #15 #25 #28 — Docker −190MB is the riskiest ops change (tsx is required in prod), sequenced LAST (PR10); the specs-quota note is cosmetic.
+
 ## Cross-cutting themes
 
 - The external-write / real-MCP batch is shipped+LIVE structurally but is the single weakest seam in the product: a dead browser call (missing content-type), a wrong Confluence tool name, a double-write-on-conflict bug, an English-only human-confirm prompt, an over-claiming signed attestation, and zero owner-scope/persistence regression tests all cluster on this one path. It needs a focused 'make MCP actually work and stay guarded' sprint before it can be called done.
@@ -21,49 +50,49 @@ AKIS is NOT "fully done top-to-bottom," but it is much closer than its own docs 
 
 ### P1
 
-**#1 [P1/S] MCP external-write (Jira/Confluence publish) is dead in the browser — POST body sent without content-type**
+**#1 [P1/S] ✅ CLOSED (1bc133d) — MCP external-write (Jira/Confluence publish) is dead in the browser — POST body sent without content-type**
 
 - **Where:** `frontend/src/api/client.ts:271,275 (proposeExternalWrite / confirmExternalWrite)` (frontend-studio)
 - **Why:** The two external-write POSTs are the ONLY body-carrying calls in the entire client that omit headers:{'content-type':'application/json'}. A browser fetch with a string body defaults to text/plain;charset=UTF-8; the main Fastify app has no global content-type parser, so req.body stays a raw STRING — b.action is undefined -> propose 400 'BadAction', and confirm mints with digest '' -> mismatch -> write recorded 'failed'. The whole recently-shipped+LIVE human-confirm publish flow is non-functional from the actual UI. Invisible to tests: the route contract test uses Fastify inject (auto-sets the JSON header) and the component test fully mocks the ApiClient.
 - **Fix:** Add headers:{'content-type':'application/json'} to both proposeExternalWrite and confirmExternalWrite, matching every other POST in the client. Pin with a client.test.ts that spies fetchFn and asserts the captured RequestInit headers contain application/json for these two routes. Repairs the gate flow — does not weaken the external-write gate.
 
-**#2 [P1/M] Preview routes are not owner-scoped (IDOR: boot/stop/reach another user's code-running preview)**
+**#2 [P1/M] ✅ CLOSED (1bc133d) — Preview routes are not owner-scoped (IDOR: boot/stop/reach another user's code-running preview)**
 
 - **Where:** `backend/src/api/preview.routes.ts:99-117 (POST/GET/DELETE /sessions/:id/preview) + /preview/:id/* proxy:129 + WS upgrade:171; registration server.ts:487` (security)
 - **Why:** Every other session-touching route resolves ownership via accessibleSession (404 for non-owner); the preview routes do a bare store.get/registry.get/registry.stop with NO owner check. PreviewDeps has no userIdOf, and server.ts:487 registers {registry,store,bus} only, while a userIdOf closure already exists (server.ts:454). The global onRequest hook is CSRF-origin only. So any caller who knows a session id can boot-and-RUN another user's generated code, DELETE-stop another owner's live preview (DoS), and GET/WS-reach the running app. Only mitigation is randomUUID session ids (not enumerable).
 - **Fix:** Thread the existing userIdOf closure into PreviewDeps and apply the accessibleSession 404-pattern in POST/GET/DELETE /sessions/:id/preview, exactly as /log and /events do; gate the /preview/:id/* proxy and the WS upgrade behind the same ownership resolution. Same fix shape used elsewhere; injection point at server.ts:487. Violates no sacred invariant.
 
-**#3 [P1/M] External-write CONFIRM persists status with a stale version -> conflict-after-execute can DOUBLE-write Jira/Confluence**
+**#3 [P1/M] ✅ CLOSED (1bc133d) — External-write CONFIRM persists status with a stale version -> conflict-after-execute can DOUBLE-write Jira/Confluence**
 
 - **Where:** `backend/src/api/sessions.routes.ts:292-323 (final store.update at 319, version captured at 293)` (backend-correctness)
 - **Why:** The status-recording store.update at line 319 uses s.version captured at 293 — AFTER the awaited, multi-second executeExternalWrite network round-trip — and is OUTSIDE the inner try/finally so a conflict escapes uncaught. The version DOES move in that window: chatAppend (server.ts:548) writes the same session on every chat turn (the chat box is live while ExternalWriteCard renders on a done build), and a second propose bumps it too. A 'version conflict' is an unnamed Error -> mapped to HTTP 500 (not in CONFLICT_ERRORS). Net: the Jira issue/Confluence page is already CREATED upstream but the proposal stays status:'proposed', so the user re-confirms the still-'proposed' card -> a SECOND non-idempotent issue/page. No test covers this.
 - **Fix:** After executeExternalWrite, re-read the session fresh and write the resolved record with a short optimistic-retry loop (mirror the chatAppend retry in server.ts:548); critically, persist the executed/failed outcome even on conflict so the proposal flips off 'proposed' and the existing rec.status!=='proposed' guard refuses a re-confirm. Add a contract test that bumps the version between propose and confirm. Gate-safe.
 
-**#4 [P1/M] bodyContains probe applied to vite/next SPAs falsely-REDs a healthy app -> build can never verify**
+**#4 [P1/M] ✅ CLOSED (1bc133d) — bodyContains probe applied to vite/next SPAs falsely-REDs a healthy app -> build can never verify**
 
 - **Where:** `backend/src/verify/bootSmoke.ts:291-303 (deriveChecks added for ALL app types) + criteria.ts:103 (emits bodyContains); probe() bootSmoke.ts:202` (verify-trust)
 - **Why:** deriveChecks emits {kind:'bodyContains',path:'/',literal} for any spec quoting a static label, and runBootSmoke adds it for ALL app types — only roundTrip/auth are gated to node-service (lines 298/302), bodyContains is NOT. For a vite/next SPA the dev server serves the JS shell; the literal is JS-injected and never in the SERVED bytes -> probe 'missing literal' -> passed:false -> no VerifyToken. A correct SPA whose spec names a static heading is falsely-RED'd and can NEVER pass the gate. Fail-closed (never false-green, so no trust invariant weakened) but product-blocking. SPA case is untested.
 - **Fix:** Gate bodyContains derivation/probing to app types whose served / is the rendered surface (static, node-service); for vite/next downgrade a bodyContains to a render/pathStatus probe. Derive FEWER checks for SPAs. Add a boot-smoke test with a vite file set + a static-literal spec asserting the run still passes.
 
-**#5 [P1/S] Signed Build Provenance Attestation over-claims "verified" on a demo/simulated run (no simulated marker)**
+**#5 [P1/S] ✅ CLOSED (1bc133d) — Signed Build Provenance Attestation over-claims "verified" on a demo/simulated run (no simulated marker)**
 
 - **Where:** `backend/src/verify/attestation.ts:52-104 (buildAttestation / attestationMarkdown); contrast backend/src/report/trustReport.ts:64-77` (verify-trust)
 - **Why:** BuildProvenanceAttestation has NO demo/simulated field; buildAttestation sets gates.verified:isVerified(s), true for a demo run (the mock runner mints a real VerifyToken), and signPassportFor signs it unconditionally. attestationMarkdown renders 'Independently verified — a real >=1-test pass' for a SIMULATED build. The session carries the honesty signal (testEvidence.demo) and the Trust Report consumes it, but the attestation — the explicitly-named handable, SIGNED client artifact (Move 3) — ignores it.
 - **Fix:** Thread simulated = s.testEvidence?.demo === true into BuildProvenanceAttestation (a simulated boolean on verification, gate gates.verified to isVerified(s) && !simulated) and render a SIMULATED banner in attestationMarkdown exactly as renderTrustReportMarkdown does. Keep what the passport SIGNS demo-blind (no gate change). Gate-safe.
 
-**#6 [P1/S] External-write HTTP routes (real outward side effects) have no owner-scope / cross-user / 401 test**
+**#6 [P1/S] ✅ CLOSED (1bc133d) — External-write HTTP routes (real outward side effects) have no owner-scope / cross-user / 401 test**
 
 - **Where:** `backend/test/contract/external-writes.routes.test.ts:21,36 (guard: sessions.routes.ts:131-136,259-324)` (tests-coverage)
 - **Why:** The confirm route is the ONLY path that creates a Jira/Confluence page/issue, executed through the REQUESTER's per-provider MCP transport. Owner-scope rests on accessibleSession, but the contract test always resolves one owner (opts.owner never set to a second value), never proposes/confirms as a different user, and never tests an unauthenticated request. Contrast publish.routes.test.ts which has explicit cross-user isolation. A regression letting user B confirm user A's proposal (executing a write through B's Atlassian account) would pass green.
 - **Fix:** Add to external-writes.routes.test.ts: (a) propose under owner A then GET/POST/confirm as owner B -> 404 (accessibleSession null); (b) confirm with userIdOf->undefined -> 401. Both fail if the accessibleSession guard or the 401 check were removed.
 
-**#7 [P1/S] README.md What's-built omits the shipped+LIVE MCP / external-write / Scribe-docs batch**
+**#7 [P1/S] ✅ CLOSED (1bc133d) — README.md What's-built omits the shipped+LIVE MCP / external-write / Scribe-docs batch**
 
 - **Where:** `README.md:22-41` (spec-drift)
 - **Why:** grep over README.md for MCP|jira|confluence|external-write|scribe-doc|atlassian returns ZERO body matches, yet the code is shipped+reachable+LIVE: mcpConnect.routes.ts (registered server.ts:516), externalWriteGate.ts mintApprovedExternalWrite, ScribeAgent.ts:192 writeDocs (wired Orchestrator.ts:411), FE McpConnections.tsx + ExternalWriteCard.tsx:453. README is the canonical 'what's built' surface and an entire shipped batch is invisible there.
 - **Fix:** Add What's-built rows for real-MCP connect (Jira/Confluence/GitHub browser-OAuth/DCR), the external-write propose->confirm->execute gate, and Scribe README docs. Doc-only/additive — weakens no gate.
 
-**#8 [P1/M] External-write human-confirm summary is hardcoded English (the sacred-gate confirm prompt)**
+**#8 [P1/M] ✅ CLOSED (1bc133d) — External-write human-confirm summary is hardcoded English (the sacred-gate confirm prompt)**
 
 - **Where:** `frontend/src/components/ExternalWriteCard.tsx:44-46, 99, 122` (i18n)
 - **Why:** The summary the user reads BEFORE authorizing an outward write is built client-side English-only ('Create Confluence page ... in ...' / 'Create Jira issue ...'), echoed verbatim by the server (sessions.routes.ts:273) and rendered raw at the review/confirm step (line 99) and history (line 122). A TR user confirming a write sees an English sentence on exactly the human-confirm gate the threat model relies on. digestExternalWrite hashes only provider/action/target/payload (NOT the summary), so localizing the displayed copy does not touch the digest binding.
@@ -83,25 +112,25 @@ AKIS is NOT "fully done top-to-bottom," but it is much closer than its own docs 
 - **Why:** The picker declares role=dialog aria-modal=true but only wires backdrop-click and Cancel to onClose — no keydown Escape handler, no focus move into the dialog on open, no Tab trap, no focus restore. An aria-modal dialog that ignores Escape and lets Tab escape into inert content fails the standard modal a11y contract. HistoryMenu.tsx:20 already shows the correct Escape pattern.
 - **Fix:** Add an Escape keydown listener calling onClose, move focus to the dialog/close button on open via a ref, trap Tab within the dialog (or at minimum restore focus to the ModelChip trigger on close). Mirror the HistoryMenu pattern.
 
-**#11 [P2/S] Inline chat VerifyBubble / DoneBubble render green "Verified" with no simulated label on a demo run**
+**#11 [P2/S] ✅ CLOSED (1bc133d) — Inline chat VerifyBubble / DoneBubble render green "Verified" with no simulated label on a demo run**
 
 - **Where:** `frontend/src/chat/ChatThread.tsx:150-159 (VerifyBubble) & 210-220 (DoneBubble); chatModel.ts:10,19,89-93,125` (verify-trust)
 - **Why:** The wire verify event carries demo (events.ts:71, stamped TraceAgent.ts:64) but chatModel.ts maps it dropping demo; the done event has no demo field at all. VerifyBubble styles m.passed GREEN 'Verified · N tests' and DoneBubble renders 'Shipped · verified' for a demo build with no amber/simulated marker. Mitigated: the adjacent TrustLedger already amber-tags the verify step, the durable Trust Report is correct, and /health surfaces demo mode — so this is a secondary cosmetic-honesty gap, not over-claim on a durable artifact (see rank 5).
 - **Fix:** Carry demo onto VerifyMsg (chatModel.ts:91) from e.demo, amber-tint VerifyBubble and append the existing trust.ledger.simulated (TR+EN already present); for DoneBubble derive simulated from the session view's tests.demo so 'Shipped · verified' is not shown unqualified on a mock run.
 
-**#12 [P2/S] externalWrites (jsonb ARRAY column) has NO PgSessionStore round-trip parity test — the array-vs-json bug class that hit chat LIVE**
+**#12 [P2/S] ✅ CLOSED (38958b3) — externalWrites (jsonb ARRAY column) has NO PgSessionStore round-trip parity test — the array-vs-json bug class that hit chat LIVE**
 
 - **Where:** `backend/test/unit/session-store-parity.test.ts:28,40,66 (vs PgSessionStore.ts:73,77,217)` (tests-coverage)
 - **Why:** PgSessionStore plumbs externalWrites as an array-valued jsonb column and toJson stringifies it precisely because node-pg renders a JS array as a Postgres array literal — the exact bug caught LIVE on chat. But the parity fake omits external_writes entirely and there is no round-trip test. Mutation-proven: commenting out the PATCH_COLUMNS entry passes all 24 parity + 7 route tests. externalWrites is an ADDITIVE NON-GATE column, so this is a durable-persistence coverage gap, not a gate weakening.
 - **Fix:** Add external_writes to the parity fake's JSONB set, INSERT destructuring and UPDATE column loop, then add a parity test asserting an array of proposals (status proposed->executed) round-trips via PgSessionStore.get(), mirroring the existing chat array test.
 
-**#13 [P2/S] The external_writes migration ALTER is not asserted in the migration unit test (other additive columns are)**
+**#13 [P2/S] ✅ CLOSED (38958b3) — The external_writes migration ALTER is not asserted in the migration unit test (other additive columns are)**
 
 - **Where:** `backend/test/unit/pg-migrations.test.ts:51-60 (vs pg.ts:108,211)` (tests-coverage)
 - **Why:** pg.ts defines ADD_EXTERNAL_WRITES (L108) in MIGRATIONS (L211), but pg-migrations.test.ts pins the publish ALTER with a rationale (L57) and has NO equivalent for external_writes; the integration test asserts only users/external_id + vector_chunks. Mutation-proven: removing ADD_EXTERNAL_WRITES from MIGRATIONS passes all 9 migration tests, so an upgraded pre-existing sessions table that lost this ALTER would silently drop external-write state on Postgres with no failing test.
 - **Fix:** Add to pg-migrations.test.ts: assert /ALTER TABLE sessions ADD COLUMN IF NOT EXISTS external_writes jsonb/ is present plus the fresh-table DDL check for external_writes jsonb, mirroring the publish assertions.
 
-**#14 [P2/S] MCP connection-tile provider blurbs are hardcoded English (NEW MCP UI)**
+**#14 [P2/S] ✅ CLOSED (1bc133d) — MCP connection-tile provider blurbs are hardcoded English (NEW MCP UI)**
 
 - **Where:** `frontend/src/pages/McpConnections.tsx:8-11, 76` (i18n)
 - **Why:** PROVIDERS blurbs ('Create issues + pages (you confirm each write)', 'Read repo context for grounding') are hardcoded English and rendered at line 76 with no t() wrapping (no settings.mcp.blurb.* keys exist in catalog.ts). A TR user on the headline new-MCP connect screen sees English describing exactly which external writes a connection enables.
@@ -125,31 +154,31 @@ AKIS is NOT "fully done top-to-bottom," but it is much closer than its own docs 
 - **Why:** Spec wants a per-provider read allow-list (Jira search/read, Confluence list-spaces/get-page) admitted into the agent grounding loop (slice 8); readOnlyAllowlist.ts defines ONLY GITHUB_READONLY_TOOLS (12 names), no Atlassian read list, and ScribeAgent grounding admits only github_* tools. Atlassian shipped write-only. Slice 8 unchecked is consistent with the spec's own plan, so this is genuine scope honesty: agents cannot read Jira/Confluence for grounding.
 - **Fix:** Implement the Atlassian read allow-list (frozen, mutator-neutralized) + bridge into the grounding loop per sec5/slice8 keeping remote content EPHEMERAL (never RAG-ingested), OR amend SPEC 01 to scope Atlassian write-only-in-MVP.
 
-**#18 [P2/M] THREAT-MODEL.md documents only 4 gates — omits the external-write gate (sacred 5th branded token)**
+**#18 [P2/M] ✅ CLOSED (a405f51) — THREAT-MODEL.md documents only 4 gates — omits the external-write gate (sacred 5th branded token)**
 
 - **Where:** `THREAT-MODEL.md:1+13-19` (spec-drift)
 - **Why:** Title is 'agentic core + 4 gates'; the structural-guarantee list covers only VerifyToken/ApprovalToken/ApprovedPush/TestRunResult; grep external-write is empty. externalWriteGate.ts:148-171 defines ApprovedExternalWrite as a module-private unique-symbol brand with mintApprovedExternalWrite the sole producer — a live server-minted branded gate this audit treats as a sacred constraint, unmentioned in the security-facing doc. SELF_HOSTING.md and MEMORY.md have zero MCP/Atlassian content. (Partly Phase-5-sequenced by SPEC 01 sec10.)
 - **Fix:** Document external-write as the 5th branded gate (propose-only for untrusted/remote content); add MCP env/setup + the EPHEMERAL-never-RAG invariant to SELF_HOSTING.md/MEMORY.md. Doc-only.
 
-**#19 [P2/M] ARCHITECTURE.md (accurate-not-aspirational) is stale — no MCP, no external-write gate**
+**#19 [P2/M] ✅ CLOSED (a405f51) — ARCHITECTURE.md (accurate-not-aspirational) is stale — no MCP, no external-write gate**
 
 - **Where:** `ARCHITECTURE.md:1-8+sec2` (spec-drift)
 - **Why:** Header dated 2026-06-03, subtitle 'real, shipped architecture, accurate not aspirational'; grep MCP|jira|confluence|external-write|atlassian = ZERO. Section 2 'The 4 gates + branded tokens' never mentions external-write. The MCP batch was committed/hardened 2026-06-07, postdating the doc, so the doc genuinely lags the shipped+LIVE reality.
 - **Fix:** Add an MCP-integration section (transport seam, OAuth/DCR provider, mcpTransportFor, propose->confirm->execute) and update section 2 to 4 build gates + external-write gate (5 tokens). Doc-only.
 
-**#20 [P2/S] NEXT.md contradicts the tree: golden-eval quality gate claimed not built when it ships and passes**
+**#20 [P2/S] ✅ CLOSED (a405f51) — NEXT.md contradicts the tree: golden-eval quality gate claimed not built when it ships and passes**
 
 - **Where:** `docs/NEXT.md:62,84,111 vs docs/roadmap.md:61,65` (spec-drift)
 - **Why:** NEXT.md says the golden-eval gate is 'not built'/TODO at three places, but retrieval-golden-eval.test.ts (HIT_RATE_GATE=0.85, 26 pairs over the 20-doc golden-corpus, real vector+BM25+RRF+rerank path) exists and roadmap.md:61/65 correctly mark it shipped as the last M1 exit criterion. NEXT.md was never reconciled after the gate landed.
 - **Fix:** Update NEXT.md sections 2,6 and the snapshot table to mark golden-eval DONE citing retrieval-golden-eval.test.ts. Doc-only.
 
-**#21 [P2/M] Product-spec AC "full-stack app proven by CI boot tests" overstates CI coverage**
+**#21 [P2/M] ✅ CLOSED (a405f51) — Product-spec AC "full-stack app proven by CI boot tests" overstates CI coverage**
 
 - **Where:** `docs/product/akis-app-builder-studio-spec.md:64 vs .github/workflows/ci.yml` (spec-drift)
 - **Why:** AC #4 claims a full-stack app builds->verifies->previews->ships through the gates 'proven by CI boot tests', but CI runs only typecheck+vitest (mock), a docker build + keyless /health boot smoke, and a chromium Playwright smoke asserting ONLY the anonymous landing renders. grep AKIS_REAL_TESTS over .github/workflows = ZERO; no CI step drives a real build through the gates. NEXT.md sec7 itself concedes full browser E2E is TODO.
 - **Fix:** Reword AC #4 to match reality (image-boot + landing-render smoke; full-flow E2E TODO) or add a CI job driving a real build->verify->preview cycle. Doc-fix is the cheaper honest option.
 
-**#22 [P2/S] Confirm UI shows only summary + 16 digest chars, not the payload bytes the human authorizes**
+**#22 [P2/S] ✅ CLOSED (bed8815) — Confirm UI shows only summary + 16 digest chars, not the payload bytes the human authorizes**
 
 - **Where:** `frontend/src/components/ExternalWriteCard.tsx:97-106` (mcp-completeness)
 - **Why:** The review step renders only mode.summary and a 16-char digest slice; the title/body payload is bound into the digest but never shown, thinning the 'human confirms the exact bytes' intent of the external-write gate. Mitigated: the summary includes title + target key, the payload is built deterministically from the user's own build, and the digest still blocks a display->execute swap.
@@ -223,7 +252,7 @@ AKIS is NOT "fully done top-to-bottom," but it is much closer than its own docs 
 - **Why:** The MCP callback takes a state param but never verifies it (userId only from the cookie), deviating from the spec (line 42, HMAC userId-bound state) and from githubConnect.routes.ts which signs/verifies one. CSRF is largely mitigated by PKCE: the code_verifier is stored per-(userId,provider) and the SDK exchanges the code against the victim's verifier, so an attacker-injected code fails PKCE — exploitability is weaker than a classic OAuth-CSRF.
 - **Fix:** Add an HMAC userId-bound state and reject mismatches (mirror githubConnect), or document the PKCE binding as the intentional mitigation. Gate-neutral.
 
-**#34 [P3/S] ExternalWriteCard 'go to Settings' is a raw <a href> -> full page reload inside the studio**
+**#34 [P3/S] ✅ CLOSED (bed8815) — ExternalWriteCard 'go to Settings' is a raw <a href> -> full page reload inside the studio**
 
 - **Where:** `frontend/src/components/ExternalWriteCard.tsx:76` (frontend-studio)
 - **Why:** <a href=/settings> is a bare anchor, not the SPA Link; the app is a History-API router so this does a full document navigation, tearing down the studio React tree (AuthContext re-probe, lazy chunk re-init, providers/health/usage re-fetch, active-run live view + preview lost — only the localStorage chat thread survives) just to reach Settings. Non-blocking UX degradation.
