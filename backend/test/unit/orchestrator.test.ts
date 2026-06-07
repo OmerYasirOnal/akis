@@ -5,6 +5,8 @@ import { buildServices } from '../../src/di/services.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { NotVerifiedError } from '../../src/gates/pushGate.js'
 import { mintApprovedSpec } from '../../src/gates/specGate.js'
+import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
+import type { LlmProvider, ChatRequest, ChatResult } from '../../src/agent/LlmProvider.js'
 import type { RepoSource, RepoIngestInput } from '../../src/knowledge/ingest/RepoSource.js'
 import { isVerified } from '@akis/shared'
 import { fileURLToPath } from 'node:url'
@@ -228,6 +230,39 @@ describe('Orchestrator — repo auto-ingest on push (issue #7 AC1)', () => {
     expect(isVerified(done)).toBe(true)
     // The session status persisted is still 'done' — the failed ingest never mutated it.
     expect((await services.store.get(s.id))!.status).toBe('done')
+  })
+})
+
+describe('Orchestrator — Scribe docs ship with the app (digest-bound, Gate 4)', () => {
+  it('a Scribe-authored README.md lands in the VERIFIED code.files and survives the push-gate digest re-check', async () => {
+    // A provider that returns a README for the writeDocs pass and delegates everything else
+    // (spec/code) to the deterministic MockProvider.
+    const mock = new MockProvider()
+    const provider: LlmProvider = {
+      name: 'mock', model: 'mock',
+      async chat(req: ChatRequest): Promise<ChatResult> {
+        if (typeof req.system === 'string' && req.system.includes('writing the README')) {
+          return { text: '# Built App\n\nThis app does what the spec describes. Run it locally with the included files.' }
+        }
+        return mock.chat(req)
+      },
+    }
+    const store = new MockSessionStore()
+    const services = buildServices({ store, skillsDir, mockCriticScore: 90, provider, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    const orch = new Orchestrator(services)
+    const s = await orch.start({ idea: 'build a todo web app' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const verified = (await services.store.get(s.id))!
+    expect(isVerified(verified)).toBe(true)
+    // The README is in the VERIFIED file set (digest-bound into the VerifyToken).
+    const readme = verified.code?.files.find(f => f.filePath === 'README.md')
+    expect(readme).toBeDefined()
+    expect(readme?.content).toContain('Built App')
+    // The push gate re-check (digestFiles(files) === verifyToken.codeDigest) passes WITH the README
+    // present → it ships through the same Gate 4 → done. (A digest mismatch would throw here.)
+    const done = await orch.confirmPush(s.id)
+    expect(done.status).toBe('done')
   })
 })
 

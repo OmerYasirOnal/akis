@@ -1,4 +1,5 @@
 import type { SpecArtifact, SharedContext, ToolName } from '@akis/shared'
+import type { RepoFile } from '../../di/MockGitHubAdapter.js'
 import type { EventBus } from '../../events/bus.js'
 import type { ChatResult, LlmProvider } from '../../agent/LlmProvider.js'
 import { nextTs } from '../../events/clock.js'
@@ -9,6 +10,16 @@ import type { KnowledgePort } from '../../knowledge/KnowledgePort.js'
 import { buildAdvisoryTools, buildAdvisoryToolsWithGithub } from '../../agent/tools/advisoryTools.js'
 import { callWithTools } from '../../agent/tools/toolLoop.js'
 import type { McpSessionPool } from '../../agent/mcp/McpSessionPool.js'
+
+/** Focused system prompt for the additive README pass (ScribeAgent.writeDocs). Grounded + concise;
+ *  never invents features (matches AKIS's provenance posture). */
+const DOCS_SYSTEM = `You are AKIS Scribe writing the README for an app AKIS just built. Output ONE clean README.md in GitHub-flavored markdown: a title, a one-paragraph description of what the app does, a "Run it locally" section, and a "Features" list derived from the acceptance criteria. Be accurate and grounded — describe ONLY what the spec and the file list actually contain; never invent endpoints, scripts, or features. Where a detail is unknown, write a short "TODO:" line instead of guessing. Keep it concise (a few hundred words). Return ONLY the markdown.`
+
+/** Strip a single ```markdown … ``` fence the model may wrap the whole README in. */
+function stripWrappingFence(s: string): string {
+  const m = /^```(?:markdown|md)?\s*\n([\s\S]*?)\n```$/.exec(s.trim())
+  return m?.[1] ? m[1].trim() : s
+}
 
 export interface ScribeInput {
   sessionId: string
@@ -167,6 +178,28 @@ export class ScribeAgent {
     const metrics = buildAgentMetrics(res.usage, startedAt, toolCalls)
     this.deps.bus.emit({ kind: 'agent_end', role: 'scribe', ok: parsed, metrics, agent: 'scribe', laneId, sessionId, ts: nextTs() })
     return outcome
+  }
+
+  /**
+   * ADDITIVE + fail-soft: author a concise README for the just-built app from the approved spec +
+   * the actual file list. Returns undefined on any error/empty/mock output, so documentation can
+   * NEVER block a build. Pure (provider call + return) — the orchestrator narrates around it and
+   * injects the file into the VERIFIED set so it ships through the SAME push gate (digest-bound).
+   * Zero gate authority (only the LLM provider, identical trust posture to Proto).
+   */
+  async writeDocs(input: { spec: SpecArtifact; files: RepoFile[] }): Promise<RepoFile | undefined> {
+    try {
+      const fileList = input.files.map(f => f.filePath).join(', ')
+      const userMsg = `Write a concise, accurate README.md for this app. Use ONLY what the spec and file list below actually contain — never invent a feature; where something is unknown write a "TODO:" line instead of guessing.\n\nTITLE: ${input.spec.title}\n\nSPEC:\n${input.spec.body}\n\nFILES: ${fileList || '(none)'}\n\nReturn ONLY the README markdown.`
+      const res = await this.deps.provider.chat({ system: DOCS_SYSTEM, messages: [{ role: 'user', content: userMsg }], maxTokens: 2048 })
+      const content = stripWrappingFence((res.text ?? '').trim())
+      // A mock/keyless provider returns empty/trivial text → no fabricated docs file (fail-soft).
+      if (content.length < 20) return undefined
+      return { filePath: 'README.md', content }
+    } catch {
+      // Documentation is additive — a provider error must never fail the build.
+      return undefined
+    }
   }
 
   /**
