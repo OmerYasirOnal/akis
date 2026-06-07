@@ -62,10 +62,15 @@ Atlassian token is **never** reused as a login/session credential.
 ### Slice 6 — agent wiring (Scribe proposes via the MCP bridge)
 
 Expose the Atlassian server's tools to the agent through `McpToolBridge` (slice-2 transport), so
-Scribe can *read* Jira/Confluence context and *emit proposals* for writes. The bridge already
-namespaces tools and bounds result size; the Atlassian write tools must be gated exactly like §0 — a
-write tool surfaced to the agent is a **proposal emitter**, not a direct call. See carry-over note
-**A** (the bridge needs a positive Atlassian write allow-list, parallel to `readOnlyAllowlist.ts`).
+Scribe can *read* Jira/Confluence context and *emit proposals* for writes. **Scope honestly: this is
+not drop-in reuse.** The bridge is GitHub-hardcoded today (`GITHUB_READONLY_TOOLS`, the `github_`
+namespace, and `github tool '…'` error strings, all from `readOnlyAllowlist.ts`) — slice 6 must
+parameterize it (namespace + allow-list set + error labels) or add an Atlassian variant. And while
+the GitHub path namespaces tools and bounds result size, those bounds serve *read* semantics; the
+bridge has **no propose-not-execute interception for write tools at all** (it forwards calls). The
+write-tool gating of §0 — a write tool surfaced to the agent is a **proposal emitter**, not a direct
+call — is therefore *new behavior* slice 6 adds, not just a new allow-list constant. See carry-over
+note **A**.
 
 ## 3. Carry-over review notes (close before go-live)
 
@@ -79,7 +84,10 @@ such list exists yet.** `backend/src/agent/mcp/readOnlyAllowlist.ts` gives a fro
 positive set for GitHub reads; the Atlassian write track needs the symmetric thing: a frozen positive
 set of permitted Atlassian write-tool names (e.g. `createPage`, `createJiraIssue`), checked at mint
 and/or execute, so a server-advertised tool outside the set can never execute even with a valid
-token. Land this with slice 6 (the bridge is where it's enforced).
+token. **Status: the gate-side check landed (PR #128 — `ATLASSIAN_WRITE_ACTIONS` enforced at mint AND
+execute).** What remains for slice 6: enforce at the bridge too, and pin the set against the tool
+names the provider actually advertises (snapshot/intersection test, like the read-only list's) so a
+name mismatch can't silently refuse every legit write.
 
 ### B. UI-displayed digest into mint (no server-side recompute)
 
@@ -99,11 +107,12 @@ known), keeping the gate pure.
 
 ### D. Deeper canonicalization (digest stability for nested payloads)
 
-`digestExternalWrite` sorts keys **one level deep** only (`sortKeys` top-level). Today's
-target/payload are flat, so the digest is stable; a nested payload would hash by JSON insertion order
-and could let two semantically-equal payloads digest differently (or, worse, mask a meaningful
-reorder). Before any nested payload shape is introduced, make canonicalization recursive (sort keys at
-every depth) and add a digest-stability test for the nested case.
+**Status: landed (PR #127).** `digestExternalWrite` now canonicalizes recursively — object keys are
+sorted at every depth (including inside array elements), while array element ORDER remains content
+and changes the digest. Digest-stability tests cover the nested + in-array cases and the
+element-reorder inverse. Residual awareness: the digest also relies on `provider`/`action` staying
+primitive strings (they are, per the interface); if `action` ever becomes structured, it flows
+through the same recursive canonicalizer, so no gap reopens.
 
 ## 4. Non-goals (this track)
 
