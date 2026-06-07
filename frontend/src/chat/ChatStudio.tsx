@@ -144,6 +144,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     ]
     saveThread(nodes)
     setThreadKey(k => k + 1)
+    // #35: a REOPEN must NOT auto-(re)boot the local preview — the user may only want to read the
+    // transcript, and spawning a process per reopen is wasteful. Pre-seed autoRan with the reopened
+    // id so the auto-preview effect skips it; a FRESH build / a LIVE completion still auto-previews
+    // (autoRan was never set to that id). Manual "Run app" still boots a reopened build on demand.
+    autoRan.current = id
     setActiveSessionId(id); setActiveIdea(idea); setActiveView(emptyView(id))
     setBackendStatus(undefined); setActionError(undefined); setStartingSpec(undefined); setSessionGone(false)
     // Point the address bar at the reopened build so a refresh reloads THIS session, not the

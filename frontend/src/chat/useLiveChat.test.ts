@@ -135,3 +135,28 @@ describe('useLiveChat — SSE-drop reconnecting overlay', () => {
     expect(hook.result.current.view.lanes[0]!.steps[0]!.done).toBe(true)
   })
 })
+
+describe('useLiveChat — rAF coalescer (perf invariant #50)', () => {
+  it('coalesces N events delivered in one frame into a SINGLE refold (not one per event)', () => {
+    vi.useFakeTimers()
+    try {
+      const { hook, es } = setup()
+      // Three events arrive synchronously (same frame). The coalescer must BATCH them — no refold
+      // fires per event (a fast build streams ~100 notes/sec; per-event refold would thrash).
+      act(() => {
+        es().msg(E('agent_start', { role: 'scribe', agent: 'scribe' }), 1)
+        es().msg(E('narration', { text: 'a', ts: 1 }), 2)
+        es().msg(E('agent_end', { role: 'scribe', ok: true, agent: 'scribe' }), 3)
+      })
+      // BEFORE the frame flushes: the batched refold has NOT run → the view is still empty.
+      expect(hook.result.current.view.lanes.length).toBe(0)
+      // Flush the SINGLE coalesced animation frame.
+      act(() => { vi.advanceTimersByTime(20) })
+      // ONE refold reflects ALL three events (scribe start+end → one done step).
+      expect(hook.result.current.view.lanes.length).toBe(1)
+      expect(hook.result.current.view.lanes[0]!.steps[0]!.done).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
