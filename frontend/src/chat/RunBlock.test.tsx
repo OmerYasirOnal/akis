@@ -60,6 +60,18 @@ describe('RunBlock — inline run-block (slim header + chronological bubbles)', 
     expect(screen.getByText(/Shipped/)).toBeInTheDocument()
   })
 
+  it('the verify bubble pluralizes the EN test count — "1 test" (singular), not "1 tests"', async () => {
+    FakeStream.created = []
+    const api = new ApiClient('', vi.fn(okFetch()))
+    render(wrap(<RunBlock sessionId="s1" idea="# Todo App" active api={api}
+      onApprove={() => {}} onConfirm={() => {}} onNewBuild={() => {}} makeClient={() => new FakeStream() as unknown as EventStreamClient} />))
+    const live = FakeStream.created[FakeStream.created.length - 1]!
+    act(() => { live.emit(ev({ kind: 'verify', testsRun: 1, passed: true, agent: 'trace', laneId: 'verify' }), 1) })
+    // A single passing test reads as "1 test" (singular) — the broken "1 tests" must NOT appear.
+    await waitFor(() => expect(screen.getByText(/1 test\b/)).toBeInTheDocument())
+    expect(screen.queryByText(/1 tests/)).toBeNull()
+  })
+
   it('the SOLE gate surface is ONE inline gate bubble (no strip duplicate); Approve calls onApprove, minting nothing', async () => {
     FakeStream.created = []
     const onApprove = vi.fn()
