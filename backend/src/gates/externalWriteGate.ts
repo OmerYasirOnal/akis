@@ -105,7 +105,10 @@ function frozenWriteActionSet(names: readonly string[]): ReadonlySet<string> {
 }
 
 /** The ONLY Atlassian (Jira/Confluence) write-tool names a proposal may invoke. Keep this honest:
- *  add a name ONLY when the provider advertises it AND a human-confirm flow exists for it. */
+ *  add a name ONLY when the provider advertises it AND a human-confirm flow exists for it.
+ *  TODO(wiring slice): once the Atlassian MCP bridge lands, pin this set against the tool names the
+ *  provider ACTUALLY advertises (snapshot/intersection test, like readOnlyAllowlist's) — a name
+ *  mismatch here would silently refuse every legitimate write. */
 export const ATLASSIAN_WRITE_ACTIONS: ReadonlySet<string> = frozenWriteActionSet([
   'createPage',       // Confluence: create a page
   'createJiraIssue',  // Jira: create an issue
@@ -155,6 +158,10 @@ export async function executeExternalWrite(
   transport: McpTransport,
   proposal: ExternalWriteProposal,
 ): Promise<ExternalWriteResult> {
+  // NOT redundant with the digest re-check below: the digest binds `action`, so a plain post-mint
+  // action swap already fails the comparison. This check defends the remaining case — a proposal
+  // whose digest matches but whose action is off-list (e.g. the allow-list shrank after mint, or a
+  // colliding digest was found). Defense-in-depth; do not delete as "already covered by the digest".
   if (!isAllowedExternalWriteAction(proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
   if (token.writeId !== proposal.id || token.digest !== digestExternalWrite(proposal)) {
     throw new ExternalWriteDigestMismatchError()
