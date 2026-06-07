@@ -119,6 +119,18 @@ export interface McpConnectionStatus {
   scopes?: string
 }
 
+/** A proposed/executed external write (Jira issue / Confluence page) for a build — never a token. */
+export interface ExternalWriteSummary {
+  id: string
+  provider: string
+  summary: string
+  action: string
+  status: 'proposed' | 'executed' | 'failed'
+  result?: string
+  proposedAt: string
+  confirmedAt?: string
+}
+
 /** Typed error for non-2xx responses (gate 409s carry a `code`; workflow 400s carry the
  *  `errors[]` field-level validation list from validateWorkflowConfig). */
 export class ApiError extends Error {
@@ -261,6 +273,10 @@ export class ApiClient {
   /** Confirm + EXECUTE a proposed external write (the only path that writes externally). */
   confirmExternalWrite(sessionId: string, writeId: string, digest: string): Promise<{ ok: boolean; status: string; result?: string }> {
     return this.json(`/sessions/${sessionId}/external-writes/${writeId}/confirm`, { method: 'POST', body: JSON.stringify({ digest }) })
+  }
+  /** The build's external-write proposals + their outcomes (history) — never a token. */
+  listExternalWrites(sessionId: string): Promise<{ writes: ExternalWriteSummary[] }> {
+    return this.json(`/sessions/${sessionId}/external-writes`)
   }
 
   // ── Publish to your own server (OCI free-tier) — POST-`done`, optional, NON-GATING ──
