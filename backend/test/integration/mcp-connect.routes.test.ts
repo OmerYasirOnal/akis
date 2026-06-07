@@ -2,7 +2,10 @@ import { describe, it, expect } from 'vitest'
 import Fastify from 'fastify'
 import { registerMcpConnectRoutes, mcpTransportFor, type RemoteMcpAuthFn, type RemoteMcpProviderConfig } from '../../src/api/mcpConnect.routes.js'
 import { MemoryRemoteMcpAuthStore, StoreBackedOAuthProvider } from '../../src/agent/mcp/StoreBackedOAuthProvider.js'
+import { signConnectState, verifyConnectState } from '../../src/auth/oauth.js'
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
+
+const SECRET = 'test-state-secret'
 
 const PROVIDERS: Record<string, RemoteMcpProviderConfig> = {
   atlassian: { serverUrl: 'https://mcp.example/v1', kind: 'streamable-http', scope: 'offline_access write:jira-work' },
@@ -26,7 +29,7 @@ function app(opts: { userId?: string; auth?: RemoteMcpAuthFn; store?: MemoryRemo
   const store = opts.store ?? new MemoryRemoteMcpAuthStore()
   const f = Fastify({ logger: false })
   registerMcpConnectRoutes(f, {
-    store, env: ENV, providers: PROVIDERS,
+    store, env: ENV, providers: PROVIDERS, secret: SECRET,
     auth: opts.auth ?? fakeAuth,
     userIdOf: async () => opts.userId,
   })
@@ -34,11 +37,15 @@ function app(opts: { userId?: string; auth?: RemoteMcpAuthFn; store?: MemoryRemo
 }
 
 describe('mcp connect routes', () => {
-  it('connect → 302 to the captured authorize URL (DCR + PKCE driven by the SDK)', async () => {
+  it('connect → 302 to the captured authorize URL with a SIGNED state (DCR + PKCE driven by the SDK)', async () => {
     const { f } = app({ userId: 'u1' })
     const res = await f.inject({ method: 'GET', url: '/mcp/atlassian/connect' })
     expect(res.statusCode).toBe(302)
-    expect(res.headers.location).toBe('https://auth.example/authorize?client_id=dcr&code_challenge=x')
+    const loc = new URL(res.headers.location as string)
+    expect(`${loc.origin}${loc.pathname}`).toBe('https://auth.example/authorize')
+    expect(loc.searchParams.get('client_id')).toBe('dcr') // the SDK's captured params survive
+    // a state WE signed, bound to this user + provider (CSRF / flow-integrity)
+    expect(verifyConnectState(loc.searchParams.get('state') ?? '', SECRET)).toEqual({ userId: 'u1', repo: 'atlassian' })
   })
 
   it('connect requires auth (401) and rejects an unknown provider', async () => {
@@ -47,13 +54,34 @@ describe('mcp connect routes', () => {
     expect(res.headers.location).toBe('https://akis.app/settings?mcp=unknown')
   })
 
-  it('callback exchanges the code → tokens stored, verifier cleared, redirect connected', async () => {
+  it('callback with a VALID state exchanges the code → tokens stored, verifier cleared, connected', async () => {
     const { f, store } = app({ userId: 'u1' })
-    const res = await f.inject({ method: 'GET', url: '/mcp/atlassian/callback?code=abc&state=s' })
+    const state = signConnectState('u1', 'atlassian', SECRET)
+    const res = await f.inject({ method: 'GET', url: `/mcp/atlassian/callback?code=abc&state=${encodeURIComponent(state)}` })
     expect(res.statusCode).toBe(302)
     expect(res.headers.location).toBe('https://akis.app/settings?mcp=connected')
     expect(store.load('u1', 'atlassian')?.tokens).toEqual(tokens)
     expect(store.load('u1', 'atlassian')?.codeVerifier).toBeUndefined() // spent verifier cleared
+  })
+
+  it('callback REJECTS a missing / forged / cross-user state → denied, NO token exchange (CSRF)', async () => {
+    const noCall: RemoteMcpAuthFn = async () => { throw new Error('token exchange must not run on a bad state') }
+    // (a) missing state
+    const a = app({ userId: 'u1', auth: noCall })
+    expect((await a.f.inject({ method: 'GET', url: '/mcp/atlassian/callback?code=abc' })).headers.location).toBe('https://akis.app/settings?mcp=denied')
+    expect(a.store.load('u1', 'atlassian')).toBeUndefined()
+    // (b) forged/garbage state
+    const b = app({ userId: 'u1', auth: noCall })
+    expect((await b.f.inject({ method: 'GET', url: '/mcp/atlassian/callback?code=abc&state=not-a-real-state' })).headers.location).toBe('https://akis.app/settings?mcp=denied')
+    // (c) a state validly signed for ANOTHER user — must not authorize u1's connection
+    const c = app({ userId: 'u1', auth: noCall })
+    const otherUser = signConnectState('attacker', 'atlassian', SECRET)
+    expect((await c.f.inject({ method: 'GET', url: `/mcp/atlassian/callback?code=abc&state=${encodeURIComponent(otherUser)}` })).headers.location).toBe('https://akis.app/settings?mcp=denied')
+    expect(c.store.load('u1', 'atlassian')).toBeUndefined()
+    // (d) a state signed for a DIFFERENT provider — must not cross providers
+    const d = app({ userId: 'u1', auth: noCall })
+    const otherProv = signConnectState('u1', 'github', SECRET)
+    expect((await d.f.inject({ method: 'GET', url: `/mcp/atlassian/callback?code=abc&state=${encodeURIComponent(otherProv)}` })).headers.location).toBe('https://akis.app/settings?mcp=denied')
   })
 
   it('callback with a provider error or no code → denied (no token exchange)', async () => {

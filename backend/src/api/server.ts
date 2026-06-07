@@ -513,7 +513,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // Per-user REMOTE MCP connection (browser OAuth/DCR for Atlassian Jira/Confluence + GitHub).
   // requireAuth via the SAME userIdOf; tokens stored in mcpAuthStore (encrypted) — never a session
   // credential. Writes via these servers still flow through the external-write gate (human-confirm).
-  registerMcpConnectRoutes(app, { store: mcpAuthStore, env, userIdOf })
+  registerMcpConnectRoutes(app, { store: mcpAuthStore, env, userIdOf, secret: authSecret })
   // Per-user publish destination (set/status/delete the SSH key + host/dir/port). Reuses the SAME
   // userIdOf closure (revocation-aware) so only the authenticated owner reaches their own profile.
   // The SSH key is stored encrypted in `publishProfiles` — NEVER returned/logged.

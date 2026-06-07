@@ -3,6 +3,7 @@ import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.
 import { StoreBackedOAuthProvider, type RemoteMcpAuthStore } from '../agent/mcp/StoreBackedOAuthProvider.js'
 import { HttpMcpTransport } from '../agent/mcp/HttpMcpTransport.js'
 import { baseUrl } from './oauth.routes.js'
+import { signConnectState, verifyConnectState } from '../auth/oauth.js'
 
 /**
  * Per-user REMOTE MCP connection (the "agents really use MCP" UX). A signed-in user connects their
@@ -46,6 +47,9 @@ const defaultAuth: RemoteMcpAuthFn = async (provider, opts) => {
 export interface McpConnectDeps {
   store: RemoteMcpAuthStore
   env: NodeJS.ProcessEnv
+  /** HMAC secret for the signed OAuth `state` (CSRF + flow-integrity) — the SAME server auth secret
+   *  the GitHub-connect flow uses. Binds the callback to a flow THIS user started for THIS provider. */
+  secret: string
   /** Resolve the signed-in user id (revocation-aware) — the SAME closure the rest of the server uses. */
   userIdOf: (req: FastifyRequest) => Promise<string | undefined>
   /** Injectable SDK auth() (tests); default = the real SDK auth via dynamic import. */
@@ -74,7 +78,14 @@ export function registerMcpConnectRoutes(app: FastifyInstance, deps: McpConnectD
     try {
       const result = await authFn(provider, { serverUrl: cfg.serverUrl, scope: cfg.scope })
       // The SDK (after DCR + PKCE) calls provider.redirectToAuthorization → we captured the URL.
-      if (result === 'REDIRECT' && provider.capturedAuthorizationUrl) return reply.redirect(provider.capturedAuthorizationUrl.toString())
+      if (result === 'REDIRECT' && provider.capturedAuthorizationUrl) {
+        // Bind a signed `state` to THIS user + provider (short-TTL, HMAC) so the callback can prove
+        // it belongs to a flow this user started (CSRF + flow-integrity). The SDK drives PKCE
+        // independently via the stored code_verifier, so overriding `state` here is safe.
+        const authUrl = new URL(provider.capturedAuthorizationUrl.toString())
+        authUrl.searchParams.set('state', signConnectState(userId, req.params.provider, deps.secret))
+        return reply.redirect(authUrl.toString())
+      }
       if (result === 'AUTHORIZED') return toSettings(reply, base, 'connected') // already authorized (cached tokens)
       return toSettings(reply, base, 'error')
     } catch {
@@ -90,6 +101,10 @@ export function registerMcpConnectRoutes(app: FastifyInstance, deps: McpConnectD
     const cfg = providers[req.params.provider]
     if (!cfg) return toSettings(reply, base, 'unknown')
     if (req.query.error || !req.query.code) return toSettings(reply, base, 'denied')
+    // CSRF / flow-integrity: the `state` MUST be one WE signed for THIS user + provider, unexpired.
+    // A missing, forged, expired, or cross-user/cross-provider state is refused BEFORE any exchange.
+    const st = req.query.state ? verifyConnectState(req.query.state, deps.secret) : undefined
+    if (!st || st.userId !== userId || st.repo !== req.params.provider) return toSettings(reply, base, 'denied')
     const provider = makeProvider(req, userId, req.params.provider, cfg)
     try {
       const result = await authFn(provider, { serverUrl: cfg.serverUrl, authorizationCode: req.query.code })
