@@ -402,6 +402,19 @@ export class Orchestrator {
    * state (NOT a silent reset to 'building', the old dead-end). NEVER bypasses verify.
    */
   private async verifyAndTransition(id: string, session: SessionState, files: { filePath: string; content: string }[]): Promise<SessionState> {
+    // ADDITIVE + fail-soft: Scribe authors a README INTO the verified file set, so the docs ship +
+    // push with the app through the SAME Gate 4 (the README is digest-bound into the VerifyToken,
+    // re-checked by the push gate). Done HERE — the single verify choke point — so docs land on BOTH
+    // the main approved path and the proceed-from-resolution path, generated exactly once. writeDocs
+    // returns undefined on any error/mock output, so documentation can NEVER block a build.
+    if (session.spec) {
+      const docs = await this.s.scribe.writeDocs({ spec: session.spec, files })
+      if (docs) {
+        files = mergeFiles(files, [docs])
+        session = await this.s.store.update(id, { code: { files } }, session.version)
+        this.narrate(id, 'Scribe wrote a README and bundled it with the app.')
+      }
+    }
     // The run's approved spec rides along (PR2, data only): the boot-smoke verifier derives
     // its acceptance-criteria probes from it. It never shapes the OUTCOME — mint unchanged.
     const { token, evidence } = await this.s.trace.run({ sessionId: id, laneId: 'verify', files, ...(session.spec ? { spec: session.spec } : {}) })

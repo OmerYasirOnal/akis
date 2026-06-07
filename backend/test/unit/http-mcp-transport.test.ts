@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { HttpMcpTransport, buildBearerInit } from '../../src/agent/mcp/HttpMcpTransport.js'
 import { McpUnavailableError } from '../../src/agent/mcp/McpTransport.js'
 import type { McpClientLike, McpConnection } from '../../src/agent/mcp/StdioDockerTransport.js'
@@ -30,7 +30,7 @@ describe('HttpMcpTransport', () => {
   it('passes the OAuth token to connect (header channel) and never via a tool arg', async () => {
     let seenToken: string | undefined
     const { client } = fakeConn()
-    const t = new HttpMcpTransport({ url: 'https://mcp.example/v1', token: 'secret-bearer', connect: async (_u, token) => { seenToken = token; return { client } } })
+    const t = new HttpMcpTransport({ url: 'https://mcp.example/v1', token: 'secret-bearer', connect: async ({ token }) => { seenToken = token; return { client } } })
     await t.initialize()
     expect(seenToken).toBe('secret-bearer')
   })
@@ -75,6 +75,30 @@ describe('HttpMcpTransport', () => {
   it('listTools before initialize throws (not initialized)', async () => {
     const t = new HttpMcpTransport({ url: 'u', token: 'tok', connect: async () => ({ client: fakeConn().client }) })
     await expect(t.listTools()).rejects.toBeInstanceOf(McpUnavailableError)
+  })
+})
+
+describe('HttpMcpTransport — auth method + transport kind', () => {
+  it('requires EXACTLY one of { token, authProvider }', () => {
+    expect(() => new HttpMcpTransport({ url: 'u' } as never)).toThrow(/exactly one/)
+    expect(() => new HttpMcpTransport({ url: 'u', token: 't', authProvider: {} as never })).toThrow(/exactly one/)
+  })
+
+  it('passes the authProvider + kind through to connect (the OAuth path — SDK owns auth/refresh)', async () => {
+    let seen: { kind?: string; hasProvider?: boolean; hasToken?: boolean } = {}
+    const t = new HttpMcpTransport({
+      url: 'https://mcp.atlassian.com/v1/mcp/authv2', kind: 'streamable-http', authProvider: { tokens: () => undefined } as never,
+      connect: async (args) => { seen = { kind: args.kind, hasProvider: !!args.authProvider, hasToken: args.token !== undefined }; return { client: fakeConn().client } },
+    })
+    await t.initialize()
+    expect(seen).toEqual({ kind: 'streamable-http', hasProvider: true, hasToken: false })
+  })
+
+  it('defaults to the sse kind when not specified', async () => {
+    let seenKind: string | undefined
+    const t = new HttpMcpTransport({ url: 'u', token: 'tok', connect: async (args) => { seenKind = args.kind; return { client: fakeConn().client } } })
+    await t.initialize()
+    expect(seenKind).toBe('sse')
   })
 })
 
