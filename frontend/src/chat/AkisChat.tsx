@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo, type FormEvent, type ReactNode } from 'react'
 import type { ApiClient, ProviderInfo, ChatOverrides, UsageInfo } from '../api/client.js'
 import { ApiError } from '../api/client.js'
+import { getProvidersCached, getModeCached } from '../api/providersCache.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { Markdown } from '../components/Markdown.js'
 import { CopyButton } from '../components/CopyButton.js'
@@ -218,7 +219,9 @@ export function AkisChat({
   // SEED it from the first provider's defaultModel so the chip shows a concrete model.
   useEffect(() => {
     let alive = true
-    void api.listProviders()
+    // #41: providers + mode are session-stable — read them through a process cache so AkisChat's
+    // per-build remounts don't re-fetch /api/providers + /health each time (invalidated on key change).
+    void getProvidersCached(api)
       .then(raw => {
         if (!alive) return
         // Defensive: only ever trust an actual array (a misbehaving mock/route could return
@@ -234,7 +237,7 @@ export function AkisChat({
         setModelPref(prev => (prev.provider ? prev : { ...prev, provider: first.id, model: first.defaultModel }))
       })
       .catch(() => {/* chip simply stays hidden */})
-    void api.health().then(h => { if (alive && (h?.mode === 'live' || h?.mode === 'demo')) setMode(h.mode) }).catch(() => {/* mode badge omitted */})
+    void getModeCached(api).then(m => { if (alive && m) setMode(m) }).catch(() => {/* mode badge omitted */})
     // Per-user token-usage meter: best-effort. A 401 (anonymous) or unlimited deployment just
     // hides it (UsageMeter returns null) — the chat never depends on it.
     void api.usage().then(u => { if (alive) setUsage(u) }).catch(() => {/* meter hidden */})

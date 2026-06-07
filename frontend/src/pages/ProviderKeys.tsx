@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ApiClient, ProviderInfo } from '../api/client.js'
 import { ApiError } from '../api/client.js'
+import { invalidateProvidersCache } from '../api/providersCache.js'
 import { SectionTitle, Button, Input, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
@@ -19,13 +20,13 @@ export function ProviderKeys({ api }: { api: ApiClient }) {
   const save = async (id: string): Promise<void> => {
     const key = (drafts[id] ?? '').trim(); if (!key) return
     setBusy(id); setErr(undefined)
-    try { await api.setProviderKey(id, key); setDrafts(d => ({ ...d, [id]: '' })); load() }
+    try { await api.setProviderKey(id, key); invalidateProvidersCache(api); setDrafts(d => ({ ...d, [id]: '' })); load() }
     catch (e) { setErr(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) }
     finally { setBusy(undefined) }
   }
   const remove = async (id: string): Promise<void> => {
     setBusy(id); setErr(undefined)
-    try { await api.removeProviderKey(id); load() }
+    try { await api.removeProviderKey(id); invalidateProvidersCache(api); load() }
     catch (e) { setErr(ApiError.is(e) ? `${e.code ?? 'error'}: ${e.message}` : String(e)) }
     finally { setBusy(undefined) }
   }
