@@ -89,6 +89,12 @@ Pin a specific version instead of `latest` for a reproducible deploy, e.g.
 passed a keyless `/health` boot-smoke in the release pipeline — a tag that exists is
 a tag that boots.
 
+> **Architecture: the published GHCR image is `linux/amd64` only.** The release
+> pipeline does not (yet) build multi-arch, so on an **ARM host** (Apple Silicon, an
+> Ampere/`arm64` VM) `docker pull` of the published image either fails to run or runs
+> under slow emulation. On ARM, build locally instead (`docker compose up --build`, or
+> the `build:` block above) — the Dockerfile is arch-agnostic.
+
 > The package is created on the **first** release. New GHCR packages default to
 > **private**; flip it to public once (GitHub → the repo's Packages →
 > akis-platform-mvp → Package settings → Change visibility) so anyone can
@@ -507,6 +513,24 @@ docker compose up --build      # rebuilds the image; volumes (your data) are pre
 
 `docker compose down` keeps volumes; `docker compose down -v` **deletes** them —
 use `-v` only when you intend to wipe all data.
+
+### Push an update to a remote box that runs the bundled image (maintainers)
+
+If your box runs the prebuilt `akis:deploy` image via compose (no source/git on the box),
+[`scripts/deploy-box.sh`](../scripts/deploy-box.sh) codifies the full ship: it cross-builds a
+`linux/amd64` image to a **complete** tarball (with `--provenance=false --sbom=false` so
+buildx doesn't emit a hollow image), backs up the box's current image as a rollback tag,
+streams + `docker load`s the new one, recreates the `app` container, then probes `/health` and
+**auto-rolls-back** if it doesn't come up. No secret is ever passed on the CLI or baked in.
+
+```bash
+AKIS_DEPLOY_HOST=your.box.ip ./scripts/deploy-box.sh
+# optional: AKIS_DEPLOY_USER (default ubuntu) · AKIS_DEPLOY_DIR (default ~/akis-deploy)
+#           AKIS_DEPLOY_PORT (default 3000) · AKIS_IMAGE_TAG (default akis:deploy)
+```
+
+Cross-arch caveat: it builds `linux/amd64` (most cloud VMs). The box's compose `image:` must be
+`akis:deploy`; the box keeps a `~/akis-deploy/docker-compose.yml` + `.env` (never committed).
 
 Migrations run automatically on boot and are idempotent. One edge case: upgrading a
 database first created before AKIS added OAuth identities applies a uniqueness

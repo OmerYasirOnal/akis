@@ -22,6 +22,17 @@ services:
       context: .
       dockerfile: Dockerfile
     restart: unless-stopped
+    # Resource caps + log rotation (sensible single-user defaults — edit for your box). mem_limit
+    # bounds the app + the preview child processes it spawns; pids_limit backstops a fork storm;
+    # json-file rotation stops an unbounded log filling the disk on a long-lived box.
+    mem_limit: 1g
+    pids_limit: 512
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+    # The backend's in-process drain is ~10s (backend/src/api/shutdown.ts); give Docker a LONGER
+    # grace so a clean shutdown finishes before SIGKILL (the default 10s grace would race it).
+    stop_grace_period: 30s
     depends_on:
       db:
         condition: service_healthy
@@ -99,6 +110,11 @@ services:
     # Drop-in compatible with postgres:16; the app falls back to double precision[] if absent.
     image: pgvector/pgvector:pg16
     restart: unless-stopped
+    mem_limit: 512m
+    pids_limit: 256
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
     environment:
       POSTGRES_USER: akis
       POSTGRES_PASSWORD: akis
