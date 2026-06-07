@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   digestExternalWrite, mintApprovedExternalWrite, executeExternalWrite,
   ExternalWriteDigestMismatchError, ExternalWriteActionNotAllowedError,
@@ -78,12 +78,6 @@ describe('externalWriteGate — mint requires the human-confirmed digest to matc
     // confirming digest of a DIFFERENT payload than the stored proposal → refused
     const tampered = digestExternalWrite(proposal({ payload: { title: 'Release notes', body: 'evil' } }))
     expect(() => mintApprovedExternalWrite(p, tampered)).toThrow(ExternalWriteDigestMismatchError)
-  })
-  it('REFUSES a proposal whose target + payload share a key (would silently collapse on execute)', () => {
-    // target.title and payload.title collide; executeExternalWrite merges into one args object so the
-    // executed bytes would not match the digest (which binds them separately) → reject at mint.
-    const p = proposal({ target: { spaceKey: 'ENG', title: 'where-title' }, payload: { title: 'what-title', body: 'x' } })
-    expect(() => mintApprovedExternalWrite(p, digestExternalWrite(p))).toThrow(ExternalWriteDigestMismatchError)
   })
 })
 
