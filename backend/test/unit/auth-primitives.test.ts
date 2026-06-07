@@ -47,6 +47,11 @@ describe('jwt (HS256, Node crypto)', () => {
     const body = Buffer.from(JSON.stringify({ sub: 'u1', email: 42, name: 'A', iat: 1000, exp: 9999999999 })).toString('base64url')
     const sig = createHmac('sha256', secret).update(`${head}.${body}`).digest('base64url')
     expect(() => verifyJwt(`${head}.${body}.${sig}`, secret, 1100)).toThrow(/bad claims/)
+    // Pin the OTHER arm of the OR guard independently — email valid, name non-string. Without
+    // this, a mutation dropping the name check would stay green (review follow-up).
+    const body2 = Buffer.from(JSON.stringify({ sub: 'u1', email: 'a@b.com', name: 42, iat: 1000, exp: 9999999999 })).toString('base64url')
+    const sig2 = createHmac('sha256', secret).update(`${head}.${body2}`).digest('base64url')
+    expect(() => verifyJwt(`${head}.${body2}.${sig2}`, secret, 1100)).toThrow(/bad claims/)
   })
   it('signing requires a secret (no silent unsigned tokens)', () => {
     expect(() => signJwt({ sub: 'u1', email: 'a@b.com', name: 'A' }, '')).toThrow(/missing secret/)
@@ -96,6 +101,9 @@ describe('password (scrypt)', () => {
   it('returns false (never throws) when scrypt rejects the parameters', async () => {
     // A record whose cost is a valid integer but not a power of two makes Node's scrypt throw.
     // The try/catch must absorb it into a plain false — a bad record is a failed login, not a 500.
+    // NOTE: this relies on Node's scrypt validating N as a power of two (undocumented-ish invariant);
+    // if a future Node relaxes it, this flips to a plain wrong-password false — same observable
+    // result, but the try/catch arm would no longer be exercised by this case.
     expect(await verifyPassword('x', 'scrypt$3$c2FsdA$aGFzaA')).toBe(false)
   })
 })
@@ -137,6 +145,13 @@ describe('cookie helpers', () => {
     const cfg = cookieConfigFromEnv({ AUTH_COOKIE_DOMAIN: 'akisflow.com' })
     expect(cfg.domain).toBe('akisflow.com')
     expect(serializeCookie('akis_session', 'tok', cfg)).toContain('Domain=akisflow.com')
+  })
+  it('an ABSENT AUTH_COOKIE_DOMAIN yields no domain key and no Domain= attribute (fail-safe default)', () => {
+    // The inverse of the test above (review follow-up): host-only cookies are the safe default —
+    // a stray Domain= would widen the cookie to sibling subdomains.
+    const cfg = cookieConfigFromEnv({})
+    expect('domain' in cfg).toBe(false)
+    expect(serializeCookie('akis_session', 'tok', cfg)).not.toContain('Domain=')
   })
 })
 
