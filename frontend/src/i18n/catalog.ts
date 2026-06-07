@@ -232,6 +232,13 @@ export const STRINGS = {
     'preview.collapse': 'Collapse preview',
     'preview.expand': 'Expand preview',
     'preview.collapsed': 'Preview',
+    'preview.tab.chat': 'Chat',
+    // Mobile pane-switcher tab → the live preview pane. Must NOT read "Preview" — that collides by
+    // accessible name with PreviewPanel's inner Preview tab once a run emits code files.
+    'preview.tab.live': 'Live view',
+    // Outer mobile pane-switcher tablist label — distinct from PreviewPanel's inner "Live preview"
+    // tablist so a screen reader can tell the two tablists apart.
+    'preview.pane.switcher': 'View',
     'preview.starting': 'starting…',
     'preview.booting': 'Booting the app…',
     'preview.rendering': 'Rendering your app…',
@@ -939,6 +946,11 @@ export const STRINGS = {
     'preview.collapse': 'Önizlemeyi daralt',
     'preview.expand': 'Önizlemeyi aç',
     'preview.collapsed': 'Önizleme',
+    'preview.tab.chat': 'Sohbet',
+    // Canlı görünüm — "Önizleme" ile çakışmasın (PreviewPanel'in iç "Önizleme" sekmesi).
+    'preview.tab.live': 'Canlı görünüm',
+    // Mobil bölme değiştirici tablist etiketi — iç "Canlı önizleme" tablist'inden ayırt edilebilir.
+    'preview.pane.switcher': 'Görünüm',
     'preview.starting': 'başlıyor…',
     'preview.booting': 'Uygulama başlatılıyor…',
     'preview.rendering': 'Uygulaman çiziliyor…',
