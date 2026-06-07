@@ -59,6 +59,17 @@ describe('runMigrations', () => {
     expect(texts.join('\n')).toMatch(/CREATE TABLE IF NOT EXISTS sessions[\s\S]*publish\s+jsonb/)
   })
 
+  it('runs the idempotent external_writes ALTER for pre-existing sessions tables (additive, NON-GATE field)', async () => {
+    // `external_writes` is the persisted proposal/history list for human-confirmed MCP writes.
+    // Upgraded DBs must get it via ADD COLUMN IF NOT EXISTS or the Jira/Confluence confirm card
+    // loses its lifecycle state on Postgres while still appearing to work in memory.
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    expect(texts.some(t => /ALTER TABLE sessions ADD COLUMN IF NOT EXISTS external_writes jsonb/.test(t))).toBe(true)
+    // the fresh-table DDL must also carry the column so new DBs match upgraded ones.
+    expect(texts.join('\n')).toMatch(/CREATE TABLE IF NOT EXISTS sessions[\s\S]*external_writes\s+jsonb/)
+  })
+
   it('enforces external_id uniqueness via a dedicated index (so upgraded DBs match fresh ones)', async () => {
     // A fresh DB gets `external_id text UNIQUE` inline, but the ADD COLUMN migration that
     // upgrades a pre-existing users table adds NO constraint — without a dedicated unique

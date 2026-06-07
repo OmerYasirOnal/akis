@@ -24,14 +24,15 @@ export class PgSessionStore implements SessionStore {
     // `base` (Phase B.5 edit-mode seed) is written ONLY here — it is set at session creation
     // by the controlled API path and is NOT in PATCH_COLUMNS, so it is immutable thereafter.
     await this.db.query(
-      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, external_writes, version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
       [
         s.id, s.status, s.idea, s.ownerId ?? null,
         toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken), toJson(s.testEvidence), toJson(s.passport),
         toJson(s.publish),
         toJson(s.chat),
         toJson(s.base),
+        toJson(s.externalWrites),
         s.version,
       ],
     )
