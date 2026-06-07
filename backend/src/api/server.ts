@@ -38,6 +38,9 @@ import { resolveQuotaPolicy } from '../usage/quota.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { registerGitHubConnectRoutes } from './githubConnect.routes.js'
+import { registerMcpConnectRoutes } from './mcpConnect.routes.js'
+import { JsonFileRemoteMcpAuthStore } from '../keys/JsonFileRemoteMcpAuthStore.js'
+import { MemoryRemoteMcpAuthStore, type RemoteMcpAuthStore } from '../agent/mcp/StoreBackedOAuthProvider.js'
 import { registerPublishRoutes } from './publish.routes.js'
 import { JsonFilePublishProfileStore, PublishProfileMemoryStore, type PublishProfileStore } from '../keys/PublishProfileStore.js'
 import { OpenSshTransport } from '../publish/SshTransport.js'
@@ -77,6 +80,9 @@ export interface ServerDeps {
    *  exactly like keyStore) and threaded here; tests/host-injection get an in-memory default
    *  in buildServer. Holds each user's ENCRYPTED GitHub token + their target repo. */
   connections?: GitHubConnectionStore
+  /** Per-(user,provider) remote-MCP OAuth store (Atlassian/GitHub browser-OAuth tokens, encrypted).
+   *  Built in start() (master key in scope, like connections); in-memory default in buildServer. */
+  mcpAuthStore?: RemoteMcpAuthStore
   /** Per-user publish-destination store (the encrypted SSH key + host/dir/port for "publish to
    *  your own server"). Built in start() (where the master key is in scope, exactly like
    *  connections); tests/host-injection get an in-memory default in buildServer. */
@@ -181,6 +187,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // BOTH buildServices calls so the per-owner push override (`githubFor`) is wired identically
   // on the default orchestrator AND every per-workflow orchestrator.
   const connections: GitHubConnectionStore = deps.connections ?? new GitHubConnectionMemoryStore()
+  const mcpAuthStore: RemoteMcpAuthStore = deps.mcpAuthStore ?? new MemoryRemoteMcpAuthStore()
 
   // Per-user publish destination store (the encrypted SSH key + host/dir/port). start() builds the
   // encrypted JsonFile store (master in scope); tests/host-injection get an in-memory default here.
@@ -500,6 +507,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // (revocation-aware) so only the authenticated owner reaches their own connection. The
   // connect token is stored in `connections` (encrypted) — NEVER as a session credential.
   registerGitHubConnectRoutes(app, { connections, secret: authSecret, cookie, env, userIdOf })
+  // Per-user REMOTE MCP connection (browser OAuth/DCR for Atlassian Jira/Confluence + GitHub).
+  // requireAuth via the SAME userIdOf; tokens stored in mcpAuthStore (encrypted) — never a session
+  // credential. Writes via these servers still flow through the external-write gate (human-confirm).
+  registerMcpConnectRoutes(app, { store: mcpAuthStore, env, userIdOf })
   // Per-user publish destination (set/status/delete the SSH key + host/dir/port). Reuses the SAME
   // userIdOf closure (revocation-aware) so only the authenticated owner reaches their own profile.
   // The SSH key is stored encrypted in `publishProfiles` — NEVER returned/logged.
@@ -833,6 +844,12 @@ export async function start(): Promise<void> {
   const connections: GitHubConnectionStore = process.env.NODE_ENV !== 'test'
     ? new JsonFileGitHubConnectionStore(connectionsFile, master)
     : new GitHubConnectionMemoryStore()
+  // Per-(user,provider) remote-MCP OAuth store, built HERE (master in scope). Same .config/akis dir;
+  // 0600 encrypted at rest under akis:mcp-conn:<provider>:<uid>. In-memory under NODE_ENV=test.
+  const mcpAuthFile = process.env.AKIS_MCP_AUTH_STORE_PATH ?? join(homedir(), '.config', 'akis', 'mcp-auth.json')
+  const mcpAuthStore: RemoteMcpAuthStore = process.env.NODE_ENV !== 'test'
+    ? new JsonFileRemoteMcpAuthStore(mcpAuthFile, master)
+    : new MemoryRemoteMcpAuthStore()
   // Per-user publish destination store, built HERE (master in scope, exactly like connections).
   // Same .config/akis dir; 0600 encrypted at rest under akis:publish:<uid>. Under NODE_ENV=test,
   // the in-memory store (no test writes the real .config/akis).
@@ -883,6 +900,7 @@ export async function start(): Promise<void> {
   const app = buildServer({
     keyStore,
     connections,
+    mcpAuthStore,
     publishProfiles,
     persistence: pg ? 'postgres' : 'memory',
     ...(pg ? { userStore: pg.userStore, sessionStore: pg.sessionStore, workflowStore: pg.workflowStore, usage: pg.usageStore, vectorStore: pg.vectorStore, bm25: pg.bm25, auditStore: pg.auditStore } : {}),
