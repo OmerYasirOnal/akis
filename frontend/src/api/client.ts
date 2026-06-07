@@ -112,6 +112,13 @@ export interface GitHubConnectionStatus {
   connectedAt?: string
 }
 
+/** The caller's per-provider remote-MCP connection status (Atlassian / GitHub via browser OAuth).
+ *  Never includes the token — only whether a connection exists + its granted scopes. */
+export interface McpConnectionStatus {
+  connected: boolean
+  scopes?: string
+}
+
 /** Typed error for non-2xx responses (gate 409s carry a `code`; workflow 400s carry the
  *  `errors[]` field-level validation list from validateWorkflowConfig). */
 export class ApiError extends Error {
@@ -237,6 +244,14 @@ export class ApiClient {
   githubStatus(): Promise<GitHubConnectionStatus> { return this.json<GitHubConnectionStatus>('/auth/github/status') }
   /** Remove the caller's stored GitHub connection. */
   disconnectGitHub(): Promise<{ removed: boolean }> { return this.json('/auth/github', { method: 'DELETE' }) }
+
+  // ── Per-user REMOTE MCP connection (Atlassian Jira/Confluence + GitHub via browser OAuth/DCR) ──
+  /** Full-page redirect target to begin the MCP connect (browser OAuth) flow for a provider. */
+  mcpConnectUrl(provider: string): string { return `${this.baseUrl}/mcp/${encodeURIComponent(provider)}/connect` }
+  /** The caller's MCP connection status for a provider — never includes the token. */
+  mcpStatus(provider: string): Promise<McpConnectionStatus> { return this.json<McpConnectionStatus>(`/mcp/${encodeURIComponent(provider)}/status`) }
+  /** Remove the caller's stored MCP connection for a provider. */
+  disconnectMcp(provider: string): Promise<{ ok: boolean }> { return this.json(`/mcp/${encodeURIComponent(provider)}`, { method: 'DELETE' }) }
 
   // ── Publish to your own server (OCI free-tier) — POST-`done`, optional, NON-GATING ──
   /** The caller's publish-destination status — NEVER includes the SSH key (only metadata + a

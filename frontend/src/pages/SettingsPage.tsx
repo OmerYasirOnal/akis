@@ -2,6 +2,7 @@ import type { ApiClient } from '../api/client.js'
 import { AgentsTab } from '../agents/AgentsTab.js'
 import { ProviderKeys } from './ProviderKeys.js'
 import { GitHubConnection } from './GitHubConnection.js'
+import { McpConnections } from './McpConnections.js'
 import { PublishDestination } from './PublishDestination.js'
 import { AccountSettings } from './AccountSettings.js'
 import { useAuth } from '../auth/AuthContext.js'
@@ -41,6 +42,10 @@ export function SettingsPage({ api }: { api: ApiClient }) {
 
       <Card className="p-5">
         <GitHubConnection api={api} />
+      </Card>
+
+      <Card className="p-5">
+        <McpConnections api={api} />
       </Card>
 
       <Card className="p-5">
