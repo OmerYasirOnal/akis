@@ -397,7 +397,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           would be stranded off-screen below a full-height chat. This Chat/Preview tablist (lg:hidden)
           lets a narrow viewport switch panes. Only meaningful once a run exists (there's a rail). */}
       {hasRun && (
-        <div role="tablist" aria-label={t('preview.title')} className="mb-3 flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 lg:hidden">
+        <div role="tablist" aria-label={t('preview.pane.switcher')} className="mb-3 flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 lg:hidden">
           {(['chat', 'preview'] as const).map(tab => {
             const selected = mobileTab === tab
             return (
@@ -430,7 +430,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         {/* Live preview rail — the actually-running app (the ACTIVE run). Only once a run exists. */}
         {hasRun && (
           <aside className={`min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.02] backdrop-blur-sm transition-all duration-300 ${previewOpen ? 'p-4' : 'p-2'} ${previewPaneMobile}`}>
-            <div className={`mb-2 flex ${previewOpen ? 'justify-end' : 'justify-center'}`}>
+            {/* Desktop-only collapse toggle. Hidden under lg: below lg the rail is reached via the
+                mobile pane-switcher, and the collapsed 4rem strip is a desktop-split affordance —
+                exposing it on mobile would strand the user in a confusing collapsed-strip dead-end. */}
+            <div className={`mb-2 hidden lg:flex ${previewOpen ? 'justify-end' : 'justify-center'}`}>
               <button
                 type="button"
                 onClick={() => setPreviewOpen(v => !v)}
