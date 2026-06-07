@@ -22,7 +22,9 @@ export function SectionTitle({ children, sub }: { children: ReactNode; sub?: Rea
 
 type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'subtle'; full?: boolean }
 export function Button({ variant = 'primary', full, className = '', ...rest }: ButtonProps) {
-  const base = 'rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed'
+  // focus-visible (keyboard-only) teal ring so keyboard users get a visible focus indicator
+  // on every button across the studio, without showing the ring on mouse clicks.
+  const base = 'rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950'
   const styles = {
     primary: 'bg-gradient-to-r from-[#07D1AF] to-violet-500 text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] hover:brightness-110',
     ghost: 'border border-white/15 bg-white/[0.03] text-slate-200 hover:border-white/30',
