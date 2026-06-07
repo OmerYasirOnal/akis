@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { HttpMcpTransport } from '../../src/agent/mcp/HttpMcpTransport.js'
+import { HttpMcpTransport, buildBearerInit } from '../../src/agent/mcp/HttpMcpTransport.js'
 import { McpUnavailableError } from '../../src/agent/mcp/McpTransport.js'
 import type { McpClientLike, McpConnection } from '../../src/agent/mcp/StdioDockerTransport.js'
 
@@ -75,5 +75,47 @@ describe('HttpMcpTransport', () => {
   it('listTools before initialize throws (not initialized)', async () => {
     const t = new HttpMcpTransport({ url: 'u', token: 'tok', connect: async () => ({ client: fakeConn().client }) })
     await expect(t.listTools()).rejects.toBeInstanceOf(McpUnavailableError)
+  })
+})
+
+describe('HttpMcpTransport — buildBearerInit (the SDK-fetch header normalization)', () => {
+  const bearerOf = (init: RequestInit) => new Headers(init.headers).get('Authorization')
+
+  it('injects the bearer when the SDK passes NO init/headers', () => {
+    expect(bearerOf(buildBearerInit('tok', undefined))).toBe('Bearer tok')
+    expect(bearerOf(buildBearerInit('tok', {}))).toBe('Bearer tok')
+  })
+
+  it('injects the bearer alongside a plain-object headers init (and preserves the others)', () => {
+    const init = buildBearerInit('tok', { headers: { Accept: 'text/event-stream' } })
+    expect(bearerOf(init)).toBe('Bearer tok')
+    expect(new Headers(init.headers).get('Accept')).toBe('text/event-stream')
+  })
+
+  it('injects the bearer when headers is a Headers INSTANCE (object spread would drop these)', () => {
+    const h = new Headers()
+    h.set('Accept', 'text/event-stream')
+    const init = buildBearerInit('tok', { headers: h })
+    expect(bearerOf(init)).toBe('Bearer tok')
+    expect(new Headers(init.headers).get('Accept')).toBe('text/event-stream')
+  })
+
+  it('injects the bearer when headers is a [k,v][] ARRAY (object spread would drop these)', () => {
+    const init = buildBearerInit('tok', { headers: [['Accept', 'text/event-stream'], ['X-Trace', '1']] })
+    expect(bearerOf(init)).toBe('Bearer tok')
+    expect(new Headers(init.headers).get('Accept')).toBe('text/event-stream')
+    expect(new Headers(init.headers).get('X-Trace')).toBe('1')
+  })
+
+  it('the injected Authorization wins over any caller-supplied one (the bearer is authoritative)', () => {
+    const init = buildBearerInit('tok', { headers: { Authorization: 'Bearer stale' } })
+    expect(bearerOf(init)).toBe('Bearer tok')
+  })
+
+  it('preserves non-header init fields (method/body) untouched', () => {
+    const init = buildBearerInit('tok', { method: 'POST', body: 'payload' })
+    expect(init.method).toBe('POST')
+    expect(init.body).toBe('payload')
+    expect(bearerOf(init)).toBe('Bearer tok')
   })
 })
