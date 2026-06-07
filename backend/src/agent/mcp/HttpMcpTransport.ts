@@ -45,6 +45,22 @@ const defaultSetTimer = (cb: () => void, ms: number): { clear: () => void } => {
   return { clear: () => clearTimeout(h) }
 }
 
+/**
+ * Return a copy of the SDK's `RequestInit` with the OAuth bearer set as the `Authorization` header.
+ *
+ * The header is normalized through `new Headers(init?.headers)` BEFORE setting Authorization, so a
+ * caller-supplied `Headers` instance or `[k,v][]` array (both valid `HeadersInit` shapes the SDK may
+ * pass) is preserved — an object-spread `{ ...init.headers }` would silently DROP those non-plain
+ * shapes, stripping any headers the SDK relies on (e.g. SSE `Accept`). The injected Authorization is
+ * authoritative (it `.set()`s last), so a stale caller value cannot shadow the real bearer. Non-header
+ * init fields (method/body/signal…) pass through untouched.
+ */
+export function buildBearerInit(token: string, init: RequestInit | undefined): RequestInit {
+  const headers = new Headers(init?.headers)
+  headers.set('Authorization', `Bearer ${token}`)
+  return { ...init, headers }
+}
+
 export class HttpMcpTransport implements McpTransport {
   private readonly url: string
   private readonly token: string
@@ -153,7 +169,7 @@ const defaultConnect = async (url: string, token: string, clientName: string): P
   // documented as "used for all network requests", so the token reaches both legs via the header
   // channel only.
   const bearerFetch = (input: string | URL | Request, init?: RequestInit): Promise<Response> =>
-    fetch(input as RequestInfo, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), Authorization: `Bearer ${token}` } })
+    fetch(input as RequestInfo, buildBearerInit(token, init))
   const transport = new SSEClientTransport(new URL(url), { fetch: bearerFetch } as unknown as ConstructorParameters<typeof SSEClientTransport>[1])
   const client = new Client({ name: clientName, version: '1.0.0' }, { capabilities: {} })
   // SDK-boundary cast: the SDK transport's optional fields trip exactOptionalPropertyTypes against
