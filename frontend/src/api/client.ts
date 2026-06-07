@@ -253,6 +253,16 @@ export class ApiClient {
   /** Remove the caller's stored MCP connection for a provider. */
   disconnectMcp(provider: string): Promise<{ ok: boolean }> { return this.json(`/mcp/${encodeURIComponent(provider)}`, { method: 'DELETE' }) }
 
+  // ── External writes (Jira/Confluence via MCP) — propose → human-confirm → execute ──
+  /** Record a proposed external write for a build; returns the content digest the human confirms. */
+  proposeExternalWrite(sessionId: string, body: { provider?: string; action: string; summary?: string; target?: Record<string, unknown>; payload?: Record<string, unknown> }): Promise<{ id: string; digest: string; summary: string }> {
+    return this.json(`/sessions/${sessionId}/external-writes`, { method: 'POST', body: JSON.stringify(body) })
+  }
+  /** Confirm + EXECUTE a proposed external write (the only path that writes externally). */
+  confirmExternalWrite(sessionId: string, writeId: string, digest: string): Promise<{ ok: boolean; status: string; result?: string }> {
+    return this.json(`/sessions/${sessionId}/external-writes/${writeId}/confirm`, { method: 'POST', body: JSON.stringify({ digest }) })
+  }
+
   // ── Publish to your own server (OCI free-tier) — POST-`done`, optional, NON-GATING ──
   /** The caller's publish-destination status — NEVER includes the SSH key (only metadata + a
    *  key fingerprint). */

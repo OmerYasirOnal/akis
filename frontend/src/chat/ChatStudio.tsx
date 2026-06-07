@@ -12,6 +12,7 @@ import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { TrustReportCard } from '../components/TrustReportCard.js'
 import { PublishButton } from '../components/PublishButton.js'
+import { ExternalWriteCard } from '../components/ExternalWriteCard.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
@@ -415,6 +416,8 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
                 {activeSessionId && !sessionGone && isDone && <TrustReportCard sessionId={activeSessionId} api={api} />}
                 {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING. */}
                 {activeSessionId && !sessionGone && isDone && <PublishButton sessionId={activeSessionId} api={api} initialRecord={publishRecord} />}
+                {/* Publish docs/issue to Jira/Confluence via MCP — propose → human-confirm → execute. */}
+                {activeSessionId && !sessionGone && isDone && <ExternalWriteCard sessionId={activeSessionId} idea={activeIdea} files={codeFiles} api={api} />}
                 <PreviewPanel view={activeView} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
               </>
             ) : (
