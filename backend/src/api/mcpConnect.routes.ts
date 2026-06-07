@@ -96,20 +96,25 @@ export function registerMcpConnectRoutes(app: FastifyInstance, deps: McpConnectD
   // OAuth redirect target: exchange the code (PKCE) → saveTokens (in the provider).
   app.get<{ Params: { provider: string }; Querystring: { code?: string; state?: string; error?: string } }>('/mcp/:provider/callback', async (req, reply) => {
     const base = baseUrl(req, deps.env)
-    const userId = await deps.userIdOf(req)
-    if (!userId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
     const cfg = providers[req.params.provider]
     if (!cfg) return toSettings(reply, base, 'unknown')
     if (req.query.error || !req.query.code) return toSettings(reply, base, 'denied')
-    // CSRF / flow-integrity: the `state` MUST be one WE signed for THIS user + provider, unexpired.
-    // A missing, forged, expired, or cross-user/cross-provider state is refused BEFORE any exchange.
+    // CSRF / flow-integrity + IDENTITY: the `state` MUST be one WE signed for THIS provider, unexpired.
+    // It is the SOLE unforgeable identity binding, so it is verified FIRST and st.userId is authoritative
+    // — this keeps connect working even under SameSite=Strict, where the session cookie is DROPPED on
+    // the cross-site OAuth return (mirrors /auth/github/callback). A missing/forged/expired/cross-provider
+    // state is refused BEFORE any token exchange.
     const st = req.query.state ? verifyConnectState(req.query.state, deps.secret) : undefined
-    if (!st || st.userId !== userId || st.repo !== req.params.provider) return toSettings(reply, base, 'denied')
-    const provider = makeProvider(req, userId, req.params.provider, cfg)
+    if (!st || st.repo !== req.params.provider) return toSettings(reply, base, 'denied')
+    // DEFENSE-IN-DEPTH (Lax only): a PRESENT session cookie must match the signed-state userId; under
+    // Strict the cookie is absent (cookieUser === undefined) so this is intentionally skipped.
+    const cookieUser = await deps.userIdOf(req)
+    if (cookieUser !== undefined && cookieUser !== st.userId) return toSettings(reply, base, 'denied')
+    const provider = makeProvider(req, st.userId, req.params.provider, cfg)
     try {
       const result = await authFn(provider, { serverUrl: cfg.serverUrl, authorizationCode: req.query.code })
       if (result === 'AUTHORIZED') {
-        deps.store.clearVerifier(userId, req.params.provider) // the transient PKCE verifier is spent
+        deps.store.clearVerifier(st.userId, req.params.provider) // the transient PKCE verifier is spent
         return toSettings(reply, base, 'connected')
       }
       return toSettings(reply, base, 'error')
@@ -132,6 +137,9 @@ export function registerMcpConnectRoutes(app: FastifyInstance, deps: McpConnectD
   app.delete<{ Params: { provider: string } }>('/mcp/:provider', async (req, reply) => {
     const userId = await deps.userIdOf(req)
     if (!userId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
+    // Validate the provider like /status + /connect do — a garbage id must 404, not silently
+    // {ok:true} + a pointless store persist. Removal stays idempotent for a KNOWN-but-absent provider.
+    if (!providers[req.params.provider]) return reply.code(404).send({ error: 'unknown provider', code: 'UnknownProvider' })
     deps.store.remove(userId, req.params.provider)
     return { ok: true }
   })

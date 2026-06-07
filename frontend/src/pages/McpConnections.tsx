@@ -74,6 +74,15 @@ export function McpConnections({ api }: { api: ApiClient }) {
               <div className="min-w-0">
                 <div className="font-semibold text-slate-100">{p.label}</div>
                 <div className="truncate text-sm text-slate-400">{connected ? t('settings.mcp.connected') : t(p.blurbKey)}</div>
+                {/* Parity with the GitHub card: surface the GRANTED (non-secret) scopes so the owner can
+                    confirm what they authorised (e.g. write:confluence-content). Never a token. */}
+                {connected && s?.scopes && (
+                  <div className="mt-1 flex flex-wrap gap-1">
+                    {s.scopes.split(/\s+/).filter(Boolean).map(sc => (
+                      <span key={sc} className="rounded bg-white/5 px-1.5 py-0.5 text-[10px] text-slate-400">{sc}</span>
+                    ))}
+                  </div>
+                )}
               </div>
               {connected
                 ? <Button variant="ghost" onClick={() => void disconnect(p.id)} disabled={busy === p.id}>{t('settings.mcp.disconnect')}</Button>

@@ -24,13 +24,25 @@ function makeApp() {
 }
 
 describe('CONTRACT: remote-MCP connect routes are wired into buildServer', () => {
-  it('the connect/callback/status routes are MOUNTED + owner-scoped (401 unauthenticated, not 404)', async () => {
+  it('the connect/status/disconnect routes are MOUNTED + owner-scoped (401 unauthenticated, not 404)', async () => {
     const app = makeApp()
-    for (const url of ['/mcp/atlassian/connect', '/mcp/atlassian/callback?code=x&state=y', '/mcp/atlassian/status']) {
+    // connect + status are same-site → the session cookie is the right gate → 401 unauthenticated.
+    for (const url of ['/mcp/atlassian/connect', '/mcp/atlassian/status']) {
       const res = await app.inject({ method: 'GET', url })
       expect(res.statusCode, `${url} should require auth (wired), not 404`).toBe(401)
     }
     const del = await app.inject({ method: 'DELETE', url: '/mcp/atlassian' })
     expect(del.statusCode).toBe(401)
+  })
+
+  it('the callback is MOUNTED + state-gated, NOT cookie-gated (works under SameSite=Strict; audit #2)', async () => {
+    // The OAuth return is a cross-site top-level GET; under SameSite=Strict the cookie is dropped, so
+    // the callback must NOT 401 on a missing cookie — identity comes from the signed state. An
+    // unauthenticated callback with a bogus state is REDIRECTED (?mcp=denied), proving it is wired
+    // (not 404) and gated on the state (not the cookie).
+    const app = makeApp()
+    const res = await app.inject({ method: 'GET', url: '/mcp/atlassian/callback?code=x&state=y' })
+    expect(res.statusCode, 'callback should be wired (a redirect), not 404/401').toBe(302)
+    expect(res.headers.location).toMatch(/mcp=denied/)
   })
 })

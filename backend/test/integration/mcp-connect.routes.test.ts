@@ -99,6 +99,45 @@ describe('mcp connect routes', () => {
     await f.inject({ method: 'DELETE', url: '/mcp/atlassian' })
     expect(store.load('u1', 'atlassian')).toBeUndefined()
   })
+
+  it('callback under SameSite=Strict (NO session cookie) still connects via the signed state (#2)', async () => {
+    // Under AUTH_COOKIE_SAMESITE=strict the cookie is DROPPED on the cross-site OAuth return → userIdOf
+    // is undefined. The signed state is the unforgeable identity binding, so connect must still succeed
+    // and store the tokens under the STATE's userId (mirrors /auth/github/callback).
+    const { f, store } = app({}) // no userId ⇒ no session cookie (Strict)
+    const state = signConnectState('u1', 'atlassian', SECRET)
+    const res = await f.inject({ method: 'GET', url: `/mcp/atlassian/callback?code=abc&state=${encodeURIComponent(state)}` })
+    expect(res.headers.location).toBe('https://akis.app/settings?mcp=connected')
+    expect(store.load('u1', 'atlassian')?.tokens).toEqual(tokens)
+  })
+
+  it('callback DENIES when a PRESENT cookie mismatches the signed-state userId (defense-in-depth)', async () => {
+    const noCall: RemoteMcpAuthFn = async () => { throw new Error('must not exchange on a cookie/state mismatch') }
+    const { f, store } = app({ userId: 'mallory', auth: noCall }) // cookie says mallory…
+    const state = signConnectState('u1', 'atlassian', SECRET) // …state says u1
+    const res = await f.inject({ method: 'GET', url: `/mcp/atlassian/callback?code=abc&state=${encodeURIComponent(state)}` })
+    expect(res.headers.location).toBe('https://akis.app/settings?mcp=denied')
+    expect(store.load('u1', 'atlassian')).toBeUndefined()
+    expect(store.load('mallory', 'atlassian')).toBeUndefined()
+  })
+
+  it('DELETE on an UNKNOWN provider → 404 (parity with /status), never a silent ok (#1)', async () => {
+    const { f } = app({ userId: 'u1' })
+    const res = await f.inject({ method: 'DELETE', url: '/mcp/garbage' })
+    expect(res.statusCode).toBe(404)
+    expect(res.json()).toMatchObject({ code: 'UnknownProvider' })
+  })
+
+  it('disconnect is IDEMPOTENT — a second DELETE still 200 {ok:true}, store stays empty (#3)', async () => {
+    const { f, store } = app({ userId: 'u1' })
+    store.save('u1', 'atlassian', { tokens })
+    const r1 = await f.inject({ method: 'DELETE', url: '/mcp/atlassian' })
+    expect(r1.statusCode).toBe(200); expect(r1.json()).toEqual({ ok: true })
+    expect(store.load('u1', 'atlassian')).toBeUndefined()
+    const r2 = await f.inject({ method: 'DELETE', url: '/mcp/atlassian' }) // already gone
+    expect(r2.statusCode).toBe(200); expect(r2.json()).toEqual({ ok: true })
+    expect(store.load('u1', 'atlassian')).toBeUndefined()
+  })
 })
 
 describe('mcpTransportFor', () => {
