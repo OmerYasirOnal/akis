@@ -11,7 +11,7 @@ import {
   type WorkflowConfigInput,
 } from '@akis/shared'
 import { ApiClient, ApiError, type ProviderInfo } from '../api/client.js'
-import { Card, SectionTitle, Button, Field, Input, ErrorNote } from '../ui/kit.js'
+import { Card, SectionTitle, Button, Field, Input, Select, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import {
   clampIterateBudget,
@@ -298,27 +298,27 @@ export function WorkflowBuilder({
 
                 <div className="grid grid-cols-2 gap-3">
                   <Field label={t('workflows.builder.provider')}>
-                    <select
+                    <Select
                       aria-label={`${role}-provider`}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-100"
+                      className="text-sm"
                       value={d.providerId}
                       onChange={e => setProvider(role, e.target.value)}
                     >
                       <option value="">{t('workflows.builder.default')}</option>
                       {available.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                   <Field label={t('workflows.builder.model')}>
-                    <select
+                    <Select
                       aria-label={`${role}-model`}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-100"
+                      className="text-sm"
                       value={d.modelId}
                       disabled={!provider}
                       onChange={e => setModel(role, e.target.value)}
                     >
                       <option value="">{t('workflows.builder.default')}</option>
                       {provider?.models.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                 </div>
 
@@ -399,38 +399,38 @@ export function WorkflowBuilder({
 
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <Field label={t('workflows.builder.customAgentEdge')}>
-                    <select
+                    <Select
                       aria-label={`custom-agent-${idx}-edge`}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-100"
+                      className="text-sm"
                       value={c.phase}
                       onChange={e => updateCustomAgent(c.key, { phase: e.target.value as '' | AdvisoryPhase })}
                     >
                       <option value="">{t('workflows.builder.customAgentEdgeEvery')}</option>
                       {ADVISORY_PHASES.map(p => <option key={p} value={p}>{t(`workflows.edge.${p}`)}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                   <Field label={t('workflows.builder.provider')}>
-                    <select
+                    <Select
                       aria-label={`custom-agent-${idx}-provider`}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-100"
+                      className="text-sm"
                       value={c.providerId}
                       onChange={e => setCustomProvider(c.key, e.target.value)}
                     >
                       <option value="">{t('workflows.builder.default')}</option>
                       {available.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                   <Field label={t('workflows.builder.model')}>
-                    <select
+                    <Select
                       aria-label={`custom-agent-${idx}-model`}
-                      className="w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-slate-100"
+                      className="text-sm"
                       value={c.modelId}
                       disabled={!provider}
                       onChange={e => updateCustomAgent(c.key, { modelId: e.target.value })}
                     >
                       <option value="">{t('workflows.builder.default')}</option>
                       {provider?.models.map(m => <option key={m.id} value={m.id}>{m.label}</option>)}
-                    </select>
+                    </Select>
                   </Field>
                 </div>
 

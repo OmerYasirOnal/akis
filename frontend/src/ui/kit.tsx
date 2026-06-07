@@ -1,4 +1,4 @@
-import type { ButtonHTMLAttributes, InputHTMLAttributes, ReactNode } from 'react'
+import type { ButtonHTMLAttributes, InputHTMLAttributes, SelectHTMLAttributes, ReactNode } from 'react'
 
 /** One shared visual language for the whole studio so every page/component matches:
  *  glass surfaces, the AKIS teal→violet gradient, consistent inputs/buttons. */
@@ -50,6 +50,32 @@ export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInput
     <input
       className={`w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 ${className}`}
       {...rest}
+    />
+  )
+}
+
+// An inline SVG chevron (teal-tinted), used as the custom dropdown indicator so we can drop
+// the default browser arrow via `appearance-none`. Kept as a data-URI background so it needs
+// no extra DOM and inherits the control's padding.
+const CHEVRON =
+  "url(\"data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2307D1AF' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E\")"
+
+/** A native <select> dressed in the shared design language (glass surface + teal focus ring,
+ *  custom chevron). It stays a real <select>, so keyboard/AT navigation is unchanged.
+ *  `color-scheme:'dark'` keeps the native option popup readable on our dark surface. */
+export function Select({ className = '', ...rest }: SelectHTMLAttributes<HTMLSelectElement>) {
+  return (
+    <select
+      {...rest}
+      className={`w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] bg-no-repeat py-2.5 pl-3 pr-9 text-slate-100 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      // Merge AFTER the spread so a caller's `style` augments rather than clobbers the chevron +
+      // dark color-scheme (mirrors the `className` merge contract above).
+      style={{
+        colorScheme: 'dark',
+        backgroundImage: CHEVRON,
+        backgroundPosition: 'right 0.75rem center',
+        ...rest.style,
+      }}
     />
   )
 }
