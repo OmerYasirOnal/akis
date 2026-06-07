@@ -208,7 +208,7 @@ async function probe(check: Check, baseUrl: string, fetchImpl: (url: string, ini
  *  (buildTestEvidence → digestEvidence → brandResult) with no new minting surface. Probes are
  *  E2E-flavored (they exercise the running app over HTTP), so they populate the e2e half; BDD
  *  stays empty here. `skipped` checks count as skipped, NOT as run tests. */
-function resultFromProbes(scenarios: E2eScenario[]): RealRunResult {
+function resultFromProbes(scenarios: E2eScenario[], durationMs = 0): RealRunResult {
   // A skipped check never counts as run (probe() only ever emits 'skipped' with passed:false).
   const ran = scenarios.filter(s => s.outcome !== 'skipped')
   const expected = ran.filter(s => s.passed).length
@@ -221,7 +221,8 @@ function resultFromProbes(scenarios: E2eScenario[]): RealRunResult {
     unexpected,
     flaky: 0,
     skipped,
-    durationMs: 0,
+    // Real wall-time of the probe run (was hardcoded 0 → the UI showed "0ms" for genuine tests).
+    durationMs,
   }
   // Mirror realRun.ts's gate exactly: ≥1 test, zero failures. The smoke floor guarantees
   // testsRun ≥ 1, so a probe-less spec still yields a genuine 1-test outcome (never 0).
@@ -311,8 +312,9 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
       ...(deps.roundTrip && appType === 'node-service' ? deriveAuthChecks(deps.spec) : []),
     ]
     const scenarios: E2eScenario[] = []
+    const probesStartedAt = Date.now()
     for (const c of checks) scenarios.push(await probe(c, boot.url, fetchImpl))
-    return resultFromProbes(scenarios)
+    return resultFromProbes(scenarios, Date.now() - probesStartedAt)
   })()
   // Never leak an unhandled rejection if the deadline wins the race and `work` later throws.
   const settled = work.catch((e: unknown) =>
