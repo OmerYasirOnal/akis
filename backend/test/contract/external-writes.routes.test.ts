@@ -18,12 +18,16 @@ import type { McpTransport } from '../../src/agent/mcp/McpTransport.js'
 
 const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/skills/library')
 
-function makeApp(opts: { owner?: string; connected?: boolean } = {}) {
+function makeApp(opts: { owner?: string; connected?: boolean; slowMs?: number } = {}) {
   const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
   const calls: Array<{ name: string; args: unknown }> = []
   const fakeTransport: McpTransport = {
     initialize: async () => {}, listTools: async () => [],
-    callTool: async (name, args) => { calls.push({ name, args }); return { text: 'created: https://org.atlassian.net/wiki/PAGE-1', isError: false } },
+    callTool: async (name, args) => {
+      calls.push({ name, args })
+      if (opts.slowMs) await new Promise(r => setTimeout(r, opts.slowMs)) // hold the write in-flight (concurrency tests)
+      return { text: 'created: https://org.atlassian.net/wiki/PAGE-1', isError: false }
+    },
     close: async () => {},
   }
   const f = Fastify({ logger: false })
@@ -100,5 +104,24 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
     const again = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
     expect(again.statusCode).toBe(409)
+  })
+
+  it('two CONCURRENT confirms execute the external write ONCE (in-flight guard — no double page/issue)', async () => {
+    // Both requests read status:'proposed' before either persists; without the per-writeId
+    // in-flight guard BOTH would reach the transport and create a duplicate page/issue
+    // (gate-keeper HIGH, 2026-06-07). The slow transport holds the first confirm in-flight
+    // while the second arrives.
+    const { f, calls } = makeApp({ connected: true, slowMs: 150 })
+    const id = await newSession(f)
+    const { id: writeId, digest } = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: PROPOSAL })).json()
+    const [a, b] = await Promise.all([
+      f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } }),
+      f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } }),
+    ])
+    const codes = [a.statusCode, b.statusCode].sort()
+    expect(codes).toEqual([200, 409]) // one wins, one is refused
+    const refused = a.statusCode === 409 ? a : b
+    expect(refused.json().code).toBe('ConfirmInProgress')
+    expect(calls).toHaveLength(1) // the EXTERNAL side effect fired exactly once
   })
 })

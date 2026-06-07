@@ -283,31 +283,44 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
 
   // Confirm + EXECUTE a proposal (the only path that writes externally). Mints the digest-bound,
   // allow-listed ApprovedExternalWrite, runs it through the user's per-provider MCP transport.
+  // An external write is NON-idempotent (createPage/createJiraIssue → a duplicate page/issue).
+  // `status !== 'proposed'` rejects a SEQUENTIAL replay, but two CONCURRENT confirms both read
+  // status:'proposed' before either persists → a DOUBLE external write. The per-writeId in-flight
+  // guard closes that window — the same pattern as the push `confirming` Set below
+  // (gate-keeper HIGH, 2026-06-07).
+  const confirmingWrites = new Set<string>()
   app.post<{ Params: { id: string; writeId: string }; Body: { digest?: string } }>('/sessions/:id/external-writes/:writeId/confirm', async (req, reply) => {
     const s = await accessibleSession(req, req.params.id)
     if (!s) return notFound(reply, req.params.id)
     const rec = (s.externalWrites ?? []).find(w => w.id === req.params.writeId)
     if (!rec) return reply.code(404).send({ error: 'no such external-write proposal', code: 'NoProposal' })
     if (rec.status !== 'proposed') return reply.code(409).send({ error: `proposal already ${rec.status}`, code: 'AlreadyResolved' })
-    const ownerId = await deps.userIdOf?.(req)
-    if (!ownerId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
-    if (!deps.mcpAuthStore) return reply.code(409).send({ error: 'remote-MCP not configured', code: 'McpUnavailable' })
-    const transport = (deps.mcpTransportFor ?? mcpTransportFor)({ userId: ownerId, provider: rec.provider, store: deps.mcpAuthStore, env: deps.env ?? process.env })
-    if (!transport) return reply.code(409).send({ error: `not connected to ${rec.provider} — connect it first`, code: 'NotConnected' })
-    const proposal: ExternalWriteProposal = { id: rec.id, provider: rec.provider as ExternalWriteProposal['provider'], summary: rec.summary, action: rec.action, target: rec.target, payload: rec.payload }
-    let resolved: ExternalWriteRecord
+    const inflightKey = `${s.id}:${rec.id}`
+    if (confirmingWrites.has(inflightKey)) return reply.code(409).send({ error: 'confirm already in progress', code: 'ConfirmInProgress' })
+    confirmingWrites.add(inflightKey)
     try {
-      const token = mintApprovedExternalWrite(proposal, req.body?.digest ?? '') // throws on digest/allow-list mismatch
-      const out = await executeExternalWrite(token, transport, proposal)
-      resolved = { ...rec, status: out.ok ? 'executed' : 'failed', result: out.text.slice(0, 500), confirmedAt: new Date().toISOString() }
-    } catch (e) {
-      resolved = { ...rec, status: 'failed', result: e instanceof Error ? e.message : String(e), confirmedAt: new Date().toISOString() }
+      const ownerId = await deps.userIdOf?.(req)
+      if (!ownerId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
+      if (!deps.mcpAuthStore) return reply.code(409).send({ error: 'remote-MCP not configured', code: 'McpUnavailable' })
+      const transport = (deps.mcpTransportFor ?? mcpTransportFor)({ userId: ownerId, provider: rec.provider, store: deps.mcpAuthStore, env: deps.env ?? process.env })
+      if (!transport) return reply.code(409).send({ error: `not connected to ${rec.provider} — connect it first`, code: 'NotConnected' })
+      const proposal: ExternalWriteProposal = { id: rec.id, provider: rec.provider as ExternalWriteProposal['provider'], summary: rec.summary, action: rec.action, target: rec.target, payload: rec.payload }
+      let resolved: ExternalWriteRecord
+      try {
+        const token = mintApprovedExternalWrite(proposal, req.body?.digest ?? '') // throws on digest/allow-list mismatch
+        const out = await executeExternalWrite(token, transport, proposal)
+        resolved = { ...rec, status: out.ok ? 'executed' : 'failed', result: out.text.slice(0, 500), confirmedAt: new Date().toISOString() }
+      } catch (e) {
+        resolved = { ...rec, status: 'failed', result: e instanceof Error ? e.message : String(e), confirmedAt: new Date().toISOString() }
+      } finally {
+        await transport.close().catch(() => {})
+      }
+      const next = (s.externalWrites ?? []).map(w => (w.id === rec.id ? resolved : w))
+      await services.store.update(s.id, { externalWrites: next }, s.version)
+      return reply.send({ ok: resolved.status === 'executed', status: resolved.status, result: resolved.result })
     } finally {
-      await transport.close().catch(() => {})
+      confirmingWrites.delete(inflightKey)
     }
-    const next = (s.externalWrites ?? []).map(w => (w.id === rec.id ? resolved : w))
-    await services.store.update(s.id, { externalWrites: next }, s.version)
-    return reply.send({ ok: resolved.status === 'executed', status: resolved.status, result: resolved.result })
   })
 
   const TERMINAL = new Set(['done', 'failed', 'cancelled'])
