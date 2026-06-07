@@ -480,6 +480,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     publishProfiles,
     ...(publisher ? { publisher } : {}),
     ...(deps.auditStore ? { auditStore: deps.auditStore } : {}),
+    // External-write CONFIRM (Jira/Confluence MCP) needs the per-user OAuth store + env to build the
+    // per-provider transport; propose/list work without it.
+    mcpAuthStore, env,
   })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus })
   // Ship-time preview PREWARM (perceived latency): boot the preview on the `done` event so

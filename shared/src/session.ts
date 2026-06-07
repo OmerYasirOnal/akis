@@ -202,8 +202,36 @@ export interface SessionState {
    * conversational. Capped (oldest dropped) so it stays bounded.
    */
   chat?: ChatTurn[]
+  /**
+   * ADDITIVE, NON-GATE record of PROPOSED external writes (Jira issues / Confluence pages via MCP)
+   * for this build. An agent/user can only PROPOSE (status 'proposed'); the write executes ONLY after
+   * an explicit human confirm through the external-write gate (digest-bound, allow-listed) — never
+   * autonomously. Written on the NORMAL (generic-patch) update path, NOT a gate method, EXACTLY like
+   * `passport`/`testEvidence`, so it never widens the gate-write surface. Carries NO token/secret.
+   */
+  externalWrites?: ExternalWriteRecord[]
   version: number               // optimistic lock
 }
+
+/** A persisted external-write proposal + its lifecycle (see `SessionState.externalWrites`). The
+ *  proposal fields (id/provider/summary/action/target/payload) feed the external-write gate's digest;
+ *  status/result/timestamps track the human-confirm lifecycle. Carries no token. */
+export interface ExternalWriteRecord {
+  id: string
+  provider: string
+  summary: string
+  action: string
+  target: Record<string, unknown>
+  payload: Record<string, unknown>
+  status: 'proposed' | 'executed' | 'failed'
+  /** Execution outcome text (created page/issue ref or a short error) once confirmed. */
+  result?: string
+  proposedAt: string
+  confirmedAt?: string
+}
+
+/** Hard cap on persisted external-write proposals per session — oldest dropped first (bounded row). */
+export const EXTERNAL_WRITES_MAX = 50
 
 /** One persisted AKIS-chat turn (see `SessionState.chat`). `at` is an ISO timestamp. */
 export interface ChatTurn {

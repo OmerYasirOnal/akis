@@ -68,10 +68,13 @@ export class PgSessionStore implements SessionStore {
     // normal patch path — conversation text only, it can never write a gate column. Without this
     // entry the turns are silently dropped on Postgres and the FE rehydrate finds nothing.
     ['chat', 'chat'],
+    // ADDITIVE, NON-GATE: proposed Jira/Confluence MCP writes (`external_writes` jsonb). On the
+    // normal patch path — proposal content + lifecycle only, no token/gate column.
+    ['externalWrites', 'external_writes'],
   ]
 
   /** Columns whose value is a nested object stored as jsonb (must be passed through toJson). */
-  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport', 'publish', 'chat'])
+  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport', 'publish', 'chat', 'external_writes'])
 
   async update(id: string, patch: SessionPatch, expectedVersion: number): Promise<SessionState> {
     const sets: string[] = []
@@ -170,7 +173,7 @@ export function toJson(v: unknown): unknown {
  *  already parsed by `pg` into JS objects). */
 interface SessionRow {
   id: unknown; status: unknown; idea: unknown; owner_id: unknown
-  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; publish: unknown; chat: unknown; base: unknown; version: unknown
+  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; publish: unknown; chat: unknown; base: unknown; external_writes: unknown; version: unknown
 }
 
 /**
@@ -209,6 +212,9 @@ function toSession(raw: Record<string, unknown>): SessionState {
     // ADDITIVE, NON-GATE, set-only-at-create: the Phase B.5 edit-mode seed round-trips as
     // plain jsonb (data only — no capability), so edit-mode builds survive a Pg restart.
     ...(r.base != null ? { base: r.base as NonNullable<SessionState['base']> } : {}),
+    // ADDITIVE, NON-GATE: proposed external writes round-trip as plain jsonb (content + lifecycle
+    // only, no token), so the human-confirm flow survives a Pg restart.
+    ...(r.external_writes != null ? { externalWrites: r.external_writes as NonNullable<SessionState['externalWrites']> } : {}),
     ...(r.approval != null ? { approval: r.approval as unknown as ApprovalToken } : {}),
     ...(r.verify_token != null ? { verifyToken: r.verify_token as unknown as VerifyToken } : {}),
   }

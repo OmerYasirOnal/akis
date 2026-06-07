@@ -1,5 +1,8 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { type WorkflowConfig, type SessionState, type PublishRecord, isVerified } from '@akis/shared'
+import { randomUUID } from 'node:crypto'
+import { type WorkflowConfig, type SessionState, type PublishRecord, type ExternalWriteRecord, EXTERNAL_WRITES_MAX, isVerified } from '@akis/shared'
+import { digestExternalWrite, mintApprovedExternalWrite, executeExternalWrite, isAllowedExternalWriteAction, type ExternalWriteProposal } from '../gates/externalWriteGate.js'
+import { mcpTransportFor } from './mcpConnect.routes.js'
 import type { Orchestrator } from '../orchestrator/Orchestrator.js'
 import type { OrchestratorServices } from '../di/services.js'
 import type { SeqEvent } from '../events/bus.js'
@@ -52,6 +55,16 @@ export interface SessionsDeps {
    *  /sessions/:id/audit — the owner-scoped, restart-durable chronological event trail. Absent ⇒
    *  the route falls back to the in-memory bus replay (today's behavior, just not durable). */
   auditStore?: import('../audit/AuditLog.js').AuditStore
+  /** Per-(user,provider) remote-MCP OAuth store — enables the external-write CONFIRM route to build a
+   *  per-user transport (mcpTransportFor) and EXECUTE a human-confirmed Jira/Confluence write. Absent
+   *  ⇒ the propose/list routes still work but confirm replies 409 (no remote-MCP store wired). */
+  mcpAuthStore?: import('../agent/mcp/StoreBackedOAuthProvider.js').RemoteMcpAuthStore
+  /** Process env (PUBLIC_BASE_URL + the provider registry) for mcpTransportFor. */
+  env?: NodeJS.ProcessEnv
+  /** INJECTABLE per-user transport factory (tests). Default = the real mcpTransportFor (builds an
+   *  OAuth-backed HttpMcpTransport for a connected provider). Typed to the McpTransport SEAM so a
+   *  test can inject a fake; the real factory (returning HttpMcpTransport) satisfies it. */
+  mcpTransportFor?: (opts: { userId: string; provider: string; store: import('../agent/mcp/StoreBackedOAuthProvider.js').RemoteMcpAuthStore; env: NodeJS.ProcessEnv }) => import('../agent/mcp/McpTransport.js').McpTransport | undefined
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -238,6 +251,63 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     }
     const { events } = services.bus.replaySince(id, 0)
     return reply.send({ durable: false, entries: events.map(e => ({ seq: e.seq, kind: e.event.kind, payload: e.event })) })
+  })
+
+  // EXTERNAL WRITES (Jira/Confluence via MCP) — gate-safe: an agent/user PROPOSES; the write executes
+  // ONLY after a HUMAN confirm (digest-bound + action-allow-listed via the external-write gate). The
+  // model is never autonomous over an outward side effect. All owner-scoped.
+  app.get<{ Params: { id: string } }>('/sessions/:id/external-writes', async (req, reply) => {
+    const s = await accessibleSession(req, req.params.id)
+    if (!s) return notFound(reply, req.params.id)
+    return reply.send({ writes: s.externalWrites ?? [] })
+  })
+
+  // Record a proposal (no execution). Returns the content digest the human must confirm.
+  app.post<{ Params: { id: string }; Body: { provider?: string; action?: string; summary?: string; target?: Record<string, unknown>; payload?: Record<string, unknown> } }>('/sessions/:id/external-writes', async (req, reply) => {
+    const s = await accessibleSession(req, req.params.id)
+    if (!s) return notFound(reply, req.params.id)
+    const b = req.body ?? {}
+    if (!b.action || !isAllowedExternalWriteAction(b.action)) return reply.code(400).send({ error: 'action is not on the external-write allow-list', code: 'BadAction' })
+    const proposal: ExternalWriteRecord = {
+      id: randomUUID(), provider: b.provider ?? 'atlassian', action: b.action,
+      summary: (b.summary ?? b.action).slice(0, 200), target: b.target ?? {}, payload: b.payload ?? {},
+      status: 'proposed', proposedAt: new Date().toISOString(),
+    }
+    const next = [...(s.externalWrites ?? []), proposal].slice(-EXTERNAL_WRITES_MAX)
+    await services.store.update(s.id, { externalWrites: next }, s.version)
+    // The digest binds provider/action/target/payload only (the gate's strict provider union; the
+    // record keeps provider as a widenable string for forward-compat).
+    const digest = digestExternalWrite({ provider: proposal.provider as ExternalWriteProposal['provider'], action: proposal.action, target: proposal.target, payload: proposal.payload })
+    return reply.send({ id: proposal.id, digest, summary: proposal.summary })
+  })
+
+  // Confirm + EXECUTE a proposal (the only path that writes externally). Mints the digest-bound,
+  // allow-listed ApprovedExternalWrite, runs it through the user's per-provider MCP transport.
+  app.post<{ Params: { id: string; writeId: string }; Body: { digest?: string } }>('/sessions/:id/external-writes/:writeId/confirm', async (req, reply) => {
+    const s = await accessibleSession(req, req.params.id)
+    if (!s) return notFound(reply, req.params.id)
+    const rec = (s.externalWrites ?? []).find(w => w.id === req.params.writeId)
+    if (!rec) return reply.code(404).send({ error: 'no such external-write proposal', code: 'NoProposal' })
+    if (rec.status !== 'proposed') return reply.code(409).send({ error: `proposal already ${rec.status}`, code: 'AlreadyResolved' })
+    const ownerId = await deps.userIdOf?.(req)
+    if (!ownerId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
+    if (!deps.mcpAuthStore) return reply.code(409).send({ error: 'remote-MCP not configured', code: 'McpUnavailable' })
+    const transport = (deps.mcpTransportFor ?? mcpTransportFor)({ userId: ownerId, provider: rec.provider, store: deps.mcpAuthStore, env: deps.env ?? process.env })
+    if (!transport) return reply.code(409).send({ error: `not connected to ${rec.provider} — connect it first`, code: 'NotConnected' })
+    const proposal: ExternalWriteProposal = { id: rec.id, provider: rec.provider as ExternalWriteProposal['provider'], summary: rec.summary, action: rec.action, target: rec.target, payload: rec.payload }
+    let resolved: ExternalWriteRecord
+    try {
+      const token = mintApprovedExternalWrite(proposal, req.body?.digest ?? '') // throws on digest/allow-list mismatch
+      const out = await executeExternalWrite(token, transport, proposal)
+      resolved = { ...rec, status: out.ok ? 'executed' : 'failed', result: out.text.slice(0, 500), confirmedAt: new Date().toISOString() }
+    } catch (e) {
+      resolved = { ...rec, status: 'failed', result: e instanceof Error ? e.message : String(e), confirmedAt: new Date().toISOString() }
+    } finally {
+      await transport.close().catch(() => {})
+    }
+    const next = (s.externalWrites ?? []).map(w => (w.id === rec.id ? resolved : w))
+    await services.store.update(s.id, { externalWrites: next }, s.version)
+    return reply.send({ ok: resolved.status === 'executed', status: resolved.status, result: resolved.result })
   })
 
   const TERMINAL = new Set(['done', 'failed', 'cancelled'])

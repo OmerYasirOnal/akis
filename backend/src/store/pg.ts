@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   passport      jsonb,
   publish       jsonb,
   base          jsonb,
+  external_writes jsonb,
   version       integer NOT NULL DEFAULT 0,
   created_at    timestamptz NOT NULL DEFAULT now()
 )`
@@ -100,6 +101,11 @@ export const ADD_PUBLISH = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS publis
  *  refresh/another device. Without it the field is silently dropped on Postgres and the FE
  *  rehydrate would find nothing. */
 export const ADD_CHAT = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chat jsonb`
+
+/** Idempotent migration: add the additive, NON-GATE `external_writes` jsonb column (nullable) — the
+ *  proposed Jira/Confluence MCP writes for a session. Without it the field is silently dropped on
+ *  Postgres. */
+export const ADD_EXTERNAL_WRITES = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS external_writes jsonb`
 
 /** Newest-first per-owner history listing (listByOwner) is the hot read path. */
 export const CREATE_SESSIONS_OWNER_INDEX = `CREATE INDEX IF NOT EXISTS sessions_owner_id_idx ON sessions (owner_id, created_at DESC)`
@@ -202,6 +208,7 @@ const MIGRATIONS: readonly string[] = [
   ADD_PUBLISH,
   ADD_CHAT,
   ADD_BASE,
+  ADD_EXTERNAL_WRITES,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,
   CREATE_VECTOR_CHUNKS_TABLE,
