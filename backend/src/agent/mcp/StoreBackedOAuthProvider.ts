@@ -46,6 +46,8 @@ export interface RemoteMcpAuthStore {
   load(userId: string, provider: string): RemoteMcpAuthRecord | undefined
   save(userId: string, provider: string, patch: RemoteMcpAuthPatch): void
   clearVerifier(userId: string, provider: string): void
+  /** Remove a connection entirely (the disconnect route). */
+  remove(userId: string, provider: string): void
   /** Whether auth material CAN be persisted right now (encryption configured) — a non-throwing
    *  preflight so the connect route never starts an OAuth flow it can't persist. */
   canStore(): boolean
@@ -151,5 +153,6 @@ export class MemoryRemoteMcpAuthStore implements RemoteMcpAuthStore {
     const cur = this.rows.get(k)
     if (cur) { delete cur.codeVerifier; this.rows.set(k, cur) }
   }
+  remove(userId: string, provider: string): void { this.rows.delete(this.key(userId, provider)) }
   canStore(): boolean { return true } // in-memory needs no encryption
 }
