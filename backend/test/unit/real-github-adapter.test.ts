@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RealGitHubAdapter, type PushFetch } from '../../src/di/RealGitHubAdapter.js'
+import { RealGitHubAdapter, GitHubDeliveryError, type PushFetch } from '../../src/di/RealGitHubAdapter.js'
 import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
 
 const TOKEN = 'ghp_push_supersecrettoken_DO_NOT_LEAK'
@@ -155,6 +155,36 @@ describe('RealGitHubAdapter (offline, injected fetch — GitHub REST API)', () =
     expect(thrown).toBeInstanceOf(Error)
     const msg = `${(thrown as Error).message}\n${(thrown as Error).stack ?? ''}`
     expect(msg).not.toContain(TOKEN)
+  })
+
+  it('maps a missing/invalid delivery target (HTTP 404) to a structured GitHubDeliveryError', async () => {
+    // The repo target does not exist (or the token cannot see it): the very first request
+    // (default-branch lookup) 404s. This must be a recognizable delivery failure, NOT a
+    // raw provider Error, so the route can map it to a 4xx + stable code.
+    const notFound: PushFetch = async () => ({
+      ok: false, status: 404, headers: { get: () => null }, json: async () => ({ message: 'Not Found' }), text: async () => 'Not Found',
+    })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'gone', token: TOKEN, fetch: notFound })
+    let thrown: unknown
+    try { await a.pushFiles('sess-1', FILES) } catch (e) { thrown = e }
+    expect(thrown).toBeInstanceOf(GitHubDeliveryError)
+    expect((thrown as GitHubDeliveryError).name).toBe('GitHubDeliveryError')
+    expect((thrown as GitHubDeliveryError).status).toBe(404)
+    // still token-free
+    expect(`${(thrown as Error).message}\n${(thrown as Error).stack ?? ''}`).not.toContain(TOKEN)
+  })
+
+  it('maps bad credentials (HTTP 401) and rate-limit/forbidden (HTTP 403) to GitHubDeliveryError too', async () => {
+    for (const status of [401, 403] as const) {
+      const failing: PushFetch = async () => ({
+        ok: false, status, headers: { get: () => null }, json: async () => ({ message: 'x' }), text: async () => 'x',
+      })
+      const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch: failing })
+      let thrown: unknown
+      try { await a.pushFiles('sess-1', FILES) } catch (e) { thrown = e }
+      expect(thrown).toBeInstanceOf(GitHubDeliveryError)
+      expect((thrown as GitHubDeliveryError).status).toBe(status)
+    }
   })
 
   it('NEVER leaks the token when fetch itself rejects (wraps lower-level errors)', async () => {
