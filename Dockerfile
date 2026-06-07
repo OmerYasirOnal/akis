@@ -7,10 +7,11 @@
 #
 # The backend runs UNCOMPILED TypeScript via `tsx src/main.ts` (there is no
 # backend build step, and @akis/shared resolves to shared/src/index.ts directly),
-# so the runtime image must retain `tsx` (a devDependency) plus the full
-# pnpm-workspace node_modules graph. We achieve that by carrying the builder's
-# frozen, fully-linked node_modules into the final stage rather than re-running a
-# `--prod` install (which would PRUNE tsx and break the CMD).
+# so the runtime image must retain `tsx` plus the full pnpm-workspace node_modules
+# graph. We carry the builder's frozen, fully-linked node_modules into the final
+# stage. tsx is now a backend RUNTIME dependency (not a devDependency) — the
+# prerequisite for a future prune — but the actual dev-toolchain prune is still
+# DESIGN-PENDING (audit #25; see the note after the build step + docs/SELF_HOSTING.md).
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # ─── Stage 1: builder — frozen install + build the frontend (→ frontend/dist) ───
@@ -36,6 +37,17 @@ COPY shared   ./shared
 COPY backend  ./backend
 COPY frontend ./frontend
 RUN pnpm -r build
+
+# NOTE (audit #25 — image slim, DESIGN-PENDING): the dev/build toolchain (typescript ~23MB, @rolldown
+# ~38MB, lightningcss ~17MB, jsdom, playwright, vite ~100MB+) still rides into the runtime. tsx is now
+# a RUNTIME dependency (above) — the prerequisite that lets a prune keep it — BUT a plain
+# `pnpm prune --prod` was MEASURED to leave those packages in the workspace `.pnpm` store (it does not
+# prune workspace importers' devDeps here), so it bought ~0. The two effective fixes both need their
+# own verification pass and are deliberately deferred (see docs/SELF_HOSTING.md "Image size"):
+#   (a) `pnpm deploy --prod` of the backend into a self-contained dir — must prove the tsx CMD + the
+#       source-resolved `@akis/shared` alias survive the deploy bundle; or
+#   (b) a targeted `rm -rf` of the build-toolchain `.pnpm` dirs (the existing pdf-parse pattern) —
+#       must NOT remove esbuild, which is a tsx RUNTIME dependency (two esbuild versions coexist here).
 
 # ─── Stage 2: runtime — node:22-alpine, NON-ROOT, tsx-in-prod retained ──────────
 FROM node:22-alpine AS runtime
