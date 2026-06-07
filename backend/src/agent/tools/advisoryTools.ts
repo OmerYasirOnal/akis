@@ -1,7 +1,9 @@
 import type { KnowledgePort } from '../../knowledge/KnowledgePort.js'
+import type { RegisteredTool } from './ToolRegistry.js'
 import { ToolRegistry } from './ToolRegistry.js'
 import { retrieveKnowledgeTool } from './retrieveKnowledgeTool.js'
 import { buildGithubMcpTools, type GithubMcpDeps } from './githubMcpTools.js'
+import { buildAtlassianMcpTools, type AtlassianMcpDeps } from './atlassianMcpTools.js'
 
 /**
  * The SINGLE choke point that translates an advisory agent's declared capabilities
@@ -58,34 +60,33 @@ export interface AdvisoryToolsWithGithub {
  */
 export async function buildAdvisoryToolsWithGithub(
   capabilities: ReadonlySet<string>,
-  deps: { knowledge?: KnowledgePort; sessionId: string; githubMcp?: GithubMcpDeps },
+  deps: { knowledge?: KnowledgePort; sessionId: string; githubMcp?: GithubMcpDeps; atlassianMcp?: AtlassianMcpDeps },
 ): Promise<AdvisoryToolsWithGithub> {
   const ragOnly = buildAdvisoryTools(capabilities, deps)
-  if (!deps.githubMcp) return { registry: ragOnly, release: NOOP_RELEASE }
+  if (!deps.githubMcp && !deps.atlassianMcp) return { registry: ragOnly, release: NOOP_RELEASE }
 
-  let built
-  try {
-    built = await buildGithubMcpTools(deps.githubMcp)
-  } catch {
-    // buildGithubMcpTools never throws by contract, but be defensive: RAG-only on any escape.
-    // No result ⇒ no ref was returned to us; nothing to release.
-    return { registry: ragOnly, release: NOOP_RELEASE }
+  // Build EACH present MCP source FAIL-CLOSED + INDEPENDENTLY: a source that throws or yields no tools
+  // contributes nothing and holds no ref. Each returns its own `release` (github frees a pool ref;
+  // atlassian closes the HTTP transport) — both held for the loop's lifetime, freed together below.
+  const built: { tools: RegisteredTool[]; release: () => void }[] = []
+  if (deps.githubMcp) {
+    try { built.push(await buildGithubMcpTools(deps.githubMcp)) } catch { /* defensive: RAG-only for this source */ }
   }
-  if (built.tools.length === 0) {
-    // buildGithubMcpTools already released its ref on the no-tools path; nothing more to do.
-    return { registry: ragOnly, release: NOOP_RELEASE }
+  if (deps.atlassianMcp) {
+    try { built.push(await buildAtlassianMcpTools(deps.atlassianMcp)) } catch { /* defensive: RAG-only for this source */ }
   }
+  const releaseAll = (): void => { for (const b of built) b.release() } // each release is idempotent
+  const allTools = built.flatMap(b => b.tools)
+  if (allTools.length === 0) { releaseAll(); return { registry: ragOnly, release: NOOP_RELEASE } }
 
-  // Register the github tools onto a SEPARATE registry; if any register throws (e.g. a
-  // duplicate name), discard ALL github tools, RELEASE the held ref (no loop will use it), and
-  // return the untouched RAG-only registry.
+  // Register the MCP read tools onto a SEPARATE registry; if any register throws (e.g. a duplicate
+  // name across sources), discard ALL of them, RELEASE every held ref, and return the RAG-only registry.
   try {
     const merged = buildAdvisoryTools(capabilities, deps)
-    for (const t of built.tools) merged.register(t)
-    // The ref stays held for the loop's lifetime; the caller releases it via `built.release`.
-    return { registry: merged, release: built.release }
+    for (const t of allTools) merged.register(t)
+    return { registry: merged, release: releaseAll }
   } catch {
-    built.release()
+    releaseAll()
     return { registry: ragOnly, release: NOOP_RELEASE }
   }
 }
