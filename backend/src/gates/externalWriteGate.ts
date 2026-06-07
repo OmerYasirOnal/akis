@@ -191,6 +191,10 @@ export async function executeExternalWrite(
   if (token.writeId !== proposal.id || token.digest !== digestExternalWrite(proposal)) {
     throw new ExternalWriteDigestMismatchError()
   }
+  // Same defense-in-depth parity as the allow-list above: mint already refused colliding keys, but
+  // re-assert here so the unambiguous-merge property never rests on mint alone.
+  const collisions = collidingKeys(proposal.target, proposal.payload)
+  if (collisions.length > 0) throw new ExternalWriteKeyCollisionError(collisions)
   const res = await transport.callTool(proposal.action, { ...proposal.target, ...proposal.payload })
   return { ok: !res.isError, text: res.text }
 }

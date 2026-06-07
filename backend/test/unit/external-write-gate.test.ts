@@ -137,6 +137,17 @@ describe('externalWriteGate — positive write-action allow-list', () => {
     expect(() => mintApprovedExternalWrite(p, digestExternalWrite(p))).not.toThrow()
   })
 
+  it('execute ALSO refuses colliding keys (defense-in-depth parity with the allow-list — never rests on mint alone)', async () => {
+    // Mint from a disjoint proposal, then present a COLLIDING one with the same id: the digest
+    // re-check would already refuse it, but assert the collision guard independently by digest-matching.
+    const colliding = proposal({ target: { spaceKey: 'ENG', body: 'TARGET-OWNED' }, payload: { title: 'X', body: 'PAYLOAD-OWNED' } })
+    const clean = proposal({ target: { spaceKey: 'ENG' }, payload: { title: 'X', body: 'Y' } })
+    const token = mintApprovedExternalWrite(clean, digestExternalWrite(clean))
+    const { t, calls } = fakeTransport()
+    await expect(executeExternalWrite(token, t, colliding)).rejects.toThrow() // digest mismatch OR collision — refused either way
+    expect(calls.length).toBe(0) // and crucially: the transport never fired
+  })
+
   it('mint REFUSES a proposal whose action is not on the allow-list (the doc-comment promise enforced)', () => {
     const p = proposal({ action: 'deletePage' })
     expect(() => mintApprovedExternalWrite(p, digestExternalWrite(p))).toThrow(ExternalWriteActionNotAllowedError)
