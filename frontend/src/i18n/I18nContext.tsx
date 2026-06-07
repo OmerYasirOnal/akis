@@ -23,7 +23,10 @@ function loadLocale(initial: Locale): Locale {
 
 /** Feature-sliced i18n via context (no prop-drilling, F2-AC11). The chosen locale is persisted
  *  to localStorage and read on init, so TR survives navigation and reload (it was previously
- *  in-memory React state that reverted to EN on every page change). */
+ *  in-memory React state that reverted to EN on every page change).
+ *  NOTE: a persisted choice WINS over the `initial` prop — `initial` is only the fallback when
+ *  nothing (valid) is persisted. A future `<I18nProvider initial="tr">` cannot force a locale
+ *  past a stored `akis_lang`; clear the key if you ever need that. */
 export function I18nProvider({ children, initial = 'en' }: { children: ReactNode; initial?: Locale }) {
   const [locale, setLocaleState] = useState<Locale>(() => loadLocale(initial))
   // Keep <html lang> in sync so screen readers pronounce TR/EN content correctly (WCAG 3.1.2).
