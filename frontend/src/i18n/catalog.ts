@@ -74,7 +74,8 @@ export const STRINGS = {
     // Maps the backend GitHubDeliveryError code (a 422) to a friendly, localized message instead of
     // leaking the raw English provider string ("github: request to /git/blobs failed (HTTP 404)").
     // The push gate is untouched — the run parks push_failed and stays retryable.
-    'push.deliveryFailed': 'Could not reach the GitHub push destination — check that the configured repository exists and the connected account can write to it, then retry.',
+    'recovery.push.deliveryFailed': 'Could not reach the GitHub push destination — check that the configured repository exists and the connected account can write to it, then retry.',
+    'recovery.push.rateLimited': 'GitHub is rate-limiting requests right now — the destination is fine; wait a moment and retry the push.',
     // Stale deep-link recovery: a session that NO LONGER EXISTS (server restart wiped the
     // in-memory store, DB loss, or external deletion) makes GET /sessions/:id return 404. The
     // honest recovery is to start a NEW build — not to hang on a frozen view. Distinct from the
@@ -783,7 +784,8 @@ export const STRINGS = {
     // KAPILI push'u yeniden çalıştırır (Gate 4 yine VerifyToken'dan üretir) — atlatma değil.
     'recovery.push.hint': 'İnşa doğrulandı, ancak push başarısız oldu. Push\'u yeniden dene — yine doğrulanmış push onayını gerektirir (push kapısı asla atlanmaz).',
     'recovery.push.retry': 'Push başarısız — yeniden dene',
-    'push.deliveryFailed': 'GitHub push hedefine ulaşılamadı — yapılandırılan deponun var olduğunu ve bağlı hesabın yazma yetkisi olduğunu kontrol edip yeniden deneyin.',
+    'recovery.push.deliveryFailed': 'GitHub push hedefine ulaşılamadı — yapılandırılan deponun var olduğunu ve bağlı hesabın yazma yetkisi olduğunu kontrol edip yeniden deneyin.',
+    'recovery.push.rateLimited': 'GitHub şu anda istekleri hız sınırına takıyor — hedefte sorun yok; biraz bekleyip push\'u yeniden deneyin.',
     // Eskimiş derin bağlantı kurtarma: ARTIK MEVCUT OLMAYAN bir oturum (sunucu yeniden başlaması
     // bellek deposunu sildi, DB kaybı ya da dış silme) GET /sessions/:id'in 404 dönmesine yol açar.
     // Dürüst kurtarma, donmuş bir görünümde takılmak değil YENİ bir geliştirme başlatmaktır. Geçici

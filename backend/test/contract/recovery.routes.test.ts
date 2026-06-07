@@ -92,6 +92,23 @@ describe('CONTRACT: recovery routes', () => {
     expect(after.status).toBe('push_failed')
   })
 
+  it('POST /sessions/:id/confirm with an upstream 429 → forwarded as 429 (transient, NOT collapsed to 422), gate stays retryable', async () => {
+    const { app, services } = makeApp()
+    services.github = {
+      createRepo: async () => 'https://github.com/me/limited',
+      read: () => [],
+      pushFiles: async () => { throw new GitHubDeliveryError('github: rate limited or forbidden (HTTP 429)', 429) },
+    }
+    const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/approve` })
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/run` }) // → awaiting_push_confirm
+    const res = await app.inject({ method: 'POST', url: `/sessions/${s.id}/confirm` })
+    expect(res.statusCode).toBe(429) // back-off signal preserved end-to-end
+    expect(res.json().code).toBe('GitHubDeliveryError')
+    const after = (await app.inject({ method: 'GET', url: `/sessions/${s.id}` })).json()
+    expect(after.status).toBe('push_failed') // still parked retryable — gate untouched
+  })
+
   it('POST /sessions/:id/retry from the wrong status → 409', async () => {
     const { app } = makeApp()
     const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
