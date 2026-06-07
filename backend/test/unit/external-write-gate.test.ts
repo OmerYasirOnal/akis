@@ -42,6 +42,25 @@ describe('externalWriteGate — digest', () => {
   it('IGNORES the id (a handle, not content)', () => {
     expect(digestExternalWrite(proposal({ id: 'other' }))).toBe(digestExternalWrite(proposal()))
   })
+  it('canonicalizes NESTED object key order too (deep, not just top level)', () => {
+    const a = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: { spaceKey: 'ENG' }, payload: { meta: { a: 1, b: 2 }, title: 'X' } })
+    const b = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: { spaceKey: 'ENG' }, payload: { title: 'X', meta: { b: 2, a: 1 } } })
+    expect(a).toBe(b)
+  })
+  it('canonicalizes object keys inside ARRAYS too (deep, order-preserving for array elements)', () => {
+    const a = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { items: [{ a: 1, b: 2 }, { c: 3, d: 4 }] } })
+    const b = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { items: [{ b: 2, a: 1 }, { d: 4, c: 3 }] } })
+    expect(a).toBe(b)
+  })
+  it('CHANGES when ARRAY ELEMENT order changes (element order IS content — reordering must not re-confirm)', () => {
+    const a = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { items: [{ a: 1 }, { b: 2 }] } })
+    const b = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { items: [{ b: 2 }, { a: 1 }] } })
+    expect(a).not.toBe(b)
+  })
+  it('still CHANGES when a nested content byte changes', () => {
+    const base = digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { meta: { a: 1, b: 2 } } })
+    expect(digestExternalWrite({ provider: 'atlassian', action: 'createPage', target: {}, payload: { meta: { a: 1, b: 3 } } })).not.toBe(base)
+  })
 })
 
 describe('externalWriteGate — mint requires the human-confirmed digest to match', () => {
