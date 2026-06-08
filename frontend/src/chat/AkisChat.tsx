@@ -276,7 +276,8 @@ export function AkisChat({
   useEffect(() => {
     const el = scrollRef.current
     if (!el) return
-    if (pendingRunScroll.current) { setAtBottom(isNearBottom(el)); return } // run-header scroll takes over
+    // NB: on a build-start commit `appendRun` has set stickToBottom=false, so the jump branch below is
+    // skipped and the run-header layout effect (block:'start') owns the viewport (H3) — no extra guard needed.
     if (stickToBottom.current) { el.scrollTop = el.scrollHeight; setAtBottom(true) }
     else setAtBottom(isNearBottom(el)) // new content arrived while scrolled up → reveal the pill
   }, [nodes, busy])
