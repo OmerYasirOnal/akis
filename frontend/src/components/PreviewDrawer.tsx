@@ -257,7 +257,7 @@ export function PreviewDrawer({
         // hint that it's grabbable) and lifts its border to teal. `motion-safe:` so the nudge collapses
         // to instant under reduced-motion; the color shift still applies (a non-distracting cue). The
         // verified dot below is the persistent trust signal, untouched.
-        className="group absolute right-0 top-1/2 z-40 hidden -translate-y-1/2 items-center gap-1.5 rounded-l-lg border border-r-0 border-white/10 bg-[#0B1220] px-2 py-3 text-slate-300 shadow-lg transition-[colors,transform,border-color] hover:border-[#07D1AF]/30 hover:text-slate-100 hover:[transform:translateY(-50%)_translateX(-2px)] focus-visible:border-[#07D1AF]/30 focus-visible:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 motion-reduce:transition-colors motion-reduce:hover:[transform:translateY(-50%)] lg:flex"
+        className="group absolute right-0 top-1/2 z-40 hidden -translate-y-1/2 items-center gap-1.5 rounded-l-lg border border-r-0 border-white/10 bg-[#0B1220] px-2 py-3 text-slate-300 shadow-lg transition-[color,background-color,border-color,transform] hover:border-[#07D1AF]/30 hover:text-slate-100 hover:[transform:translateY(-50%)_translateX(-2px)] focus-visible:border-[#07D1AF]/30 focus-visible:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 motion-reduce:transition-colors motion-reduce:hover:[transform:translateY(-50%)] lg:flex"
       >
         <span
           data-testid="preview-edge-dot"
@@ -283,7 +283,7 @@ export function PreviewDrawer({
       aria-haspopup="dialog"
       // MICRO-INTERACTION: a small tap-down scale gives the pocket FAB tactile feedback on touch;
       // `motion-safe:` keeps it instant under reduced-motion (the bg/ring hover cues still apply).
-      className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/10 bg-[#0B1220] px-4 py-3 text-sm font-semibold text-slate-100 shadow-2xl transition-[colors,transform] hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 motion-safe:active:scale-95 lg:hidden"
+      className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/10 bg-[#0B1220] px-4 py-3 text-sm font-semibold text-slate-100 shadow-2xl transition-[color,background-color,transform] hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 motion-safe:active:scale-95 lg:hidden"
     >
       <span
         data-testid="preview-fab-dot"
