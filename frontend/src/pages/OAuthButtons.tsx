@@ -44,7 +44,9 @@ export function OAuthButtons({ api }: { api: ApiClient }) {
   const { t } = useI18n()
   const [providers, setProviders] = useState<string[]>([])
   const [redirecting, setRedirecting] = useState<string | null>(null)
-  useEffect(() => { void api.getOAuthProviders().then(r => setProviders(r.providers)).catch(() => setProviders([])) }, [api])
+  // `?? []` so a malformed/partial response degrades to "no buttons" rather than crashing the
+  // auth page on `undefined.length` (honest absence beats a white screen).
+  useEffect(() => { void api.getOAuthProviders().then(r => setProviders(r.providers ?? [])).catch(() => setProviders([])) }, [api])
   if (providers.length === 0) return null
 
   return (
