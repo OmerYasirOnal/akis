@@ -109,7 +109,7 @@ export function PublishDestination({ api }: { api: ApiClient }) {
               onChange={e => setSshPrivateKey(e.target.value)}
               rows={5}
               placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----'}
-              className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-600 focus:border-teal-400/40 focus:outline-none"
+              className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-600 focus:border-[#07D1AF] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
             />
           </Field>
           <div>

@@ -6,6 +6,7 @@ import { agentName } from '../agents/names.js'
 import { foldSessionView } from '../live/viewModel.js'
 import { aggregateRunMetrics, type RunMetrics } from './runMetrics.js'
 import { fmtTokens, fmtDuration, fmtUsd } from '../chat/metricsFormat.js'
+import { statusSignal } from '../chat/statusLabel.js'
 
 const pct = (n: number): string => `${Math.round(n * 100)}%`
 
@@ -97,9 +98,12 @@ export function AnalyticsPage({ api }: { api: ApiClient }) {
                   <div key={summary.id} className="flex flex-col gap-1.5 py-3 first:pt-0 last:pb-0">
                     <div className="flex items-center gap-2">
                       <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-200" title={summary.idea}>{summary.idea}</span>
+                      {/* P1-7: localized human label + meaningful tone (the SAME resolver History uses) —
+                          never the raw enum. A verified run keeps its emerald "shipped" intent; otherwise
+                          the status's own tone (amber/teal/rose/neutral) carries the signal. */}
                       <span className={`shrink-0 rounded-md border px-1.5 py-0.5 text-[10px] font-medium ${
-                        summary.verified ? 'border-emerald-400/30 bg-emerald-400/[0.07] text-emerald-200' : 'border-white/10 bg-white/[0.02] text-slate-400'
-                      }`}>{summary.status}</span>
+                        summary.verified ? 'border-emerald-400/30 bg-emerald-400/[0.07] text-emerald-200' : statusSignal(summary.status).tone
+                      }`}>{t(statusSignal(summary.status).labelKey)}</span>
                     </div>
                     <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 text-xs text-slate-400 tabular-nums">
                       <span>{t('analytics.perRun.totalTokens')}: <span className="text-slate-200">{metrics.totalTokens !== undefined ? fmtTokens(metrics.totalTokens) : DASH}</span></span>

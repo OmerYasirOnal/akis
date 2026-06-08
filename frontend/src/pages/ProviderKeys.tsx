@@ -5,6 +5,10 @@ import { invalidateProvidersCache } from '../api/providersCache.js'
 import { SectionTitle, Button, Input, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
+/** Fill {provider} in a catalog template (same local idiom as PreviewDrawer/AgentWriteProposals —
+ *  i18n keeps the template; the FE interpolates at render). */
+const fill = (s: string, vars: Record<string, string>): string => s.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m)
+
 /** Self-serve provider-key management — connect/remove your own AI keys (stored
  *  encrypted server-side; the response only ever returns the last 4 chars). */
 export function ProviderKeys({ api }: { api: ApiClient }) {
@@ -47,7 +51,7 @@ export function ProviderKeys({ api }: { api: ApiClient }) {
                 {p.available ? `${t('settings.keys.connected')}${p.last4 ? ` · ••••${p.last4}` : ''}` : t('settings.keys.notConnected')}
               </div>
             </div>
-            <Input type="password" aria-label={`${p.label} key`} value={drafts[p.id] ?? ''} placeholder={t('settings.keys.placeholder')}
+            <Input type="password" aria-label={fill(t('settings.keys.aria'), { provider: p.label })} value={drafts[p.id] ?? ''} placeholder={t('settings.keys.placeholder')}
               onChange={e => setDrafts(d => ({ ...d, [p.id]: e.target.value }))} className="min-w-0" />
             <div className="flex shrink-0 items-center gap-2">
               <Button variant="ghost" onClick={() => void save(p.id)} disabled={busy === p.id || !(drafts[p.id] ?? '').trim()}>{t('settings.keys.save')}</Button>

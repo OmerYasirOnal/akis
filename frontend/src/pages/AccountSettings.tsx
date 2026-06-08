@@ -52,7 +52,7 @@ export function AccountSettings({ api }: { api: ApiClient }) {
         {nameErr && <ErrorNote>{nameErr}</ErrorNote>}
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={savingName || !name.trim() || name.trim() === user?.name}>{t('settings.profile.save')}</Button>
-          {nameSaved && <span className="text-xs text-[#07D1AF]">{t('settings.profile.saved')}</span>}
+          {nameSaved && <span role="status" className="text-xs text-[#07D1AF]">{t('settings.profile.saved')}</span>}
         </div>
       </form>
 
@@ -67,7 +67,7 @@ export function AccountSettings({ api }: { api: ApiClient }) {
         {pwErr && <ErrorNote>{pwErr}</ErrorNote>}
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={savingPw || next.length < 8}>{t('settings.password.change')}</Button>
-          {pwDone && <span className="text-xs text-[#07D1AF]">{t('settings.password.changed')}</span>}
+          {pwDone && <span role="status" className="text-xs text-[#07D1AF]">{t('settings.password.changed')}</span>}
         </div>
       </form>
     </div>

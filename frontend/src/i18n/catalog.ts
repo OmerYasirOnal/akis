@@ -334,6 +334,7 @@ export const STRINGS = {
     'auth.password.show': 'Show password',
     'auth.password.hide': 'Hide password',
     'auth.name': 'Name',
+    'auth.namePlaceholder': 'Ada Lovelace',
     'auth.noAccount': 'New to AKIS?',
     'auth.haveAccount': 'Already have an account?',
     'auth.pwHint': 'At least 8 characters.',
@@ -384,6 +385,7 @@ export const STRINGS = {
     'settings.keys.save': 'Save',
     'settings.keys.remove': 'Remove',
     'settings.keys.placeholder': 'Paste API key…',
+    'settings.keys.aria': '{provider} key',
     // ── Per-user GitHub connection ──
     'settings.github.title': 'GitHub delivery',
     'settings.github.sub': 'Connect your GitHub so AKIS ships verified builds to a repo you own.',
@@ -1119,6 +1121,7 @@ export const STRINGS = {
     'auth.password.show': 'Parolayı göster',
     'auth.password.hide': 'Parolayı gizle',
     'auth.name': 'İsim',
+    'auth.namePlaceholder': 'Ada Lovelace',
     'auth.noAccount': 'AKIS’te yeni misin?',
     'auth.haveAccount': 'Zaten hesabın var mı?',
     'auth.pwHint': 'En az 8 karakter.',
@@ -1169,6 +1172,7 @@ export const STRINGS = {
     'settings.keys.save': 'Kaydet',
     'settings.keys.remove': 'Kaldır',
     'settings.keys.placeholder': 'API anahtarını yapıştır…',
+    'settings.keys.aria': '{provider} anahtarı',
     // ── Kullanıcıya özel GitHub bağlantısı ──
     'settings.github.title': 'GitHub teslimatı',
     'settings.github.sub': 'GitHub hesabını bağla, AKIS doğrulanmış yapıları senin sahip olduğun bir depoya göndersin.',

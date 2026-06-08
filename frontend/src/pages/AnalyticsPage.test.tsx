@@ -69,4 +69,25 @@ describe('AnalyticsPage', () => {
     // No fabricated "0 tok" anywhere on the page for the absent-usage run.
     expect(screen.queryByText(/0 tok/)).toBeNull()
   })
+
+  it('renders the localized status (the shared History resolver), never the raw enum', async () => {
+    render(<I18nProvider><AnalyticsPage api={apiWith(ANALYTICS)} /></I18nProvider>)
+    // Both runs are status:'done' → the localized "Shipped" pill (history.status.done), not "done".
+    await waitFor(() => expect(screen.getAllByText('Shipped').length).toBeGreaterThanOrEqual(2))
+    // The raw backend enum must never leak as a visible status pill.
+    expect(screen.queryByText('done')).toBeNull()
+  })
+
+  it('localizes an awaiting_* status (the exact bug) — never the raw "awaiting_push_confirm"', async () => {
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/analytics')) return resp(ANALYTICS)
+      if (path.endsWith('/sessions/mine')) return resp([{ id: 'pending', idea: 'Pending build', status: 'awaiting_push_confirm', verified: false }] as SessionSummary[])
+      if (/\/sessions\/[^/]+\/log$/.test(path)) return resp({ events: [], head: 0 })
+      return resp({})
+    })
+    render(<I18nProvider><AnalyticsPage api={new ApiClient('', fetchFn)} /></I18nProvider>)
+    // history.status.awaitingPush = "Needs you · ship" — the localized label, not the enum.
+    await waitFor(() => expect(screen.getByText('Needs you · ship')).toBeInTheDocument())
+    expect(screen.queryByText('awaiting_push_confirm')).toBeNull()
+  })
 })
