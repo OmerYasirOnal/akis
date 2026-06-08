@@ -43,7 +43,11 @@ describe('AccountMenu', () => {
     const logout = vi.fn()
     wrap({ ...baseUser, provider: 'password' }, logout)
     await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
-    await userEvent.click(screen.getByRole('menuitem', { name: 'Sign out' }))
+    const signOut = screen.getByRole('menuitem', { name: 'Sign out' })
+    // destructive action is visually distinguished (muted-rose hover), unlike the benign Settings item
+    expect(signOut.className).toMatch(/hover:text-rose-300/)
+    expect(screen.getByRole('menuitem', { name: 'Settings' }).className).not.toMatch(/rose/)
+    await userEvent.click(signOut)
     expect(logout).toHaveBeenCalledTimes(1)
   })
 
