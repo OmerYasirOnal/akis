@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ApiClient, PublishProfileStatus } from '../api/client.js'
-import { SectionTitle, Button, Input, ErrorNote, Field } from '../ui/kit.js'
+import { SectionTitle, Button, Input, ErrorNote, Field, EmptyState } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -57,7 +57,7 @@ export function PublishDestination({ api }: { api: ApiClient }) {
       {err && <div className="mb-3"><ErrorNote>{err}</ErrorNote></div>}
 
       {status === undefined ? null : !status.configured ? (
-        <div className="text-sm text-slate-400">{t('settings.publish.notConfigured')}</div>
+        <EmptyState>{t('settings.publish.notConfigured')}</EmptyState>
       ) : status.present ? (
         <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">

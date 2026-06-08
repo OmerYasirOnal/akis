@@ -108,3 +108,24 @@ export function Stat({ label, value, accent = false }: { label: ReactNode; value
     </Card>
   )
 }
+
+/** Default glyph for an EmptyState — a lock, reading as "not enabled / configured yet". */
+function LockGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  )
+}
+
+/** A designed "not available / not configured" state for a section — a centered, dashed-border
+ *  panel with a muted glyph + message — so an unconfigured card reads as INTENTIONALLY empty
+ *  rather than a broken card with one lone grey sentence in the corner. */
+export function EmptyState({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
+      <span className="text-slate-500">{icon ?? <LockGlyph />}</span>
+      <p className="max-w-sm text-sm text-slate-400">{children}</p>
+    </div>
+  )
+}
