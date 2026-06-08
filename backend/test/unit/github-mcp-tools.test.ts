@@ -4,12 +4,12 @@ import { buildAdvisoryToolsWithGithub } from '../../src/agent/tools/advisoryTool
 import { McpSessionPool, type McpTransportFactory } from '../../src/agent/mcp/McpSessionPool.js'
 import { McpUnavailableError, type McpTransport, type McpToolInfo, type McpToolResult } from '../../src/agent/mcp/McpTransport.js'
 import { GITHUB_READONLY_TOOLS } from '../../src/agent/mcp/readOnlyAllowlist.js'
-import { ScribeAgent } from '../../src/orchestrator/subagents/ScribeAgent.js'
+import { ScribeAgent, SCRIBE_PROPOSE_HINT } from '../../src/orchestrator/subagents/ScribeAgent.js'
 import { EventBus } from '../../src/events/bus.js'
 import type { KnowledgePort, RetrieveQuery } from '../../src/knowledge/KnowledgePort.js'
 import type { LlmProvider, ChatResult } from '../../src/agent/LlmProvider.js'
 import type { KnowledgeChunk, AkisEvent } from '@akis/shared'
-import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
+import { ProtoAgent, PROTO_PROPOSE_HINT } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { mintApprovedSpec } from '../../src/gates/specGate.js'
 import { approveSpec } from '../helpers/tokens.js'
 import { initialSession } from '@akis/shared'
@@ -668,6 +668,117 @@ describe('propose_github_write build wiring (Scribe end-to-end)', () => {
     const out = await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'idea', githubMcp: { pool, ownerId: 'o', token: SECRET } })
     expect(out.type).toBe('spec')
     expect(specs()).not.toContain('propose_github_write')              // store absent ⇒ tool absent
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// propose-write PROMPT GUIDANCE — the behavioral layer. The conservative, gate-safe
+// guidance text is appended to the Scribe/Proto system prompt ONLY when github is
+// connected AND the propose tool registered (a store is wired); it is ABSENT otherwise.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('propose-write prompt guidance (Scribe + Proto)', () => {
+  function approvedFor(): ReturnType<typeof mintApprovedSpec> {
+    const spec = { title: 'T', body: 'B' }
+    return mintApprovedSpec({ ...initialSession('s1', 'x'), spec, approval: approveSpec(spec) })
+  }
+
+  /** A provider that records EVERY system prompt it is asked to chat with, then returns a
+   *  parseable spec AND files (so both Scribe and Proto's single chat parses successfully). */
+  function recordingSpecProvider(): { provider: LlmProvider; systems: string[] } {
+    const systems: string[] = []
+    const provider: LlmProvider = {
+      name: 'fake', model: 'fake',
+      async chat(req): Promise<ChatResult> {
+        systems.push(req.system)
+        return { text: '{"kind":"spec","title":"T","body":"# T","files":[{"filePath":"index.html","content":"<x>"}]}' }
+      },
+    }
+    return { provider, systems }
+  }
+
+  it('Scribe: the propose guidance is PRESENT when github is connected + a store is wired', async () => {
+    const bus = new EventBus()
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'a todo app', 'owner-1') })
+    const { provider, systems } = recordingSpecProvider()
+    const t = new FakeTransport({ advertise: [READ_TOOL] })
+    const { pool } = poolWith(t)
+
+    const scribe = new ScribeAgent({ bus, provider, store })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'a todo app', githubMcp: { pool, ownerId: 'o', token: SECRET } })
+
+    // The EXACT guidance block is appended; the no-target-repo guard is its load-bearing clause.
+    const sys = systems[0]!
+    expect(sys).toContain(SCRIBE_PROPOSE_HINT)
+    expect(sys).toMatch(/proposed \(awaiting your confirmation\)/)
+    expect(sys).toMatch(/If no target repo is named, do NOT propose/)
+  })
+
+  it('Scribe: the propose guidance is ABSENT when github is NOT connected (byte-identical no-github path)', async () => {
+    const bus = new EventBus()
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'a todo app', 'owner-1') })
+    const { provider, systems } = recordingSpecProvider()
+
+    const scribe = new ScribeAgent({ bus, provider, store }) // store wired, but NO githubMcp
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'a todo app' })
+
+    expect(systems[0]).not.toContain(SCRIBE_PROPOSE_HINT)
+    expect(systems[0]).not.toMatch(/propose_github_write/)
+  })
+
+  it('Scribe: the propose guidance is ABSENT when connected but NO store is wired (tool never registers)', async () => {
+    const bus = new EventBus()
+    const { provider, systems } = recordingSpecProvider()
+    const t = new FakeTransport({ advertise: [READ_TOOL] })
+    const { pool } = poolWith(t)
+
+    const scribe = new ScribeAgent({ bus, provider }) // NO store dep
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'a todo app', githubMcp: { pool, ownerId: 'o', token: SECRET } })
+
+    expect(systems[0]).not.toContain(SCRIBE_PROPOSE_HINT)
+  })
+
+  it('Proto: the propose guidance is PRESENT (in the gather pass) when github is connected + a store is wired', async () => {
+    const bus = new EventBus()
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'idea', 'owner-1') })
+    const { provider, systems } = recordingSpecProvider()
+    const t = new FakeTransport({ advertise: [READ_TOOL] })
+    const { pool } = poolWith(t)
+
+    const proto = new ProtoAgent({ bus, provider, store })
+    await proto.run({ sessionId: 's1', laneId: 'main', approved: approvedFor(), githubMcp: { pool, ownerId: 'o', token: SECRET } })
+
+    // The gather pass's system prompt (a distinct chat call from code production) carries the hint.
+    expect(systems.some(s => s.includes(PROTO_PROPOSE_HINT))).toBe(true)
+    expect(systems.some(s => /proposed \(awaiting your confirmation\)/.test(s))).toBe(true)
+    expect(systems.some(s => /If no target repo is named, do NOT propose/.test(s))).toBe(true)
+  })
+
+  it('Proto: the propose guidance is ABSENT when github is NOT connected (byte-identical no-github path)', async () => {
+    const bus = new EventBus()
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'idea', 'owner-1') })
+    const { provider, systems } = recordingSpecProvider()
+
+    const proto = new ProtoAgent({ bus, provider, store }) // store wired, but NO githubMcp
+    await proto.run({ sessionId: 's1', laneId: 'main', approved: approvedFor() })
+
+    expect(systems.some(s => s.includes(PROTO_PROPOSE_HINT))).toBe(false)
+    expect(systems.some(s => s.includes('propose_github_write'))).toBe(false)
+  })
+
+  it('Proto: the propose guidance is ABSENT when connected but NO store is wired (tool never registers)', async () => {
+    const bus = new EventBus()
+    const { provider, systems } = recordingSpecProvider()
+    const t = new FakeTransport({ advertise: [READ_TOOL] })
+    const { pool } = poolWith(t)
+
+    const proto = new ProtoAgent({ bus, provider }) // NO store dep
+    await proto.run({ sessionId: 's1', laneId: 'main', approved: approvedFor(), githubMcp: { pool, ownerId: 'o', token: SECRET } })
+
+    expect(systems.some(s => s.includes(PROTO_PROPOSE_HINT))).toBe(false)
   })
 })
 
