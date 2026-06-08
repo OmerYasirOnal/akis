@@ -30,6 +30,16 @@ describe('PublishDestination (Settings card)', () => {
     expect(screen.queryByLabelText('Host')).not.toBeInTheDocument()
   })
 
+  it('shows a loading row while the first status fetch is in flight, then the content', async () => {
+    let resolveStatus!: (s: PublishProfileStatus) => void
+    const pending = new Promise<PublishProfileStatus>(r => { resolveStatus = r })
+    renderI18n(<PublishDestination api={fakeApi({ publishStatus: () => pending })} />)
+    expect(await screen.findByText(/Loading…/)).toBeInTheDocument()
+    await act(async () => { resolveStatus({ configured: true, present: false }); await pending })
+    await screen.findByLabelText('Host')
+    expect(screen.queryByText(/Loading…/)).not.toBeInTheDocument()
+  })
+
   it('status-fetch FAILURE → shows the real error, NOT the not-configured banner', async () => {
     // A dev-proxy gap / network error must never masquerade as the not-configured banner —
     // that message wrongly sends the user to chase an admin action when the server is fine.

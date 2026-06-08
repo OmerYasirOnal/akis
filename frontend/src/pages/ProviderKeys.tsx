@@ -13,7 +13,9 @@ const fill = (s: string, vars: Record<string, string>): string => s.replace(/\{(
  *  encrypted server-side; the response only ever returns the last 4 chars). */
 export function ProviderKeys({ api }: { api: ApiClient }) {
   const { t } = useI18n()
-  const [providers, setProviders] = useState<ProviderInfo[]>([])
+  // undefined = first fetch in flight (a genuine "not yet loaded" signal); the catch resolves it to
+  // [] so the loading row always clears — it never shows a state that can't be left.
+  const [providers, setProviders] = useState<ProviderInfo[] | undefined>()
   const [drafts, setDrafts] = useState<Record<string, string>>({})
   const [busy, setBusy] = useState<string | undefined>()
   const [err, setErr] = useState<string | undefined>()
@@ -39,6 +41,13 @@ export function ProviderKeys({ api }: { api: ApiClient }) {
     <div>
       <SectionTitle sub={t('settings.keys.sub')}>{t('settings.keys.title')}</SectionTitle>
       {err && <div className="mb-3"><ErrorNote>{err}</ErrorNote></div>}
+      {/* First-fetch spinner row (mirrors HistoryPage) so a slow link never shows a blank card. */}
+      {providers === undefined ? (
+        <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-4 text-sm text-slate-400">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#07D1AF]/40 border-t-[#07D1AF]" />
+          {t('settings.loading')}
+        </div>
+      ) : (
       <div className="flex flex-col gap-3">
         {/* Explicit responsive grid (not flex-wrap, which orphaned the Save button onto a new line
             under the input): stacked label/input/actions on mobile; a 7rem · 1fr · auto single row
@@ -60,6 +69,7 @@ export function ProviderKeys({ api }: { api: ApiClient }) {
           </div>
         ))}
       </div>
+      )}
     </div>
   )
 }

@@ -26,6 +26,13 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
   // Clamp the selection so a shrinking file list can never leave it out of range.
   const active = sorted.length ? sorted[Math.min(selected, sorted.length - 1)] : undefined
 
+  // The whole artifact as fenced blocks (one per file, path-labelled), so the user can lift the
+  // entire app out in one copy — e.g. to paste into another tool. Stable per file list (memoized).
+  const allFenced = useMemo(
+    () => sorted.map(f => `\`\`\`${f.filePath}\n${f.content}\n\`\`\``).join('\n\n'),
+    [sorted],
+  )
+
   if (sorted.length === 0) {
     return (
       <div className="flex h-full flex-col gap-3">
@@ -43,11 +50,15 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
 
   return (
     <div className="flex h-full flex-col gap-3">
-      <div className="flex items-center justify-between">
+      <div className="flex items-center justify-between gap-2">
         <h3 className="text-sm font-semibold text-slate-200">{t('code.title')}</h3>
-        <span className="rounded bg-white/[0.06] px-2 py-0.5 text-xs text-slate-400">
-          {sorted.length} {t('code.files')}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="rounded bg-white/[0.06] px-2 py-0.5 text-xs text-slate-400">
+            {sorted.length} {t('code.files')}
+          </span>
+          {/* Copy every file as path-labelled fenced blocks — the whole artifact in one grab. */}
+          <CopyButton text={allFenced} label={t('code.copyAll')} className="text-[10px]" />
+        </div>
       </div>
 
       <div className="grid min-h-0 flex-1 grid-cols-[minmax(11rem,22%)_1fr] gap-2 overflow-hidden rounded-xl border border-white/10 bg-black/50 lg:grid-cols-[minmax(13rem,26%)_1fr]">

@@ -239,6 +239,7 @@ export const STRINGS = {
     'code.files': 'files',
     'code.empty': 'No code yet — files appear here once the agents finish writing the app.',
     'code.lines': 'lines',
+    'code.copyAll': 'Copy all',
     'copy.file': 'Copy file',
     'copy.codeBlock': 'Copy code',
     // ── Build history (studio redesign) ──
@@ -378,6 +379,7 @@ export const STRINGS = {
     'billing.ok.success': 'You’re on Pro — thanks! Your plan is active.',
     'billing.ok.cancel': 'Checkout cancelled — you’re still on the Free plan.',
     'settings.sub': 'Your account, agents, and workflow defaults.',
+    'settings.loading': 'Loading…',
     'settings.keys.title': 'Provider keys',
     'settings.keys.sub': 'Connect your own AI provider keys (stored encrypted on the server, never echoed).',
     'settings.keys.connected': 'Connected',
@@ -1024,6 +1026,7 @@ export const STRINGS = {
     'code.files': 'dosya',
     'code.empty': 'Henüz kod yok — ajanlar uygulamayı yazmayı bitirince dosyalar burada görünür.',
     'code.lines': 'satır',
+    'code.copyAll': 'Tümünü kopyala',
     'copy.file': 'Dosyayı kopyala',
     'copy.codeBlock': 'Kodu kopyala',
     // P1-CORE-1: çalıştırma başına "bu sonuç simüle edildi" rozeti — verify gate kartında ve
@@ -1165,6 +1168,7 @@ export const STRINGS = {
     'billing.ok.success': 'Pro’dasın — teşekkürler! Planın aktif.',
     'billing.ok.cancel': 'Ödeme iptal edildi — hâlâ Ücretsiz plandasın.',
     'settings.sub': 'Hesabın, ajanların ve varsayılan iş akışların.',
+    'settings.loading': 'Yükleniyor…',
     'settings.keys.title': 'Sağlayıcı anahtarları',
     'settings.keys.sub': 'Kendi AI sağlayıcı anahtarlarını bağla (sunucuda şifreli saklanır, asla geri gösterilmez).',
     'settings.keys.connected': 'Bağlı',
