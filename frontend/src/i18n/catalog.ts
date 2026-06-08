@@ -169,6 +169,11 @@ export const STRINGS = {
     'spec.build': 'Approve & Build',
     'spec.building': 'Starting workflow…',
     'spec.started': 'Workflow started',
+    // Once a spec has started building, its full body is collapsed (it stops eating ~60vh above the
+    // live activity) — a one-line summary chip + a toggle to re-reveal it (H1-Fix-B).
+    'spec.show': 'Show spec',
+    'spec.hide': 'Hide spec',
+    'spec.collapsed': 'Spec approved — building',
     'workflow.starting.title': 'Workflow is starting',
     'workflow.starting.body': 'Creating the run session and attaching the live agent stream.',
     'workflow.starting.elapsed': 'Elapsed',
@@ -937,6 +942,11 @@ export const STRINGS = {
     'spec.build': 'Onayla & Build',
     'spec.building': 'Workflow başlıyor…',
     'spec.started': 'Workflow başladı',
+    // Bir spec build’e başladığında tüm gövdesi katlanır (canlı etkinliğin üstünde ~60vh yer
+    // kaplamayı bırakır) — tek satırlık özet + tekrar açmak için bir düğme (H1-Fix-B).
+    'spec.show': 'Spec’i göster',
+    'spec.hide': 'Spec’i gizle',
+    'spec.collapsed': 'Spec onaylandı — inşa ediliyor',
     'workflow.starting.title': 'Workflow başlıyor',
     'workflow.starting.body': 'Çalışma oturumu oluşturuluyor ve canlı ajan akışı bağlanıyor.',
     'workflow.starting.elapsed': 'Geçen süre',

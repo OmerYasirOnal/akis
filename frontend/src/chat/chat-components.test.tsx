@@ -108,6 +108,32 @@ describe('ChatStudio', () => {
     expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('on build start, scrolls the run HEADER to the top (block:start) instead of the column bottom (H3)', async () => {
+    // jsdom has no scrollIntoView — install a spy so we can assert WHAT the auto-scroll targets.
+    const spy = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { value: spy, configurable: true, writable: true })
+    try {
+      const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+        if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+        if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: SPEC_REPLY }), text: async () => '' } as unknown as Response
+        if (path.endsWith('/sessions') && init?.method === 'POST') return { ok: true, status: 201, json: async () => ({ id: 's1', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
+        return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+      })
+      const api = new ApiClient('', fetchFn)
+      const fake = new FakeStream()
+      render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+      await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
+      await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+
+      // The run marker mounts → its wrapper header is scrolled to the TOP of the viewport.
+      await waitFor(() => expect(spy).toHaveBeenCalled())
+      expect(spy).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }))
+    } finally {
+      delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView
+    }
+  })
+
   it('keeps the user in chat while the workflow starts from the approved spec', async () => {
     const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
       if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response

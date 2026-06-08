@@ -89,6 +89,41 @@ describe('SpecCard', () => {
     expect(onBuild).not.toHaveBeenCalled()
   })
 
+  describe('collapse once started (H1-Fix-B)', () => {
+    it('a NOT-started card shows the full spec body (no Show-spec toggle)', () => {
+      renderI18n(<SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} />)
+      expect(screen.getByRole('heading', { name: 'TODO App' })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: 'Show spec' })).toBeNull()
+    })
+
+    it('a STARTED card collapses the body to a summary chip + Show-spec toggle by default', () => {
+      renderI18n(<SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} started />)
+      // The 60vh markdown body is hidden …
+      expect(screen.queryByRole('heading', { name: 'TODO App' })).toBeNull()
+      // … replaced by the one-line summary (the spec title) + the collapsed status + a Show toggle.
+      expect(screen.getByText('TODO App')).toBeInTheDocument()
+      expect(screen.getByText('Spec approved — building')).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Show spec' })).toBeInTheDocument()
+    })
+
+    it('Show spec reveals the body; Hide spec re-collapses it', async () => {
+      renderI18n(<SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} started />)
+      await userEvent.click(screen.getByRole('button', { name: 'Show spec' }))
+      expect(screen.getByRole('heading', { name: 'TODO App' })).toBeInTheDocument()
+      await userEvent.click(screen.getByRole('button', { name: 'Hide spec' }))
+      expect(screen.queryByRole('heading', { name: 'TODO App' })).toBeNull()
+      expect(screen.getByRole('button', { name: 'Show spec' })).toBeInTheDocument()
+    })
+
+    it('auto-collapses when a card TRANSITIONS to started while mounted', () => {
+      const { rerender } = renderI18n(<SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} />)
+      expect(screen.getByRole('heading', { name: 'TODO App' })).toBeInTheDocument()
+      rerender(<I18nProvider><SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} started /></I18nProvider>)
+      expect(screen.queryByRole('heading', { name: 'TODO App' })).toBeNull()
+      expect(screen.getByRole('button', { name: 'Show spec' })).toBeInTheDocument()
+    })
+  })
+
   describe('Copy spec', () => {
     it('copies the current spec text to the clipboard', async () => {
       const writeText = vi.fn(() => Promise.resolve())
