@@ -72,3 +72,52 @@ describe('StoreBackedOAuthProvider — server-side OAuth/DCR adapter', () => {
     expect(otherProvider.tokens()).toBeUndefined() // different provider
   })
 })
+
+describe('StoreBackedOAuthProvider — STATIC client (GitHub, no DCR)', () => {
+  function makeStatic(store = new MemoryRemoteMcpAuthStore()) {
+    const p = new StoreBackedOAuthProvider({
+      userId: 'u1', provider: 'github', redirectUrl: 'https://akis.app/mcp/github/callback',
+      scope: 'repo read:org read:user', store,
+      staticClient: { clientId: 'gh-client', clientSecret: 'gh-secret' },
+    })
+    return { p, store }
+  }
+
+  it('clientInformation() returns the STATIC client (so the SDK skips DCR / registerClient)', () => {
+    const { p, store } = makeStatic()
+    // The store has NO clientInfo (no DCR ran), yet clientInformation() is populated from the static
+    // creds — this is exactly the non-undefined return that makes the SDK bypass registerClient.
+    expect(store.load('u1', 'github')?.clientInfo).toBeUndefined()
+    expect(p.clientInformation()).toEqual({ client_id: 'gh-client', client_secret: 'gh-secret' })
+  })
+
+  it('saveClientInformation is a NO-OP with a static client — never overwrites the fixed creds', () => {
+    const { p, store } = makeStatic()
+    // Even if the SDK (defensively) tried to persist a registered client, it must not clobber the
+    // static creds nor write to the store.
+    p.saveClientInformation({ client_id: 'dcr-should-not-win', redirect_uris: ['https://akis/cb'] })
+    expect(store.load('u1', 'github')?.clientInfo).toBeUndefined()
+    expect(p.clientInformation()).toEqual({ client_id: 'gh-client', client_secret: 'gh-secret' })
+  })
+
+  it('tokens still round-trip via the store (only the CLIENT is static, not the tokens)', () => {
+    const { p, store } = makeStatic()
+    expect(p.tokens()).toBeUndefined()
+    p.saveTokens(tokens)
+    expect(p.tokens()).toEqual(tokens)
+    expect(store.load('u1', 'github')?.tokens).toEqual(tokens)
+  })
+
+  it('WITHOUT a static client the store-backed (DCR) behavior is unchanged', () => {
+    // Same provider, NO staticClient → falls back to the store-backed clientInfo (the Atlassian path).
+    const store = new MemoryRemoteMcpAuthStore()
+    const p = new StoreBackedOAuthProvider({
+      userId: 'u1', provider: 'github', redirectUrl: 'https://akis.app/mcp/github/callback',
+      scope: 'repo', store,
+    })
+    expect(p.clientInformation()).toBeUndefined() // no DCR client yet, no static client
+    p.saveClientInformation(clientInfo)           // DCR persists
+    expect(p.clientInformation()).toEqual(clientInfo)
+    expect(store.load('u1', 'github')?.clientInfo).toEqual(clientInfo)
+  })
+})

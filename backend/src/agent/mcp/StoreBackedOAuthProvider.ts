@@ -62,6 +62,17 @@ export interface StoreBackedOAuthOptions {
   scope: string
   clientName?: string
   store: RemoteMcpAuthStore
+  /**
+   * STATIC pre-registered OAuth client (e.g. GitHub). Some OAuth servers (github.com/login/oauth)
+   * do NOT support Dynamic Client Registration — they have no registration_endpoint — so the SDK's
+   * DCR step would fail. When set, `clientInformation()` returns this fixed client, which makes the
+   * SDK SKIP DCR entirely (auth.js: the registerClient block runs only when clientInformation() is
+   * falsy) and run the rest of the flow (PKCE authorize + token exchange) against the server's
+   * DISCOVERED authorize/token endpoints. Omit it for DCR-capable servers (Atlassian) — those keep
+   * the store-backed, DCR-registered behavior unchanged. The secret rides only in-process; it is
+   * never persisted to the auth store nor surfaced in a URL/log/response.
+   */
+  staticClient?: { clientId: string; clientSecret: string }
 }
 
 export class StoreBackedOAuthProvider implements OAuthClientProvider {
@@ -85,12 +96,21 @@ export class StoreBackedOAuthProvider implements OAuthClientProvider {
   }
 
   clientInformation(): OAuthClientInformation | undefined {
+    // STATIC client (GitHub): return the pre-registered OAuth App credentials so the SDK skips DCR
+    // (its registerClient block runs ONLY when this is falsy) and proceeds straight to PKCE authorize
+    // + token exchange against the server's DISCOVERED endpoints. The secret stays in-process.
+    const sc = this.opts.staticClient
+    if (sc) return { client_id: sc.clientId, client_secret: sc.clientSecret }
+    // DCR path (Atlassian): the SDK-registered client persisted by saveClientInformation.
     return this.load().clientInfo
   }
 
   // DCR: the SDK calls this after registering a client with the server. Persist it so later
-  // sessions reuse the SAME client (no re-registration).
+  // sessions reuse the SAME client (no re-registration). With a STATIC client the SDK never reaches
+  // DCR, but guard anyway: NEVER overwrite the fixed creds with a store record (a no-op keeps the
+  // static client authoritative and the store clean).
   saveClientInformation(info: OAuthClientInformationFull): void {
+    if (this.opts.staticClient) return
     this.opts.store.save(this.opts.userId, this.opts.provider, { clientInfo: info })
   }
 

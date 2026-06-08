@@ -3,7 +3,7 @@ import type { OAuthClientProvider } from '@modelcontextprotocol/sdk/client/auth.
 import { StoreBackedOAuthProvider, type RemoteMcpAuthStore } from '../agent/mcp/StoreBackedOAuthProvider.js'
 import { HttpMcpTransport } from '../agent/mcp/HttpMcpTransport.js'
 import { baseUrl } from './oauth.routes.js'
-import { signConnectState, verifyConnectState } from '../auth/oauth.js'
+import { signConnectState, verifyConnectState, oauthCreds } from '../auth/oauth.js'
 
 /**
  * Per-user REMOTE MCP connection (the "agents really use MCP" UX). A signed-in user connects their
@@ -37,8 +37,31 @@ export const REMOTE_MCP_PROVIDERS: Record<string, RemoteMcpProviderConfig> = {
   github: {
     serverUrl: 'https://api.githubcopilot.com/mcp/',
     kind: 'streamable-http',
-    scope: '', // GitHub's hosted client negotiates scope; left empty so the SDK uses the server default
+    // github.com/login/oauth has NO Dynamic Client Registration, so AKIS connects this server with a
+    // STATIC client = its own GitHub OAuth App (see makeProvider / mcpTransportFor). We therefore
+    // control the requested scope. This is read-grounding ("read repo context"): GitHub OAuth Apps
+    // have no read-only repo scope, so 'repo' is the practical grant (matches the existing
+    // GitHub-delivery connect); read:org/read:user round out org+user context. Any WRITE tool the
+    // server exposes still flows through the external-write gate, never autonomously.
+    scope: 'repo read:org read:user',
   },
+}
+
+/**
+ * STATIC OAuth client for a remote-MCP provider whose authorization server does NOT support Dynamic
+ * Client Registration. Today that is ONLY github: github.com/login/oauth has no registration_endpoint,
+ * so the SDK's DCR step would fail; instead we hand the SDK AKIS's own GitHub OAuth App
+ * (GITHUB_OAUTH_CLIENT_ID/SECRET) — the SAME app the GitHub-delivery connect uses, whose base-'/'
+ * callback already covers ${base}/mcp/github/callback. Returns a SPREADABLE object: `{ staticClient }`
+ * when creds are present, or `{}` so the caller can `...` it and OMIT the key entirely under
+ * exactOptionalPropertyTypes (a present-but-undefined staticClient would type-error). Absent creds ⇒
+ * no static client ⇒ the github connect degrades honestly (DCR is attempted and fails with an
+ * 'error' redirect), exactly like a missing OAuth app. Atlassian (and any other provider) is NEVER
+ * given a static client → it keeps DCR. */
+function staticClientFor(provider: string, env: NodeJS.ProcessEnv): { staticClient?: { clientId: string; clientSecret: string } } {
+  if (provider !== 'github') return {}
+  const creds = oauthCreds('github', env)
+  return creds ? { staticClient: creds } : {}
 }
 
 /** The SDK `auth()` driver (injectable for tests). Returns the AuthResult string ('REDIRECT' on the
@@ -69,7 +92,14 @@ export function registerMcpConnectRoutes(app: FastifyInstance, deps: McpConnectD
   const providers = deps.providers ?? REMOTE_MCP_PROVIDERS
   const toSettings = (reply: FastifyReply, base: string, status: string): FastifyReply => reply.redirect(`${base}/settings?mcp=${status}`)
   const makeProvider = (req: FastifyRequest, userId: string, name: string, cfg: RemoteMcpProviderConfig): StoreBackedOAuthProvider =>
-    new StoreBackedOAuthProvider({ userId, provider: name, redirectUrl: `${baseUrl(req, deps.env)}/mcp/${name}/callback`, scope: cfg.scope, store: deps.store, clientName: 'AKIS' })
+    new StoreBackedOAuthProvider({
+      userId, provider: name, redirectUrl: `${baseUrl(req, deps.env)}/mcp/${name}/callback`,
+      scope: cfg.scope, store: deps.store, clientName: 'AKIS',
+      // GitHub: no DCR → connect with AKIS's static GitHub OAuth App. Omit when creds are absent so
+      // the SDK falls back to DCR (which github lacks → an honest 'error', never a crash). Atlassian
+      // never gets a staticClient → keeps DCR.
+      ...staticClientFor(name, deps.env),
+    })
 
   // Begin the connect flow: authenticated + a known provider + encryption configured.
   app.get<{ Params: { provider: string } }>('/mcp/:provider/connect', async (req, reply) => {
@@ -171,6 +201,10 @@ export function mcpTransportFor(opts: {
   const authProvider = new StoreBackedOAuthProvider({
     userId: opts.userId, provider: opts.provider, redirectUrl: `${base}/mcp/${opts.provider}/callback`,
     scope: cfg.scope, store: opts.store, clientName: 'AKIS',
+    // Same static-client rule as the connect route: github auto-refresh must present the SAME static
+    // client at the token endpoint (github has no DCR), so a refresh after connect doesn't fall into
+    // a failing DCR. Atlassian keeps its DCR-registered client (no staticClient).
+    ...staticClientFor(opts.provider, opts.env),
   })
   return new HttpMcpTransport({ url: cfg.serverUrl, kind: cfg.kind, authProvider })
 }
