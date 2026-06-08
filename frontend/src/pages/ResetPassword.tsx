@@ -45,7 +45,7 @@ export function ResetPassword({ api }: { api: ApiClient }) {
           <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
-        <Button type="submit" full disabled={busy || password.length < 8}>{busy ? '…' : t('auth.reset.cta')}</Button>
+        <Button type="submit" full loading={busy} disabled={password.length < 8}>{t('auth.reset.cta')}</Button>
       </form>
     </AuthShell>
   )

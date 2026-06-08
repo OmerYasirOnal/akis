@@ -44,7 +44,7 @@ export function Signup({ api }: { api: ApiClient }) {
           <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
-        <Button type="submit" full disabled={busy || !name || !email || password.length < 8}>{busy ? '…' : t('auth.signup.cta')}</Button>
+        <Button type="submit" full loading={busy} disabled={!name || !email || password.length < 8}>{t('auth.signup.cta')}</Button>
       </form>
     </AuthShell>
   )

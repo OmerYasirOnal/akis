@@ -20,17 +20,30 @@ export function SectionTitle({ children, sub }: { children: ReactNode; sub?: Rea
   )
 }
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'subtle'; full?: boolean }
-export function Button({ variant = 'primary', full, className = '', ...rest }: ButtonProps) {
-  // focus-visible (keyboard-only) teal ring so keyboard users get a visible focus indicator
-  // on every button across the studio, without showing the ring on mouse clicks.
-  const base = 'rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950'
+/** A small inline spinner that adopts the current text color (so it reads on any button
+ *  variant / surface). Decorative — the surrounding control carries the busy semantics. */
+export function Spinner({ className = '' }: { className?: string }) {
+  return <span aria-hidden className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent ${className}`} />
+}
+
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'subtle'; full?: boolean; loading?: boolean }
+export function Button({ variant = 'primary', full, loading = false, className = '', children, disabled, ...rest }: ButtonProps) {
+  // focus-visible (keyboard-only) teal ring so keyboard users get a visible focus indicator on
+  // every button, without showing the ring on mouse clicks. When `loading`, show a spinner BEFORE
+  // the label (keep the action verb visible — never a bare "…"), set aria-busy, and disable so
+  // the action can't double-fire.
+  const base = 'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950'
   const styles = {
     primary: 'bg-gradient-to-r from-[#07D1AF] to-violet-500 text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] hover:brightness-110',
     ghost: 'border border-white/15 bg-white/[0.03] text-slate-200 hover:border-white/30',
     subtle: 'text-slate-400 hover:text-slate-200',
   }[variant]
-  return <button className={`${base} ${styles} ${full ? 'w-full' : ''} ${className}`} {...rest} />
+  return (
+    <button className={`${base} ${styles} ${full ? 'w-full' : ''} ${className}`} aria-busy={loading || undefined} disabled={disabled || loading} {...rest}>
+      {loading && <Spinner />}
+      {children}
+    </button>
+  )
 }
 
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {

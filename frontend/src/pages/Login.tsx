@@ -55,7 +55,7 @@ export function Login({ api }: { api: ApiClient }) {
         </Field>
         <Link to="/forgot-password" className="-mt-2 self-end text-xs text-slate-400 hover:text-[#07D1AF]">{t('auth.forgot.link')}</Link>
         {err && <ErrorNote>{err}</ErrorNote>}
-        <Button type="submit" full disabled={busy || !email || !password}>{busy ? '…' : t('auth.login.cta')}</Button>
+        <Button type="submit" full loading={busy} disabled={!email || !password}>{t('auth.login.cta')}</Button>
       </form>
     </AuthShell>
   )

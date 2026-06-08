@@ -74,4 +74,20 @@ describe('Button (design-system)', () => {
       unmount()
     }
   })
+
+  it('loading shows a spinner + aria-busy + disabled, and keeps the action verb (never a bare …)', () => {
+    const { rerender } = render(<Button loading>Sign in</Button>)
+    const btn = screen.getByRole('button', { name: /Sign in/ })
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveAttribute('aria-busy', 'true')
+    expect(btn.querySelector('.animate-spin')).not.toBeNull() // spinner present
+    expect(btn).toHaveTextContent('Sign in')                   // verb still shown
+    expect(btn.textContent).not.toContain('…')
+    // not loading → no busy, not disabled, no spinner
+    rerender(<Button>Sign in</Button>)
+    const idle = screen.getByRole('button', { name: 'Sign in' })
+    expect(idle).not.toBeDisabled()
+    expect(idle).not.toHaveAttribute('aria-busy')
+    expect(idle.querySelector('.animate-spin')).toBeNull()
+  })
 })
