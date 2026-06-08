@@ -64,7 +64,9 @@ describe('AnalyticsPage', () => {
     expect(screen.getByText('Static page')).toBeInTheDocument()
     // The token-bearing run shows a real total (8000+4345 = 12345 → "12.3k"); the absent-usage
     // run shows the honest dash (appears for both the total and the per-agent cell), never a 0.
-    await waitFor(() => expect(screen.getByText('12.3k')).toBeInTheDocument())
+    // "12.3k" now appears for BOTH the per-run row and the report-wide grand-total tile (one
+    // token-bearing run ⇒ they're equal), so assert ≥1 rather than a unique match.
+    await waitFor(() => expect(screen.getAllByText('12.3k').length).toBeGreaterThanOrEqual(1))
     expect(screen.getAllByText('—').length).toBeGreaterThanOrEqual(1)
     // No fabricated "0 tok" anywhere on the page for the absent-usage run.
     expect(screen.queryByText(/0 tok/)).toBeNull()

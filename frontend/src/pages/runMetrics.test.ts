@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { aggregateRunMetrics } from './runMetrics.js'
+import { aggregateRunMetrics, aggregateModelUsage, aggregateAgentTotals, aggregateGrandTotals, cleanRunTitle, bucketRunsByTime } from './runMetrics.js'
 import { foldSessionView } from '../live/viewModel.js'
 import type { AkisEvent } from '@akis/shared'
 
@@ -17,6 +17,34 @@ function fullRunEvents(): AkisEvent[] {
     ev({ kind: 'agent_end', role: 'trace', ok: true, agent: 'trace', laneId: 'verify', metrics: { durationMs: 1_000, toolCalls: 1 } }),
   ]
 }
+
+describe('cleanRunTitle (pure title cleanup)', () => {
+  it('strips a leading markdown heading and takes the first meaningful line', () => {
+    expect(cleanRunTitle('# Modern Not Alma Uygulaması\n## Kapsam\n- madde')).toBe('Modern Not Alma Uygulaması')
+  })
+
+  it('skips leading blank lines and code fences to reach the title', () => {
+    expect(cleanRunTitle('\n\n```ts\nconst x = 1\n```\n## Oylama uygulaması')).toBe('Oylama uygulaması')
+  })
+
+  it('strips surrounding bold/italic/backtick markers and a trailing colon', () => {
+    expect(cleanRunTitle('**Voting app:**')).toBe('Voting app')
+    expect(cleanRunTitle('`my-cli`')).toBe('my-cli')
+  })
+
+  it('collapses inner whitespace and trims', () => {
+    expect(cleanRunTitle('   Hello    world   ')).toBe('Hello world')
+  })
+
+  it('a plain title passes through unchanged', () => {
+    expect(cleanRunTitle('Just a plain idea')).toBe('Just a plain idea')
+  })
+
+  it('an empty/all-blank idea returns empty (caller falls back)', () => {
+    expect(cleanRunTitle('')).toBe('')
+    expect(cleanRunTitle('\n   \n')).toBe('')
+  })
+})
 
 describe('aggregateRunMetrics (pure per-run cost)', () => {
   it('sums tokens (in+out across reporting agents) and time across all agents', () => {
@@ -92,5 +120,134 @@ describe('aggregateRunMetrics (pure per-run cost)', () => {
     const m = aggregateRunMetrics(foldSessionView('s1', fullRunEvents())) // metrics carry usage but no model
     expect(m.totalUsd).toBeUndefined()
     expect(m.totalTokens).toBe(1850)
+  })
+})
+
+/** Two priced builds: build A (Opus Scribe) + build B (Opus Proto + unlisted-model Proto). */
+function pricedView(id: string, events: AkisEvent[]) {
+  return foldSessionView(id, events.map(e => ({ ...e, sessionId: id })))
+}
+
+describe('aggregateModelUsage (report-wide, by model)', () => {
+  it('groups usage-bearing steps by model, sums tokens, prices known models, counts calls; sorts desc', () => {
+    const a = pricedView('a', [
+      ev({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId: 'main', metrics: { usage: { inTokens: 1_000_000, outTokens: 1_000_000 }, model: 'claude-opus-4-8', durationMs: 1_000, toolCalls: 0 } }),
+    ])
+    const b = pricedView('b', [
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { usage: { inTokens: 1_000, outTokens: 1_000 }, model: 'claude-opus-4-8', durationMs: 1_000, toolCalls: 0 } }),
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { usage: { inTokens: 500, outTokens: 500 }, model: 'an-unlisted-model', durationMs: 1_000, toolCalls: 0 } }),
+    ])
+    const rows = aggregateModelUsage([a, b])
+    const opus = rows.find(r => r.model === 'claude-opus-4-8')
+    expect(opus).toMatchObject({ tokens: 2_002_000, calls: 2 }) // 1M+1M + 1k+1k tokens across 2 calls
+    expect(opus?.usd).toBeCloseTo(30.03, 2) // 1M in $5 + 1M out $25 + (1k in + 1k out) ≈ $0.03
+    const unlisted = rows.find(r => r.model === 'an-unlisted-model')
+    expect(unlisted).toMatchObject({ tokens: 1_000, calls: 1 })
+    expect(unlisted?.usd).toBeUndefined() // unknown model → no fabricated $
+    expect(rows[0]?.model).toBe('claude-opus-4-8') // sorted desc by tokens
+  })
+
+  it('skips steps with no usage (LLM-free / mock {0,0}) — never a fabricated 0-token model row', () => {
+    const v = pricedView('v', [
+      ev({ kind: 'agent_start', role: 'trace', agent: 'trace', laneId: 'verify' }),
+      ev({ kind: 'agent_end', role: 'trace', ok: true, agent: 'trace', laneId: 'verify', metrics: { durationMs: 1_000, toolCalls: 1 } }),
+    ])
+    expect(aggregateModelUsage([v])).toEqual([])
+  })
+})
+
+describe('aggregateAgentTotals (report-wide, by agent)', () => {
+  it('sums tokens/usd per role across views; runs = distinct views with usage; sorts desc', () => {
+    const a = pricedView('a', [
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { usage: { inTokens: 1_000_000, outTokens: 1_000_000 }, model: 'claude-opus-4-8', durationMs: 1_000, toolCalls: 0 } }),
+      ev({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId: 'main', metrics: { usage: { inTokens: 100, outTokens: 50 }, durationMs: 1_000, toolCalls: 0 } }),
+    ])
+    const b = pricedView('b', [
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { usage: { inTokens: 1_000, outTokens: 1_000 }, model: 'claude-opus-4-8', durationMs: 1_000, toolCalls: 0 } }),
+    ])
+    const rows = aggregateAgentTotals([a, b])
+    const proto = rows.find(r => r.role === 'proto')
+    expect(proto).toMatchObject({ tokens: 2_002_000, runs: 2 }) // spent in BOTH builds
+    expect(proto?.usd).toBeCloseTo(30.03, 2) // 1M+1M Opus ($30) + 1k+1k Opus ($0.03)
+    const scribe = rows.find(r => r.role === 'scribe')
+    expect(scribe).toMatchObject({ tokens: 150, runs: 1 })
+    expect(scribe?.usd).toBeUndefined() // no model → unpriced
+    expect(rows[0]?.role).toBe('proto') // sorted desc by tokens
+  })
+})
+
+describe('aggregateGrandTotals (report-wide)', () => {
+  it('sums tokens/usd/ms across views; ms always summed; tokens undefined when nothing reported', () => {
+    const priced = pricedView('a', [
+      ev({ kind: 'agent_start', role: 'proto', agent: 'proto', laneId: 'main' }),
+      ev({ kind: 'agent_end', role: 'proto', ok: true, agent: 'proto', laneId: 'main', metrics: { usage: { inTokens: 1_000_000, outTokens: 1_000_000 }, model: 'claude-opus-4-8', durationMs: 5_000, toolCalls: 0 } }),
+    ])
+    const usageless = pricedView('b', [
+      ev({ kind: 'agent_start', role: 'trace', agent: 'trace', laneId: 'verify' }),
+      ev({ kind: 'agent_end', role: 'trace', ok: true, agent: 'trace', laneId: 'verify', metrics: { durationMs: 2_000, toolCalls: 1 } }),
+    ])
+    const g = aggregateGrandTotals([priced, usageless])
+    expect(g.tokens).toBe(2_000_000)
+    expect(g.usd).toBe(30)
+    expect(g.ms).toBe(7_000) // 5000 + 2000, even the usageless run contributes time
+
+    const none = aggregateGrandTotals([usageless])
+    expect(none.tokens).toBeUndefined()
+    expect(none.usd).toBeUndefined()
+    expect(none.ms).toBe(2_000)
+  })
+})
+
+describe('bucketRunsByTime (time-series, pure)', () => {
+  // Pin "now" to a fixed local instant so the window is deterministic across machines.
+  const now = new Date(2026, 5, 8, 12, 0, 0).getTime() // 2026-06-08 (a Monday) noon, local
+
+  it('daily: returns the 7 most-recent day buckets ending today, oldest → newest', () => {
+    const buckets = bucketRunsByTime([], 'daily', now)
+    expect(buckets).toHaveLength(7)
+    // Last bucket contains "now".
+    const last = buckets[6]!
+    expect(now).toBeGreaterThanOrEqual(last.start)
+    expect(now).toBeLessThan(last.end)
+    // Buckets ascend in time and each empty bucket reads as a zero bar.
+    for (let i = 1; i < buckets.length; i++) expect(buckets[i]!.start).toBeGreaterThan(buckets[i - 1]!.start)
+    expect(buckets.every(b => b.tokens === 0 && b.runs === 0)).toBe(true)
+  })
+
+  it('sums tokens + counts runs into the matching day bucket; usage-absent runs still count', () => {
+    const today = now
+    const twoDaysAgo = now - 2 * 86_400_000
+    const buckets = bucketRunsByTime(
+      [{ startedAt: today, tokens: 1000 }, { startedAt: today, tokens: 500 }, { startedAt: twoDaysAgo, tokens: 0 }],
+      'daily', now,
+    )
+    const last = buckets[6]!
+    expect(last.tokens).toBe(1500)
+    expect(last.runs).toBe(2)
+    const twoBack = buckets[4]! // 7 buckets, index 6 = today, index 4 = two days ago
+    expect(twoBack.tokens).toBe(0)
+    expect(twoBack.runs).toBe(1) // a 0-token run still happened
+  })
+
+  it('drops runs older than the window', () => {
+    const old = now - 30 * 86_400_000 // 30 days ago — outside a 7-day daily window
+    const buckets = bucketRunsByTime([{ startedAt: old, tokens: 9999 }], 'daily', now)
+    expect(buckets.reduce((s, b) => s + b.tokens, 0)).toBe(0)
+    expect(buckets.reduce((s, b) => s + b.runs, 0)).toBe(0)
+  })
+
+  it('weekly/monthly/yearly use their default window sizes and bucket the current run', () => {
+    expect(bucketRunsByTime([], 'weekly', now)).toHaveLength(8)
+    expect(bucketRunsByTime([], 'monthly', now)).toHaveLength(6)
+    const yearly = bucketRunsByTime([{ startedAt: now, tokens: 2000 }], 'yearly', now)
+    expect(yearly).toHaveLength(4)
+    expect(yearly[3]!.tokens).toBe(2000) // this year's bucket
+    expect(yearly[3]!.label).toBe('2026')
   })
 })
