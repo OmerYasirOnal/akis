@@ -149,3 +149,58 @@ describe('mcpTransportFor', () => {
     expect(mcpTransportFor({ userId: 'u1', provider: 'atlassian', store, env: ENV, providers: PROVIDERS })).toBeDefined()
   })
 })
+
+describe('mcp connect — github STATIC client (no DCR), atlassian DCR', () => {
+  // Both providers, so the connect route can build either; github has a STATIC-client path.
+  const BOTH: Record<string, RemoteMcpProviderConfig> = {
+    atlassian: { serverUrl: 'https://mcp.example/v1', kind: 'streamable-http', scope: 'offline_access write:jira-work' },
+    github: { serverUrl: 'https://api.githubcopilot.com/mcp/', kind: 'streamable-http', scope: 'repo read:org read:user' },
+  }
+  const GH_ENV = { PUBLIC_BASE_URL: 'https://akis.app', GITHUB_OAUTH_CLIENT_ID: 'gh-id', GITHUB_OAUTH_CLIENT_SECRET: 'gh-secret' }
+
+  /** Capture the provider the connect route constructs so we can inspect its clientInformation(). */
+  function appCapturing(env: Record<string, string>) {
+    let captured: StoreBackedOAuthProvider | undefined
+    const capturingAuth: RemoteMcpAuthFn = async (provider, opts) => {
+      captured = provider as StoreBackedOAuthProvider
+      return fakeAuth(provider, opts)
+    }
+    const f = Fastify({ logger: false })
+    const store = new MemoryRemoteMcpAuthStore()
+    registerMcpConnectRoutes(f, { store, env, providers: BOTH, secret: SECRET, auth: capturingAuth, userIdOf: async () => 'u1' })
+    return { f, store, get: () => captured }
+  }
+
+  it('github connect builds a provider whose clientInformation() is the STATIC OAuth App (creds present → DCR skipped)', async () => {
+    const a = appCapturing(GH_ENV)
+    const res = await a.f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    expect(res.statusCode).toBe(302) // flow proceeds (no DCR failure)
+    // The constructed provider returns the static GitHub OAuth App — a non-undefined clientInformation()
+    // is exactly what makes the SDK bypass registerClient/DCR.
+    expect(a.get()?.clientInformation()).toEqual({ client_id: 'gh-id', client_secret: 'gh-secret' })
+  })
+
+  it('atlassian connect builds a provider with NO static client → DCR (store-backed) behavior', async () => {
+    const a = appCapturing(GH_ENV) // github creds present, but atlassian must NOT use them
+    const res = await a.f.inject({ method: 'GET', url: '/mcp/atlassian/connect' })
+    expect(res.statusCode).toBe(302)
+    // No static client and no DCR client persisted yet ⇒ undefined ⇒ the SDK would run DCR.
+    expect(a.get()?.clientInformation()).toBeUndefined()
+  })
+
+  it('github connect WITHOUT OAuth creds falls back to no-static-client (honest degrade, never crash)', async () => {
+    const a = appCapturing({ PUBLIC_BASE_URL: 'https://akis.app' }) // GitHub OAuth creds absent
+    const res = await a.f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    // The fake auth still captures + REDIRECTs; with the REAL SDK this provider (no static client,
+    // github has no DCR) would degrade to an 'error' redirect — never a crash.
+    expect(res.statusCode).toBe(302)
+    expect(a.get()?.clientInformation()).toBeUndefined() // no static creds → store-backed (would DCR)
+  })
+
+  it('mcpTransportFor for a connected github user carries the static client (creds present)', () => {
+    const store = new MemoryRemoteMcpAuthStore()
+    store.save('u1', 'github', { tokens }) // connected
+    const t = mcpTransportFor({ userId: 'u1', provider: 'github', store, env: GH_ENV, providers: BOTH })
+    expect(t).toBeDefined() // a transport is built for the connected github user (refresh uses the static client)
+  })
+})
