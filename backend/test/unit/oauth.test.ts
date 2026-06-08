@@ -43,6 +43,23 @@ describe('authorizeUrl', () => {
     expect(url.searchParams.get('response_type')).toBe('code')
     expect(url.searchParams.get('scope')).toContain('email')
   })
+
+  // FR-oauth-signin-3 / -4 — GitHub LOGIN authorize must pin the exact, MINIMAL contract:
+  // allow_signup=true, response_type=code, and the narrow login scope. A regression that widened
+  // the login scope (e.g. to `repo`, which the per-user CONNECT flow uses) or dropped allow_signup
+  // would be a real security/UX defect — these assertions fail it.
+  it('GitHub login authorize pins allow_signup=true, response_type=code, and the minimal scope', () => {
+    const url = new URL(authorizeUrl('github', 'gh-cid', 'https://app/oauth/github/callback', 'st9'))
+    expect(url.origin + url.pathname).toBe('https://github.com/login/oauth/authorize')
+    expect(url.searchParams.get('client_id')).toBe('gh-cid')
+    expect(url.searchParams.get('redirect_uri')).toBe('https://app/oauth/github/callback')
+    expect(url.searchParams.get('state')).toBe('st9')
+    expect(url.searchParams.get('allow_signup')).toBe('true')
+    expect(url.searchParams.get('response_type')).toBe('code')
+    // EXACT minimal login scope — not the broader connect `repo` scope.
+    expect(url.searchParams.get('scope')).toBe('read:user user:email')
+    expect(url.searchParams.get('scope')).not.toContain('repo')
+  })
 })
 
 describe('exchangeCode', () => {
