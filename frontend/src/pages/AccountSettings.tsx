@@ -61,10 +61,10 @@ export function AccountSettings({ api }: { api: ApiClient }) {
       <form onSubmit={changePw} className="flex flex-col gap-3 border-t border-white/10 pt-6 md:border-l md:border-t-0 md:pl-8 md:pt-0">
         <SectionTitle>{t('settings.password.title')}</SectionTitle>
         <Field label={t('settings.password.current')} hint={t('settings.password.currentHint')}>
-          <Input type="password" autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} placeholder="••••••••" />
+          <Input type="password" autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} />
         </Field>
         <Field label={t('settings.password.new')} hint={t('auth.pwHint')}>
-          <Input type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} placeholder="••••••••" />
+          <Input type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} />
         </Field>
         {pwErr && <ErrorNote>{pwErr}</ErrorNote>}
         <div className="flex items-center gap-3">

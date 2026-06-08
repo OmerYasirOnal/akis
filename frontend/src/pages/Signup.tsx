@@ -41,7 +41,7 @@ export function Signup({ api }: { api: ApiClient }) {
           <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label={t('auth.password')} hint={t('auth.pwHint')}>
-          <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
         <Button type="submit" full loading={busy} disabled={!name || !email || password.length < 8}>{t('auth.signup.cta')}</Button>

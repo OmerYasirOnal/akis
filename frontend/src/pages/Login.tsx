@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react'
+import { useState, useMemo, type FormEvent } from 'react'
 import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
 import { ApiClient, ApiError } from '../api/client.js'
@@ -26,13 +26,15 @@ export function Login({ api }: { api: ApiClient }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
-  // Surface an OAuth callback error passed back as ?error=<code>. Known codes map to a specific
-  // message; an unrecognized/empty code still shows the generic auth.oauth.error.
-  const [err, setErr] = useState<string | undefined>(() => {
+  // OAuth callback errors (?error=<code>) render UP by the OAuth buttons that caused them; form
+  // submit errors render DOWN in the form. Separating them stops an OAuth failure from looking
+  // like an email/password error at the bottom of the card. Known codes map to a specific message;
+  // an unrecognized/empty code still shows the generic auth.oauth.error (never a raw code).
+  const oauthErr = useMemo(() => {
     const code = new URLSearchParams(window.location.search).get('error')
-    if (!code) return undefined
-    return t(OAUTH_ERROR_KEYS[code] ?? 'auth.oauth.error')
-  })
+    return code ? t(OAUTH_ERROR_KEYS[code] ?? 'auth.oauth.error') : undefined
+  }, [t])
+  const [err, setErr] = useState<string | undefined>()
 
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault()
@@ -45,15 +47,18 @@ export function Login({ api }: { api: ApiClient }) {
   return (
     <AuthShell title={t('auth.login.title')} subtitle={t('auth.login.subtitle')}
       footer={<>{t('auth.noAccount')} <Link to="/signup" className="font-semibold text-[#07D1AF] hover:underline">{t('auth.signup.cta')}</Link></>}>
-      <div className="mb-4"><OAuthButtons api={api} /></div>
+      <div className="mb-4 flex flex-col gap-3">
+        {oauthErr && <ErrorNote>{oauthErr}</ErrorNote>}
+        <OAuthButtons api={api} />
+      </div>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.email')}>
           <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label={t('auth.password')}>
-          <PasswordInput autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} required />
         </Field>
-        <Link to="/forgot-password" className="-mt-2 self-end text-xs text-slate-400 hover:text-[#07D1AF]">{t('auth.forgot.link')}</Link>
+        <Link to="/forgot-password" className="self-end py-1 text-sm text-slate-400 transition hover:text-[#07D1AF]">{t('auth.forgot.link')}</Link>
         {err && <ErrorNote>{err}</ErrorNote>}
         <Button type="submit" full loading={busy} disabled={!email || !password}>{t('auth.login.cta')}</Button>
       </form>

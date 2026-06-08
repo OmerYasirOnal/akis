@@ -42,7 +42,7 @@ export function ResetPassword({ api }: { api: ApiClient }) {
       footer={<Link to="/login" className="font-semibold text-[#07D1AF] hover:underline">{t('auth.back')}</Link>}>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.password')} hint={t('auth.pwHint')}>
-          <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
         <Button type="submit" full loading={busy} disabled={password.length < 8}>{t('auth.reset.cta')}</Button>
