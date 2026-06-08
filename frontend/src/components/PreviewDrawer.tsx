@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, type ReactNode } from 'react'
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /** Fill {n}/{base} placeholders in a string (the catalog carries the template). Same local helper idiom
@@ -24,8 +24,12 @@ export interface PreviewDrawerProps {
   onOpen: () => void
   /** Close the drawer (the ✕ calls this). */
   onClose: () => void
-  /** Whether the active build is VERIFIED — drives the dot on the collapsed edge-tab (L3). */
+  /** Whether the active build is VERIFIED — drives the dot on the collapsed edge-tab (L3) AND the mobile FAB. */
   verified?: boolean
+  /** Mobile-overlay (M1) guard: on `<lg` the parent passes false so a persisted `open:true` does NOT
+   *  auto-show the full-screen overlay on load — it requires an explicit FAB tap. Defaults to false so the
+   *  overlay is closed-on-load by default; the desktop push-split is unaffected (it reads `open` directly). */
+  allowAutoOpen?: boolean
   /** Region A: the gate-adjacent card stack (Trust/Publish/Proposals/ExternalWrite). */
   cards: ReactNode
   /** Region B: the PreviewPanel (browser-chrome + DeviceFrame + iframe). */
@@ -51,7 +55,7 @@ export interface PreviewDrawerProps {
  * (`onPointerWidth` live, `commitRatio` on release), which maps it to `--preview-w`/ratio and persists.
  */
 export function PreviewDrawer({
-  open, ratio, onKeyDown, onPointerWidth, commitRatio, onOpen, onClose, verified, cards, preview,
+  open, ratio, onKeyDown, onPointerWidth, commitRatio, onOpen, onClose, verified, allowAutoOpen = false, cards, preview,
 }: PreviewDrawerProps) {
   const { t } = useI18n()
   const drawerId = useId()
@@ -116,10 +120,53 @@ export function PreviewDrawer({
     document.removeEventListener('pointerup', endDrag)
   }, [onPointerMove, endDrag])
 
-  // Desktop-only render (`hidden lg:contents`): the mobile overlay is Task 6. We use a Fragment so the
-  // collapsed EDGE-TAB is a SIBLING of the (aria-hidden) slid-off aside — keeping it in the a11y tree when
-  // the drawer is closed (a button inside an aria-hidden subtree would be unreachable). Both share the
-  // `hidden lg:flex`/`lg:block` desktop gate.
+  // --- MOBILE OVERLAY (<lg) state. The overlay is a full-screen dialog whose open state is INTERNAL to the
+  // drawer (driven by the FAB), NOT the `open` prop — that prop owns the desktop push-split. M1 guard: it is
+  // seeded from `allowAutoOpen && open` so a rehydrated `open:true` does NOT auto-show the overlay on a small
+  // viewport (the parent passes allowAutoOpen=false there); it requires an explicit FAB tap. We seed once via
+  // useState's initializer so a later `open` flip can't retroactively pop the overlay open.
+  const [mobileOpen, setMobileOpen] = useState(() => allowAutoOpen && open)
+  const fabRef = useRef<HTMLButtonElement>(null)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const closeMobile = useCallback(() => { onClose(); setMobileOpen(false) }, [onClose])
+
+  // MOBILE A11Y — mirrors ModelPicker VERBATIM in spirit (#10 modal contract): on open, focus moves INTO the
+  // panel (first focusable = the ✕); Escape closes; Tab is TRAPPED inside the dialog; body scroll is locked
+  // (`overscroll-behavior: contain` so a scroll inside the overlay can't chain to the page); on close, focus
+  // is RESTORED to the FAB that opened it. Only wires up while the overlay is actually open.
+  useEffect(() => {
+    if (!mobileOpen) return
+    const panel = overlayRef.current
+    const focusables = (): HTMLElement[] =>
+      panel ? Array.from(panel.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')) : []
+    focusables()[0]?.focus() // focus the first control on open
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') { e.preventDefault(); closeMobile(); return }
+      if (e.key !== 'Tab') return
+      const f = focusables()
+      if (f.length === 0) return
+      const first = f[0]!, last = f[f.length - 1]!
+      if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
+    }
+    document.addEventListener('keydown', onKey)
+    // Body scroll-lock + overscroll containment while the overlay owns the screen.
+    const prevOverflow = document.body.style.overflow
+    const prevOverscroll = document.body.style.overscrollBehavior
+    document.body.style.overflow = 'hidden'
+    document.body.style.overscrollBehavior = 'contain'
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.body.style.overflow = prevOverflow
+      document.body.style.overscrollBehavior = prevOverscroll
+      // Restore focus to the FAB that opened the overlay (the modal-a11y contract's exit half).
+      fabRef.current?.focus()
+    }
+  }, [mobileOpen, closeMobile])
+
+  // A Fragment so the collapsed EDGE-TAB (desktop) is a SIBLING of the (aria-hidden) slid-off aside — keeping
+  // it in the a11y tree when the drawer is closed (a button inside an aria-hidden subtree would be
+  // unreachable). The desktop aside/edge-tab are `hidden lg:*`; the mobile FAB + overlay are `lg:hidden`.
   return (
     <>
     <aside
@@ -180,6 +227,7 @@ export function PreviewDrawer({
     {!open && (
       <button
         type="button"
+        data-testid="preview-edge-tab"
         onClick={onOpen}
         aria-label={t('preview.open')}
         className="absolute right-0 top-1/2 z-40 hidden -translate-y-1/2 items-center gap-1.5 rounded-l-lg border border-r-0 border-white/10 bg-[#0B1220] px-2 py-3 text-slate-300 shadow-lg transition-colors hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 lg:flex"
@@ -192,6 +240,70 @@ export function PreviewDrawer({
         />
         <span aria-hidden="true" className="text-xs [writing-mode:vertical-rl]">{t('preview.open')}</span>
       </button>
+    )}
+
+    {/* MOBILE POCKET FAB (<lg only) — the persistent reachability handle that replaces the old Chat/Preview
+        tablist. It toggles the full-screen overlay and carries the verified/unverified dot so the trust state
+        is legible even while the preview is pocketed. Always present on small screens (independent of `open`,
+        which owns only the desktop push-split). */}
+    <button
+      ref={fabRef}
+      type="button"
+      data-testid="preview-fab"
+      onClick={() => setMobileOpen(o => !o)}
+      aria-label={t('preview.open')}
+      aria-expanded={mobileOpen}
+      aria-haspopup="dialog"
+      className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/10 bg-[#0B1220] px-4 py-3 text-sm font-semibold text-slate-100 shadow-2xl transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 lg:hidden"
+    >
+      <span
+        data-testid="preview-fab-dot"
+        data-verified={String(!!verified)}
+        aria-hidden="true"
+        className={`h-2 w-2 rounded-full ${verified ? 'bg-[#07D1AF] shadow-[0_0_6px_rgba(7,209,175,0.7)]' : 'bg-slate-500'}`}
+      />
+      <span aria-hidden="true">{t('preview.open')}</span>
+    </button>
+
+    {/* MOBILE OVERLAY (<lg only) — a full-screen `role=dialog aria-modal` shell mirroring ModelPicker's a11y
+        (Escape close, focus-into-on-open, focus-restore-to-FAB-on-close, body scroll-lock). It reuses the SAME
+        two regions (cards + preview) — the slots are rendered a second time here; only one branch is visible
+        per breakpoint (CSS `lg:hidden` vs `hidden lg:flex`). Resize is disabled on mobile (no separator). */}
+    {mobileOpen && (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label={t('preview.title')}
+        className="fixed inset-0 z-50 flex flex-col bg-black/70 lg:hidden"
+        // Tapping the scrim (outside the panel) dismisses — inner clicks stopPropagation below.
+        onClick={closeMobile}
+        // overscroll-behavior:contain so a scroll inside the overlay can't chain to the page underneath.
+        style={{ overscrollBehavior: 'contain' }}
+      >
+        <div
+          ref={overlayRef}
+          onClick={e => e.stopPropagation()}
+          className="flex h-full min-h-0 flex-col border-l border-white/10 bg-[#0B1220] shadow-2xl"
+        >
+          {/* HEADER — close (✕). */}
+          <div className="flex shrink-0 items-center justify-end border-b border-white/10 px-3 py-2">
+            <button
+              type="button"
+              onClick={closeMobile}
+              aria-label={t('preview.close')}
+              className="rounded-md p-1 text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
+            >
+              <span aria-hidden="true">✕</span>
+            </button>
+          </div>
+
+          {/* BODY — the same two scroll regions as the desktop drawer (H1). */}
+          <div className="flex h-full min-h-0 flex-col">
+            <div className="shrink-0 overflow-y-auto px-3 py-3 [max-height:50vh]">{cards}</div>
+            <div className="min-h-0 flex-1">{preview}</div>
+          </div>
+        </div>
+      </div>
     )}
     </>
   )

@@ -48,19 +48,22 @@ describe('PreviewDrawer (desktop)', () => {
     expect(screen.getByTestId('preview-drawer')).toHaveStyle({ transform: 'translateX(0)' })
     expect(screen.getByTestId('cards-slot')).toBeInTheDocument()
     expect(screen.getByTestId('preview-slot')).toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: /open preview|önizlemeyi aç/i })).toBeNull()
+    // No DESKTOP edge-tab when open (the mobile FAB is a separate, always-present pocket handle).
+    expect(screen.queryByTestId('preview-edge-tab')).toBeNull()
   })
 
   it('closed drawer is translated off and shows the edge-tab', () => {
     renderDrawer({ open: false })
     expect(screen.getByTestId('preview-drawer')).toHaveStyle({ transform: 'translateX(100%)' })
-    expect(screen.getByRole('button', { name: /open preview|önizlemeyi aç/i })).toBeInTheDocument()
+    // The desktop edge-tab and the mobile FAB share the localized "Open preview" name (CSS gates which is
+    // visible), so scope to the edge-tab's testid to avoid the ambiguous role+name match in jsdom.
+    expect(screen.getByTestId('preview-edge-tab')).toBeInTheDocument()
   })
 
   it('edge-tab calls onOpen', async () => {
     const onOpen = vi.fn()
     renderDrawer({ open: false, onOpen })
-    await userEvent.click(screen.getByRole('button', { name: /open preview|önizlemeyi aç/i }))
+    await userEvent.click(screen.getByTestId('preview-edge-tab'))
     expect(onOpen).toHaveBeenCalledTimes(1)
   })
 
@@ -90,5 +93,78 @@ describe('PreviewDrawer (desktop)', () => {
     screen.getByRole('separator').focus()
     await userEvent.keyboard('{ArrowLeft}')
     expect(onKeyDown).toHaveBeenCalled()
+  })
+})
+
+describe('PreviewDrawer (mobile overlay)', () => {
+  // jsdom doesn't evaluate the Tailwind `lg:` breakpoints, so BOTH the desktop drawer and the mobile
+  // overlay live in the DOM at once; CSS hides one in a real browser. The mobile overlay's INITIAL show is
+  // driven by `allowAutoOpen` (the parent sets it false on small viewports per M1), not the `open` prop —
+  // so these tests exercise that JS-level contract directly rather than faking a viewport.
+
+  it('persisted open=true does NOT auto-show the overlay on load; the FAB is shown instead (M1)', () => {
+    // The default props carry open=true (a rehydrated persisted state). With allowAutoOpen defaulting to
+    // false the overlay must stay closed until an explicit FAB tap — no dialog, only the pocket handle.
+    renderDrawer({ open: true })
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByTestId('preview-fab')).toBeInTheDocument()
+  })
+
+  it('tapping the FAB opens a role=dialog aria-modal overlay with BOTH regions', async () => {
+    renderDrawer({ open: true })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const dlg = screen.getByRole('dialog')
+    expect(dlg).toHaveAttribute('aria-modal', 'true')
+    // Both regions render inside the overlay (the slots are shared with the desktop drawer, so query
+    // within the dialog to disambiguate from the desktop copy).
+    expect(dlg.querySelector('[data-testid="cards-slot"]')).not.toBeNull()
+    expect(dlg.querySelector('[data-testid="preview-slot"]')).not.toBeNull()
+  })
+
+  it('Escape on the open overlay calls onClose AND closes the overlay (focus restored to the FAB)', async () => {
+    const onClose = vi.fn()
+    renderDrawer({ open: true, onClose })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).toHaveBeenCalled()
+    // The overlay is internal view-state: Escape collapses it back to the FAB and returns focus there.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    expect(screen.getByTestId('preview-fab')).toHaveFocus()
+  })
+
+  it('opening moves focus INTO the overlay panel (focus trap entry)', async () => {
+    renderDrawer({ open: true })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const dlg = screen.getByRole('dialog')
+    // Focus landed on a control inside the dialog (the close ✕ is the first focusable), not left on body.
+    expect(dlg.contains(document.activeElement)).toBe(true)
+    expect(document.activeElement).not.toBe(document.body)
+  })
+
+  it('the overlay close ✕ collapses it back to the FAB', async () => {
+    const onClose = vi.fn()
+    renderDrawer({ open: true, onClose })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const dlg = screen.getByRole('dialog')
+    const close = dlg.querySelector<HTMLButtonElement>('button[aria-label="Close preview"]')!
+    await userEvent.click(close)
+    expect(onClose).toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
+  it('the FAB carries the verified dot when verified', () => {
+    renderDrawer({ open: true, verified: true })
+    const dot = screen.getByTestId('preview-fab-dot')
+    expect(dot).toBeInTheDocument()
+    expect(dot.getAttribute('data-verified')).toBe('true')
+  })
+
+  it('Escape with the overlay CLOSED does not call onClose', async () => {
+    const onClose = vi.fn()
+    renderDrawer({ open: true, onClose })
+    // No FAB tap → overlay never opened → Escape is inert (the desktop drawer owns no keyboard close).
+    await userEvent.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
   })
 })
