@@ -387,6 +387,49 @@ describe('buildAdvisoryToolsWithGithub', () => {
     expect(reg.specs().map(s => s.name)).toEqual(['retrieve_knowledge'])
     expect(() => release()).not.toThrow()
   })
+
+  it('NFR-6: github read-build FAILS but store+cap present ⇒ propose_github_write STILL registers; release() is idempotent', async () => {
+    // The propose tool is surfaced under the SAME connection condition as the github READ tools, but is
+    // INDEPENDENT of the read child actually spawning (advisoryTools.ts ~88): a degraded Docker/MCP build
+    // still records proposals (a pure store-append), but a build with NO connection never sees it. Here the
+    // read transport throws McpUnavailableError on init — ZERO github_ read tools register — yet the propose
+    // capability must survive, because the human-confirm route is the only executor and proposing has no
+    // side effect. A regression that coupled propose_github_write to a successful read build would drop it.
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'idea', 'owner-1') })
+    const t = new FakeTransport({ onInit: () => { throw new McpUnavailableError('docker missing') } })
+    const { pool } = poolWith(t)
+    const { registry: reg, release } = await buildAdvisoryToolsWithGithub(new Set(['propose_github_write']), {
+      sessionId: 's1',
+      githubMcp: { pool, ownerId: 'o', token: SECRET, diag: () => {} },
+      store,
+    })
+    const names = reg.specs().map(s => s.name)
+    expect(names).toContain('propose_github_write')                    // survives the degraded read build
+    expect(names.some(n => n.startsWith('github_'))).toBe(false)       // no read tool registered (init threw)
+    // The propose tool holds NO ref, so release is a safe no-op — and calling it twice never throws.
+    expect(() => { release(); release() }).not.toThrow()
+  })
+
+  it('NFR-6: a github pool whose acquire REJECTS still yields a propose_github_write tool + an idempotent release', async () => {
+    // The harder degrade: the pool's acquire rejects outright (e.g. a transient pool failure). The github
+    // source contributes no read tools, but the propose-only branch is reached independently, so the agent
+    // can still PROPOSE. The returned release must remain callable and idempotent regardless of how the
+    // read source degraded.
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'idea', 'owner-1') })
+    const t = new FakeTransport()
+    const { pool } = poolWith(t)
+    // Force acquire to reject so buildGithubMcpTools degrades to honest absence (no read tools, no ref held).
+    pool.acquire = async () => { throw new Error('pool exhausted') }
+    const { registry: reg, release } = await buildAdvisoryToolsWithGithub(new Set(['propose_github_write']), {
+      sessionId: 's1',
+      githubMcp: { pool, ownerId: 'o', token: SECRET, diag: () => {} },
+      store,
+    })
+    expect(reg.specs().map(s => s.name)).toContain('propose_github_write')
+    expect(() => { release(); release() }).not.toThrow()
+  })
 })
 
 // ─────────────────────────────────────────────────────────────────────────────
