@@ -206,6 +206,9 @@ export const STRINGS = {
     'preview.unsupported': 'This app can’t be previewed live.',
     'preview.retry': 'Retry',
     'preview.bootSlow': 'Still booting — taking longer than expected.',
+    // ── Preview header actions (only when the URL is embeddable /preview/) ──
+    'preview.openTab': 'Open in new tab',
+    'preview.copyUrl': 'Copy URL',
     // ── Preview drawer + device toggle ──
     'preview.open': 'Open preview',
     'preview.close': 'Close preview',
@@ -979,6 +982,9 @@ export const STRINGS = {
     'preview.unsupported': 'Bu uygulama canlı önizlenemiyor.',
     'preview.retry': 'Yeniden dene',
     'preview.bootSlow': 'Hâlâ başlatılıyor — beklenenden uzun sürüyor.',
+    // ── Önizleme başlık eylemleri (yalnızca URL gömülebilir /preview/ olduğunda) ──
+    'preview.openTab': 'Yeni sekmede aç',
+    'preview.copyUrl': "URL'yi kopyala",
     // ── Önizleme çekmecesi + cihaz geçişi ──
     'preview.open': 'Önizlemeyi aç',
     'preview.close': 'Önizlemeyi kapat',

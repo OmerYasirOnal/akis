@@ -6,6 +6,7 @@ import { CodeBrowser } from './CodeBrowser.js'
 import { TrustReport } from './TrustReport.js'
 import { DeviceFrame } from './DeviceFrame.js'
 import type { Device } from './DeviceFrame.js'
+import { CopyButton } from './CopyButton.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -107,6 +108,34 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
           <h3 className="text-sm font-semibold text-slate-200">{t('preview.title')}</h3>
         )}
         <div className="flex items-center gap-2">
+          {/* Preview header actions — ONLY when the live URL is embeddable (`/preview/`) AND the
+              Preview tab is active (Code/Trust don't show the running app). A non-/preview/ or
+              missing URL renders NEITHER button (honesty — no dead affordances). `url` is the same
+              relative path the iframe loads, so opening it in a tab is the SAME app at the SAME
+              studio origin — no new gate/security surface. */}
+          {embeddable && activeTab === 'preview' && url && (
+            <>
+              {/* Open the running app full-screen in a new tab. `window.open` with the relative
+                  `/preview/:id/` resolves against the studio origin (identical to the iframe src);
+                  noopener,noreferrer keeps the new tab from reaching back into the studio. */}
+              <button
+                type="button"
+                aria-label={t('preview.openTab')}
+                title={t('preview.openTab')}
+                onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
+                className="inline-flex items-center rounded border border-white/15 px-2 py-1 text-[11px] text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
+              >
+                <span aria-hidden="true">↗</span>
+              </button>
+              {/* Copy the ABSOLUTE preview URL so it's shareable/openable outside the studio (a bare
+                  relative path is useless on its own). Reuses the shared CopyButton idiom. */}
+              <CopyButton
+                text={new URL(url, location.origin).href}
+                label={t('preview.copyUrl')}
+                className="motion-safe:active:scale-95"
+              />
+            </>
+          )}
           {/* P1-CORE-1: when the boot is in demo mode (mock provider/verification), the embedded
               "running app" is a demo, not a real-verified build — flag it on the preview itself. */}
           {/* Pills normalized (review): one shape — rounded-md + 1px border + matching padding — so
