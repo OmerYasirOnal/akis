@@ -448,3 +448,47 @@ describe('ChatStudio — preview drawer (push-split shell + auto-open on ready)'
     await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
   })
 })
+
+// ── LOW-2 (no first-frame flash): a persisted-OPEN drawer must paint at the RIGHT width on the very
+//    first frame. `containerWidth` starts 0 (jsdom has no ResizeObserver), so without the synchronous
+//    useLayoutEffect seed the shell's `--preview-w` would be '0px' (a collapsed-drawer flash). The seed
+//    measures the shell's rect BEFORE paint, so `--preview-w` is already correct on the first commit. ──
+describe('ChatStudio — LOW-2 first-frame width seed (no collapsed-drawer flash)', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
+  afterEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/'); vi.restoreAllMocks() })
+
+  it('seeds containerWidth via useLayoutEffect so --preview-w is non-zero on first paint when the drawer persists open', () => {
+    // Persisted state: the drawer was left OPEN at ratio 0.46 (the F5 case). useResizable rehydrates
+    // open=true from this; the seed must make --preview-w reflect a real width immediately.
+    localStorage.setItem('akis_preview_drawer', JSON.stringify({ open: true, ratio: 0.46 }))
+    // jsdom returns width:0 from getBoundingClientRect by default; mock it so the synchronous seed reads
+    // a real shell width (the only width source in tests — there is no ResizeObserver in jsdom).
+    const SHELL_W = 1000
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: SHELL_W, height: 600, top: 0, left: 0, right: SHELL_W, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect)
+
+    const api = new ApiClient('', vi.fn(async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response)))
+    const fake = new FakeStream()
+    const { container } = render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    // The shell carries the single source-of-truth split var. With the seed it is the clamped
+    // ratio*width (clampRatio(0.46, 1000) floors at MIN_PX/1000 = 0.48 → 480px), NOT the '0px' flash.
+    const shell = container.querySelector('[data-preview-shell]') as HTMLElement
+    expect(shell.style.getPropertyValue('--preview-w')).toBe('480px')
+    expect(shell.style.getPropertyValue('--preview-w')).not.toBe('0px')
+  })
+
+  it('leaves --preview-w at 0px when the persisted drawer is CLOSED (seed only matters while open)', () => {
+    localStorage.setItem('akis_preview_drawer', JSON.stringify({ open: false, ratio: 0.46 }))
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 1000, height: 600, top: 0, left: 0, right: 1000, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect)
+    const api = new ApiClient('', vi.fn(async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response)))
+    const fake = new FakeStream()
+    const { container } = render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    const shell = container.querySelector('[data-preview-shell]') as HTMLElement
+    // Closed → no split → full-width chat; the seed doesn't force a width open.
+    expect(shell.style.getPropertyValue('--preview-w')).toBe('0px')
+  })
+})

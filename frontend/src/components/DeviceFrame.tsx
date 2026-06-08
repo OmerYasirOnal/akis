@@ -72,8 +72,10 @@ export function DeviceFrame(
                 aria-pressed={device === d}
                 aria-label={labelFor(d)}
                 onClick={() => onDevice(d)}
+                // Smooth active/hover swap (the bg+text crossfade reads as a settled toggle, not a
+                // hard cut); the tap-down scale is `motion-safe:` so reduced-motion keeps it instant.
                 className={[
-                  'rounded-md px-2 py-1 transition-colors',
+                  'rounded-md px-2 py-1 transition-colors motion-safe:active:scale-95',
                   device === d
                     ? 'bg-white/10 text-slate-100'
                     : 'text-slate-400 hover:text-slate-200',
@@ -97,7 +99,13 @@ export function DeviceFrame(
       <div className="relative flex-1 overflow-auto bg-slate-950">
         <div
           data-testid="device-frame"
-          className="mx-auto h-full"
+          // WIDTH MOTION (Task: polish): the logical width glides between presets
+          // (Responsive ↔ Mobil ↔ Masaüstü) instead of snapping. `motion-safe:` collapses it to an
+          // instant change under prefers-reduced-motion (a11y). During a separator drag the drawer's
+          // ancestor carries `is-dragging`, and `[.is-dragging_&]:!transition-none` KILLS the width
+          // transition so a Desktop-preset width (capped at the live paneWidth) tracks the pointer 1:1
+          // instead of lagging behind by the 200ms ease — a smudgy drag would feel broken.
+          className="mx-auto h-full motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out [.is-dragging_&]:!transition-none"
           style={{ width: widthStyle }}
         >
           {children}

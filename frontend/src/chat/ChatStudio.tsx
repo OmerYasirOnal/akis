@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import type { StringKey } from '../i18n/catalog.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -83,6 +83,19 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // ABSOLUTE sibling out of the flex flow, so this measures the chat column's available width.
   const shellRef = useRef<HTMLDivElement | null>(null)
   const [containerWidth, setContainerWidth] = useState(0)
+  // LOW-2 (no first-frame flash): on a reload where the persisted drawer is OPEN, `containerWidth`
+  // starts 0, so `previewW` resolves to '0px' and the drawer would paint at width:0 for the one frame
+  // before the ResizeObserver fires post-paint — a visible flash of a collapsed drawer. Measure the
+  // shell SYNCHRONOUSLY before paint here and seed `containerWidth` so `--preview-w` is already correct
+  // on the first frame. Guarded to only seed while still 0 (and only when the rect has real width) so
+  // it never fights the ResizeObserver below, which owns every subsequent resize. useLayoutEffect runs
+  // before the browser paints; useEffect would run after, defeating the purpose.
+  useLayoutEffect(() => {
+    const el = shellRef.current
+    if (!el) return
+    const w = el.getBoundingClientRect().width
+    if (w > 0) setContainerWidth(prev => (prev === 0 ? w : prev))
+  }, [])
   useEffect(() => {
     const el = shellRef.current
     if (!el || typeof ResizeObserver === 'undefined') return
@@ -490,7 +503,14 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           into the remaining space); below lg the drawer is a full-screen overlay → NO padding (the
           lg:[padding-right] arbitrary class applies the var only at lg+). */}
       <section
-        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm transition-[padding] duration-200 ease-out ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
+        // PUSH-SPLIT MOTION: the chat reflows its right padding by `--preview-w` as the drawer opens/
+        // closes. `motion-safe:` so it snaps INSTANTLY under prefers-reduced-motion (a11y) — it must
+        // stay in lockstep with the drawer's own `motion-safe` slide, so both honor the same media query.
+        // DRAG GUARD: during a separator drag the parent writes `--preview-w` per rAF; the padding ease
+        // would LAG the live cursor, so the shell carries `.is-dragging` for the drag and
+        // `[.is-dragging_&]:!transition-none` drops the ease → the split tracks the pointer 1:1. The next
+        // render after release restores the committed value with the transition back on (no flash).
+        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
       >
         {header}
         <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>

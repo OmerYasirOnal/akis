@@ -89,6 +89,9 @@ export function PreviewDrawer({
     if (node) {
       node.classList.remove('is-dragging')
       node.closest('[data-testid="preview-drawer"]')?.classList.remove('is-dragging')
+      // Also drop it from the SHELL so the chat push-split padding + device-frame width transitions
+      // (which gate off `.is-dragging`) re-enable now that the 1:1 drag is over (see onPointerDown).
+      node.closest('[data-preview-shell]')?.classList.remove('is-dragging')
       try { node.releasePointerCapture(e.pointerId) } catch { /* capture may already be gone */ }
     }
     document.removeEventListener('pointermove', onPointerMove)
@@ -108,6 +111,12 @@ export function PreviewDrawer({
       try { node.setPointerCapture(e.pointerId) } catch { /* non-fatal: drag still tracked via doc listeners */ }
       node.classList.add('is-dragging')
       node.closest('[data-testid="preview-drawer"]')?.classList.add('is-dragging')
+      // Mark the SHELL too: the parent writes `--preview-w` per rAF during the drag, and the chat
+      // push-split padding + the device-frame width both ease that var by default — which would LAG the
+      // pointer. Gating their transitions off `.is-dragging` on the shell (a common ancestor of both)
+      // kills the ease for the duration of the drag so the split tracks the cursor 1:1; the next render
+      // after release restores the committed value with the transition back on (no flash).
+      node.closest('[data-preview-shell]')?.classList.add('is-dragging')
     }
     document.addEventListener('pointermove', onPointerMove)
     document.addEventListener('pointerup', endDrag)
@@ -176,8 +185,17 @@ export function PreviewDrawer({
       // Push-split: the parent shifts the chat by `--preview-w`; this drawer fills that strip. translateX
       // 100% slides it fully off-screen when collapsed (the edge-tab stays). `[&.is-dragging_iframe]:…`
       // makes the iframe ignore pointer events DURING a drag so it can't swallow the gesture.
-      style={{ transform: open ? 'translateX(0)' : 'translateX(100%)', width: 'var(--preview-w)' }}
-      className="absolute inset-y-0 right-0 z-30 hidden flex-col border-l border-white/10 bg-[#0B1220] shadow-2xl transition-transform duration-200 ease-out lg:flex [&.is-dragging_iframe]:pointer-events-none"
+      // MOTION (Task: polish): the slide is `motion-safe:` so it collapses to an INSTANT snap under
+      // prefers-reduced-motion (a11y) — duration-300 ease-out reads as a smooth glide on a pro surface.
+      // DEPTH CUE: when open the drawer carries a soft left-edge shadow (a thin teal-tinted edge over a
+      // wider dark falloff) so it reads as FLOATING over the pushed chat rather than a flat seam; closed
+      // it drops to the plain shadow-2xl (no stray glow off-screen).
+      style={{
+        transform: open ? 'translateX(0)' : 'translateX(100%)',
+        width: 'var(--preview-w)',
+        ...(open ? { boxShadow: '-12px 0 32px -8px rgba(0,0,0,0.55), -1px 0 0 0 rgba(7,209,175,0.12)' } : {}),
+      }}
+      className="absolute inset-y-0 right-0 z-30 hidden flex-col border-l border-white/10 bg-[#0B1220] shadow-2xl motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out lg:flex [&.is-dragging_iframe]:pointer-events-none"
     >
       {/* LEFT-EDGE RESIZE SEPARATOR — keyboard splitter + pointer drag (capture on this stable node). */}
       <div
@@ -196,8 +214,13 @@ export function PreviewDrawer({
         style={{ touchAction: 'none' }}
         className="group absolute inset-y-0 left-0 z-10 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center focus:outline-none"
       >
-        {/* The visible hairline grows on hover/focus — the hit-area (w-3) stays wide for easy grabbing. */}
-        <span className="h-full w-px bg-white/10 transition-colors group-hover:bg-[#07D1AF]/60 group-focus:bg-[#07D1AF]" aria-hidden="true" />
+        {/* The visible hairline grows on hover/focus — the hit-area (w-3) stays wide for easy grabbing.
+            KEYBOARD FOCUS (a11y): the global :focus-visible teal outline is suppressed here (the handle
+            is a 12px hit-strip, so an offset outline would float oddly), so the hairline itself becomes
+            the focus affordance — it THICKENS to a 2px teal bar with a soft glow on group-focus-visible,
+            giving keyboard users a clear, in-place focus ring. Hover only tints (no width jump). The
+            color/size change is `motion-safe:` so it's instant under reduced-motion. */}
+        <span className="h-full w-px bg-white/10 motion-safe:transition-all group-hover:bg-[#07D1AF]/60 group-focus-visible:w-0.5 group-focus-visible:bg-[#07D1AF] group-focus-visible:shadow-[0_0_6px_rgba(7,209,175,0.7)]" aria-hidden="true" />
       </div>
 
       {/* HEADER — close (✕). */}
@@ -230,7 +253,11 @@ export function PreviewDrawer({
         data-testid="preview-edge-tab"
         onClick={onOpen}
         aria-label={t('preview.open')}
-        className="absolute right-0 top-1/2 z-40 hidden -translate-y-1/2 items-center gap-1.5 rounded-l-lg border border-r-0 border-white/10 bg-[#0B1220] px-2 py-3 text-slate-300 shadow-lg transition-colors hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 lg:flex"
+        // MICRO-INTERACTION (subtle): on hover/focus the tab nudges ~2px LEFT off the edge (a "peek"
+        // hint that it's grabbable) and lifts its border to teal. `motion-safe:` so the nudge collapses
+        // to instant under reduced-motion; the color shift still applies (a non-distracting cue). The
+        // verified dot below is the persistent trust signal, untouched.
+        className="group absolute right-0 top-1/2 z-40 hidden -translate-y-1/2 items-center gap-1.5 rounded-l-lg border border-r-0 border-white/10 bg-[#0B1220] px-2 py-3 text-slate-300 shadow-lg transition-[colors,transform,border-color] hover:border-[#07D1AF]/30 hover:text-slate-100 hover:[transform:translateY(-50%)_translateX(-2px)] focus-visible:border-[#07D1AF]/30 focus-visible:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 motion-reduce:transition-colors motion-reduce:hover:[transform:translateY(-50%)] lg:flex"
       >
         <span
           data-testid="preview-edge-dot"
@@ -254,7 +281,9 @@ export function PreviewDrawer({
       aria-label={t('preview.open')}
       aria-expanded={mobileOpen}
       aria-haspopup="dialog"
-      className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/10 bg-[#0B1220] px-4 py-3 text-sm font-semibold text-slate-100 shadow-2xl transition-colors hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 lg:hidden"
+      // MICRO-INTERACTION: a small tap-down scale gives the pocket FAB tactile feedback on touch;
+      // `motion-safe:` keeps it instant under reduced-motion (the bg/ring hover cues still apply).
+      className="fixed bottom-4 right-4 z-40 flex items-center gap-2 rounded-full border border-white/10 bg-[#0B1220] px-4 py-3 text-sm font-semibold text-slate-100 shadow-2xl transition-[colors,transform] hover:bg-white/[0.06] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 motion-safe:active:scale-95 lg:hidden"
     >
       <span
         data-testid="preview-fab-dot"

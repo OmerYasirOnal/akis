@@ -84,19 +84,21 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
           // Preview ⇄ Code ⇄ Trust toggle — Code surfaces once files exist, Trust once a
           // verification has produced structured evidence.
           <div role="tablist" aria-label={t('preview.title')} className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+            {/* Tab buttons crossfade their active/hover state (transition-colors) for a settled toggle
+                rather than a hard cut; the tap-down scale is `motion-safe:` (instant under reduced-motion). */}
             <button role="tab" aria-selected={activeTab === 'preview'} onClick={() => setTab('preview')}
-              className={`rounded-md px-2.5 py-1 ${activeTab === 'preview' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+              className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'preview' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
               {t('preview.tab.preview')}
             </button>
             {fileCount > 0 && (
               <button role="tab" aria-selected={activeTab === 'code'} onClick={() => setTab('code')}
-                className={`rounded-md px-2.5 py-1 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+                className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
                 {t('preview.tab.code')} <span className="text-slate-500">{fileCount}</span>
               </button>
             )}
             {hasTrust && (
               <button role="tab" aria-selected={activeTab === 'trust'} onClick={() => setTab('trust')}
-                className={`rounded-md px-2.5 py-1 ${activeTab === 'trust' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+                className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'trust' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
                 {t('trust.tab')}
               </button>
             )}
