@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { CORE_ROLES, type Role, type AgentConfig } from '@akis/shared'
 import { ApiClient, type ProviderInfo } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
-import { Select } from '../ui/kit.js'
+import { Select, Button } from '../ui/kit.js'
 
 type Selection = Record<string, { providerId: string; modelId: string }>
 
@@ -56,22 +56,24 @@ export function AgentsTab({ api }: { api: ApiClient }) {
       </div>
 
       <div className="overflow-hidden rounded-lg border border-white/10">
-        <div className="grid grid-cols-3 gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] uppercase tracking-widest text-slate-500">
+        {/* 3-column header only from md — below that each row stacks (role caption + 2 selects),
+            so the two comboboxes are full-width and tappable at 390px instead of crushed. */}
+        <div className="hidden grid-cols-3 gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-2 text-[10px] uppercase tracking-widest text-slate-400 md:grid">
           <span>{t('agents.roster')}</span><span>{t('agents.provider')}</span><span>{t('agents.model')}</span>
         </div>
         {CORE_ROLES.map(role => {
           const cur = sel[role]
           const provider = available.find(p => p.id === cur?.providerId)
           return (
-            <div key={role} className="grid grid-cols-3 items-center gap-2 px-3 py-2 text-sm">
-              <span className="font-medium text-slate-200">{role}</span>
-              <Select aria-label={`${role}-provider`} className="py-1.5 text-sm"
+            <div key={role} className="grid grid-cols-1 gap-2 border-b border-white/5 px-3 py-3 text-sm last:border-b-0 md:grid-cols-3 md:items-center md:border-b-0 md:py-2">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-400 md:text-sm md:font-medium md:normal-case md:tracking-normal md:text-slate-200">{role}</span>
+              <Select aria-label={`${role}-provider`} className="py-2 text-sm md:py-1.5"
                 value={cur?.providerId ?? ''}
                 onChange={e => { const p = available.find(x => x.id === e.target.value); setAgent(role, e.target.value, p?.defaultModel ?? '') }}>
                 <option value="">{t('agents.default')}</option>
                 {available.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
               </Select>
-              <Select aria-label={`${role}-model`} className="py-1.5 text-sm"
+              <Select aria-label={`${role}-model`} className="py-2 text-sm md:py-1.5"
                 value={cur?.modelId ?? ''} disabled={!provider}
                 onChange={e => cur && setAgent(role, cur.providerId, e.target.value)}>
                 <option value="">{t('agents.default')}</option>
@@ -83,10 +85,7 @@ export function AgentsTab({ api }: { api: ApiClient }) {
       </div>
 
       <div className="flex items-center gap-3">
-        <button onClick={save} disabled={busy}
-          className="rounded-lg bg-gradient-to-r from-cyan-400 to-violet-500 px-4 py-2 font-semibold text-slate-900 disabled:opacity-40">
-          {t('agents.save')}
-        </button>
+        <Button onClick={save} disabled={busy}>{t('agents.save')}</Button>
         {saved && <span className="text-sm text-emerald-300">{t('agents.saved')}</span>}
       </div>
     </div>

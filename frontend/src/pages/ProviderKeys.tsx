@@ -36,18 +36,23 @@ export function ProviderKeys({ api }: { api: ApiClient }) {
       <SectionTitle sub={t('settings.keys.sub')}>{t('settings.keys.title')}</SectionTitle>
       {err && <div className="mb-3"><ErrorNote>{err}</ErrorNote></div>}
       <div className="flex flex-col gap-3">
+        {/* Explicit responsive grid (not flex-wrap, which orphaned the Save button onto a new line
+            under the input): stacked label/input/actions on mobile; a 7rem · 1fr · auto single row
+            from sm. The action buttons are grouped so they never split. */}
         {providers.map(p => (
-          <div key={p.id} className="flex flex-wrap items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
-            <div className="w-28 shrink-0">
+          <div key={p.id} className="grid grid-cols-1 gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-center">
+            <div>
               <div className="text-sm font-semibold text-slate-100">{p.label}</div>
-              <div className={`text-xs ${p.available ? 'text-[#07D1AF]' : 'text-slate-500'}`}>
+              <div className={`text-xs ${p.available ? 'text-[#07D1AF]' : 'text-slate-400'}`}>
                 {p.available ? `${t('settings.keys.connected')}${p.last4 ? ` · ••••${p.last4}` : ''}` : t('settings.keys.notConnected')}
               </div>
             </div>
             <Input type="password" aria-label={`${p.label} key`} value={drafts[p.id] ?? ''} placeholder={t('settings.keys.placeholder')}
-              onChange={e => setDrafts(d => ({ ...d, [p.id]: e.target.value }))} className="min-w-0 flex-1" />
-            <Button variant="ghost" onClick={() => void save(p.id)} disabled={busy === p.id || !(drafts[p.id] ?? '').trim()}>{t('settings.keys.save')}</Button>
-            {p.last4 && <Button variant="subtle" onClick={() => void remove(p.id)} disabled={busy === p.id}>{t('settings.keys.remove')}</Button>}
+              onChange={e => setDrafts(d => ({ ...d, [p.id]: e.target.value }))} className="min-w-0" />
+            <div className="flex shrink-0 items-center gap-2">
+              <Button variant="ghost" onClick={() => void save(p.id)} disabled={busy === p.id || !(drafts[p.id] ?? '').trim()}>{t('settings.keys.save')}</Button>
+              {p.last4 && <Button variant="subtle" onClick={() => void remove(p.id)} disabled={busy === p.id}>{t('settings.keys.remove')}</Button>}
+            </div>
           </div>
         ))}
       </div>
