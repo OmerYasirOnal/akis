@@ -5,9 +5,15 @@ import { I18nProvider } from '../i18n/I18nContext.js'
 import { RouterProvider } from '../router/router.js'
 import type { ApiClient, ExternalWriteSummary } from '../api/client.js'
 
+// Default connected status grants Confluence write so the legacy publish-to-Confluence flow still
+// renders. The scope string mirrors the backend grant (write:confluence-content = createPage capability).
+const SCOPES_WITH_CONFLUENCE = 'offline_access read:me read:jira-work write:jira-work read:confluence-content.all write:confluence-content'
+// JIRA-ONLY grant (owner decision 2026-06-08) — no Confluence write, so createPage must NOT be offered.
+const SCOPES_JIRA_ONLY = 'offline_access read:me read:jira-work write:jira-work'
+
 function makeApi(over: Partial<Record<keyof ApiClient, unknown>> = {}): ApiClient {
   return {
-    mcpStatus: vi.fn(() => Promise.resolve({ connected: true })),
+    mcpStatus: vi.fn(() => Promise.resolve({ connected: true, scopes: SCOPES_WITH_CONFLUENCE })),
     listExternalWrites: vi.fn(() => Promise.resolve({ writes: [] as ExternalWriteSummary[] })),
     proposeExternalWrite: vi.fn(() => Promise.resolve({ id: 'w1', digest: 'a'.repeat(64), summary: 'Create Confluence page “App” in ENG' })),
     confirmExternalWrite: vi.fn(() => Promise.resolve({ ok: true, status: 'executed', result: 'https://org/wiki/PAGE-1' })),
@@ -47,6 +53,30 @@ describe('ExternalWriteCard (connection-aware publish to Jira/Confluence)', () =
     fireEvent.click(screen.getByRole('button', { name: /Confirm \+ publish/ }))
     await waitFor(() => expect(api.confirmExternalWrite).toHaveBeenCalledWith('s1', 'w1', 'a'.repeat(64)))
     await waitFor(() => expect(screen.getByText(/PAGE-1/)).toBeInTheDocument())
+  })
+
+  it('JIRA-ONLY grant → Confluence publish HIDDEN (no createPage that would fail at execution); Jira unaffected', async () => {
+    const api = makeApi({ mcpStatus: vi.fn(() => Promise.resolve({ connected: true, scopes: SCOPES_JIRA_ONLY })) })
+    ui(api)
+    // Jira stays available...
+    await waitFor(() => expect(screen.getByRole('button', { name: /Create Jira issue/ })).toBeInTheDocument())
+    // ...but Confluence is gone, with an explanatory note (data-driven on the granted scope).
+    expect(screen.queryByRole('button', { name: /Publish to Confluence/ })).not.toBeInTheDocument()
+    expect(screen.getByText(/Confluence publishing isn’t available/)).toBeInTheDocument()
+  })
+
+  it('scopes unknown (connected but no scopes field) → FAIL SAFE, Confluence not offered', async () => {
+    const api = makeApi({ mcpStatus: vi.fn(() => Promise.resolve({ connected: true })) })
+    ui(api)
+    await waitFor(() => expect(screen.getByRole('button', { name: /Create Jira issue/ })).toBeInTheDocument())
+    expect(screen.queryByRole('button', { name: /Publish to Confluence/ })).not.toBeInTheDocument()
+  })
+
+  it('grant INCLUDES write:confluence-content → Confluence publish is offered again (auto-restore)', async () => {
+    const api = makeApi() // default scopes include write:confluence-content
+    ui(api)
+    await waitFor(() => expect(screen.getByRole('button', { name: /Publish to Confluence/ })).toBeInTheDocument())
+    expect(screen.queryByText(/Confluence publishing isn’t available/)).not.toBeInTheDocument()
   })
 
   it('renders the proposal history with status badges', async () => {
