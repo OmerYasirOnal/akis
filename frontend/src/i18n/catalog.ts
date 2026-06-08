@@ -216,9 +216,11 @@ export const STRINGS = {
     'preview.resizeValue': 'Preview {n}% of width',
     'preview.device.responsive': 'Responsive',
     'preview.device.mobile': 'Mobile',
+    'preview.device.tablet': 'Tablet',
     'preview.device.desktop': 'Desktop',
     'preview.device.label': 'Preview width',
     'preview.device.unit': 'px',
+    'preview.rotate': 'Rotate',
     // ── Publish to your own server (OCI) — POST-`done`, optional, NON-GATING ──
     'publish.title': 'Publish to your server',
     'publish.publish': 'Publish',
@@ -992,9 +994,11 @@ export const STRINGS = {
     'preview.resizeValue': "Önizleme genişliğin %{n}'i",
     'preview.device.responsive': 'Esnek',
     'preview.device.mobile': 'Mobil',
+    'preview.device.tablet': 'Tablet',
     'preview.device.desktop': 'Masaüstü',
     'preview.device.label': 'Önizleme genişliği',
     'preview.device.unit': 'px',
+    'preview.rotate': 'Döndür',
     // ── Kendi sunucuna yayınla (OCI) — `done` SONRASI, isteğe bağlı, KAPI DEĞİL ──
     'publish.title': 'Sunucuna yayınla',
     'publish.publish': 'Yayınla',

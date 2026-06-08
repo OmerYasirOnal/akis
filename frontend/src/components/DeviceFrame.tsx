@@ -2,33 +2,55 @@
  * DeviceFrame — wraps the preview iframe and sets its LOGICAL width per device preset.
  *
  * WHY: the preview panel needs to emulate different viewport widths without transform-scale
- * (v1 scope: no rotate, no tablet, no scale). The wrapper div is mx-auto'd inside a dark
- * letterbox so the iframe scrolls horizontally when smaller than the pane (desktop on a
- * narrow panel) while the rest of the panel vertically scrolls independently.
+ * (we NEVER upscale a mobile/tablet preset — scaling up muddies text). The wrapper div is
+ * mx-auto'd inside a dark letterbox so the iframe scrolls horizontally when smaller than the
+ * pane (a wide preset on a narrow panel) while the rest of the panel vertically scrolls
+ * independently.
  *
- * Width rules (v1):
+ * Width rules:
  *   responsive → 100%  (fills the pane)
- *   mobile     → 390px (iPhone logical width, hardcoded)
+ *   mobile     → 390px portrait / 844px landscape (iPhone logical 390×844)
+ *   tablet     → 768px portrait / 1024px landscape (iPad logical 768×1024)
  *   desktop    → min(1280, paneWidth)px  (capped so the user sees the full width)
+ *
+ * Rotate (mobile/tablet only): swaps the preset's width↔height so the app's portrait/landscape
+ * media queries fire authentically. We only set the iframe container's WIDTH — the iframe itself
+ * (sandbox/allow/src) is never touched. Orientation is local state and RESETS to portrait when
+ * the device changes (or moves to responsive/desktop, where rotate is meaningless).
  *
  * The device toggle row is ONLY shown when tab === 'preview' (M4 from plan).
  */
 import type { ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { useI18n } from '../i18n/I18nContext.js'
 
-export type Device = 'responsive' | 'mobile' | 'desktop'
+export type Device = 'responsive' | 'mobile' | 'tablet' | 'desktop'
 
-/** Canonical logical widths per preset; null means "fill available" (responsive). */
+/** Canonical logical widths (PORTRAIT) per preset; null means "fill available" (responsive). */
 export const DEVICE_WIDTHS: Record<Device, number | null> = {
   responsive: null,
   mobile: 390,
+  tablet: 768,
   desktop: 1280,
 }
 
-const PRESETS: Device[] = ['responsive', 'mobile', 'desktop']
+/**
+ * Canonical logical heights (PORTRAIT) for the ROTATABLE presets only. Rotating to landscape
+ * swaps width↔height, so the frame's logical width becomes this value. responsive/desktop never
+ * rotate, so they have no entry here.
+ */
+export const DEVICE_HEIGHTS: Partial<Record<Device, number>> = {
+  mobile: 844,
+  tablet: 1024,
+}
+
+/** Presets that support rotate (a portrait/landscape swap is only meaningful for handhelds). */
+const ROTATABLE: ReadonlySet<Device> = new Set<Device>(['mobile', 'tablet'])
+
+const PRESETS: Device[] = ['responsive', 'mobile', 'tablet', 'desktop']
 
 /** Glyph used in the toggle button face — Unicode box chars keep it font-independent. */
-const GLYPH: Record<Device, string> = { responsive: '↔', mobile: '▢', desktop: '▭' }
+const GLYPH: Record<Device, string> = { responsive: '↔', mobile: '▢', tablet: '▯', desktop: '▭' }
 
 export function DeviceFrame(
   { device, onDevice, paneWidth, tab, children }:
@@ -36,12 +58,32 @@ export function DeviceFrame(
 ) {
   const { t } = useI18n()
 
+  // Orientation is view-state only. RESET to portrait whenever the device changes: a stale
+  // landscape flag must never leak into a non-rotatable preset (responsive/desktop) or a fresh
+  // preset selection. WHY effect (not derived): rotate is a user toggle, so it needs its own state.
+  const [landscape, setLandscape] = useState(false)
+  useEffect(() => { setLandscape(false) }, [device])
+
+  const canRotate = ROTATABLE.has(device)
+  // landscape only applies to rotatable presets; guard so a stale flag can't affect width math
+  const isLandscape = canRotate && landscape
+
   const base = DEVICE_WIDTHS[device]
-  // desktop caps at paneWidth so horizontal overflow only appears when the preset is wider
-  const widthStyle: string =
+  // The LOGICAL width that drives the frame:
+  //   responsive → fill (null)
+  //   desktop    → capped at the live pane (min(1280, paneWidth))
+  //   mobile/tablet portrait  → preset width
+  //   mobile/tablet landscape → preset height (the rotated long edge becomes the width)
+  const logicalWidth: number | null =
     base === null
-      ? '100%'
-      : `${device === 'desktop' ? Math.min(base, Math.max(0, paneWidth)) : base}px`
+      ? null
+      : device === 'desktop'
+      ? Math.min(base, Math.max(0, paneWidth))
+      : isLandscape
+      ? (DEVICE_HEIGHTS[device] ?? base)
+      : base
+
+  const widthStyle: string = logicalWidth === null ? '100%' : `${logicalWidth}px`
 
   // WHY conditional helper: i18n map avoids a cascade of ternaries in JSX
   const labelFor = (d: Device): string =>
@@ -49,10 +91,12 @@ export function DeviceFrame(
       ? t('preview.device.responsive')
       : d === 'mobile'
       ? t('preview.device.mobile')
+      : d === 'tablet'
+      ? t('preview.device.tablet')
       : t('preview.device.desktop')
 
-  // Show the pixel badge for fixed-width presets only (responsive fills its parent)
-  const displayPx = base !== null ? base : null
+  // Pixel badge: show the current (possibly rotated) logical width for fixed-width presets only.
+  const displayPx = logicalWidth !== null ? logicalWidth : null
 
   return (
     <div className="flex h-full flex-col">
@@ -86,6 +130,26 @@ export function DeviceFrame(
             ))}
           </div>
 
+          {/* Rotate — ONLY for rotatable presets (mobile/tablet). Hidden for responsive/desktop
+              where portrait/landscape is meaningless. Swaps the preset width↔height in-place;
+              icon-only to stay within the header row budget. */}
+          {canRotate && (
+            <button
+              type="button"
+              aria-pressed={isLandscape}
+              aria-label={t('preview.rotate')}
+              onClick={() => setLandscape(l => !l)}
+              className={[
+                'rounded-md border border-white/10 px-2 py-1 text-xs transition-colors motion-safe:active:scale-95',
+                isLandscape
+                  ? 'bg-white/10 text-slate-100'
+                  : 'bg-white/[0.03] text-slate-400 hover:text-slate-200',
+              ].join(' ')}
+            >
+              ⟳
+            </button>
+          )}
+
           {/* Pixel badge — shown only for fixed-width presets */}
           {displayPx !== null && (
             <span className="rounded bg-white/[0.06] px-1.5 py-0.5 text-[10px] tabular-nums text-slate-400">
@@ -99,12 +163,13 @@ export function DeviceFrame(
       <div className="relative flex-1 overflow-auto bg-slate-950">
         <div
           data-testid="device-frame"
-          // WIDTH MOTION (Task: polish): the logical width glides between presets
-          // (Responsive ↔ Mobil ↔ Masaüstü) instead of snapping. `motion-safe:` collapses it to an
-          // instant change under prefers-reduced-motion (a11y). During a separator drag the drawer's
-          // ancestor carries `is-dragging`, and `[.is-dragging_&]:!transition-none` KILLS the width
-          // transition so a Desktop-preset width (capped at the live paneWidth) tracks the pointer 1:1
-          // instead of lagging behind by the 200ms ease — a smudgy drag would feel broken.
+          // WIDTH MOTION (Task: polish): the logical width glides between presets and on rotate
+          // (Responsive ↔ Mobil ↔ Tablet ↔ Masaüstü, portrait ↔ landscape) instead of snapping.
+          // `motion-safe:` collapses it to an instant change under prefers-reduced-motion (a11y).
+          // During a separator drag the drawer's ancestor carries `is-dragging`, and
+          // `[.is-dragging_&]:!transition-none` KILLS the width transition so a Desktop-preset width
+          // (capped at the live paneWidth) tracks the pointer 1:1 instead of lagging behind by the
+          // 200ms ease — a smudgy drag would feel broken.
           className="mx-auto h-full motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out [.is-dragging_&]:!transition-none"
           style={{ width: widthStyle }}
         >
