@@ -70,6 +70,43 @@ describe('runMigrations', () => {
     expect(texts.join('\n')).toMatch(/CREATE TABLE IF NOT EXISTS sessions[\s\S]*external_writes\s+jsonb/)
   })
 
+  it('adds avatar_url / email_verified / status to users (fresh DDL + idempotent ALTER, so upgraded DBs match fresh ones)', async () => {
+    // The OAuth login projection needs avatar_url; OAuth sign-ins are created verified+active.
+    // A pre-existing users table must get these via ADD COLUMN IF NOT EXISTS or the
+    // upsertOAuth INSERT/UPDATE that references them fails on an upgraded Postgres.
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    const all = texts.join('\n')
+    // fresh-table DDL carries all three
+    expect(all).toMatch(/CREATE TABLE IF NOT EXISTS users[\s\S]*avatar_url\s+text/)
+    expect(all).toMatch(/CREATE TABLE IF NOT EXISTS users[\s\S]*email_verified\s+boolean/)
+    expect(all).toMatch(/CREATE TABLE IF NOT EXISTS users[\s\S]*status\s+text/)
+    // idempotent ALTERs for upgraded DBs
+    expect(texts.some(t => /ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text/.test(t))).toBe(true)
+    expect(texts.some(t => /ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean/.test(t))).toBe(true)
+    expect(texts.some(t => /ALTER TABLE users ADD COLUMN IF NOT EXISTS status text/.test(t))).toBe(true)
+  })
+
+  it('constrains the user status to the canonical user_status value-domain on fresh DBs (CHECK in BOTH the CREATE and the ADD COLUMN)', async () => {
+    // The canonical/live DB types status as a `user_status` ENUM {pending_verification, active,
+    // disabled, deleted}; fresh text DBs must stay in that SAME value-domain via an inline CHECK on
+    // BOTH the CREATE_USERS_TABLE column and the ADD COLUMN migration. The inline CHECK only applies
+    // when the column is freshly created (ADD COLUMN IF NOT EXISTS short-circuits on an existing
+    // column), so it is a guard on fresh DBs and a no-op on the existing enum DB — and thus safe to
+    // re-run idempotently.
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    const all = texts.join('\n')
+    // every constrained value, in either DDL form
+    for (const v of ['pending_verification', 'active', 'disabled', 'deleted']) {
+      expect(all).toContain(`'${v}'`)
+    }
+    // CREATE carries the CHECK on the status column
+    expect(all).toMatch(/CREATE TABLE IF NOT EXISTS users[\s\S]*status\s+text[\s\S]*CHECK \(status IN \('pending_verification','active','disabled','deleted'\)\)/)
+    // the idempotent ADD COLUMN carries the SAME CHECK (so upgraded text DBs match fresh ones)
+    expect(texts.some(t => /ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active' CHECK \(status IN \('pending_verification','active','disabled','deleted'\)\)/.test(t))).toBe(true)
+  })
+
   it('enforces external_id uniqueness via a dedicated index (so upgraded DBs match fresh ones)', async () => {
     // A fresh DB gets `external_id text UNIQUE` inline, but the ADD COLUMN migration that
     // upgrades a pre-existing users table adds NO constraint — without a dedicated unique

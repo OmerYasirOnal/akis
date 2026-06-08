@@ -86,4 +86,18 @@ describe('Login page', () => {
     await waitFor(() => expect(window.location.pathname).toBe('/'))
     expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining('/auth/login'), expect.objectContaining({ method: 'POST' }))
   })
+
+  it('maps a known ?error= code to its specific OAuth message', () => {
+    const { api } = fakeApi({ '/auth/me': () => ({ ok: false, status: 401, body: {} }) })
+    window.history.pushState({}, '', '/login?error=oauth_denied')
+    render(<I18nProvider><RouterProvider><AuthProvider api={api}><Login api={api} /></AuthProvider></RouterProvider></I18nProvider>)
+    expect(screen.getByText('Sign-in was cancelled or denied.')).toBeInTheDocument()
+  })
+
+  it('falls back to the generic OAuth message for an unrecognized ?error= code', () => {
+    const { api } = fakeApi({ '/auth/me': () => ({ ok: false, status: 401, body: {} }) })
+    window.history.pushState({}, '', '/login?error=something_else')
+    render(<I18nProvider><RouterProvider><AuthProvider api={api}><Login api={api} /></AuthProvider></RouterProvider></I18nProvider>)
+    expect(screen.getByText('Social sign-in failed. Please try again.')).toBeInTheDocument()
+  })
 })

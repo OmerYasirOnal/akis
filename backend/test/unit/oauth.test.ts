@@ -71,6 +71,22 @@ describe('fetchProfile', () => {
     const http: HttpFetch = async () => ok({ sub: 'g-1', email: 'ada@goog.dev', name: 'Ada G', email_verified: true })
     expect(await fetchProfile('google', 'tok', http)).toEqual({ externalId: 'google:g-1', email: 'ada@goog.dev', name: 'Ada G' })
   })
+  it('returns the GitHub avatar_url as avatarUrl (login projection)', async () => {
+    const http: HttpFetch = async (url) => {
+      if (url.endsWith('/user')) return ok({ id: 7, login: 'ada', name: 'Ada', email: 'ada@gh.dev', avatar_url: 'https://avatars.githubusercontent.com/u/7' })
+      throw new Error('unexpected ' + url)
+    }
+    expect(await fetchProfile('github', 'tok', http)).toEqual({ externalId: 'github:7', email: 'ada@gh.dev', name: 'Ada', avatarUrl: 'https://avatars.githubusercontent.com/u/7' })
+  })
+  it('returns the Google picture as avatarUrl (login projection)', async () => {
+    const http: HttpFetch = async () => ok({ sub: 'g-9', email: 'ada@goog.dev', name: 'Ada G', email_verified: true, picture: 'https://lh3.googleusercontent.com/a/ada' })
+    expect(await fetchProfile('google', 'tok', http)).toEqual({ externalId: 'google:g-9', email: 'ada@goog.dev', name: 'Ada G', avatarUrl: 'https://lh3.googleusercontent.com/a/ada' })
+  })
+  it('omits avatarUrl entirely when the provider returns none (exactOptionalPropertyTypes — no explicit undefined)', async () => {
+    const http: HttpFetch = async () => ok({ sub: 'g-10', email: 'noavatar@goog.dev', email_verified: true })
+    const p = await fetchProfile('google', 'tok', http)
+    expect('avatarUrl' in p).toBe(false)
+  })
   it('throws on a profile missing id/email', async () => {
     await expect(fetchProfile('google', 'tok', async () => ok({ name: 'x' }))).rejects.toThrow()
   })

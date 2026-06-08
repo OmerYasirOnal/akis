@@ -21,7 +21,11 @@ export interface SqlClient {
   end?(): Promise<void>
 }
 
-/** Idempotent DDL for the `users` table (the auth/oauth identity store). */
+/** Idempotent DDL for the `users` table (the auth/oauth identity store). `avatar_url` is the
+ *  provider profile picture (OAuth login projection). `email_verified`/`status` record whether
+ *  the email is provider-verified and the account is active — set TRUE/'active' for OAuth
+ *  sign-ins (the provider already verified the address). Defaults keep password accounts on the
+ *  existing behavior (no flag set ⇒ false/active baseline). */
 export const CREATE_USERS_TABLE = `
 CREATE TABLE IF NOT EXISTS users (
   id            text PRIMARY KEY,
@@ -32,6 +36,16 @@ CREATE TABLE IF NOT EXISTS users (
   token_version integer NOT NULL DEFAULT 0,
   tier          text,
   stripe_customer_id text,
+  avatar_url    text,
+  email_verified boolean NOT NULL DEFAULT false,
+  -- VALUE-DOMAIN NOTE: the canonical/live DB types this column as a \`user_status\` ENUM
+  -- {pending_verification, active, disabled, deleted}; fresh DBs use \`text\` + the inline CHECK
+  -- below to stay within that SAME value-domain. An inline column CHECK applies ONLY when the
+  -- column is freshly created here — so it is a no-op on the enum DB (the column already exists)
+  -- and a guard on fresh text DBs. The type difference is intentional and safe because \`status\`
+  -- is currently WRITE-ONLY: PgUserStore writes 'active' on OAuth INSERT but never SELECTs it back
+  -- into AuthUser, so the text-vs-enum mismatch never crosses the row↔user mapper.
+  status        text NOT NULL DEFAULT 'active' CHECK (status IN ('pending_verification','active','disabled','deleted')),
   created_at    timestamptz NOT NULL DEFAULT now()
 )`
 
@@ -46,6 +60,23 @@ export const ADD_TOKEN_VERSION = `ALTER TABLE users ADD COLUMN IF NOT EXISTS tok
  *  free) + their Stripe customer id (set by the checkout webhook, reused for the billing portal). */
 export const ADD_USER_TIER = `ALTER TABLE users ADD COLUMN IF NOT EXISTS tier text`
 export const ADD_USER_STRIPE_CUSTOMER = `ALTER TABLE users ADD COLUMN IF NOT EXISTS stripe_customer_id text`
+
+/** Idempotent migration: OAuth login projection — the provider avatar URL (nullable; only
+ *  OAuth users that exposed a picture have one). */
+export const ADD_USER_AVATAR_URL = `ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_url text`
+/** Idempotent migration: whether the email is provider-verified, and the account status.
+ *  Set TRUE/'active' on an OAuth sign-in (the provider already verified the email). Defaults
+ *  preserve existing password-account behavior on an upgraded DB. */
+export const ADD_USER_EMAIL_VERIFIED = `ALTER TABLE users ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false`
+/** Idempotent migration for the account status. VALUE-DOMAIN NOTE (see CREATE_USERS_TABLE):
+ *  the canonical/live DB types this as a \`user_status\` ENUM {pending_verification, active,
+ *  disabled, deleted}; fresh/upgraded text DBs use \`text\` + this inline CHECK to stay in the SAME
+ *  value-domain. ADD COLUMN IF NOT EXISTS short-circuits when the column already exists, so the
+ *  CHECK is applied ONLY when the column is freshly added — a no-op (no new constraint) on a DB that
+ *  already has \`status\` (text OR enum), which is what keeps the idempotent re-run safe. The column
+ *  is currently WRITE-ONLY (never SELECTed back into AuthUser), so the text-vs-enum type difference
+ *  is intentional and safe. */
+export const ADD_USER_STATUS = `ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active' CHECK (status IN ('pending_verification','active','disabled','deleted'))`
 
 /**
  * Idempotent UNIQUE index on external_id. The fresh-table inline `external_id text UNIQUE`
@@ -210,6 +241,9 @@ const MIGRATIONS: readonly string[] = [
   ADD_TOKEN_VERSION,
   ADD_USER_TIER,
   ADD_USER_STRIPE_CUSTOMER,
+  ADD_USER_AVATAR_URL,
+  ADD_USER_EMAIL_VERIFIED,
+  ADD_USER_STATUS,
   CREATE_USERS_EXTERNAL_ID_UNIQUE,
   CREATE_SESSIONS_TABLE,
   ADD_TEST_EVIDENCE,

@@ -3,7 +3,7 @@ import { createHmac } from 'node:crypto'
 import { signJwt, verifyJwt, signResetToken, verifyResetToken, JwtError } from '../../src/auth/jwt.js'
 import { hashPassword, verifyPassword } from '../../src/auth/password.js'
 import { serializeCookie, parseCookies, cookieConfigFromEnv } from '../../src/auth/cookie.js'
-import { UserStore, EmailTakenError, toPublic } from '../../src/auth/UserStore.js'
+import { UserStore, EmailTakenError, toPublic, providerOf, type AuthUser } from '../../src/auth/UserStore.js'
 
 describe('jwt (HS256, Node crypto)', () => {
   const secret = 'test-secret-abc'
@@ -165,6 +165,27 @@ describe('UserStore', () => {
   it('toPublic never leaks the password hash', () => {
     expect(toPublic({ id: '1', name: 'A', email: 'a@b.com', passwordHash: 'secret', createdAt: 'x' })).not.toHaveProperty('passwordHash')
   })
+  it('providerOf derives the login provider from the externalId namespace', () => {
+    expect(providerOf('github:42')).toBe('github')
+    expect(providerOf('google:abc')).toBe('google')
+    expect(providerOf(undefined)).toBe('password')   // no externalId ⇒ password account
+    expect(providerOf('')).toBe('password')
+    expect(providerOf('saml:weird')).toBe('password') // unknown namespace ⇒ password (fail-safe)
+  })
+  it('toPublic projects provider + avatarUrl (the FE login projection contract)', () => {
+    const base = { id: '1', name: 'A', email: 'a@b.com', passwordHash: 'secret', createdAt: 'x' } satisfies Partial<AuthUser>
+    // password account: provider 'password', no avatarUrl key at all (exactOptionalPropertyTypes).
+    const pw = toPublic({ ...base })
+    expect(pw).toEqual({ id: '1', name: 'A', email: 'a@b.com', provider: 'password' })
+    expect('avatarUrl' in pw).toBe(false)
+    // github with an avatar passes both through
+    expect(toPublic({ ...base, externalId: 'github:7', avatarUrl: 'https://av/gh' }))
+      .toEqual({ id: '1', name: 'A', email: 'a@b.com', provider: 'github', avatarUrl: 'https://av/gh' })
+    // google without an avatar derives the provider but omits avatarUrl
+    const g = toPublic({ ...base, externalId: 'google:9' })
+    expect(g).toEqual({ id: '1', name: 'A', email: 'a@b.com', provider: 'google' })
+    expect('avatarUrl' in g).toBe(false)
+  })
   it('upsertOAuth binds by externalId and links a (verified) email account to that identity', async () => {
     const s = new UserStore()
     const a = await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' }) // allowCreate defaults true → never null here
@@ -176,5 +197,59 @@ describe('UserStore', () => {
     const linked = await s.upsertOAuth({ externalId: 'google:2', email: 'BO@akis.dev', name: 'Bo' })
     expect(linked?.id).toBe(pw.id)
     expect((await s.findById(pw.id))?.externalId).toBe('google:2')
+  })
+  it('upsertOAuth sets avatarUrl on create and surfaces it via toPublic', async () => {
+    const s = new UserStore()
+    const u = await s.upsertOAuth({ externalId: 'github:5', email: 'pic@akis.dev', name: 'Pic', avatarUrl: 'https://av/5' })
+    expect(u?.avatarUrl).toBe('https://av/5')
+    expect(toPublic(u!)).toMatchObject({ provider: 'github', avatarUrl: 'https://av/5' })
+  })
+  it('upsertOAuth returning identity REFRESHES the avatar when the profile carries a new one', async () => {
+    // An owner who first logged in before avatars (no picture stored) must get their photo
+    // on the next login — the returning-identity path now refreshes rather than returning early.
+    const s = new UserStore()
+    await s.upsertOAuth({ externalId: 'github:42', email: 'own@akis.dev', name: 'Owner' }) // no avatar yet
+    const refreshed = await s.upsertOAuth({ externalId: 'github:42', email: 'own@akis.dev', name: 'Owner', avatarUrl: 'https://av/new' })
+    expect(refreshed?.avatarUrl).toBe('https://av/new')
+    expect((await s.findByEmail('own@akis.dev'))?.avatarUrl).toBe('https://av/new')
+  })
+  it('upsertOAuth returning identity with NO avatar PRESERVES the existing one', async () => {
+    // A login whose profile exposes no picture must not wipe the avatar the account already had.
+    const s = new UserStore()
+    await s.upsertOAuth({ externalId: 'github:43', email: 'keep@akis.dev', name: 'Keep', avatarUrl: 'https://av/keep' })
+    const refreshed = await s.upsertOAuth({ externalId: 'github:43', email: 'keep@akis.dev', name: 'Keep' }) // no avatar this time
+    expect(refreshed?.avatarUrl).toBe('https://av/keep')
+    expect((await s.findByEmail('keep@akis.dev'))?.avatarUrl).toBe('https://av/keep')
+  })
+  it('upsertOAuth returns an email account ALREADY bound to identity A unchanged when a DIFFERENT identity B logs in with that email (Pg parity)', async () => {
+    // Parity with PgUserStore (`if (byEmail.externalId) return byEmail`): once an email is bound
+    // to one provider identity, a second provider that happens to share the verified email must NOT
+    // rebind the externalId NOR adopt its avatar onto the first provider's account — the account is
+    // returned with NO mutation. (Without this, identity B's avatar would land on identity A.)
+    const s = new UserStore()
+    // identity A links/creates the account (no avatar yet, so a clobber would be visible).
+    const a = await s.upsertOAuth({ externalId: 'github:100', email: 'shared@akis.dev', name: 'Shared' })
+    expect(a?.externalId).toBe('github:100')
+    expect(a?.avatarUrl).toBeUndefined()
+    // identity B logs in with the SAME email, carrying an avatar.
+    const b = await s.upsertOAuth({ externalId: 'google:200', email: 'shared@akis.dev', name: 'Shared', avatarUrl: 'https://av/B' })
+    // Same row, still bound to A, and B's avatar was NOT adopted.
+    expect(b?.id).toBe(a?.id)
+    expect(b?.externalId).toBe('github:100')
+    expect(b?.avatarUrl).toBeUndefined()
+    // The cross-index for B's identity was never created (no rebind), so A still owns the email.
+    expect((await s.findByEmail('shared@akis.dev'))?.externalId).toBe('github:100')
+    expect((await s.findByEmail('shared@akis.dev'))?.avatarUrl).toBeUndefined()
+  })
+  it('upsertOAuth adopts an avatar on link only when absent, and never clobbers an existing one', async () => {
+    const s = new UserStore()
+    // (a) link path adopts the avatar when the account has none.
+    const pw = await s.create({ name: 'No Pic', email: 'link@akis.dev', passwordHash: 'h' })
+    await s.upsertOAuth({ externalId: 'github:6', email: 'link@akis.dev', name: 'No Pic', avatarUrl: 'https://av/6' })
+    expect((await s.findById(pw.id))?.avatarUrl).toBe('https://av/6')
+    // (b) the SAME identity re-logging in is the returning-identity path: a fresh provider
+    //     avatar refreshes the stored picture (so an owner's updated photo follows them).
+    await s.upsertOAuth({ externalId: 'github:6', email: 'link@akis.dev', name: 'No Pic', avatarUrl: 'https://av/UPDATED' })
+    expect((await s.findById(pw.id))?.avatarUrl).toBe('https://av/UPDATED')
   })
 })

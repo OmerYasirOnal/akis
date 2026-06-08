@@ -20,6 +20,7 @@ import { ResetPassword } from '../pages/ResetPassword.js'
 import { I18nProvider, useI18n } from '../i18n/I18nContext.js'
 import { RouterProvider, useRouter, Link, Navigate } from '../router/router.js'
 import { AuthProvider, useAuth } from '../auth/AuthContext.js'
+import { AccountMenu } from './AccountMenu.js'
 
 /** API base: same-origin in prod (fastify-static serves the FE); override via env in dev. */
 const BASE = (import.meta.env?.VITE_API_BASE as string | undefined) ?? ''
@@ -105,10 +106,7 @@ function AppFrame({ api }: { api: ApiClient }) {
             <div className="hidden text-right sm:block">
               <div className="text-xs font-medium text-slate-200">{user?.name}</div>
             </div>
-            <button onClick={() => void logout()} title={t('nav.logout')} aria-label={t('nav.logout')}
-              className="grid h-8 w-8 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-xs font-black text-slate-950">
-              {(user?.name ?? '?').slice(0, 1).toUpperCase()}
-            </button>
+            {user && <AccountMenu user={user} logout={logout} />}
           </div>
         </header>
         <Suspense fallback={<PageFallback />}>{page}</Suspense>

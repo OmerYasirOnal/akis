@@ -6,7 +6,7 @@ import { type SqlClient, createPgPool, runMigrations } from '../store/pg.js'
  *  callers and tests that import `SqlClient` from here keep working. */
 export type { SqlClient }
 
-interface Row { id: string; name: string; email: string; password_hash: string; created_at: string | Date; external_id?: string | null; token_version?: number | string | null; tier?: string | null; stripe_customer_id?: string | null }
+interface Row { id: string; name: string; email: string; password_hash: string; created_at: string | Date; external_id?: string | null; token_version?: number | string | null; tier?: string | null; stripe_customer_id?: string | null; avatar_url?: string | null }
 const toUser = (r: Row): AuthUser => ({
   id: r.id, name: r.name, email: r.email, passwordHash: r.password_hash,
   createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
@@ -14,6 +14,7 @@ const toUser = (r: Row): AuthUser => ({
   ...(r.token_version !== null && r.token_version !== undefined ? { tokenVersion: Number(r.token_version) } : {}),
   ...(r.tier === 'pro' ? { tier: 'pro' as const } : {}),
   ...(r.stripe_customer_id ? { stripeCustomerId: r.stripe_customer_id } : {}),
+  ...(r.avatar_url ? { avatarUrl: r.avatar_url } : {}),
 })
 const norm = (e: string): string => e.trim().toLowerCase()
 const PG_UNIQUE_VIOLATION = '23505'
@@ -63,10 +64,22 @@ export class PgUserStore implements UserStorePort {
     return rows[0] ? toUser(rows[0] as unknown as Row) : undefined
   }
 
-  async upsertOAuth(input: { externalId: string; email: string; name: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null> {
-    // 1) same provider identity returning?
+  async upsertOAuth(input: { externalId: string; email: string; name: string; avatarUrl?: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null> {
+    const avatar = input.avatarUrl ?? null
+    // 1) same provider identity returning? REFRESH the row rather than returning it unchanged.
+    //    The provider re-verified this identity every login, so re-affirm email_verified and pick
+    //    up a fresh avatar (COALESCE keeps the existing picture when the profile carries none).
+    //    Deliberately NOT touching `status`: an existing user who logged in BEFORE the avatar
+    //    feature must get their photo, but a 'disabled'/'deleted' account must NOT be silently
+    //    re-activated just because they can still pass the provider's email check.
     const byExt = await this.db.query('SELECT * FROM users WHERE external_id = $1', [input.externalId])
-    if (byExt.rows[0]) return toUser(byExt.rows[0] as unknown as Row)
+    if (byExt.rows[0]) {
+      const { rows } = await this.db.query(
+        'UPDATE users SET avatar_url = COALESCE($1, avatar_url), email_verified = true WHERE id = $2 RETURNING *',
+        [avatar, (byExt.rows[0] as unknown as Row).id],
+      )
+      return toUser((rows[0] ?? byExt.rows[0]) as unknown as Row)
+    }
     const email = norm(input.email)
     // 2) link to the (provider-verified) email account, recording the identity.
     const byEmail = await this.findByEmail(email)
@@ -76,16 +89,25 @@ export class PgUserStore implements UserStorePort {
       // and return it UNCHANGED — mirroring the in-memory store, which returns `existing`
       // with its original externalId rather than a fabricated one that was never persisted.
       if (byEmail.externalId) return byEmail
-      await this.db.query('UPDATE users SET external_id = $1 WHERE id = $2', [input.externalId, byEmail.id])
-      return { ...byEmail, externalId: input.externalId }
+      // Link + mark provider-verified (the provider verified this email), and adopt the avatar only
+      // when the row has none (COALESCE keeps an existing picture). RETURNING * so we reflect whatever
+      // the row actually carries (e.g. a pre-existing avatar_url). Deliberately NOT writing
+      // status='active' here — linking an identity to an existing account must not silently
+      // re-activate a 'disabled'/'deleted' one (same fail-closed reasoning as the returning path).
+      const { rows } = await this.db.query(
+        `UPDATE users SET external_id = $1, email_verified = true, avatar_url = COALESCE(avatar_url, $2) WHERE id = $3 RETURNING *`,
+        [input.externalId, avatar, byEmail.id],
+      )
+      return rows[0] ? toUser(rows[0] as unknown as Row) : { ...byEmail, externalId: input.externalId }
     }
     // Step 3 (create) — REFUSED when signup is disabled: OAuth must not mint a new account.
     if (opts?.allowCreate === false) return null
     // 3) create — race-safe: a concurrent first login may insert the same email/identity.
+    //    Provider-verified email ⇒ the new account is created verified + active.
     try {
       const { rows } = await this.db.query(
-        'INSERT INTO users (id, name, email, password_hash, external_id) VALUES ($1,$2,$3,$4,$5) RETURNING *',
-        [this.genId(), input.name.trim() || email, email, '', input.externalId],
+        `INSERT INTO users (id, name, email, password_hash, external_id, avatar_url, email_verified, status) VALUES ($1,$2,$3,$4,$5,$6,true,'active') RETURNING *`,
+        [this.genId(), input.name.trim() || email, email, '', input.externalId, avatar],
       )
       return toUser(rows[0] as unknown as Row)
     } catch (err) {

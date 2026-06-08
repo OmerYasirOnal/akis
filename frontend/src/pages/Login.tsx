@@ -6,6 +6,17 @@ import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
 import { OAuthButtons } from './OAuthButtons.js'
+import type { StringKey } from '../i18n/catalog.js'
+
+/** Map the OAuth callback's ?error=<code> to a specific message key. An unrecognized/empty code
+ *  falls through to the generic auth.oauth.error — so the page never shows a raw code. */
+const OAUTH_ERROR_KEYS: Record<string, StringKey> = {
+  oauth_denied: 'auth.oauth.err.denied',
+  oauth_unavailable: 'auth.oauth.err.unavailable',
+  oauth_state: 'auth.oauth.err.state',
+  oauth_failed: 'auth.oauth.err.failed',
+  oauth_unknown: 'auth.oauth.err.unknown',
+}
 
 export function Login({ api }: { api: ApiClient }) {
   const { login } = useAuth()
@@ -14,10 +25,13 @@ export function Login({ api }: { api: ApiClient }) {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
-  // Surface an OAuth callback error passed back as ?error=… (generic message).
-  const [err, setErr] = useState<string | undefined>(
-    new URLSearchParams(window.location.search).get('error') ? t('auth.oauth.error') : undefined,
-  )
+  // Surface an OAuth callback error passed back as ?error=<code>. Known codes map to a specific
+  // message; an unrecognized/empty code still shows the generic auth.oauth.error.
+  const [err, setErr] = useState<string | undefined>(() => {
+    const code = new URLSearchParams(window.location.search).get('error')
+    if (!code) return undefined
+    return t(OAUTH_ERROR_KEYS[code] ?? 'auth.oauth.error')
+  })
 
   const submit = async (e: FormEvent): Promise<void> => {
     e.preventDefault()
