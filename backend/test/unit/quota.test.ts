@@ -13,6 +13,14 @@ describe('resolveQuotaPolicy', () => {
   it('a positive integer budget is parsed', () => {
     expect(resolveQuotaPolicy({ AKIS_USER_TOKEN_BUDGET: '100000' }).budget).toBe(100000)
   })
+  it('TIER-AWARE (paid-tier foundation): pro reads AKIS_PRO_TOKEN_BUDGET, free reads AKIS_USER_TOKEN_BUDGET; default tier is free (byte-unchanged)', () => {
+    const env = { AKIS_USER_TOKEN_BUDGET: '50000', AKIS_PRO_TOKEN_BUDGET: '5000000' }
+    expect(resolveQuotaPolicy(env).budget).toBe(50000)          // default tier='free' → existing behaviour
+    expect(resolveQuotaPolicy(env, 'free').budget).toBe(50000)
+    expect(resolveQuotaPolicy(env, 'pro').budget).toBe(5000000) // pro → its own (higher) budget
+    // pro budget unset/0 ⇒ unlimited for pro, independent of the free budget
+    expect(resolveQuotaPolicy({ AKIS_USER_TOKEN_BUDGET: '50000' }, 'pro').budget).toBe(0)
+  })
   it('monthly is the default period; daily/weekly map to their ms', () => {
     expect(resolveQuotaPolicy({ AKIS_USER_TOKEN_BUDGET: '1' }).periodMs).toBe(30 * DAY)
     expect(resolveQuotaPolicy({ AKIS_USER_TOKEN_BUDGET: '1', AKIS_USER_TOKEN_PERIOD: 'daily' }).periodMs).toBe(DAY)

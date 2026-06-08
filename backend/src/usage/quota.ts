@@ -39,8 +39,15 @@ function parsePeriodMs(raw: string | undefined): number {
 
 /** Resolve the quota policy from env. Default budget 0 (unlimited) so single-operator dev is
  *  BYTE-UNCHANGED. AKIS_USER_TOKEN_BUDGET: integer tokens (0/unset/NaN ⇒ unlimited). */
-export function resolveQuotaPolicy(env: Record<string, string | undefined>): QuotaPolicy {
-  const raw = Number(env.AKIS_USER_TOKEN_BUDGET)
+/** The two account tiers. 'free' is the default (server-managed key + AKIS_USER_TOKEN_BUDGET);
+ *  'pro' is the paid subscription (AKIS_PRO_TOKEN_BUDGET, default 0 ⇒ unlimited). */
+export type Tier = 'free' | 'pro'
+
+export function resolveQuotaPolicy(env: Record<string, string | undefined>, tier: Tier = 'free'): QuotaPolicy {
+  // TIER-AWARE: pro reads AKIS_PRO_TOKEN_BUDGET, free reads AKIS_USER_TOKEN_BUDGET. Default tier='free'
+  // keeps every existing caller byte-UNCHANGED (and a deployment that never sets the pro var). 0/unset/
+  // NaN ⇒ unlimited for that tier.
+  const raw = Number(tier === 'pro' ? env.AKIS_PRO_TOKEN_BUDGET : env.AKIS_USER_TOKEN_BUDGET)
   const budget = Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 0
   return { budget, periodMs: parsePeriodMs(env.AKIS_USER_TOKEN_PERIOD) }
 }
