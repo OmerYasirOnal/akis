@@ -211,6 +211,16 @@ export const STRINGS = {
     'preview.unsupported': 'This app can’t be previewed live.',
     'preview.retry': 'Retry',
     'preview.bootSlow': 'Still booting — taking longer than expected.',
+    // ── Preview drawer + device toggle ──
+    'preview.open': 'Open preview',
+    'preview.close': 'Close preview',
+    'preview.resize': 'Resize preview',
+    'preview.resizeValue': 'Preview {n}% of width',
+    'preview.device.responsive': 'Responsive',
+    'preview.device.mobile': 'Mobile',
+    'preview.device.desktop': 'Desktop',
+    'preview.device.label': 'Preview width',
+    'preview.device.unit': 'px',
     // ── Publish to your own server (OCI) — POST-`done`, optional, NON-GATING ──
     'publish.title': 'Publish to your server',
     'publish.publish': 'Publish',
@@ -977,6 +987,16 @@ export const STRINGS = {
     'preview.unsupported': 'Bu uygulama canlı önizlenemiyor.',
     'preview.retry': 'Yeniden dene',
     'preview.bootSlow': 'Hâlâ başlatılıyor — beklenenden uzun sürüyor.',
+    // ── Önizleme çekmecesi + cihaz geçişi ──
+    'preview.open': 'Önizlemeyi aç',
+    'preview.close': 'Önizlemeyi kapat',
+    'preview.resize': 'Önizlemeyi yeniden boyutlandır',
+    'preview.resizeValue': "Önizleme genişliğin %{n}'i",
+    'preview.device.responsive': 'Esnek',
+    'preview.device.mobile': 'Mobil',
+    'preview.device.desktop': 'Masaüstü',
+    'preview.device.label': 'Önizleme genişliği',
+    'preview.device.unit': 'px',
     // ── Kendi sunucuna yayınla (OCI) — `done` SONRASI, isteğe bağlı, KAPI DEĞİL ──
     'publish.title': 'Sunucuna yayınla',
     'publish.publish': 'Yayınla',
