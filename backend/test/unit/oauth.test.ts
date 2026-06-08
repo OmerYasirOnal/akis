@@ -43,6 +43,23 @@ describe('authorizeUrl', () => {
     expect(url.searchParams.get('response_type')).toBe('code')
     expect(url.searchParams.get('scope')).toContain('email')
   })
+
+  // FR-oauth-signin-3 / -4 — GitHub LOGIN authorize must pin the exact, MINIMAL contract:
+  // allow_signup=true, response_type=code, and the narrow login scope. A regression that widened
+  // the login scope (e.g. to `repo`, which the per-user CONNECT flow uses) or dropped allow_signup
+  // would be a real security/UX defect — these assertions fail it.
+  it('GitHub login authorize pins allow_signup=true, response_type=code, and the minimal scope', () => {
+    const url = new URL(authorizeUrl('github', 'gh-cid', 'https://app/oauth/github/callback', 'st9'))
+    expect(url.origin + url.pathname).toBe('https://github.com/login/oauth/authorize')
+    expect(url.searchParams.get('client_id')).toBe('gh-cid')
+    expect(url.searchParams.get('redirect_uri')).toBe('https://app/oauth/github/callback')
+    expect(url.searchParams.get('state')).toBe('st9')
+    expect(url.searchParams.get('allow_signup')).toBe('true')
+    expect(url.searchParams.get('response_type')).toBe('code')
+    // EXACT minimal login scope — not the broader connect `repo` scope.
+    expect(url.searchParams.get('scope')).toBe('read:user user:email')
+    expect(url.searchParams.get('scope')).not.toContain('repo')
+  })
 })
 
 describe('exchangeCode', () => {
@@ -85,6 +102,18 @@ describe('fetchProfile', () => {
   it('omits avatarUrl entirely when the provider returns none (exactOptionalPropertyTypes — no explicit undefined)', async () => {
     const http: HttpFetch = async () => ok({ sub: 'g-10', email: 'noavatar@goog.dev', email_verified: true })
     const p = await fetchProfile('google', 'tok', http)
+    expect('avatarUrl' in p).toBe(false)
+  })
+  // FR-account-menu-17 (github side): a GitHub profile with NO avatar_url must also OMIT the key
+  // (not set avatarUrl: undefined) — mirrors the google omit-path above so the AccountMenu falls
+  // back to the gradient initial. Guards against a regression that always spreads avatarUrl.
+  it('omits avatarUrl for a GitHub profile that exposes no avatar_url (no explicit undefined)', async () => {
+    const http: HttpFetch = async (url) => {
+      if (url.endsWith('/user')) return ok({ id: 13, login: 'noav', name: 'No Avatar', email: 'noav@gh.dev' })
+      throw new Error('unexpected ' + url)
+    }
+    const p = await fetchProfile('github', 'tok', http)
+    expect(p).toEqual({ externalId: 'github:13', email: 'noav@gh.dev', name: 'No Avatar' })
     expect('avatarUrl' in p).toBe(false)
   })
   it('throws on a profile missing id/email', async () => {

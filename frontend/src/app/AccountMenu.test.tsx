@@ -91,4 +91,121 @@ describe('AccountMenu', () => {
     await userEvent.keyboard('{Escape}')
     expect(screen.queryByRole('menu')).not.toBeInTheDocument()
   })
+
+  // ── FR-account-menu-11 (PARTIAL): click-OUTSIDE closes, click-INSIDE keeps it open. ──
+  // A regression that widened the close to fire on any mousedown (dropping the
+  // `!ref.current.contains(target)` guard) would FAIL the "inside keeps open" assertion.
+  it('a mousedown OUTSIDE the panel closes the menu', async () => {
+    wrap({ ...baseUser, provider: 'password' }, vi.fn())
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+    // The listener is bound to `document` on the `mousedown` event — drive it directly.
+    fireEvent.mouseDown(document.body)
+    expect(screen.queryByRole('menu')).not.toBeInTheDocument()
+  })
+
+  it('a mousedown INSIDE the panel does NOT close the menu (ref-contains guard)', async () => {
+    wrap({ ...baseUser, provider: 'password' }, vi.fn())
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    const menu = screen.getByRole('menu')
+    // Mousedown on a node inside the panel — the contains() guard must keep it open.
+    fireEvent.mouseDown(menu)
+    expect(screen.getByRole('menu')).toBeInTheDocument()
+  })
+
+  // ── NFR-account-menu-6/-10 + FR-account-menu-11: the effect cleanup must remove BOTH the
+  // mousedown AND keydown document listeners on close (and on unmount). A regression that
+  // forgot to remove one (or removed the wrong event) would leak a listener and FAIL here. ──
+  it('removes BOTH the mousedown and keydown document listeners when the menu closes', async () => {
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+    wrap({ ...baseUser, provider: 'password' }, vi.fn())
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    removeSpy.mockClear() // ignore any removes during the open phase; we assert the CLOSE cleanup
+    await userEvent.keyboard('{Escape}') // close → effect cleanup runs
+    const removed = removeSpy.mock.calls.map(c => c[0])
+    expect(removed).toContain('mousedown')
+    expect(removed).toContain('keydown')
+    removeSpy.mockRestore()
+  })
+
+  it('removes BOTH document listeners on unmount (no leak when the menu is open)', async () => {
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+    const { unmount } = wrap({ ...baseUser, provider: 'password' }, vi.fn())
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    removeSpy.mockClear()
+    unmount()
+    const removed = removeSpy.mock.calls.map(c => c[0])
+    expect(removed).toContain('mousedown')
+    expect(removed).toContain('keydown')
+    removeSpy.mockRestore()
+  })
+
+  // NFR-account-menu-6: the add↔remove listener accounting must BALANCE across an open→close
+  // cycle, so repeated open/close can never accumulate stale document listeners.
+  it('balances document add/remove listener counts across an open→close cycle', async () => {
+    const addSpy = vi.spyOn(document, 'addEventListener')
+    const removeSpy = vi.spyOn(document, 'removeEventListener')
+    wrap({ ...baseUser, provider: 'password' }, vi.fn())
+    const countFor = (spy: typeof addSpy, ev: string): number => spy.mock.calls.filter(c => c[0] === ev).length
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' })) // open: +mousedown +keydown
+    await userEvent.keyboard('{Escape}') // close: cleanup removes both
+    for (const ev of ['mousedown', 'keydown'] as const) {
+      expect(countFor(addSpy, ev)).toBe(countFor(removeSpy, ev))
+    }
+    addSpy.mockRestore(); removeSpy.mockRestore()
+  })
+
+  // ── NFR-account-menu-8 (PARTIAL): the trigger advertises a menu popup and reflects open state. ──
+  // Dropping aria-haspopup or freezing aria-expanded (a common regression when refactoring the
+  // toggle) would FAIL this — the closed value must be "false" and flip to "true" once open.
+  it('the trigger has aria-haspopup="menu" and toggles aria-expanded false→true on open', async () => {
+    wrap({ ...baseUser, provider: 'password' }, vi.fn())
+    const trigger = screen.getByRole('button', { name: 'Account menu' })
+    expect(trigger).toHaveAttribute('aria-haspopup', 'menu')
+    expect(trigger).toHaveAttribute('aria-expanded', 'false')
+    await userEvent.click(trigger)
+    expect(trigger).toHaveAttribute('aria-expanded', 'true')
+  })
+
+  // ── FR-account-menu-6: the open panel shows the name + email, each with the `truncate` class
+  // so a long value never blows out the fixed-width panel. ──
+  it('the open menu shows name + email, both carrying the truncate class', async () => {
+    wrap({ ...baseUser, provider: 'github' }, vi.fn())
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    const name = screen.getByText('Ada Lovelace')
+    const email = screen.getByText('ada@example.com')
+    expect(name.className).toContain('truncate')
+    expect(email.className).toContain('truncate')
+  })
+
+  // ── FR-account-menu-8: the provider line carries the MATCHING glyph and only that one. ──
+  // github → GitHub <svg> present, Google glyph absent.
+  it('the github provider line renders the GitHubMark svg and NOT the Google glyph', async () => {
+    wrap({ ...baseUser, provider: 'github' }, vi.fn())
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    const menu = screen.getByRole('menu')
+    // GitHubMark is an inline <svg viewBox="0 0 16 16"> — assert exactly that mark is present.
+    expect(menu.querySelector('svg[viewBox="0 0 16 16"]')).toBeTruthy()
+    // The Google glyph is the letter "G" circle — it must be absent on a github account.
+    expect(screen.queryByText('G')).toBeNull()
+  })
+
+  // password → NEITHER glyph (no svg mark, no Google "G").
+  it('the password provider line renders NEITHER provider glyph', async () => {
+    wrap({ ...baseUser, provider: 'password' }, vi.fn())
+    await userEvent.click(screen.getByRole('button', { name: 'Account menu' }))
+    const menu = screen.getByRole('menu')
+    expect(menu.querySelector('svg[viewBox="0 0 16 16"]')).toBeNull()
+    expect(screen.queryByText('G')).toBeNull()
+    expect(screen.getByText('Email account')).toBeInTheDocument()
+  })
+
+  // ── NFR-account-menu-10: the avatar <img> is decorative — alt MUST be the empty string so
+  // screen readers don't announce a redundant/duplicated label. ──
+  it('the provider photo <img> has an empty alt (decorative)', () => {
+    const { container } = wrap({ ...baseUser, provider: 'github', avatarUrl: 'https://avatars.example/ada.png' }, vi.fn())
+    const img = container.querySelector('img') as HTMLImageElement
+    expect(img).toBeTruthy()
+    expect(img.getAttribute('alt')).toBe('')
+  })
 })

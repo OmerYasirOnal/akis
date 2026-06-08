@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { PgUserStore, type SqlClient } from '../../src/auth/PgUserStore.js'
-import { EmailTakenError } from '../../src/auth/UserStore.js'
+import { EmailTakenError, toPublic } from '../../src/auth/UserStore.js'
 
 /** A fake SqlClient: records queries and returns scripted rows by a matcher. */
 function fakeDb(handlers: { match: (sql: string) => boolean; rows: (params: unknown[]) => Array<Record<string, unknown>>; throws?: { code: string } }[]) {
@@ -145,5 +145,56 @@ describe('PgUserStore', () => {
     ])
     await new PgUserStore(db, () => 'oauth-id').upsertOAuth({ externalId: 'google:11', email: 'np@akis.dev', name: 'NP' })
     expect(calls.find(c => c.text.startsWith('INSERT'))!.params).toEqual(['oauth-id', 'NP', 'np@akis.dev', '', 'google:11', null, 'google'])
+  })
+
+  // ── provider-badge FR-11 / NFR-2: toUser must NOT widen AuthProvider. An unrecognized DB
+  //    `last_login_provider` (a future/legacy value, a typo, or NULL) maps to lastLoginProvider
+  //    === undefined, so the wire badge (toPublic) then DERIVES the provider from externalId. ──
+  it('findById maps an UNRECOGNIZED last_login_provider to lastLoginProvider undefined (derive from externalId)', async () => {
+    for (const bad of ['saml', 'garbage', null]) {
+      const { db } = fakeDb([{ match: s => s.startsWith('SELECT'), rows: () => [row({ external_id: 'github:7', last_login_provider: bad })] }])
+      const u = (await new PgUserStore(db).findById('id1'))!
+      // The stray value is dropped — never coerced onto the union.
+      expect(u.lastLoginProvider).toBeUndefined()
+      // toPublic then falls back to deriving from the bound externalId: github here.
+      expect(toPublic(u).provider).toBe('github')
+    }
+  })
+
+  it('findById KEEPS a recognized last_login_provider and toPublic prefers it over the externalId derivation', async () => {
+    // Account is bound to a github identity but signed in THIS time via google (cross-provider).
+    const { db } = fakeDb([{ match: s => s.startsWith('SELECT'), rows: () => [row({ external_id: 'github:7', last_login_provider: 'google' })] }])
+    const u = (await new PgUserStore(db).findById('id1'))!
+    expect(u.lastLoginProvider).toBe('google')
+    expect(toPublic(u).provider).toBe('google') // last-login wins over the bound identity
+  })
+
+  // ── provider-badge NFR-5: the create race. SELECTs miss, INSERT loses the race (23505), and the
+  //    follow-up `WHERE external_id = $1 OR email = $2` finds the row the winner inserted. We must
+  //    RETURN that row (no throw), carrying its last_login_provider intact. A regression that
+  //    re-threw on 23505, or dropped the recovery SELECT, would FAIL here. ──
+  it('upsertOAuth recovers from a concurrent-insert 23505 by re-SELECTing (external_id OR email) and returns that row with its provider', async () => {
+    const { db, calls } = fakeDb([
+      { match: s => s.startsWith('SELECT') && s.includes('external_id = $1') && !s.includes('OR email'), rows: () => [] }, // byExt miss
+      { match: s => s.startsWith('SELECT') && s.includes('WHERE email'), rows: () => [] },                                   // byEmail miss
+      { match: s => s.startsWith('INSERT'), rows: () => [], throws: { code: '23505' } },                                     // lost the race
+      // Recovery SELECT: `WHERE external_id = $1 OR email = $2` — the row the concurrent winner wrote.
+      { match: s => s.startsWith('SELECT') && s.includes('OR email'), rows: p => [row({ id: 'winner', external_id: p[0] as string, last_login_provider: 'github' })] },
+    ])
+    const u = (await new PgUserStore(db).upsertOAuth({ externalId: 'github:42', email: 'race@akis.dev', name: 'Race' }))!
+    expect(u.id).toBe('winner')
+    expect(u.externalId).toBe('github:42')
+    expect(u.lastLoginProvider).toBe('github') // the recovered row's provider is preserved
+    // The recovery SELECT was actually issued with BOTH the external_id and the lowercased email.
+    const recover = calls.find(c => c.text.startsWith('SELECT') && c.text.includes('OR email'))!
+    expect(recover.params).toEqual(['github:42', 'race@akis.dev'])
+  })
+
+  it('upsertOAuth RE-THROWS a non-unique INSERT error (only 23505 triggers the race recovery)', async () => {
+    const { db } = fakeDb([
+      { match: s => s.startsWith('SELECT'), rows: () => [] },
+      { match: s => s.startsWith('INSERT'), rows: () => [], throws: { code: '40001' } }, // serialization failure, not a dup
+    ])
+    await expect(new PgUserStore(db).upsertOAuth({ externalId: 'github:99', email: 'x@akis.dev', name: 'X' })).rejects.toMatchObject({ code: '40001' })
   })
 })

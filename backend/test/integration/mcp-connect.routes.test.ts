@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import Fastify from 'fastify'
-import { registerMcpConnectRoutes, mcpTransportFor, type RemoteMcpAuthFn, type RemoteMcpProviderConfig } from '../../src/api/mcpConnect.routes.js'
-import { MemoryRemoteMcpAuthStore, StoreBackedOAuthProvider } from '../../src/agent/mcp/StoreBackedOAuthProvider.js'
+import { registerMcpConnectRoutes, mcpTransportFor, REMOTE_MCP_PROVIDERS, type RemoteMcpAuthFn, type RemoteMcpProviderConfig } from '../../src/api/mcpConnect.routes.js'
+import { MemoryRemoteMcpAuthStore, StoreBackedOAuthProvider, type RemoteMcpAuthStore, type RemoteMcpAuthRecord } from '../../src/agent/mcp/StoreBackedOAuthProvider.js'
 import { signConnectState, verifyConnectState } from '../../src/auth/oauth.js'
 import type { OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js'
 
@@ -202,5 +202,211 @@ describe('mcp connect — github STATIC client (no DCR), atlassian DCR', () => {
     store.save('u1', 'github', { tokens }) // connected
     const t = mcpTransportFor({ userId: 'u1', provider: 'github', store, env: GH_ENV, providers: BOTH })
     expect(t).toBeDefined() // a transport is built for the connected github user (refresh uses the static client)
+  })
+})
+
+// ── Regression guards for verified-but-unguarded behaviors (requirements verification 2026-06-08) ──
+// These assert SPECIFIC, already-correct behaviors so a regression (wider scope, fail-OPEN connect,
+// echoed error text, persisted client_secret, leaked token) would FAIL the suite. Production is NOT
+// changed by these tests.
+
+const BOTH_REG: Record<string, RemoteMcpProviderConfig> = {
+  atlassian: { serverUrl: 'https://mcp.example/v1', kind: 'streamable-http', scope: 'offline_access write:jira-work' },
+  github: { serverUrl: 'https://api.githubcopilot.com/mcp/', kind: 'streamable-http', scope: 'repo read:org read:user' },
+}
+const GH_LOGIN_ENV = { PUBLIC_BASE_URL: 'https://akis.app', GITHUB_OAUTH_CLIENT_ID: 'gh-id', GITHUB_OAUTH_CLIENT_SECRET: 'gh-secret' }
+
+/** A store that refuses to persist (encryption not configured) — every mutator is a tripwire so a
+ *  regression that wrote BEFORE the canStore() preflight would blow up loudly. */
+class CannotStore implements RemoteMcpAuthStore {
+  load(): RemoteMcpAuthRecord | undefined { return undefined }
+  save(): void { throw new Error('save() must not run when canStore() is false') }
+  clearVerifier(): void { throw new Error('clearVerifier() must not run when canStore() is false') }
+  remove(): void { throw new Error('remove() must not run when canStore() is false') }
+  canStore(): boolean { return false }
+}
+
+/** auth() that THROWS the moment it is touched — proves the route never reached the SDK. */
+const authMustNotRun: RemoteMcpAuthFn = async () => { throw new Error('SDK auth() must NOT be invoked') }
+
+/** Build a capturing app over the real-config-shaped BOTH_REG with an injectable auth(). */
+function regApp(opts: { env: Record<string, string>; auth?: RemoteMcpAuthFn; store?: RemoteMcpAuthStore; userId?: string }) {
+  let captured: StoreBackedOAuthProvider | undefined
+  let redirectUrlSeen: string | undefined
+  const auth = opts.auth ?? (async (provider, o) => {
+    captured = provider as StoreBackedOAuthProvider
+    redirectUrlSeen = (provider as StoreBackedOAuthProvider).redirectUrl
+    return fakeAuth(provider, o)
+  })
+  const store = opts.store ?? new MemoryRemoteMcpAuthStore()
+  const f = Fastify({ logger: false })
+  registerMcpConnectRoutes(f, {
+    store, env: opts.env, providers: BOTH_REG, secret: SECRET, auth,
+    userIdOf: async () => opts.userId ?? 'u1',
+  })
+  return { f, store, get: () => captured, redirectUrl: () => redirectUrlSeen }
+}
+
+describe('regression · github remote-MCP connect guards', () => {
+  it('FR-6 / NFR-8 / UC-3: canStore()===false → 302 mcp=unavailable AND auth() is NEVER invoked (fail-CLOSED)', async () => {
+    const { f } = regApp({ env: GH_LOGIN_ENV, auth: authMustNotRun, store: new CannotStore() })
+    const res = await f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    expect(res.statusCode).toBe(302)
+    // exact opaque status — a regression that fell through to 'error'/'connected' or actually ran the
+    // flow would fail here (and authMustNotRun would have thrown first).
+    expect(res.headers.location).toBe('https://akis.app/settings?mcp=unavailable')
+  })
+
+  it('FR-8: the connect provider redirectUrl is EXACTLY ${base}/mcp/github/callback (the base-/ registered URI)', async () => {
+    const a = regApp({ env: GH_LOGIN_ENV })
+    const res = await a.f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    expect(res.statusCode).toBe(302)
+    // captured from the provider the route handed to auth() — drifting the callback path or origin
+    // (which would break the OAuth-App's registered redirect) fails this.
+    expect(a.redirectUrl()).toBe('https://akis.app/mcp/github/callback')
+  })
+
+  it('FR-9: connect-step auth() AUTHORIZED (cached tokens) → mcp=connected, no authorize-page redirect', async () => {
+    // auth() returns AUTHORIZED on the connect step (no code) WITHOUT capturing an authorize URL.
+    const authorizedNoRedirect: RemoteMcpAuthFn = async () => 'AUTHORIZED'
+    const a = regApp({ env: GH_LOGIN_ENV, auth: authorizedNoRedirect })
+    const res = await a.f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    expect(res.statusCode).toBe(302)
+    expect(res.headers.location).toBe('https://akis.app/settings?mcp=connected')
+    // NOT an authorize-page 302 — it lands back on settings, never the IdP.
+    expect(res.headers.location).not.toContain('authorize')
+  })
+
+  it('FR-10: connect-step auth() THROWS → EXACTLY mcp=error, error text NEVER echoed into the redirect', async () => {
+    const secretMsg = 'super-secret-discovery-failure-detail'
+    const throwingAuth: RemoteMcpAuthFn = async () => { throw new Error(secretMsg) }
+    const a = regApp({ env: GH_LOGIN_ENV, auth: throwingAuth })
+    const res = await a.f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    expect(res.statusCode).toBe(302)
+    const loc = res.headers.location as string
+    expect(loc).toBe('https://akis.app/settings?mcp=error')
+    expect(loc).not.toContain(secretMsg)
+    expect(loc).not.toContain('error=') // no error-detail querystring, only the opaque mcp=error token
+  })
+
+  it('FR-12: after connect, store.codeVerifier is persisted AND clientInfo (static secret) is NEVER persisted', async () => {
+    const a = regApp({ env: GH_LOGIN_ENV }) // fakeAuth saves a PKCE verifier on the connect step
+    const res = await a.f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    expect(res.statusCode).toBe(302)
+    const rec = (a.store as MemoryRemoteMcpAuthStore).load('u1', 'github')
+    expect(rec?.codeVerifier).toBeDefined() // PKCE verifier persisted for the in-flight connect
+    expect(rec?.clientInfo).toBeUndefined() // the static OAuth App is NEVER written to the store (secret stays in-process)
+  })
+})
+
+describe('regression · staticClientFor behavior via clientInformation() (NFR-13 / NFR-17)', () => {
+  // staticClientFor is module-private; its contract is observable through the provider the connect
+  // route constructs — clientInformation() is the SDK's DCR-skip signal and the faithful surface.
+
+  it('NFR-13: github WITHOUT OAuth creds → no static client (key OMITTED) → clientInformation() undefined', async () => {
+    // staticClientFor('github', {}) must return {} (key omitted, not present-but-undefined): a
+    // present-but-undefined staticClient would still drive clientInformation() to creds, so an
+    // undefined result here proves the key is genuinely absent.
+    const a = regApp({ env: { PUBLIC_BASE_URL: 'https://akis.app' } }) // no GITHUB_OAUTH_* creds
+    await a.f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    expect(a.get()?.clientInformation()).toBeUndefined()
+  })
+
+  it('NFR-17: github WITH the login-app env creds → reuses EXACTLY those creds (same OAuth App, no separate app)', async () => {
+    // staticClientFor keys off GITHUB_OAUTH_CLIENT_ID/SECRET — the very env vars the login flow uses
+    // (oauthCreds('github', env)) — so connecting reuses the operator's existing OAuth App.
+    const a = regApp({ env: GH_LOGIN_ENV })
+    await a.f.inject({ method: 'GET', url: '/mcp/github/connect' })
+    expect(a.get()?.clientInformation()).toEqual({ client_id: 'gh-id', client_secret: 'gh-secret' })
+  })
+
+  it('NFR-14: atlassian is NEVER given the github static client even when github creds are present', async () => {
+    const a = regApp({ env: GH_LOGIN_ENV }) // github creds set, but atlassian must keep its DCR path
+    await a.f.inject({ method: 'GET', url: '/mcp/atlassian/connect' })
+    expect(a.get()?.clientInformation()).toBeUndefined() // no static client → SDK would DCR
+  })
+})
+
+describe('regression · atlassian Jira-only scope + connect/status guards', () => {
+  it('FR-1 / NFR-8: REMOTE_MCP_PROVIDERS.atlassian.scope is JIRA-ONLY — Jira scopes present, ALL Confluence scopes absent', () => {
+    const atlassian = REMOTE_MCP_PROVIDERS.atlassian
+    expect(atlassian).toBeDefined()
+    const granted = new Set((atlassian as RemoteMcpProviderConfig).scope.split(/\s+/))
+    // Jira read+write must be present (the capability we DO request)…
+    expect(granted.has('read:jira-work')).toBe(true)
+    expect(granted.has('write:jira-work')).toBe(true)
+    // …and NONE of the Confluence scopes — re-adding any of these (a regression) would make Atlassian
+    // fail the WHOLE authorization on a site that hasn't granted them, blocking Jira too.
+    for (const c of ['read:confluence-content.all', 'write:confluence-content', 'read:confluence-space.summary']) {
+      expect(granted.has(c)).toBe(false)
+    }
+  })
+
+  it('FR-5 / NFR-8: atlassian connect with canStore()===false → mcp=unavailable, auth() NEVER invoked', async () => {
+    const { f } = regApp({ env: GH_LOGIN_ENV, auth: authMustNotRun, store: new CannotStore() })
+    const res = await f.inject({ method: 'GET', url: '/mcp/atlassian/connect' })
+    expect(res.statusCode).toBe(302)
+    expect(res.headers.location).toBe('https://akis.app/settings?mcp=unavailable')
+  })
+
+  it('FR-7/-8: connect-step AUTHORIZED → connected; an unexpected string → error; a throw → error', async () => {
+    const connected = regApp({ env: GH_LOGIN_ENV, auth: async () => 'AUTHORIZED' })
+    expect((await connected.f.inject({ method: 'GET', url: '/mcp/atlassian/connect' })).headers.location)
+      .toBe('https://akis.app/settings?mcp=connected')
+
+    // Any other (unexpected) AuthResult string that is neither AUTHORIZED nor a captured REDIRECT → error.
+    const weird = regApp({ env: GH_LOGIN_ENV, auth: async () => 'SOMETHING_UNEXPECTED' })
+    expect((await weird.f.inject({ method: 'GET', url: '/mcp/atlassian/connect' })).headers.location)
+      .toBe('https://akis.app/settings?mcp=error')
+
+    const threw = regApp({ env: GH_LOGIN_ENV, auth: async () => { throw new Error('boom') } })
+    expect((await threw.f.inject({ method: 'GET', url: '/mcp/atlassian/connect' })).headers.location)
+      .toBe('https://akis.app/settings?mcp=error')
+  })
+
+  it('FR-14 / NFR-3: /status returns the SAVED granted scope VERBATIM (not the requested cfg.scope), token-free', async () => {
+    const a = regApp({ env: GH_LOGIN_ENV })
+    // The site granted a DIFFERENT, narrower scope than what cfg requested (offline_access write:jira-work).
+    const grantedScope = 'read:jira-work' // strictly different from the configured request
+    const grantedTokens: OAuthTokens = { access_token: 'sekret-at', token_type: 'bearer', refresh_token: 'sekret-rt', scope: grantedScope }
+    ;(a.store as MemoryRemoteMcpAuthStore).save('u1', 'atlassian', { tokens: grantedTokens })
+    const res = await a.f.inject({ method: 'GET', url: '/mcp/atlassian/status' })
+    expect(res.statusCode).toBe(200)
+    const body = res.json()
+    expect(body.connected).toBe(true)
+    expect(body.scopes).toBe(grantedScope) // VERBATIM granted, not the requested 'offline_access write:jira-work'
+    expect(body.scopes).not.toBe((BOTH_REG.atlassian as RemoteMcpProviderConfig).scope)
+    // No token ever leaves /status (nor the response shape).
+    const json = JSON.stringify(body)
+    expect(json).not.toContain('access_token'); expect(json).not.toContain('refresh_token')
+    expect(json).not.toContain('sekret-at'); expect(json).not.toContain('sekret-rt')
+  })
+
+  it('FR-14 / NFR-3: connect & callback Location never carries an access/refresh token', async () => {
+    // Use DISTINCTIVE token values so a leak is unambiguous (the module `tokens` uses 2-char values
+    // that collide with words like "authorize"/"settings").
+    const loud: OAuthTokens = { access_token: 'AT-LEAK-MARKER-9', token_type: 'bearer', refresh_token: 'RT-LEAK-MARKER-9' }
+    const loudAuth: RemoteMcpAuthFn = async (provider, opts) => {
+      if (opts.authorizationCode) { (provider as StoreBackedOAuthProvider).saveTokens(loud); return 'AUTHORIZED' }
+      ;(provider as StoreBackedOAuthProvider).saveCodeVerifier('pkce')
+      ;(provider as StoreBackedOAuthProvider).redirectToAuthorization(new URL('https://auth.example/authorize?client_id=dcr'))
+      return 'REDIRECT'
+    }
+    // connect → captured authorize URL (the only outward 302 with secrets in scope)
+    const a = regApp({ env: GH_LOGIN_ENV, auth: loudAuth })
+    const connect = await a.f.inject({ method: 'GET', url: '/mcp/atlassian/connect' })
+    const connectLoc = connect.headers.location as string
+    expect(connectLoc).not.toContain('access_token'); expect(connectLoc).not.toContain('refresh_token')
+    expect(connectLoc).not.toContain(loud.access_token); expect(connectLoc).not.toContain(loud.refresh_token as string)
+
+    // callback → on success the Location is the opaque mcp=connected, never a token (loudAuth saves `loud`).
+    const state = signConnectState('u1', 'atlassian', SECRET)
+    const cb = await a.f.inject({ method: 'GET', url: `/mcp/atlassian/callback?code=abc&state=${encodeURIComponent(state)}` })
+    const cbLoc = cb.headers.location as string
+    expect(cbLoc).toBe('https://akis.app/settings?mcp=connected')
+    expect(cbLoc).not.toContain('access_token'); expect(cbLoc).not.toContain('refresh_token')
+    expect(cbLoc).not.toContain(loud.access_token); expect(cbLoc).not.toContain(loud.refresh_token as string)
+    // and the tokens DID land (proving the no-leak isn't because nothing was exchanged)
+    expect((a.store as MemoryRemoteMcpAuthStore).load('u1', 'atlassian')?.tokens).toEqual(loud)
   })
 })

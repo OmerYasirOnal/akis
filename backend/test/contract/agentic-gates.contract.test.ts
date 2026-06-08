@@ -182,6 +182,16 @@ describe('CONTRACT: 4 structural gates (real path)', () => {
     // below at line ~197 keeps this structural); retrieve_knowledge is not in GATE_TOOLS.
     expect(isGateTool('retrieve_knowledge')).toBe(false)
   })
+
+  it('NFR-1: propose_github_write carries ZERO gate authority (not a gate tool, never in GATE_TOOLS)', () => {
+    // The agent-propose tool may ONLY append a status:'proposed' record — the human-confirm route is
+    // the sole executor. If propose_github_write ever slipped into GATE_TOOLS it would gain a structural
+    // gate owner (GATE_TOOL_OWNER) and the producer-scope validation would start treating it as a gated
+    // capability — a privilege-escalation regression. These two assertions are the canary: the tool name
+    // must be classified as NON-gate, and the frozen GATE_TOOLS set must not list it.
+    expect(isGateTool('propose_github_write')).toBe(false)
+    expect((GATE_TOOLS as readonly string[]).includes('propose_github_write')).toBe(false)
+  })
 })
 
 // ── Type-level tripwires: the gate tokens are nominally branded and the gate
