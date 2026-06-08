@@ -24,16 +24,18 @@ function fakeApi(over: Partial<ApiClient> = {}): ApiClient {
 describe('PublishDestination (Settings card)', () => {
   it('not-configured (no encryption) → shows the banner, no form', async () => {
     renderI18n(<PublishDestination api={fakeApi({ publishStatus: async () => ({ configured: false, present: false }) })} />)
-    await screen.findByText(/encryption is not configured/i)
+    // User-facing copy must NOT leak the raw server env-var name; it points at the admin instead.
+    await screen.findByText(/encrypted credential storage/i)
+    expect(screen.queryByText(/AI_KEY_ENCRYPTION_KEY/)).not.toBeInTheDocument()
     expect(screen.queryByLabelText('Host')).not.toBeInTheDocument()
   })
 
   it('status-fetch FAILURE → shows the real error, NOT the not-configured banner', async () => {
-    // A dev-proxy gap / network error must never masquerade as "encryption not configured" —
-    // that message sends the operator to fix a server env that is actually fine.
+    // A dev-proxy gap / network error must never masquerade as the not-configured banner —
+    // that message wrongly sends the user to chase an admin action when the server is fine.
     renderI18n(<PublishDestination api={fakeApi({ publishStatus: async () => { throw new Error('502 bad gateway') } })} />)
     await screen.findByText(/502 bad gateway/i)
-    expect(screen.queryByText(/encryption is not configured/i)).not.toBeInTheDocument()
+    expect(screen.queryByText(/encrypted credential storage/i)).not.toBeInTheDocument()
   })
 
   it('no profile → renders the form including a WRITE-ONLY key field (never seeded)', async () => {

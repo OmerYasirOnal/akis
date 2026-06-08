@@ -42,7 +42,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
         <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">{label}</span>
         {children}
       </label>
-      {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-slate-400">{hint}</span>}
     </div>
   )
 }
@@ -50,7 +50,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className={`w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 ${className}`}
+      className={`w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 placeholder:text-slate-400 focus:border-[#07D1AF] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 ${className}`}
       {...rest}
     />
   )
@@ -69,7 +69,7 @@ export function Select({ className = '', ...rest }: SelectHTMLAttributes<HTMLSel
   return (
     <select
       {...rest}
-      className={`w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] bg-no-repeat py-2.5 pl-3 pr-9 text-slate-100 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      className={`w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] bg-no-repeat py-2.5 pl-3 pr-9 text-slate-100 focus:border-[#07D1AF] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
       // Merge AFTER the spread so a caller's `style` augments rather than clobbers the chevron +
       // dark color-scheme (mirrors the `className` merge contract above).
       style={{
@@ -90,7 +90,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 export function Stat({ label, value, accent = false }: { label: ReactNode; value: ReactNode; accent?: boolean }) {
   return (
     <Card className="px-4 py-3">
-      <div className="text-[11px] uppercase tracking-widest text-slate-500">{label}</div>
+      <div className="text-[11px] uppercase tracking-widest text-slate-400">{label}</div>
       <div className={`mt-1 text-2xl font-bold ${accent ? 'text-[#07D1AF]' : 'text-slate-100'}`}>{value}</div>
     </Card>
   )

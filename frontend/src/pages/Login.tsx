@@ -3,6 +3,7 @@ import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
+import { PasswordInput } from '../ui/PasswordInput.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
 import { OAuthButtons } from './OAuthButtons.js'
@@ -50,7 +51,7 @@ export function Login({ api }: { api: ApiClient }) {
           <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label={t('auth.password')}>
-          <Input type="password" autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput autoComplete="current-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         <Link to="/forgot-password" className="-mt-2 self-end text-xs text-slate-400 hover:text-[#07D1AF]">{t('auth.forgot.link')}</Link>
         {err && <ErrorNote>{err}</ErrorNote>}

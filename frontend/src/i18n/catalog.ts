@@ -65,7 +65,7 @@ export const STRINGS = {
     // the live preview when the run's verify/preview event carries `demo:true`, so a mock
     // "verified"/running app can never be mistaken for a real one AT THE RESULT.
     'result.demo.badge': 'DEMO · verification simulated',
-    'result.demo.title': 'This result was produced by the mock test runner — it is NOT a real ≥1-test pass. Add a provider key and disable AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY for a live, real-verified build.',
+    'result.demo.title': 'This result was produced by the mock test runner — it is NOT a real ≥1-test pass. Add a provider key in Settings for a live, real-verified build.',
     'chat.working': 'working…',
     'chat.revised': 'number of times this agent re-ran (critic-driven revisions)',
     'trust.headline': 'Builder & verifier are separate · deploy needs your approval · every step is auditable',
@@ -111,6 +111,11 @@ export const STRINGS = {
     'akis.ask': 'Ask AKIS anything…',
     'akis.send': 'Ask',
     'akis.suggestions': 'Suggested replies',
+    'akis.starters.title': 'Not sure where to start? Try one of these:',
+    'akis.starter.1': 'A habit tracker with daily streaks and reminders',
+    'akis.starter.2': 'A team standup bot that collects async updates',
+    'akis.starter.3': 'A URL shortener with click analytics',
+    'akis.starter.4': 'A Markdown notes app with full-text search',
     // ── Chat resilience: distinct error rows, retry, honest empties, truncated spec ──
     'akis.error.label': 'Message failed',
     'akis.error.retry': 'Retry',
@@ -300,7 +305,7 @@ export const STRINGS = {
     'nav.logout': 'Sign out',
     'nav.toggleLanguage': 'Switch language',
     'mode.demo.badge': 'DEMO · mock-verified',
-    'mode.demo.title': 'Demo mode: builds use a mock provider and/or mock verification — "verified" is NOT from real tests. Add a provider key and disable AKIS_ALLOW_MOCK for live builds.',
+    'mode.demo.title': 'Demo mode: builds use a mock provider and/or mock verification — "verified" is NOT from real tests. To run live, real-verified builds, add a provider key in Settings.',
     'common.loading': 'Loading…',
     'auth.login.title': 'Welcome back',
     'auth.login.subtitle': 'Sign in to your AKIS studio.',
@@ -311,6 +316,8 @@ export const STRINGS = {
     'auth.signup.disabled': 'Signups are closed on this instance. Please sign in instead.',
     'auth.email': 'Email',
     'auth.password': 'Password',
+    'auth.password.show': 'Show password',
+    'auth.password.hide': 'Hide password',
     'auth.name': 'Name',
     'auth.noAccount': 'New to AKIS?',
     'auth.haveAccount': 'Already have an account?',
@@ -476,7 +483,7 @@ export const STRINGS = {
     // Publish destination (OCI free-tier) — the SSH key + host/dir/port for "publish to your own server".
     'settings.publish.title': 'Publish destination',
     'settings.publish.sub': 'Deploy a finished build to your own server (e.g. an Oracle Cloud free-tier instance) over SSH.',
-    'settings.publish.notConfigured': 'Publishing is not available — encryption is not configured on this server (set AI_KEY_ENCRYPTION_KEY).',
+    'settings.publish.notConfigured': 'Publishing isn’t available on this deployment yet — your administrator needs to enable encrypted credential storage on the server.',
     'settings.publish.host': 'Host',
     'settings.publish.hostHint': 'The instance hostname or IP — reachable over SSH from where AKIS runs.',
     'settings.publish.sshUser': 'SSH user',
@@ -872,6 +879,11 @@ export const STRINGS = {
     'akis.ask': 'AKIS’e bir şey sor…',
     'akis.send': 'Sor',
     'akis.suggestions': 'Önerilen yanıtlar',
+    'akis.starters.title': 'Nereden başlayacağını bilmiyor musun? Şunlardan birini dene:',
+    'akis.starter.1': 'Günlük seri ve hatırlatmalı bir alışkanlık takipçisi',
+    'akis.starter.2': 'Asenkron güncellemeleri toplayan bir takım standup botu',
+    'akis.starter.3': 'Tıklama analizli bir URL kısaltıcı',
+    'akis.starter.4': 'Tam metin aramalı bir Markdown not uygulaması',
     // ── Sohbet dayanıklılığı: ayrı hata satırları, yeniden dene, dürüst boş yanıt, kesilmiş spec ──
     'akis.error.label': 'Mesaj başarısız',
     'akis.error.retry': 'Yeniden dene',
@@ -986,7 +998,7 @@ export const STRINGS = {
     // P1-CORE-1: çalıştırma başına "bu sonuç simüle edildi" rozeti — verify gate kartında ve
     // canlı önizlemede, çalıştırmanın verify/preview olayı `demo:true` taşıdığında gösterilir.
     'result.demo.badge': 'DEMO · doğrulama simüle edildi',
-    'result.demo.title': 'Bu sonuç taklit (mock) test koşucusu tarafından üretildi — GERÇEK bir ≥1-test geçişi DEĞİLDİR. Canlı, gerçekten doğrulanmış bir derleme için bir sağlayıcı anahtarı ekleyin ve AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY seçeneklerini kapatın.',
+    'result.demo.title': 'Bu sonuç taklit (mock) test koşucusu tarafından üretildi — GERÇEK bir ≥1-test geçişi DEĞİLDİR. Canlı, gerçekten doğrulanmış bir derleme için Ayarlar’dan bir sağlayıcı anahtarı ekleyin.',
     // ── Geliştirme geçmişi (stüdyo yeniden tasarımı) ──
     'history.title': 'Geliştirme geçmişi',
     'history.sub': 'AKIS ile inşa ettiğin her uygulama — çalışmasını ve önizlemesini görmek için birini aç.',
@@ -1063,7 +1075,7 @@ export const STRINGS = {
     'nav.logout': 'Çıkış yap',
     'nav.toggleLanguage': 'Dili değiştir',
     'mode.demo.badge': 'DEMO · sahte doğrulama',
-    'mode.demo.title': 'Demo modu: derlemeler bir taklit sağlayıcı ve/veya taklit doğrulama kullanır — "doğrulandı" GERÇEK testlerden gelmez. Gerçek derlemeler için bir sağlayıcı anahtarı ekleyin ve AKIS_ALLOW_MOCK seçeneğini kapatın.',
+    'mode.demo.title': 'Demo modu: derlemeler bir taklit sağlayıcı ve/veya taklit doğrulama kullanır — "doğrulandı" GERÇEK testlerden gelmez. Canlı, gerçekten doğrulanmış derlemeler için Ayarlar’dan bir sağlayıcı anahtarı ekleyin.',
     'common.loading': 'Yükleniyor…',
     'auth.login.title': 'Tekrar hoş geldin',
     'auth.login.subtitle': 'AKIS stüdyona giriş yap.',
@@ -1074,6 +1086,8 @@ export const STRINGS = {
     'auth.signup.disabled': 'Bu örnekte kayıt kapalı. Lütfen giriş yapın.',
     'auth.email': 'E-posta',
     'auth.password': 'Parola',
+    'auth.password.show': 'Parolayı göster',
+    'auth.password.hide': 'Parolayı gizle',
     'auth.name': 'İsim',
     'auth.noAccount': 'AKIS’te yeni misin?',
     'auth.haveAccount': 'Zaten hesabın var mı?',
@@ -1233,7 +1247,7 @@ export const STRINGS = {
     // Yayın hedefi (OCI ücretsiz katman) — "kendi sunucuna yayınla" için SSH anahtarı + host/dizin/port.
     'settings.publish.title': 'Yayın hedefi',
     'settings.publish.sub': 'Tamamlanmış bir yapıyı SSH üzerinden kendi sunucuna dağıt (ör. bir Oracle Cloud ücretsiz katman örneği).',
-    'settings.publish.notConfigured': 'Yayınlama kullanılamıyor — bu sunucuda şifreleme yapılandırılmamış (AI_KEY_ENCRYPTION_KEY ayarla).',
+    'settings.publish.notConfigured': 'Yayınlama bu dağıtımda henüz kullanılamıyor — yöneticinin sunucuda şifreli kimlik bilgisi depolamayı etkinleştirmesi gerekiyor.',
     'settings.publish.host': 'Host',
     'settings.publish.hostHint': 'Örneğin host adı veya IP — AKIS’in çalıştığı yerden SSH ile erişilebilir olmalı.',
     'settings.publish.sshUser': 'SSH kullanıcısı',
