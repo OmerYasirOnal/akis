@@ -126,10 +126,14 @@ describe('ChatStudio', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Workflow started' })).toBeDisabled())
     expect(screen.getAllByLabelText(/ask akis/i).length).toBeGreaterThanOrEqual(1)
     act(() => fake.emit(ev({ kind: 'done', verified: true, provider: 'mock' }), 1))
-    await userEvent.click(screen.getByRole('button', { name: 'Collapse preview' }))
-    expect(screen.getByRole('button', { name: 'Expand preview' })).toBeInTheDocument()
-    // The collapsed-rail vertical label (a <span>, not the mobile Chat/Preview tab <button>).
-    expect(screen.getByText('Preview', { selector: 'span' })).toBeInTheDocument()
+    // The preview now lives in a slide-in DRAWER (the in-flow Collapse/Expand <aside> was retired).
+    // Closed-by-default → the edge-tab "Open preview" reopens it; the ✕ closes it back. Exercise both.
+    const drawer = await screen.findByTestId('preview-drawer')
+    expect(drawer).toHaveAttribute('aria-hidden', 'true')
+    await userEvent.click(screen.getByTestId('preview-edge-tab')) // "Open preview"
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'false'))
+    await userEvent.click(screen.getByRole('button', { name: 'Close preview' }))
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
   })
 
   it('a follow-up approved spec EDITS the prior app: startSession carries baseSessionId once the prior session produced code', async () => {

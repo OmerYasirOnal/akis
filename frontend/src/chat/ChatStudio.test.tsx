@@ -190,14 +190,13 @@ describe('ChatStudio — P0-1 single spec approval (chat-approved spec seed)', (
   })
 })
 
-// ── MOBILE 390px: the preview rail must be reachable via a Chat/Preview tab toggle ──
-describe('ChatStudio — mobile chat/preview tab toggle', () => {
+// ── MOBILE 390px: the preview rail is reachable via the drawer's persistent FAB (the old mobile
+//    Chat/Preview tablist was retired in favor of the slide-in drawer + floating "Open preview"). ──
+describe('ChatStudio — mobile preview reachability via the drawer FAB', () => {
   beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
   afterEach(() => { window.history.replaceState({}, '', '/') })
 
-  /** A studio fetch that creates a session for one approval whose getSession resolves DONE with code
-   *  files. The realistic state: code files make PreviewPanel's inner Preview⇄Code tablist render, so
-   *  the test pins that the OUTER mobile pane-switcher coexists with (and stays distinct from) it. */
+  /** A studio fetch that creates a session for one approval whose getSession resolves DONE with code. */
   function runFetch(): (path: string, init?: RequestInit) => Promise<Response> {
     const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
     return async (path: string, init?: RequestInit) => {
@@ -205,47 +204,36 @@ describe('ChatStudio — mobile chat/preview tab toggle', () => {
       if (path.endsWith('/api/chat/stream')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as unknown as Response
       if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply }), text: async () => '' } as unknown as Response
       if (path.endsWith('/sessions') && init?.method === 'POST') return { ok: true, status: 201, json: async () => ({ id: 'sm', status: 'running', idea: '# TODO App\nA list.', version: 1 }), text: async () => '' } as unknown as Response
-      // DONE + code files → codeFiles non-empty → PreviewPanel's inner tablist (showTablist) renders.
       if (path.endsWith('/sessions/sm')) return { ok: true, status: 200, json: async () => ({ id: 'sm', status: 'done', code: { files: [{ filePath: 'index.html', content: '<html/>' }] }, version: 2 }), text: async () => '' } as unknown as Response
       if (path.endsWith('/sessions/sm/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
       return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
     }
   }
 
-  it('once a code-producing run exists, the mobile "View" switcher coexists with PreviewPanel\'s inner tablist; its "Live view" tab stays uniquely findable and toggling works', async () => {
+  it('there is NO mobile chat/preview tablist anymore; the drawer + its FAB appear once a run exists', async () => {
     const api = new ApiClient('', vi.fn(runFetch()))
     const fake = new FakeStream()
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
 
-    // Idle: no mobile tablist yet (the toggle only matters once there's a preview rail to reach).
+    // Idle: no drawer yet (only mounts once a run exists).
+    expect(screen.queryByTestId('preview-drawer')).toBeNull()
+    expect(screen.queryByTestId('preview-fab')).toBeNull()
+    // The retired mobile pane-switcher is gone.
     expect(screen.queryByRole('tablist', { name: /view/i })).toBeNull()
 
-    // Start a build → hasRun becomes true, and getSession resolves DONE-with-code.
     await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
 
-    // Wait for the realistic coexistence: TWO tablists — the outer mobile "View" switcher AND
-    // PreviewPanel's inner "Live preview" tablist (which only appears once code files exist).
-    await waitFor(() => expect(screen.getAllByRole('tablist')).toHaveLength(2))
-    // The two tablists are distinguishable by accessible name for a screen reader (must-fix 1).
-    expect(screen.getByRole('tablist', { name: 'View' })).toBeInTheDocument()
-    expect(screen.getByRole('tablist', { name: 'Live preview' })).toBeInTheDocument()
-
-    // The mobile switcher's preview tab is "Live view" — distinct from PreviewPanel's inner "Preview"
-    // tab, so it stays UNIQUELY findable even while both tablists are mounted (must-fix 2).
-    const liveTab = screen.getByRole('tab', { name: 'Live view' })
-    const chatTab = screen.getByRole('tab', { name: 'Chat' })
-    // PreviewPanel's inner "Preview" tab also exists, and it does NOT match the mobile switcher.
-    expect(screen.getByRole('tab', { name: 'Preview' })).not.toBe(liveTab)
-    // Default lands on Chat (chat-first design).
-    expect(chatTab).toHaveAttribute('aria-selected', 'true')
-    expect(liveTab).toHaveAttribute('aria-selected', 'false')
-
-    // Tapping the mobile "Live view" tab selects it — the rail is now the foreground mobile pane.
-    await userEvent.click(liveTab)
-    expect(liveTab).toHaveAttribute('aria-selected', 'true')
-    expect(chatTab).toHaveAttribute('aria-selected', 'false')
+    // The drawer is now mounted (a sibling of the chat) with its persistent mobile FAB.
+    const drawer = await screen.findByTestId('preview-drawer')
+    expect(screen.getByTestId('preview-fab')).toBeInTheDocument()
+    // The retired "View" pane-switcher tablist is gone.
+    expect(screen.queryByRole('tablist', { name: 'View' })).toBeNull()
+    // The drawer is CLOSED by default (chat-first) → its content is aria-hidden, so PreviewPanel's
+    // inner tablist is correctly NOT in the a11y tree while collapsed; the edge-tab reopens it.
+    expect(drawer).toHaveAttribute('aria-hidden', 'true')
+    expect(screen.getByTestId('preview-edge-tab')).toBeInTheDocument()
   })
 })
 
@@ -355,5 +343,108 @@ describe('ChatStudio — anchored multi-run transcript', () => {
     expect(screen.getByText(/I’m AKIS/)).toBeInTheDocument()
     expect(screen.queryByText('unrelated earlier chat')).toBeNull()
     expect(screen.queryByText('unrelated earlier reply')).toBeNull()
+  })
+})
+
+// ── PREVIEW DRAWER: push-split shell, auto-open on ready (not starting), #35 reopen suppression ──
+describe('ChatStudio — preview drawer (push-split shell + auto-open on ready)', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  /** Per-connect fake stream (one per run-block's useLiveChat). The most-recently-connected is the
+   *  ACTIVE run (a terminal run folds /log without an EventSource); emit() drives folding on it so a
+   *  test can flip the folded view's preview lifecycle (starting → ready) and assert the drawer. */
+  class EmitStream {
+    static created: EmitStream[] = []
+    connectedUrl?: string
+    private onEvent?: (e: AkisEvent, seq: number) => void
+    constructor() { EmitStream.created.push(this) }
+    connect(url: string, h: { onEvent: (e: AkisEvent, seq: number) => void }): void { this.connectedUrl = url; this.onEvent = h.onEvent }
+    close(): void {}
+    emit(e: AkisEvent, seq: number): void { this.onEvent?.(e, seq) }
+  }
+  const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
+    ({ agent: 'orchestrator', laneId: 'main', sessionId: 'sd', ts: 0, ...(e as object) }) as AkisEvent
+
+  const SPEC = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
+
+  /** A studio harness: one chat spec → one created RUNNING session (sd) whose getSession resolves
+   *  running (so the build is live and its EmitStream is the active reporter we can emit on). */
+  function drawerFetch(): (path: string, init?: RequestInit) => Promise<Response> {
+    return async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: SPEC }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && init?.method === 'POST') return { ok: true, status: 201, json: async () => ({ id: 'sd', status: 'running', idea: '# TODO App\nA list.', version: 1 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sd/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sd')) return { ok: true, status: 200, json: async () => ({ id: 'sd', status: 'running', version: 1 }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  /** Drive a fresh build to live and return the active EmitStream (the live reporter). */
+  async function startLiveBuild() {
+    EmitStream.created = []
+    const api = new ApiClient('', vi.fn(drawerFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    // The active run connects its EventSource (a fresh build is live, not terminal).
+    await waitFor(() => expect(EmitStream.created.some(s => s.connectedUrl === '/sessions/sd/events')).toBe(true))
+    return EmitStream.created.find(s => s.connectedUrl === '/sessions/sd/events')!
+  }
+
+  it('chat is full-width (--preview-w: 0px, drawer aria-hidden) before any preview is ready', async () => {
+    const live = await startLiveBuild()
+    live.emit(ev({ kind: 'session', status: 'started', sessionId: 'sd' }), 1)
+    // Drawer mounts (sibling) once a run exists, but stays CLOSED until a preview is ready.
+    const drawer = await screen.findByTestId('preview-drawer')
+    expect(drawer).toHaveAttribute('aria-hidden', 'true')
+    expect(drawer).toHaveStyle({ transform: 'translateX(100%)' })
+    // The shell drives the chat padding via a single CSS var, which is 0px while closed.
+    expect(drawer.closest('[data-preview-shell]')!.getAttribute('style')).toContain('--preview-w: 0px')
+  })
+
+  it('does NOT auto-open while the preview is only starting', async () => {
+    const live = await startLiveBuild()
+    live.emit(ev({ kind: 'preview_status', status: 'starting', sessionId: 'sd' }), 1)
+    // A starting frame is NOT a ready artifact → the drawer must stay closed (anti-flicker).
+    const drawer = await screen.findByTestId('preview-drawer')
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
+  })
+
+  it('auto-opens the drawer when the preview becomes ready (once per run)', async () => {
+    const live = await startLiveBuild()
+    const drawer = await screen.findByTestId('preview-drawer')
+    expect(drawer).toHaveAttribute('aria-hidden', 'true')
+    // A ready frame yields an embeddable /preview/sd/ url → the drawer slides in.
+    live.emit(ev({ kind: 'preview_status', status: 'ready', url: '/preview/sd/', sessionId: 'sd' }), 1)
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'false'))
+    expect(drawer).toHaveStyle({ transform: 'translateX(0)' })
+  })
+
+  it('reopening a finished build does NOT auto-open the drawer (#35 drawerAutoOpened pre-seed)', async () => {
+    EmitStream.created = []
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'sR', idea: '# Reopened App', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sR/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sR')) return { ok: true, status: 200, json: async () => ({ id: 'sR', status: 'done', version: 1 }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+
+    await userEvent.click(await screen.findByRole('button', { name: /History/i }))
+    await userEvent.click(await screen.findByRole('menuitem', { name: /Reopened App/i }))
+    await waitFor(() => expect(screen.getByText('Reopened App')).toBeInTheDocument())
+    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/sR/events')!)
+
+    const drawer = await screen.findByTestId('preview-drawer')
+    // A reopen pre-seeds drawerAutoOpened — even a fresh `ready` frame must NOT auto-open it (the
+    // user reopened to read the transcript; the drawer is opened only by an explicit action).
+    live.emit(ev({ kind: 'preview_status', status: 'ready', url: '/preview/sR/', sessionId: 'sR' }), 1)
+    await Promise.resolve()
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
   })
 })
