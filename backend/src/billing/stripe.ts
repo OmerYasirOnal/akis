@@ -85,14 +85,15 @@ export interface StripeEvent { type: string; data: { object: Record<string, unkn
  */
 export function verifyWebhook(rawBody: string, sigHeader: string | undefined, secret: string | undefined, nowMs = Date.now()): StripeEvent | undefined {
   if (!secret || !sigHeader) return undefined
-  const parts = Object.fromEntries(sigHeader.split(',').map(p => p.split('=', 2) as [string, string]))
-  const t = Number(parts.t)
-  const v1 = parts.v1
-  if (!Number.isFinite(t) || !v1) return undefined
+  const parts = sigHeader.split(',').map(p => p.split('=', 2) as [string, string])
+  const t = Number(parts.find(([k]) => k === 't')?.[1])
+  // Stripe may send MULTIPLE v1 signatures during a webhook-secret rotation — accept if ANY matches.
+  const v1s = parts.filter(([k]) => k === 'v1').map(([, v]) => v)
+  if (!Number.isFinite(t) || v1s.length === 0) return undefined
   if (Math.abs(nowMs / 1000 - t) > 300) return undefined // >5 min skew ⇒ reject (replay guard)
-  const expected = createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex')
-  const a = Buffer.from(expected), b = Buffer.from(v1)
-  if (a.length !== b.length || !timingSafeEqual(a, b)) return undefined
+  const a = Buffer.from(createHmac('sha256', secret).update(`${t}.${rawBody}`).digest('hex'))
+  const valid = v1s.some(v1 => { const b = Buffer.from(v1); return a.length === b.length && timingSafeEqual(a, b) })
+  if (!valid) return undefined
   try {
     const ev = JSON.parse(rawBody) as StripeEvent
     return ev && typeof ev.type === 'string' && ev.data && typeof ev.data === 'object' ? ev : undefined
