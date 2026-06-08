@@ -28,9 +28,11 @@ describe('Select (design-system)', () => {
     const cls = el.className
     // Custom chevron requires hiding the native one.
     expect(cls).toContain('appearance-none')
-    // Shared design-system teal focus state (matches Input).
+    // Shared design-system teal focus state (matches Input): a 2px /50 ring so keyboard
+    // focus is clearly visible on the dark surface (WCAG 2.4.7), not a faint 1px hint.
     expect(cls).toContain('focus:border-[#07D1AF]')
-    expect(cls).toContain('focus:ring-[#07D1AF]/40')
+    expect(cls).toContain('focus:ring-2')
+    expect(cls).toContain('focus:ring-[#07D1AF]/50')
     expect(cls).toContain('focus:outline-none')
   })
 
