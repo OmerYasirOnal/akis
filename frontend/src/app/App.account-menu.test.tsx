@@ -69,4 +69,14 @@ describe('App: a language toggle is available BEFORE auth (pre-auth switcher)', 
     fireEvent.click(toggle) // same DOM node persists; React updates its label in place
     expect(toggle).toHaveTextContent('TR')
   })
+
+  it('anonymous landing (/) shows EXACTLY ONE language toggle — no PublicFrame duplicate', async () => {
+    // The pre-auth toggle lives in AuthShell (auth pages), NOT PublicFrame, so Landing — which
+    // ships its own header toggle — must not render a second, overlapping one.
+    window.history.pushState({}, '', '/')
+    vi.stubGlobal('fetch', stubFetch({ status: 401 }))
+    render(<App />)
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /switch language/i }).length).toBeGreaterThan(0))
+    expect(screen.getAllByRole('button', { name: /switch language/i })).toHaveLength(1)
+  })
 })
