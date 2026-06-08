@@ -1,13 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { ApiClient, BillingStatus } from '../api/client.js'
-import { SectionTitle, Button, ErrorNote } from '../ui/kit.js'
+import { Card, SectionTitle, Button, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
-/** Settings → Plan. Shows the caller's tier (Free/Pro). When Stripe is configured, a Free user gets an
- *  "Upgrade to Pro" button (→ hosted Stripe Checkout) and a Pro user gets "Manage" (→ Stripe portal).
- *  When billing is NOT configured the actions are hidden — the card just shows the current (Free) plan,
- *  so a self-host deployment with no Stripe never sees a dead button. Reads the ?billing= post-redirect
- *  signal once and strips it. */
+/** Settings → Plan. SHELVED for the MVP: the entire card is HIDDEN unless the owner has configured
+ *  Stripe (STRIPE_SECRET_KEY + STRIPE_PRICE_PRO) — so a self-host / MVP deployment shows no billing UI at
+ *  all. Once configured it appears: a Free user gets "Upgrade to Pro" (→ hosted Stripe Checkout) and a Pro
+ *  user gets "Manage" (→ Stripe portal). Reads the ?billing= post-redirect signal once and strips it. */
 export function BillingPlan({ api }: { api: ApiClient }) {
   const { t } = useI18n()
   const [status, setStatus] = useState<BillingStatus | undefined>()
@@ -34,9 +33,11 @@ export function BillingPlan({ api }: { api: ApiClient }) {
     } catch (e) { setErr(String(e)); setBusy(false) }
   }
 
-  const tier = status?.tier ?? 'free'
+  // SHELVED: hide the whole card until the owner configures Stripe (dormant in the MVP, ready later).
+  if (!status?.configured) return null
+  const tier = status.tier
   return (
-    <div>
+    <Card className="p-5">
       <SectionTitle sub={t('billing.sub')}>{t('billing.title')}</SectionTitle>
       {banner && (
         <div className={`mb-3 rounded-lg border px-3 py-2 text-sm ${banner === 'success' ? 'border-[#07D1AF]/30 bg-[#07D1AF]/10 text-[#07D1AF]' : 'border-amber-400/30 bg-amber-400/10 text-amber-200'}`} role="status">
@@ -58,6 +59,6 @@ export function BillingPlan({ api }: { api: ApiClient }) {
           <Button variant="ghost" onClick={() => void go('portal')} disabled={busy}>{busy ? '…' : t('billing.manage')}</Button>
         )}
       </div>
-    </div>
+    </Card>
   )
 }

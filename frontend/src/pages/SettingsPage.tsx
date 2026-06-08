@@ -37,9 +37,7 @@ export function SettingsPage({ api }: { api: ApiClient }) {
         <AccountSettings api={api} />
       </Card>
 
-      <Card className="p-5">
-        <BillingPlan api={api} />
-      </Card>
+      <BillingPlan api={api} />
 
       <Card className="p-5">
         <ProviderKeys api={api} />
