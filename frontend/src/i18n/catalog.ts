@@ -209,11 +209,13 @@ export const STRINGS = {
     // ── Preview header actions (only when the URL is embeddable /preview/) ──
     'preview.openTab': 'Open in new tab',
     'preview.copyUrl': 'Copy URL',
+    'preview.refresh': 'Refresh preview',
     // ── Preview drawer + device toggle ──
     'preview.open': 'Open preview',
     'preview.close': 'Close preview',
     'preview.resize': 'Resize preview',
     'preview.resizeValue': 'Preview {n}% of width',
+    'preview.resetHint': 'Drag to resize · double-click to reset width',
     'preview.device.responsive': 'Responsive',
     'preview.device.mobile': 'Mobile',
     'preview.device.tablet': 'Tablet',
@@ -990,11 +992,13 @@ export const STRINGS = {
     // ── Önizleme başlık eylemleri (yalnızca URL gömülebilir /preview/ olduğunda) ──
     'preview.openTab': 'Yeni sekmede aç',
     'preview.copyUrl': "URL'yi kopyala",
+    'preview.refresh': 'Önizlemeyi yenile',
     // ── Önizleme çekmecesi + cihaz geçişi ──
     'preview.open': 'Önizlemeyi aç',
     'preview.close': 'Önizlemeyi kapat',
     'preview.resize': 'Önizlemeyi yeniden boyutlandır',
     'preview.resizeValue': "Önizleme genişliğin %{n}'i",
+    'preview.resetHint': 'Boyutlandırmak için sürükleyin · genişliği sıfırlamak için çift tıklayın',
     'preview.device.responsive': 'Esnek',
     'preview.device.mobile': 'Mobil',
     'preview.device.tablet': 'Tablet',

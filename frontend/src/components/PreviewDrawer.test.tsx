@@ -15,6 +15,7 @@ function renderDrawer(over: Partial<React.ComponentProps<typeof PreviewDrawer>> 
     open: true,
     ratio: 0.46,
     onKeyDown: () => {},
+    onReset: () => {},
     onPointerWidth: () => {},
     commitRatio: () => {},
     onOpen: () => {},
@@ -93,6 +94,21 @@ describe('PreviewDrawer (desktop)', () => {
     screen.getByRole('separator').focus()
     await userEvent.keyboard('{ArrowLeft}')
     expect(onKeyDown).toHaveBeenCalled()
+  })
+
+  it('double-clicking the separator calls onReset (reset-to-default-width affordance)', async () => {
+    const onReset = vi.fn()
+    renderDrawer({ open: true, onReset })
+    await userEvent.dblClick(screen.getByRole('separator'))
+    expect(onReset).toHaveBeenCalledTimes(1)
+  })
+
+  it('the separator carries the double-click-to-reset hint in its title/aria-description', () => {
+    renderDrawer({ open: true })
+    const sep = screen.getByRole('separator')
+    // EN default; the hint mentions "double-click to reset". (TR mirror exists in the catalog.)
+    expect(sep.getAttribute('title')).toMatch(/double-click to reset/i)
+    expect(sep.getAttribute('aria-description')).toBe(sep.getAttribute('title'))
   })
 })
 

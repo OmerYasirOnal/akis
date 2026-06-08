@@ -28,3 +28,24 @@ test('Enter toggles collapse and restores last width', () => {
   act(() => result.current.onKeyDown({ key: 'Enter', preventDefault(){} } as any))
   expect(result.current.open).toBe(true); expect(result.current.ratio).toBeCloseTo(0.5)
 })
+test('resetRatio snaps back to the (clamped) default and persists', () => {
+  localStorage.clear()
+  const { result, unmount } = renderHook(() => useResizable({ containerWidth: 1600 }))
+  // Drag wide, then reset — the default is clamped against the same container.
+  act(() => { result.current.openDrawer(); result.current.commitRatio(0.58) })
+  expect(result.current.ratio).not.toBeCloseTo(RATIO_DEFAULT)
+  act(() => result.current.resetRatio())
+  expect(result.current.ratio).toBeCloseTo(clampRatio(RATIO_DEFAULT, 1600))
+  // Persisted: a reload reads back the default width (not the pre-reset 0.58).
+  unmount()
+  expect(loadDrawer().ratio).toBeCloseTo(clampRatio(RATIO_DEFAULT, 1600))
+})
+test('resetRatio while open updates the restore-width too (Enter-collapse restores default)', () => {
+  const { result } = renderHook(() => useResizable({ containerWidth: 1600 }))
+  act(() => { result.current.openDrawer(); result.current.commitRatio(0.55) })
+  act(() => result.current.resetRatio())
+  // Collapse then re-open via Enter — it restores the post-reset default, not the stale 0.55.
+  act(() => result.current.onKeyDown({ key: 'Enter', preventDefault(){} } as any))
+  act(() => result.current.onKeyDown({ key: 'Enter', preventDefault(){} } as any))
+  expect(result.current.ratio).toBeCloseTo(clampRatio(RATIO_DEFAULT, 1600))
+})

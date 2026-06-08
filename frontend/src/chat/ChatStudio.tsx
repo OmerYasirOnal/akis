@@ -109,7 +109,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // The drawer's open/width state lives in useResizable (persisted ratio + open in localStorage,
   // re-clamped vs the current container). open/ratio drive the push-split; the keyboard splitter +
   // pointer drag are wired below. Pure view-state — no gate authority.
-  const { open: previewOpen, ratio, openDrawer, closeDrawer, commitRatio, onKeyDown: onResizeKeyDown } = useResizable({ containerWidth })
+  const { open: previewOpen, ratio, openDrawer, closeDrawer, commitRatio, resetRatio, onKeyDown: onResizeKeyDown } = useResizable({ containerWidth })
   const [startingSpec, setStartingSpec] = useState<string | undefined>()
   // The active run's folded live view, reported UP by its RunBlock (exactly ONE reporter — the
   // active run — so no shared per-event setState storm). Drives the header roster + the right rail.
@@ -538,6 +538,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           open={previewOpen}
           ratio={ratio}
           onKeyDown={onResizeKeyDown}
+          onReset={resetRatio}
           onPointerWidth={onPointerWidth}
           commitRatio={commitFromClientX}
           onOpen={openDrawer}

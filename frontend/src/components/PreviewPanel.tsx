@@ -54,7 +54,12 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   // flash a featureless WHITE rectangle inside the dark shell while it fetched + rendered the app.
   // Track the iframe's own load and keep a dark themed spinner over it until it paints, then fade in.
   const [loaded, setLoaded] = useState(false)
-  useEffect(() => { setLoaded(false) }, [url]) // re-arm on every (re)run / new session
+  // REFRESH (view-state only): bump a nonce to remount the iframe so it re-FETCHES the SAME
+  // /preview/:id/ url WITHOUT touching the backend preview process (no new gate/security surface —
+  // identical sandboxed src). It feeds the iframe's React `key` (force-remount) and re-arms `loaded`
+  // below so the dark skeleton shows during reload instead of a white flash.
+  const [reloadNonce, setReloadNonce] = useState(0)
+  useEffect(() => { setLoaded(false) }, [url, reloadNonce]) // re-arm on (re)run / new session / manual refresh
   // DeviceFrame's Desktop preset caps at the pane's real inner width (min(1280, paneWidth)) so the
   // user sees the full width with horizontal scroll only when narrower. Measure it read-only via a
   // ResizeObserver on the panel root — NO scaling, no per-frame React storm (one setState per resize).
@@ -126,6 +131,19 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
                 className="inline-flex items-center rounded border border-white/15 px-2 py-1 text-[11px] text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
               >
                 <span aria-hidden="true">↗</span>
+              </button>
+              {/* Reload the RUNNING app's iframe (bump the nonce → remount → re-fetch the SAME
+                  /preview/:id/ url) WITHOUT restarting the backend preview process. No new gate/
+                  security surface — it's the same sandboxed iframe at the same path; the dark
+                  skeleton re-arms (`loaded` resets) so there's no white flash on reload. */}
+              <button
+                type="button"
+                aria-label={t('preview.refresh')}
+                title={t('preview.refresh')}
+                onClick={() => setReloadNonce(n => n + 1)}
+                className="inline-flex items-center rounded border border-white/15 px-2 py-1 text-[11px] text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
+              >
+                <span aria-hidden="true">↻</span>
               </button>
               {/* Copy the ABSOLUTE preview URL so it's shareable/openable outside the studio (a bare
                   relative path is useless on its own). Reuses the shared CopyButton idiom. */}
@@ -213,7 +231,9 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
                   The iframe element below is wrapped VERBATIM: same src/sandbox/allow/onLoad and the
                   loaded-opacity transition; DeviceFrame only sets the WIDTH of its container. */}
               <DeviceFrame device={device} onDevice={onDevice} paneWidth={paneWidth} tab={activeTab}>
-                <iframe title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
+                {/* `key` includes reloadNonce so a Refresh click REMOUNTS the iframe (re-fetches the
+                    SAME src) — sandbox/allow/src path are untouched (no security/path change). */}
+                <iframe key={reloadNonce} title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
                   className={`block h-full w-full bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                   sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
               </DeviceFrame>

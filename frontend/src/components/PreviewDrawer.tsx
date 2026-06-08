@@ -15,6 +15,9 @@ export interface PreviewDrawerProps {
   ratio: number
   /** Keyboard splitter handler from useResizable — Arrow/Home/End/Enter widen/narrow/toggle. */
   onKeyDown: (e: { key: string; preventDefault(): void }) => void
+  /** Double-click the separator → snap the drawer back to the default width (useResizable.resetRatio).
+   *  View-state only — the standard "double-click the splitter to reset" affordance. */
+  onReset: () => void
   /** Live pointer-drag tick: the parent owns container geometry, so it maps clientX → `--preview-w`.
    *  Called at most once per animation frame while dragging the separator. */
   onPointerWidth: (clientX: number) => void
@@ -55,7 +58,7 @@ export interface PreviewDrawerProps {
  * (`onPointerWidth` live, `commitRatio` on release), which maps it to `--preview-w`/ratio and persists.
  */
 export function PreviewDrawer({
-  open, ratio, onKeyDown, onPointerWidth, commitRatio, onOpen, onClose, verified, allowAutoOpen = false, cards, preview,
+  open, ratio, onKeyDown, onReset, onPointerWidth, commitRatio, onOpen, onClose, verified, allowAutoOpen = false, cards, preview,
 }: PreviewDrawerProps) {
   const { t } = useI18n()
   const drawerId = useId()
@@ -209,7 +212,13 @@ export function PreviewDrawer({
         aria-valuemin={RATIO_MIN_PCT}
         aria-valuemax={RATIO_MAX_PCT}
         aria-valuetext={fill(t('preview.resizeValue'), { n: String(pct) })}
+        // Standard splitter affordance: double-click snaps the width back to default. The hint lives on
+        // the native title tooltip + aria-description so both pointer and AT users learn it (cheap, no
+        // extra DOM). resetRatio is view-state only — no gate/SSE/sandbox surface.
+        title={t('preview.resetHint')}
+        aria-description={t('preview.resetHint')}
         onKeyDown={onKeyDown}
+        onDoubleClick={onReset}
         onPointerDown={onPointerDown}
         style={{ touchAction: 'none' }}
         className="group absolute inset-y-0 left-0 z-10 flex w-3 -translate-x-1/2 cursor-col-resize items-center justify-center focus:outline-none"

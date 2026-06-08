@@ -40,11 +40,17 @@ export function useResizable({ containerWidth }: { containerWidth: number }) {
     const c = clampRatio(r, containerWidth); setRatio(c); if (open) lastOpenRatio.current = c
   }, [containerWidth, open])
 
+  // Double-click-the-splitter affordance: snap the width back to the default ratio. Clamped to the
+  // current container (so the default can't violate the px floor / chat floor on a narrow shell) and
+  // persisted via the same effect as any other ratio change (commitRatio path keeps lastOpenRatio in
+  // sync so a later Enter-collapse restores the default, not a stale pre-reset width).
+  const resetRatio = useCallback(() => { commitRatio(RATIO_DEFAULT) }, [commitRatio])
+
   const onKeyDown = useCallback((e: { key: string; preventDefault(): void }) => {
     if (e.key === 'Enter') { e.preventDefault(); setOpen(o => { if (o) return false; setRatio(clampRatio(lastOpenRatio.current, containerWidth)); return true }); return }
     const dir = e.key === 'ArrowLeft' || e.key === 'End' ? +1 : e.key === 'ArrowRight' || e.key === 'Home' ? -1 : 0
     if (!dir) return; e.preventDefault(); commitRatio(ratio + dir * STEP)
   }, [ratio, containerWidth, commitRatio])
 
-  return { open, ratio, dragging, openDrawer, closeDrawer, commitRatio, setRatioLive: setRatio, onKeyDown }
+  return { open, ratio, dragging, openDrawer, closeDrawer, commitRatio, resetRatio, setRatioLive: setRatio, onKeyDown }
 }

@@ -63,6 +63,36 @@ test('open-in-tab calls window.open with the preview URL (noopener,noreferrer)',
   }
 })
 
+test('refresh button appears (embeddable) and is hidden for a non-/preview/ URL', () => {
+  const { unmount } = renderPanel('/preview/abc/')
+  expect(screen.getByRole('button', { name: /refresh preview|önizlemeyi yenile/i })).toBeInTheDocument()
+  unmount()
+  renderPanel('https://example.com/app')
+  expect(screen.queryByRole('button', { name: /refresh preview|önizlemeyi yenile/i })).toBeNull()
+})
+
+test('refresh REMOUNTS the iframe (re-fetches the SAME src) and re-arms the loading skeleton', () => {
+  const { container } = renderPanel('/preview/abc/')
+  const iframe1 = container.querySelector('iframe')!
+  // Paint the iframe (onLoad) so the skeleton fades out — then refresh must bring it back.
+  fireEvent.load(iframe1)
+  expect(iframe1.className).toMatch(/opacity-100/)
+  expect(screen.queryByText(/rendering|çiziliyor/i)).toBeNull()
+
+  fireEvent.click(screen.getByRole('button', { name: /refresh preview|önizlemeyi yenile/i }))
+
+  const iframe2 = container.querySelector('iframe')!
+  // Remounted: a NEW iframe element (the `key` bumped) — not the same node that already loaded.
+  expect(iframe2).not.toBe(iframe1)
+  // Same src/sandbox/allow — refresh re-fetches the IDENTICAL url, no path/security change.
+  expect(iframe2.getAttribute('src')).toBe('/preview/abc/')
+  expect(iframe2.getAttribute('sandbox')).toBe('allow-scripts allow-forms allow-popups')
+  expect(iframe2.getAttribute('allow')).toBe('clipboard-write')
+  // `loaded` re-armed: the dark skeleton is back (iframe hidden) until the new load paints — no white flash.
+  expect(iframe2.className).toMatch(/opacity-0/)
+  expect(screen.getByText(/rendering|çiziliyor/i)).toBeInTheDocument()
+})
+
 test('copy lifts the ABSOLUTE preview URL (resolved against the studio origin)', async () => {
   const writeText = vi.fn<(t: string) => Promise<void>>().mockResolvedValue(undefined)
   // jsdom has no clipboard by default — install a minimal fake.
