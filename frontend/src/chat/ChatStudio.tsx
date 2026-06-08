@@ -13,6 +13,7 @@ import { PreviewPanel } from '../components/PreviewPanel.js'
 import { TrustReportCard } from '../components/TrustReportCard.js'
 import { PublishButton } from '../components/PublishButton.js'
 import { ExternalWriteCard } from '../components/ExternalWriteCard.js'
+import { AgentWriteProposals } from '../components/AgentWriteProposals.js'
 import { AgentRoster } from '../components/AgentRoster.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
@@ -454,6 +455,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
                 {activeSessionId && !sessionGone && isDone && <TrustReportCard sessionId={activeSessionId} api={api} />}
                 {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING. */}
                 {activeSessionId && !sessionGone && isDone && <PublishButton sessionId={activeSessionId} api={api} initialRecord={publishRecord} />}
+                {/* Agent-proposed GitHub writes — confirm cards for status:'proposed' writes an agent
+                    recorded via propose_github_write. NOT gated on isDone: a proposal surfaces LIVE
+                    during the build (it arrives as a propose_github_write tool_call); the human reads
+                    the exact bound bytes and confirms. AKIS only proposes — never autonomous. */}
+                {activeSessionId && !sessionGone && <AgentWriteProposals sessionId={activeSessionId} api={api} />}
                 {/* Publish docs/issue to Jira/Confluence via MCP — propose → human-confirm → execute. */}
                 {activeSessionId && !sessionGone && isDone && <ExternalWriteCard sessionId={activeSessionId} idea={activeIdea} files={codeFiles} api={api} />}
                 <PreviewPanel view={activeView} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />

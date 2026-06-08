@@ -81,7 +81,7 @@ describe('ExternalWriteCard (connection-aware publish to Jira/Confluence)', () =
 
   it('renders the proposal history with status badges', async () => {
     const writes: ExternalWriteSummary[] = [
-      { id: 'h1', provider: 'atlassian', summary: 'Create Jira issue “App”', action: 'createJiraIssue', status: 'executed', result: 'ISSUE-9', proposedAt: '2026-06-07T00:00:00Z' },
+      { id: 'h1', provider: 'atlassian', summary: 'Create Jira issue “App”', action: 'createJiraIssue', target: {}, payload: {}, digest: 'abc', status: 'executed', result: 'ISSUE-9', proposedAt: '2026-06-07T00:00:00Z' },
     ]
     const api = makeApi({ listExternalWrites: vi.fn(() => Promise.resolve({ writes })) })
     ui(api)
