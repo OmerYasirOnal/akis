@@ -59,6 +59,11 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     const list = await f.inject({ method: 'GET', url: `/sessions/${id}/external-writes` })
     expect(list.json().writes).toHaveLength(1)
     expect(list.json().writes[0]).toMatchObject({ status: 'proposed', action: 'createPage' })
+    // LIST carries the EXACT bound bytes + the SAME content digest the propose returned, so a confirm
+    // UI can render what the digest binds and confirm with the digest (Phase D) — no re-propose.
+    expect(list.json().writes[0].target).toEqual(PROPOSAL.target)
+    expect(list.json().writes[0].payload).toEqual(PROPOSAL.payload)
+    expect(list.json().writes[0].digest).toBe(prop.json().digest)
     expect(calls).toHaveLength(0) // proposing executes NOTHING
   })
 

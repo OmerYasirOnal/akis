@@ -124,12 +124,21 @@ export interface McpConnectionStatus {
   scopes?: string
 }
 
-/** A proposed/executed external write (Jira issue / Confluence page) for a build — never a token. */
+/** A proposed/executed external write (Jira/Confluence page or a GitHub issue/PR write) for a build —
+ *  never a token. `target`/`payload`/`digest` let a confirm UI render the EXACT bound bytes and confirm
+ *  with the digest (no re-propose): the server computes `digest` over the stored proposal, so what the
+ *  human reads == what the gate binds == what executes. */
 export interface ExternalWriteSummary {
   id: string
   provider: string
   summary: string
   action: string
+  /** WHERE the write lands (owner/repo/issue_number|pullNumber, method…) — the digest binds it. */
+  target: Record<string, unknown>
+  /** WHAT is written (title/body/state/event/merge_method/labels…) — the digest binds it. */
+  payload: Record<string, unknown>
+  /** SHA-256 of the stored proposal (provider/action/target/payload). Confirm posts this verbatim. */
+  digest: string
   status: 'proposed' | 'executing' | 'executed' | 'failed'
   result?: string
   proposedAt: string

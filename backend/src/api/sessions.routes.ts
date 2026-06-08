@@ -284,7 +284,15 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   app.get<{ Params: { id: string } }>('/sessions/:id/external-writes', async (req, reply) => {
     const s = await accessibleSession(req, req.params.id)
     if (!s) return notFound(reply, req.params.id)
-    return reply.send({ writes: s.externalWrites ?? [] })
+    // Each record also returns its `target`, `payload`, and stored-content `digest` so a confirm UI
+    // (the agent-proposal cards) can render the EXACT bound bytes and confirm with the digest WITHOUT
+    // a re-propose round-trip. The digest is computed over the SAME narrowed provider/action/target/
+    // payload mint binds — so what the human reads == what executes. Carries no token.
+    const writes = (s.externalWrites ?? []).map(w => ({
+      ...w,
+      digest: digestExternalWrite({ provider: w.provider as ExternalWriteProposal['provider'], action: w.action, target: w.target, payload: w.payload }),
+    }))
+    return reply.send({ writes })
   })
 
   // Record a proposal (no execution). Returns the content digest the human must confirm.

@@ -48,6 +48,16 @@ describe('recordGithubProposal (shared recorder)', () => {
     expect((await store.get('s1'))?.externalWrites ?? []).toHaveLength(0)
   })
 
+  it('refuses an irreversible MERGE proposal that lacks a numeric pullNumber (so the typed-confirm friction can never be dropped), but accepts one with it', async () => {
+    const store = await seededStore()
+    const bad = await recordGithubProposal(store, 's1', { action: 'merge_pull_request', summary: 'merge', target: { owner: 'o', repo: 'r' }, payload: { merge_method: 'squash' } })
+    expect(bad).toEqual({ error: expect.stringContaining('pullNumber') })
+    expect((await store.get('s1'))?.externalWrites ?? []).toHaveLength(0)
+    const ok = await recordGithubProposal(store, 's1', { action: 'merge_pull_request', summary: 'merge #18', target: { owner: 'o', repo: 'r', pullNumber: 18 }, payload: { merge_method: 'squash' } })
+    expect('writeId' in ok).toBe(true)
+    expect((await store.get('s1'))?.externalWrites).toHaveLength(1)
+  })
+
   it('rejects a colliding target/payload (the disjoint-key invariant) and appends NOTHING', async () => {
     const store = await seededStore()
     // `body` appears in BOTH target and payload — the execute-merge would silently override.

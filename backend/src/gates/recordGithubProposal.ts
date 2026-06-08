@@ -33,6 +33,13 @@ const GITHUB: 'github' = 'github'
  *  confirm route's patchExternalWrite retry budget). */
 const MAX_RETRY = 5
 
+/** True for a positive integer (or a string that is exactly one) — used to require a real PR number
+ *  on an irreversible merge so the confirm UI's typed-PR-number friction (§5.4) can never be skipped. */
+function isPositiveInt(v: unknown): boolean {
+  const n = typeof v === 'number' ? v : typeof v === 'string' && v.trim() !== '' ? Number(v) : NaN
+  return Number.isInteger(n) && n > 0
+}
+
 export interface GithubProposalInput {
   action: string
   summary: string
@@ -52,6 +59,12 @@ export async function recordGithubProposal(
   //    the gate's OWN predicate, so a name the gate would reject at mint never becomes a proposal.
   if (!isAllowedExternalWriteAction(GITHUB, action)) {
     return { error: 'action is not on the GitHub external-write allow-list' }
+  }
+  // 1b. Fail-closed: a MERGE is irreversible and the confirm UI gates it behind typing the exact
+  //     pullNumber (§5.4) — refuse a merge proposal that lacks a numeric pullNumber so that strongest
+  //     friction can never be silently dropped for a malformed/ambiguous merge.
+  if (action === 'merge_pull_request' && !isPositiveInt(target.pullNumber)) {
+    return { error: 'merge_pull_request requires a numeric target.pullNumber' }
   }
   // 2. Disjoint-key pre-check (mint re-checks — defense in depth): a key in BOTH target and payload
   //    would let payload silently override target at the execute merge.
