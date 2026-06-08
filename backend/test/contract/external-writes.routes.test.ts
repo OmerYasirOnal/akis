@@ -306,4 +306,98 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     expect(retry.statusCode).toBe(409)
     expect(calls).toBe(1)
   })
+
+  // ── FR-19: the confirm executor is gated on AUTH + an MCP backend BEFORE any transport call ──
+  // Both pre-conditions sit ABOVE the mint/execute lines (sessions.routes.ts ~382/383). A regression
+  // that reorders them below the side effect, or drops either check, would let an unauthenticated
+  // caller — or a deployment with no MCP backend wired — fire a real external write. These guards
+  // count the transport's calls to prove the outward write NEVER happens on the refused path.
+  it('FR-19(a): confirm with NO authenticated user → 401 Unauthorized, ZERO transport calls', async () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    const calls: Array<{ name: string; args: unknown }> = []
+    const transport: McpTransport = {
+      initialize: async () => {}, listTools: async () => [],
+      callTool: async (name, args) => { calls.push({ name, args }); return { text: 'created: PAGE-1', isError: false } },
+      close: async () => {},
+    }
+    const f = Fastify({ logger: false })
+    // userIdOf always resolves undefined: the session is created OWNERLESS (so accessibleSession lets
+    // the confirm through), then the confirm's own auth check refuses it.
+    registerSessionRoutes(f, { orchestrator: new Orchestrator(services), services, userIdOf: async () => undefined, mcpAuthStore: new MemoryRemoteMcpAuthStore(), mcpTransportFor: () => transport })
+    const id = await newSession(f)
+    const { id: writeId, digest } = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: PROPOSAL })).json()
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
+    expect(res.statusCode).toBe(401)
+    expect(res.json().code).toBe('Unauthorized')
+    expect(calls).toHaveLength(0) // the gate fired ABOVE mint/execute — nothing reached the transport
+  })
+
+  it('FR-19(b): confirm with NO mcpAuthStore wired → 409 McpUnavailable, ZERO transport calls', async () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    const calls: Array<{ name: string; args: unknown }> = []
+    const transport: McpTransport = {
+      initialize: async () => {}, listTools: async () => [],
+      callTool: async (name, args) => { calls.push({ name, args }); return { text: 'created: PAGE-1', isError: false } },
+      close: async () => {},
+    }
+    const f = Fastify({ logger: false })
+    // Authenticated (so the 401 above is satisfied) but mcpAuthStore is OMITTED — the confirm route
+    // must refuse with McpUnavailable before constructing any transport, so a mcpTransportFor that
+    // WOULD hand back a live transport is never even consulted.
+    registerSessionRoutes(f, { orchestrator: new Orchestrator(services), services, userIdOf: async () => 'owner1', mcpTransportFor: () => transport })
+    const id = await newSession(f)
+    const { id: writeId, digest } = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: PROPOSAL })).json()
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().code).toBe('McpUnavailable')
+    expect(calls).toHaveLength(0) // refused before any transport was built/called
+  })
+
+  // ── NFR-5 (backend half): the PERSISTED outcome string is bounded to ≤500 chars ──
+  // The executor slices the transport's result to .slice(0, 500) (sessions.routes.ts ~409). A
+  // regression that widens or drops that bound would let an unbounded provider response bloat the
+  // stored record (and every list/confirm payload). A transport returning a >500-char body proves
+  // the cap holds on the durable record.
+  it('NFR-5: a >500-char transport result is truncated to ≤500 chars in the persisted record', async () => {
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    const HUGE = 'x'.repeat(5000) // far beyond the 500-char persisted cap
+    const transport: McpTransport = {
+      initialize: async () => {}, listTools: async () => [],
+      callTool: async () => ({ text: HUGE, isError: false }),
+      close: async () => {},
+    }
+    const f = Fastify({ logger: false })
+    registerSessionRoutes(f, { orchestrator: new Orchestrator(services), services, userIdOf: async () => 'owner1', mcpAuthStore: new MemoryRemoteMcpAuthStore(), mcpTransportFor: () => transport })
+    const id = await newSession(f)
+    const { id: writeId, digest } = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: PROPOSAL })).json()
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ ok: true, status: 'executed' })
+    const rec = (await services.store.get(id))!.externalWrites!.find(w => w.id === writeId)!
+    expect(rec.status).toBe('executed')
+    expect(rec.result).toBeDefined()
+    expect(rec.result!.length).toBeLessThanOrEqual(500) // the durable outcome is bounded
+  })
+
+  // ── FR-12: a row full of NON-TERMINAL github proposals refuses a new github propose (409 TooManyPending) ──
+  // The github branch shares the status-aware appender with atlassian: a full cap (EXTERNAL_WRITES_MAX)
+  // of non-terminal records has nothing safe to evict, so a new propose is a clean refusal — NOT a silent
+  // eviction of an in-flight proposal. (The atlassian variant is covered above; this pins the GITHUB
+  // recorder path, which routes through recordGithubProposal.)
+  it('FR-12: a github propose into a row full of non-terminal github proposals → 409 TooManyPending', async () => {
+    const { f, services } = makeApp()
+    const id = await newSession(f)
+    const cur = (await services.store.get(id))!
+    const full: NonNullable<SessionState['externalWrites']> = Array.from({ length: EXTERNAL_WRITES_MAX }, (_, i) => ({
+      id: `g${i}`, provider: 'github', action: 'add_issue_comment', summary: `g${i}`,
+      target: { owner: 'OmerYasirOnal', repo: 'akis', issue_number: i }, payload: { body: `comment ${i}` },
+      status: 'proposed' as const, proposedAt: '2026-06-08T00:00:00.000Z',
+    }))
+    await services.store.update(id, { externalWrites: full }, cur.version)
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { provider: 'github', action: 'add_issue_comment', summary: 'one more', target: { owner: 'OmerYasirOnal', repo: 'akis', issue_number: 999 }, payload: { body: 'the overflow comment' } } })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().code).toBe('TooManyPending')
+    // The full row of in-flight proposals is untouched — nothing evicted, nothing appended.
+    expect((await services.store.get(id))!.externalWrites).toHaveLength(EXTERNAL_WRITES_MAX)
+  })
 })
