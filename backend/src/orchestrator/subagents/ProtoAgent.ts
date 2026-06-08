@@ -207,11 +207,15 @@ export class ProtoAgent {
     })
     // Proceed when EITHER a github_ read tool OR the propose tool registered (a degraded read-tool build
     // can still record proposals). Nothing registered ⇒ nothing to do (fail-closed, byte-identical).
+    const hasReadTools = registry.specs().some(s => s.name.startsWith('github_'))
     const hasPropose = registry.specs().some(s => s.name === 'propose_github_write')
-    if (!registry.specs().some(s => s.name.startsWith('github_')) && !hasPropose) { release(); return '' }
+    if (!hasReadTools && !hasPropose) { release(); return '' }
     const system = [
       'You are gathering READ-ONLY context from a connected GitHub repo to help write code that matches its existing patterns.',
-      'Use the github_* tools to read ONLY what is relevant to the spec (search/list/get a few key files — do NOT exhaustively crawl).',
+      // The read instruction is added ONLY when a github_ read tool actually registered. In a DEGRADED
+      // build (the github-MCP Docker child failed → ZERO github_ reads, only the propose tool) there is
+      // nothing to read, so this line is dropped — the model is never told to "use the github_* tools".
+      ...(hasReadTools ? ['Use the github_* tools to read ONLY what is relevant to the spec (search/list/get a few key files — do NOT exhaustively crawl).'] : []),
       'Then reply with a SHORT plain-text summary (a few bullets): the stack/conventions, key files, and patterns to match. No code, no JSON.',
       // The propose hint is added ONLY when the propose tool actually registered (connection + store).
       ...(hasPropose ? [PROTO_PROPOSE_HINT] : []),
@@ -234,7 +238,12 @@ export class ProtoAgent {
         },
       )
       const summary = (res.text ?? '').trim()
-      return summary ? `${PROTO_GITHUB_CONTEXT_HEADER}${summary}\n` : ''
+      // PROVENANCE/HONESTY: the "gathered from the user's GitHub repo" header may be emitted ONLY when a
+      // real github_ READ tool was actually registered (and thus could have run). In a degraded
+      // propose-only build (no github_ reads), ANY model free-text would otherwise be falsely labeled as
+      // repo-gathered context though NOTHING was read — so return '' there. The propose tool still
+      // recorded any proposal it made; it just injects no fabricated "gathered" context.
+      return hasReadTools && summary ? `${PROTO_GITHUB_CONTEXT_HEADER}${summary}\n` : ''
     } catch {
       return '' // fail-closed: a github failure never blocks or degrades code production
     } finally {

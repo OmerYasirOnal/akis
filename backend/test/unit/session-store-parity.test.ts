@@ -6,6 +6,7 @@ import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { PgSessionStore } from '../../src/store/PgSessionStore.js'
 import type { SqlClient } from '../../src/store/pg.js'
 import { recordGithubProposal } from '../../src/gates/recordGithubProposal.js'
+import { appendExternalWrite } from '../../src/gates/appendExternalWrite.js'
 
 /**
  * A STATEFUL fake Postgres `sessions` table: enough SQL surface (INSERT / SELECT /
@@ -290,6 +291,27 @@ function paritySuite(name: string, make: () => SessionStore) {
       // A proposal is NON-GATE: appending it never sets a gate token.
       expect(isVerified(got!)).toBe(false)
       expect(got?.approval).toBeUndefined()
+    })
+
+    it('Bug 1: a capped append (via appendExternalWrite) evicts only the OLDEST TERMINAL record on BOTH stores — never an in-flight one', async () => {
+      const store = make()
+      await store.create(seed())
+      // Seed EXACTLY the cap: index 0 'executing' (in-flight, oldest), index 1 'executed' (terminal),
+      // the rest 'proposed'. The status-aware appender must keep index 0 and drop index 1 — the class
+      // of bug that ships silently when only MockSessionStore is exercised, so assert it on Pg too.
+      const seedWrites: NonNullable<SessionState['externalWrites']> = []
+      seedWrites.push({ id: 'inflight', provider: 'github', action: 'add_issue_comment', summary: 's0', target: { owner: 'o', repo: 'r', issue_number: 0 }, payload: { body: 'b0' }, status: 'executing', proposedAt: '2026-06-08T00:00:00.000Z' })
+      seedWrites.push({ id: 'terminal', provider: 'github', action: 'add_issue_comment', summary: 's1', target: { owner: 'o', repo: 'r', issue_number: 1 }, payload: { body: 'b1' }, status: 'executed', proposedAt: '2026-06-08T00:00:00.000Z', confirmedAt: '2026-06-08T00:00:01.000Z', result: 'done' })
+      for (let i = 2; i < 50; i++) seedWrites.push({ id: `p${i}`, provider: 'github', action: 'add_issue_comment', summary: `s${i}`, target: { owner: 'o', repo: 'r', issue_number: i }, payload: { body: `b${i}` }, status: 'proposed', proposedAt: '2026-06-08T00:00:00.000Z' })
+      await store.update('s1', { externalWrites: seedWrites }, 0)
+
+      const out = await appendExternalWrite(store, 's1', { id: 'fresh', provider: 'github', action: 'add_issue_comment', summary: 'fresh', target: { owner: 'o', repo: 'r', issue_number: 999 }, payload: { body: 'new' }, status: 'proposed', proposedAt: '2026-06-08T00:00:02.000Z' })
+      expect(out).toEqual({ ok: true, id: 'fresh' })
+      const ids = (await store.get('s1'))!.externalWrites!.map(w => w.id)
+      expect(ids).toContain('inflight')    // the in-flight 'executing' record SURVIVED on both stores
+      expect(ids).not.toContain('terminal') // the oldest terminal record was evicted
+      expect(ids).toContain('fresh')
+      expect(ids).toHaveLength(50)
     })
 
     it('listByOwner returns the owner’s sessions newest-first', async () => {

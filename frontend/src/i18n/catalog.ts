@@ -444,6 +444,13 @@ export const STRINGS = {
     'aw.f.mergeMethod': 'Merge method',
     'aw.f.event': 'Review event',
     'aw.f.reviewers': 'Reviewers',
+    // Catch-all for ANY remaining digest-bound payload key (so nothing the digest binds is hidden from
+    // the structured view). Known merge/PR keys get a readable label; unmapped keys fall back to aw.f.other.
+    'aw.f.commitTitle': 'Commit title',
+    'aw.f.commitMessage': 'Commit message',
+    'aw.f.draft': 'Draft',
+    'aw.f.expectedHeadSha': 'Expected head SHA',
+    'aw.f.other': 'Other ({k})',
     // Friction banners.
     'aw.banner.merge': 'IRREVERSIBLE — this MERGES PR #{n} into {base}. It can trigger deploys and cannot be undone.',
     'aw.banner.mergeNoBase': 'IRREVERSIBLE — this MERGES PR #{n}. It can trigger deploys and cannot be undone.',
@@ -1198,6 +1205,11 @@ export const STRINGS = {
     'aw.f.mergeMethod': 'Birleştirme yöntemi',
     'aw.f.event': 'İnceleme olayı',
     'aw.f.reviewers': 'İnceleyenler',
+    'aw.f.commitTitle': 'Commit başlığı',
+    'aw.f.commitMessage': 'Commit mesajı',
+    'aw.f.draft': 'Taslak',
+    'aw.f.expectedHeadSha': 'Beklenen head SHA',
+    'aw.f.other': 'Diğer ({k})',
     'aw.banner.merge': 'GERİ ALINAMAZ — bu, PR #{n}’i {base} dalına BİRLEŞTİRİR. Dağıtımları tetikleyebilir ve geri alınamaz.',
     'aw.banner.mergeNoBase': 'GERİ ALINAMAZ — bu, PR #{n}’i BİRLEŞTİRİR. Dağıtımları tetikleyebilir ve geri alınamaz.',
     'aw.banner.closeIssue': 'Yıkıcı — bu, issue #{n}’i KAPATIR (yeniden açarak geri alınabilir, ama insanlara bildirim gider).',

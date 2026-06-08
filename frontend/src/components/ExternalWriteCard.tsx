@@ -46,7 +46,11 @@ export function ExternalWriteCard({ sessionId, idea, files, api }: { sessionId: 
   // Promise.resolve().then(call) so a SYNCHRONOUS throw (e.g. a partial mock missing the method, or
   // an older api) becomes a rejected promise the .catch handles — the card degrades, never crashes.
   const loadHistory = useCallback((): void => {
-    Promise.resolve().then(() => api.listExternalWrites(sessionId)).then(r => setHistory(Array.isArray(r?.writes) ? r.writes : [])).catch(() => {})
+    // DROP github proposed writes — those are OWNED by AgentWriteProposals (the confirm surface), so a
+    // status:'proposed' github write would otherwise double-render (here as a read-only history line AND
+    // there as a confirm card). Executed/failed github writes still belong in history.
+    const ownedByProposals = (w: ExternalWriteSummary): boolean => w.provider === 'github' && w.status === 'proposed'
+    Promise.resolve().then(() => api.listExternalWrites(sessionId)).then(r => setHistory(Array.isArray(r?.writes) ? r.writes.filter(w => !ownedByProposals(w)) : [])).catch(() => {})
   }, [api, sessionId])
 
   useEffect(() => {
