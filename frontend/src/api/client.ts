@@ -47,8 +47,10 @@ function chatOverrideBody(o?: ChatOverrides): Record<string, string> {
 /** A preview lifecycle entry (mirrors the backend PreviewEntry). */
 export interface PreviewEntry { sessionId: string; status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; url?: string; reason?: string }
 
-/** The authenticated user projection (matches the backend PublicUser). */
-export interface AuthUser { id: string; name: string; email: string }
+/** The authenticated user projection (matches the backend PublicUser). `provider`/`avatarUrl` are
+ *  derived from the OAuth identity; both are OPTIONAL — older sessions and email users may lack them.
+ *  Consumers default `provider` to 'password' and fall back to a letter avatar when `avatarUrl` is absent. */
+export interface AuthUser { id: string; name: string; email: string; provider?: 'github' | 'google' | 'password'; avatarUrl?: string }
 
 /** A build-history row from GET /sessions/mine. */
 export interface SessionSummary { id: string; idea: string; status: string; verified: boolean }

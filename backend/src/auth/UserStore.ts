@@ -1,10 +1,27 @@
 import { randomUUID } from 'node:crypto'
 import type { Tier } from '../usage/quota.js'
 
-export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string; tokenVersion?: number; tier?: Tier; stripeCustomerId?: string }
-/** The user projection safe to return over the wire — never includes the hash. */
-export interface PublicUser { id: string; name: string; email: string }
-export const toPublic = (u: AuthUser): PublicUser => ({ id: u.id, name: u.name, email: u.email })
+export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string; tokenVersion?: number; tier?: Tier; stripeCustomerId?: string; avatarUrl?: string }
+
+/** Which login provider an account uses — DERIVED from the externalId namespace prefix
+ *  (`github:`/`google:`); a password account (no externalId) is `'password'`. Exported
+ *  because both `toPublic` (the wire projection) and tests reuse it. */
+export type AuthProvider = 'github' | 'google' | 'password'
+export function providerOf(externalId?: string): AuthProvider {
+  if (externalId?.startsWith('github:')) return 'github'
+  if (externalId?.startsWith('google:')) return 'google'
+  return 'password'
+}
+
+/** The user projection safe to return over the wire — never includes the hash. `provider`
+ *  is derived (so the FE can badge how the user signed in) and `avatarUrl` is the provider
+ *  picture (only present for OAuth users that exposed one). */
+export interface PublicUser { id: string; name: string; email: string; provider: AuthProvider; avatarUrl?: string }
+export const toPublic = (u: AuthUser): PublicUser => ({
+  id: u.id, name: u.name, email: u.email, provider: providerOf(u.externalId),
+  // exactOptionalPropertyTypes: only attach avatarUrl when present (never an explicit undefined).
+  ...(u.avatarUrl ? { avatarUrl: u.avatarUrl } : {}),
+})
 
 export class EmailTakenError extends Error { constructor() { super('email already registered'); this.name = 'EmailTakenError' } }
 
@@ -26,7 +43,7 @@ export interface UserStorePort {
    *  creation is refused (signup-disabled) it returns `null`, so OAuth can NEVER mint a new account
    *  and bypass the no-open-signup posture (the no-sandbox RCE guard). Existing-user login/link is
    *  always allowed (the owner can sign in via OAuth). Default allowCreate=true (signup-enabled). */
-  upsertOAuth(input: { externalId: string; email: string; name: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null>
+  upsertOAuth(input: { externalId: string; email: string; name: string; avatarUrl?: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null>
   /** Set the user's billing tier + Stripe customer id (the paid-tier webhook). Additive; absent fields
    *  are left unchanged. Returns the updated user (or undefined if unknown). */
   setSubscription(id: string, patch: { tier?: Tier; stripeCustomerId?: string }): Promise<AuthUser | undefined>
@@ -61,18 +78,39 @@ export class UserStore implements UserStorePort {
    *  (externalId) first; falls back to the (provider-VERIFIED) email, linking it to that
    *  identity. New OAuth users have an empty passwordHash (never verifies). The caller
    *  MUST have verified the email with the provider before linking by email. */
-  async upsertOAuth(input: { externalId: string; email: string; name: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null> {
+  async upsertOAuth(input: { externalId: string; email: string; name: string; avatarUrl?: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null> {
     const byExt = this.byExternalId.get(input.externalId)
-    if (byExt) return byExt
+    if (byExt) {
+      // Returning identity: REFRESH the avatar so an owner who logged in before this feature
+      // finally gets their photo. Update only when the profile carries a new avatar; otherwise
+      // preserve whatever the account already had (mirrors the Pg COALESCE($new, avatar_url)).
+      // Guarded assignment so an absent avatar never writes an explicit undefined over the
+      // optional field (exactOptionalPropertyTypes). (The in-memory AuthUser has no
+      // status/email_verified, so avatar is all that applies.)
+      if (input.avatarUrl) byExt.avatarUrl = input.avatarUrl
+      return byExt
+    }
     const email = input.email.trim().toLowerCase()
     const existing = this.byEmail.get(email)
     if (existing) { // link this provider identity to the verified-email account
-      if (!existing.externalId) { existing.externalId = input.externalId; this.byExternalId.set(input.externalId, existing) }
+      // Parity with PgUserStore (`if (byEmail.externalId) return byEmail`): an email account
+      // ALREADY bound to a DIFFERENT identity is returned UNCHANGED — no externalId rebind, no
+      // avatar adoption. Only a FRESH link (no externalId yet) mutates the account, and the avatar
+      // adoption lives INSIDE that block so a second provider can never adopt its picture onto the
+      // first provider's account.
+      if (!existing.externalId) {
+        existing.externalId = input.externalId
+        this.byExternalId.set(input.externalId, existing)
+        // Adopt the provider avatar only when the account has none yet (don't clobber a picture the
+        // user already had). Guard the assignment so a missing avatar never writes an explicit
+        // undefined over the optional field (exactOptionalPropertyTypes).
+        if (!existing.avatarUrl && input.avatarUrl) existing.avatarUrl = input.avatarUrl
+      }
       return existing
     }
     // Step 3 (create) — REFUSED when signup is disabled: OAuth must not mint a new account.
     if (opts?.allowCreate === false) return null
-    const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock(), externalId: input.externalId }
+    const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock(), externalId: input.externalId, ...(input.avatarUrl ? { avatarUrl: input.avatarUrl } : {}) }
     this.byEmail.set(email, u); this.byId.set(u.id, u); this.byExternalId.set(input.externalId, u)
     return u
   }

@@ -3,8 +3,10 @@ import { createHmac, timingSafeEqual, randomBytes } from 'node:crypto'
 export type OAuthProviderId = 'github' | 'google'
 export const OAUTH_PROVIDERS: OAuthProviderId[] = ['github', 'google']
 
-/** Minimal normalized profile we need to find-or-create a user. */
-export interface OAuthProfile { externalId: string; email: string; name: string }
+/** Minimal normalized profile we need to find-or-create a user. `avatarUrl` is the
+ *  provider profile picture (optional — surfaced to the FE via PublicUser, never used
+ *  for identity/authorization). */
+export interface OAuthProfile { externalId: string; email: string; name: string; avatarUrl?: string }
 
 /** Injected HTTP (global fetch in prod; a stub in tests). */
 export type HttpFetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown>; text: () => Promise<string> }>
@@ -145,20 +147,20 @@ export async function fetchGitHubLogin(accessToken: string, http: HttpFetch): Pr
 export async function fetchProfile(provider: OAuthProviderId, accessToken: string, http: HttpFetch): Promise<OAuthProfile> {
   const auth = { authorization: `Bearer ${accessToken}`, accept: 'application/json', 'user-agent': 'akis-studio' }
   if (provider === 'github') {
-    const u = (await (await http('https://api.github.com/user', { headers: auth })).json()) as { id?: number; login?: string; name?: string; email?: string | null }
+    const u = (await (await http('https://api.github.com/user', { headers: auth })).json()) as { id?: number; login?: string; name?: string; email?: string | null; avatar_url?: string }
     let email = u.email ?? ''
     if (!email) {
       const emails = (await (await http('https://api.github.com/user/emails', { headers: auth })).json().catch(() => [])) as { email: string; primary: boolean; verified: boolean }[]
       email = (Array.isArray(emails) ? emails.find(e => e.primary && e.verified) ?? emails.find(e => e.verified) : undefined)?.email ?? ''
     }
     if (!u.id || !email) throw new Error('github profile missing id/email')
-    return { externalId: `github:${u.id}`, email, name: (u.name || u.login || email.split('@')[0]) as string }
+    return { externalId: `github:${u.id}`, email, name: (u.name || u.login || email.split('@')[0]) as string, ...(u.avatar_url ? { avatarUrl: u.avatar_url } : {}) }
   }
   // google
-  const g = (await (await http('https://www.googleapis.com/oauth2/v3/userinfo', { headers: auth })).json()) as { sub?: string; email?: string; name?: string; email_verified?: boolean | string }
+  const g = (await (await http('https://www.googleapis.com/oauth2/v3/userinfo', { headers: auth })).json()) as { sub?: string; email?: string; name?: string; email_verified?: boolean | string; picture?: string }
   if (!g.sub || !g.email) throw new Error('google profile missing sub/email')
   // REQUIRE a provider-verified email (Google may serialize the flag as a string).
   // Without this, an attacker-asserted unverified email could link to a victim account.
   if (g.email_verified !== true && g.email_verified !== 'true') throw new Error('google email not verified')
-  return { externalId: `google:${g.sub}`, email: g.email, name: g.name || g.email.split('@')[0]! }
+  return { externalId: `google:${g.sub}`, email: g.email, name: g.name || g.email.split('@')[0]!, ...(g.picture ? { avatarUrl: g.picture } : {}) }
 }

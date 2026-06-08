@@ -70,7 +70,9 @@ export function registerOAuthRoutes(app: FastifyInstance, deps: OAuthDeps): void
       // GATE creation behind the signup-disabled policy: link/log-in an existing account, but never
       // CREATE a new one when signup is closed (else OAuth bypasses the no-sandbox-RCE signup gate).
       const user = await deps.users.upsertOAuth(
-        { externalId: profile.externalId, email: profile.email, name: profile.name },
+        // avatarUrl is optional (exactOptionalPropertyTypes): attach it only when the provider
+        // returned one, never as an explicit undefined.
+        { externalId: profile.externalId, email: profile.email, name: profile.name, ...(profile.avatarUrl ? { avatarUrl: profile.avatarUrl } : {}) },
         { allowCreate: !deps.signupDisabled },
       )
       if (!user) return redirectLogin(reply, base, 'oauth_denied') // creation refused — signup is closed
