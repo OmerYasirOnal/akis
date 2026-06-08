@@ -10,6 +10,7 @@ import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } fro
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
+import type { Device } from '../components/DeviceFrame.js'
 import { TrustReportCard } from '../components/TrustReportCard.js'
 import { PublishButton } from '../components/PublishButton.js'
 import { ExternalWriteCard } from '../components/ExternalWriteCard.js'
@@ -71,6 +72,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const [activeIdea, setActiveIdea] = useState('')
   const [busy, setBusy] = useState(false)
   const [previewOpen, setPreviewOpen] = useState(true)
+  // Device preset for the preview iframe (Responsive default · Mobil 390 · Masaüstü min(1280,pane)).
+  // Lifted to the studio so it persists across tab flips; threaded into PreviewPanel → DeviceFrame,
+  // which sets the iframe's LOGICAL width only (no sandbox/src change). Task 7 wires the drawer.
+  const [device, setDevice] = useState<Device>('responsive')
   // MOBILE (below lg) the two panes can't sit side-by-side, so a stacked preview rail used to be
   // pushed off-screen below a full-height chat — unreachable. On narrow viewports we show ONE pane
   // at a time and a Chat/Preview tab toggle to switch. Desktop is untouched (the tabs are lg:hidden
@@ -462,7 +467,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
                 {activeSessionId && !sessionGone && <AgentWriteProposals sessionId={activeSessionId} api={api} />}
                 {/* Publish docs/issue to Jira/Confluence via MCP — propose → human-confirm → execute. */}
                 {activeSessionId && !sessionGone && isDone && <ExternalWriteCard sessionId={activeSessionId} idea={activeIdea} files={codeFiles} api={api} />}
-                <PreviewPanel view={activeView} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+                <PreviewPanel view={activeView} device={device} onDevice={setDevice} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
               </>
             ) : (
               <button

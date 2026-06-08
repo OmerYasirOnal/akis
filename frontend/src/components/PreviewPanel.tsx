@@ -4,6 +4,8 @@ import type { SessionView } from '../live/types.js'
 import { TestStats } from './TestStats.js'
 import { CodeBrowser } from './CodeBrowser.js'
 import { TrustReport } from './TrustReport.js'
+import { DeviceFrame } from './DeviceFrame.js'
+import type { Device } from './DeviceFrame.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /**
@@ -22,7 +24,7 @@ import { useI18n } from '../i18n/I18nContext.js'
  *  note — so a LOST terminal frame can't leave the spinner pulsing forever (the boot watchdog). */
 const BOOT_SLOW_MS = 125_000
 
-export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, actionError }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined; actionError?: string | undefined }) {
+export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, actionError, device, onDevice }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined; actionError?: string | undefined; device: Device; onDevice: (d: Device) => void }) {
   const { t } = useI18n()
   const [tab, setTab] = useState<'preview' | 'code' | 'trust'>('preview')
   // Boot watchdog: while `starting`, arm a single timer; if it elapses before a terminal frame
@@ -52,6 +54,21 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   // Track the iframe's own load and keep a dark themed spinner over it until it paints, then fade in.
   const [loaded, setLoaded] = useState(false)
   useEffect(() => { setLoaded(false) }, [url]) // re-arm on every (re)run / new session
+  // DeviceFrame's Desktop preset caps at the pane's real inner width (min(1280, paneWidth)) so the
+  // user sees the full width with horizontal scroll only when narrower. Measure it read-only via a
+  // ResizeObserver on the panel root — NO scaling, no per-frame React storm (one setState per resize).
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  const [paneWidth, setPaneWidth] = useState(0)
+  useEffect(() => {
+    const el = panelRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width
+      if (typeof w === 'number') setPaneWidth(w)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
   const previewError = view.preview.error
   const artifact = view.preview.artifactUrl
   const embeddable = !!url && url.startsWith('/preview/')
@@ -61,7 +78,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   const isMock = view.provider === 'mock'
 
   return (
-    <div className="flex h-full flex-col gap-3">
+    <div ref={panelRef} className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
         {showTablist ? (
           // Preview ⇄ Code ⇄ Trust toggle — Code surfaces once files exist, Trust once a
@@ -129,11 +146,13 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
         <TrustReport evidence={testEvidence} codeReview={view.codeReview} demo={view.tests.demo} />
       ) : (
       <>
-      {/* Height (review): below lg the layout STACKS with no definite ancestor height, so flex-1 is
-          inert and the band fell to a short fixed floor — dead space on a tall portrait/narrow window.
-          A viewport-relative clamp lets the stacked band grow with the screen (floor 16rem, up to 42rem);
-          on lg the fixed-height wrapper's flex-1 fills and the 28rem is just a floor. */}
-      <div className="relative flex min-h-[clamp(16rem,55vh,42rem)] flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset] lg:min-h-[28rem]">
+      {/* Height (Task 4 / SPEC H1 two-region budget): the drawer gives PreviewPanel a BOUNDED
+          height (region B = `flex-1 min-h-0`), so the band's old `min-h-[clamp(16rem,55vh,42rem)]`
+          would force the parent to overflow → the Code tab's double-scroll. Relax it to a small
+          floor (16rem, for the <lg STACKED case with no definite ancestor) while `flex-1` fills the
+          bounded parent on lg. The iframe scrolls inside DeviceFrame; this band never imposes a min
+          that overflows its bounded parent. */}
+      <div className="relative flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
         {/* Intentional browser-chrome header so the framed area never reads as dead space —
             traffic-light dots, an agent attribution, and (when live) the preview path. */}
         <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5">
@@ -157,12 +176,16 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
             // origin is enough to run a self-contained app. (Apps needing real same-origin
             // storage are a deferred cross-origin-preview hardening.)
             <>
-              {/* LETTERBOX (review: wide-panel sprawl): cap the logical width + center on the dark
-                  surface so an ultrawide panel frames the app (dark margins) instead of stretching it
-                  edge-to-edge as a bare white slab. Narrow panels (< the cap) still fill full width. */}
-              <iframe title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
-                className={`mx-auto block h-full w-full max-w-[1100px] bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
-                sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
+              {/* LETTERBOX moved into DeviceFrame (Task 4): the device toggle drives the iframe's
+                  LOGICAL width per preset (responsive 100% / mobile 390 / desktop min(1280,paneWidth)),
+                  centered via `mx-auto` on a dark surface — replacing the old fixed `max-w-[1100px]`.
+                  The iframe element below is wrapped VERBATIM: same src/sandbox/allow/onLoad and the
+                  loaded-opacity transition; DeviceFrame only sets the WIDTH of its container. */}
+              <DeviceFrame device={device} onDevice={onDevice} paneWidth={paneWidth} tab={activeTab}>
+                <iframe title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
+                  className={`block h-full w-full bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
+                  sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
+              </DeviceFrame>
               {/* Dark themed skeleton over the iframe until it actually PAINTS — no white flash. */}
               {!loaded && (
                 <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-3 bg-slate-950">
