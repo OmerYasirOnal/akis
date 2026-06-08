@@ -19,12 +19,13 @@ const ui = (api: ApiClient) => render(<I18nProvider><OAuthButtons api={api} /></
 describe('OAuthButtons', () => {
   it('renders only the server-configured providers as full-page-redirect anchors (FR-oauth-signin-2)', async () => {
     const api = makeApi(['github'])
-    ui(api)
+    const { container } = ui(api)
     const gh = await screen.findByRole('link', { name: /GitHub/i })
     expect(gh).toHaveAttribute('href', '/oauth/github/authorize')
     expect(screen.queryByRole('link', { name: /Google/i })).toBeNull()
-    // the "or" divider appears when at least one provider is present (NFR-oauth-signin-10)
-    expect(screen.getByText('or')).toBeInTheDocument()
+    // the "or" divider appears when at least one provider is present (NFR-oauth-signin-10).
+    // Assert it structurally (two hairline rules) so the check isn't coupled to the EN word.
+    expect(container.querySelectorAll('span.h-px')).toHaveLength(2)
   })
 
   it('renders nothing when the provider list is empty (FR-oauth-signin-2 / NFR-16 / UC-7)', async () => {

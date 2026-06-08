@@ -30,6 +30,11 @@ function Brand() {
   return (
     <Link to="/" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
       <AkisLogo size={34} alt="" className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
+      {/* The logo is decorative (alt="") to avoid a double "AKIS … AKIS" announce next to the
+          visible wordmark. But that wordmark is `hidden sm:block`, so below sm the home link
+          would have NO accessible name — name it with an sr-only label that yields to the
+          visible wordmark at >=sm (sm:hidden), so the link is always named, never doubled. */}
+      <span className="sr-only sm:hidden">{t('app.title')}</span>
       <div className="hidden sm:block">
         <div className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-base font-extrabold leading-tight text-transparent">{t('app.title')}</div>
       </div>
