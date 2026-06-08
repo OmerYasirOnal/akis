@@ -5,6 +5,7 @@ import type { SessionStore } from '../../src/store/SessionStore.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { PgSessionStore } from '../../src/store/PgSessionStore.js'
 import type { SqlClient } from '../../src/store/pg.js'
+import { recordGithubProposal } from '../../src/gates/recordGithubProposal.js'
 
 /**
  * A STATEFUL fake Postgres `sessions` table: enough SQL surface (INSERT / SELECT /
@@ -256,6 +257,37 @@ function paritySuite(name: string, make: () => SessionStore) {
       const got = await store.get('s1')
       expect(got?.externalWrites).toEqual(externalWrites)
       // externalWrites is NON-GATE: writing it never sets a gate token.
+      expect(isVerified(got!)).toBe(false)
+      expect(got?.approval).toBeUndefined()
+    })
+
+    it('an AGENT-appended github proposal (via recordGithubProposal) round-trips identically through both stores', async () => {
+      const store = make()
+      await store.create(seed())
+      // Drive the SAME shared recorder the propose tool uses — provider is hardcoded 'github'. The
+      // record it appends must survive a get() byte-identically on BOTH the Mock and Pg backends (the
+      // class of bug that ships silently when only MockSessionStore is exercised).
+      const out = await recordGithubProposal(store, 's1', {
+        action: 'add_issue_comment',
+        summary: 'AKIS finished — 7 real tests passed on issue #42',
+        target: { owner: 'OmerYasirOnal', repo: 'akis', issue_number: 42 },
+        payload: { body: 'AKIS finished. Result: verified — 7 real tests passed.' },
+      })
+      expect('writeId' in out).toBe(true)
+      const writeId = (out as { writeId: string }).writeId
+      const got = await store.get('s1')
+      expect(got?.externalWrites).toHaveLength(1)
+      const rec = got!.externalWrites![0]!
+      expect(rec).toMatchObject({
+        id: writeId,
+        provider: 'github',
+        action: 'add_issue_comment',
+        status: 'proposed',
+        target: { owner: 'OmerYasirOnal', repo: 'akis', issue_number: 42 },
+        payload: { body: 'AKIS finished. Result: verified — 7 real tests passed.' },
+      })
+      expect(typeof rec.proposedAt).toBe('string')
+      // A proposal is NON-GATE: appending it never sets a gate token.
       expect(isVerified(got!)).toBe(false)
       expect(got?.approval).toBeUndefined()
     })

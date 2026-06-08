@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
 import { type WorkflowConfig, type SessionState, type PublishRecord, type ExternalWriteRecord, EXTERNAL_WRITES_MAX, isVerified } from '@akis/shared'
 import { digestExternalWrite, mintApprovedExternalWrite, executeExternalWrite, isAllowedExternalWriteAction, type ExternalWriteProposal } from '../gates/externalWriteGate.js'
+import { recordGithubProposal } from '../gates/recordGithubProposal.js'
 import { mcpTransportFor } from './mcpConnect.routes.js'
 import type { Orchestrator } from '../orchestrator/Orchestrator.js'
 import type { OrchestratorServices } from '../di/services.js'
@@ -295,10 +296,19 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     // tool is invalid under atlassian and vice-versa). `provider` defaults to 'atlassian' (back-compat
     // with the original Atlassian-only propose); an unknown provider has no set → rejected here.
     const provider = (b.provider ?? 'atlassian') as ExternalWriteProposal['provider']
+    const summary = (b.summary ?? b.action ?? '').slice(0, 200)
+    // GITHUB shares ONE recorder with the agent's propose_github_write tool (so route + tool produce a
+    // byte-identical record + one digest + the same idempotent dedupe). recordGithubProposal hardcodes
+    // provider:'github', so a github proposal can ONLY ever record under github. It records — never executes.
+    if (provider === 'github') {
+      const out = await recordGithubProposal(services.store, s.id, { action: b.action ?? '', summary, target: b.target ?? {}, payload: b.payload ?? {} })
+      if ('error' in out) return reply.code(400).send({ error: out.error, code: 'BadAction' })
+      return reply.send({ id: out.writeId, digest: out.digest, summary })
+    }
     if (!b.action || !isAllowedExternalWriteAction(provider, b.action)) return reply.code(400).send({ error: 'action is not on the external-write allow-list', code: 'BadAction' })
     const proposal: ExternalWriteRecord = {
       id: randomUUID(), provider, action: b.action,
-      summary: (b.summary ?? b.action).slice(0, 200), target: b.target ?? {}, payload: b.payload ?? {},
+      summary, target: b.target ?? {}, payload: b.payload ?? {},
       status: 'proposed', proposedAt: new Date().toISOString(),
     }
     const next = [...(s.externalWrites ?? []), proposal].slice(-EXTERNAL_WRITES_MAX)

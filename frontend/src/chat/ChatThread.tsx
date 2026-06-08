@@ -11,6 +11,7 @@ export const TOOL_LABEL: Record<string, StringKey> = {
   dispatch_proto: 'chat.tool.dispatch_proto',
   run_tests: 'chat.tool.run_tests',
   retrieve_knowledge: 'chat.tool.retrieve_knowledge',
+  propose_github_write: 'chat.tool.propose_github_write',
 }
 
 const ROLE_TINT: Record<string, string> = {

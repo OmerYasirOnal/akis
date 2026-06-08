@@ -9,6 +9,10 @@ export type ToolName =
   | 'request_spec_approval' | 'request_push_confirm'
   | 'push_to_github'
   | 'retrieve_knowledge' // read-only RAG grounding; NOT a gate tool (see GATE_TOOLS)
+  // PROPOSE-ONLY external write (Phase B/C): an agent RECORDS a status:'proposed' GitHub write the
+  // human must confirm. It EXECUTES NOTHING and carries ZERO gate authority (gate caps live in
+  // GATE_TOOLS, untouched) — this is purely a DISPLAY/correlation identifier on tool_call/tool_result.
+  | 'propose_github_write'
   | 'ask' | 'chat'
   // SP1: read-only GitHub-via-MCP bridge surfaces an OPEN, runtime-discovered family of tools,
   // each namespaced `github_<server_tool>` (see McpToolBridge NS). Their names can't be enumerated
