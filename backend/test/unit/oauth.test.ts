@@ -87,6 +87,18 @@ describe('fetchProfile', () => {
     const p = await fetchProfile('google', 'tok', http)
     expect('avatarUrl' in p).toBe(false)
   })
+  // FR-account-menu-17 (github side): a GitHub profile with NO avatar_url must also OMIT the key
+  // (not set avatarUrl: undefined) — mirrors the google omit-path above so the AccountMenu falls
+  // back to the gradient initial. Guards against a regression that always spreads avatarUrl.
+  it('omits avatarUrl for a GitHub profile that exposes no avatar_url (no explicit undefined)', async () => {
+    const http: HttpFetch = async (url) => {
+      if (url.endsWith('/user')) return ok({ id: 13, login: 'noav', name: 'No Avatar', email: 'noav@gh.dev' })
+      throw new Error('unexpected ' + url)
+    }
+    const p = await fetchProfile('github', 'tok', http)
+    expect(p).toEqual({ externalId: 'github:13', email: 'noav@gh.dev', name: 'No Avatar' })
+    expect('avatarUrl' in p).toBe(false)
+  })
   it('throws on a profile missing id/email', async () => {
     await expect(fetchProfile('google', 'tok', async () => ok({ name: 'x' }))).rejects.toThrow()
   })
