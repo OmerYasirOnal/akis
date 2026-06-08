@@ -113,6 +113,35 @@ describe('AgentWriteProposals (confirm cards for agent-proposed GitHub writes)',
     expect(screen.getByText(/abcdef0123456789…/)).toBeInTheDocument()
   })
 
+  it('a MERGE proposal shows commit_title + commit_message in the STRUCTURED view (not only the exact-bytes drawer)', async () => {
+    // BUG-5: digest-bound merge-commit text must be visible in the structured "what executes" view without
+    // expanding the default-collapsed exact-bytes drawer (the structuredFields catch-all renders it).
+    const writes = [proposal({ id: 'mc1', action: 'merge_pull_request', summary: 'Merge PR 5', target: { owner: 'me', repo: 'app', pullNumber: 5 }, payload: { merge_method: 'squash', commit_title: 'Release v2', commit_message: 'Ship the verifiability layer' } })]
+    const api = makeApi(writes)
+    ui(api)
+    await waitFor(() => expect(screen.getByText(/Merge PR 5/)).toBeInTheDocument())
+    // The exact-bytes drawer is collapsed (Show, not Hide) — so these MUST be in the structured grid.
+    expect(screen.getByRole('button', { name: /Show exact bytes/ })).toBeInTheDocument()
+    expect(screen.getByText('Commit title')).toBeInTheDocument()
+    expect(screen.getByText('Release v2')).toBeInTheDocument()
+    expect(screen.getByText('Commit message')).toBeInTheDocument()
+    expect(screen.getByText('Ship the verifiability layer')).toBeInTheDocument()
+  })
+
+  it('an UNKNOWN digest-bound payload key still renders in the structured view (generic catch-all)', async () => {
+    // BUG-5: a key with no per-action row + no specific label falls back to "Other ({k})" with its value,
+    // so nothing the digest binds is hidden. Objects/arrays stringify instead of "[object Object]".
+    const writes = [proposal({ id: 'u1', action: 'create_pull_request', summary: 'Open a draft PR for review', target: { owner: 'me', repo: 'app' }, payload: { title: 'New PR', draft: true, some_future_key: { nested: 1 } } })]
+    const api = makeApi(writes)
+    ui(api)
+    await waitFor(() => expect(screen.getByText(/Open a draft PR for review/)).toBeInTheDocument())
+    // The known specific label for `draft`.
+    expect(screen.getByText('Draft')).toBeInTheDocument()
+    // The generic catch-all carries the raw key name + a JSON-stringified value.
+    expect(screen.getByText(/Other \(some_future_key\)/)).toBeInTheDocument()
+    expect(screen.getByText(/"nested":1/)).toBeInTheDocument()
+  })
+
   it('ignores non-proposed and non-github records (only proposed github writes get a confirm card)', async () => {
     const writes = [
       proposal({ id: 'x1', action: 'add_issue_comment', target: {}, payload: {}, status: 'executed', summary: 'already done' }),
@@ -153,5 +182,30 @@ describe('AgentWriteProposals polling', () => {
     // after one poll interval → the proposal appears
     await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
     expect(screen.getByText(/late proposal/)).toBeInTheDocument()
+  })
+
+  it('keeps the successful-confirm outcome panel visible across the poll tick that flips the record off proposed (BUG-6)', async () => {
+    // After confirm, the server flips this record proposed → executed; the poll would drop it from the
+    // 'proposed' filter and unmount the "Done: …" panel before the user reads it. It must stay pinned.
+    const id = 'g1'
+    const base = proposal({ id, action: 'merge_pull_request', summary: 'Merge PR 3', target: { owner: 'me', repo: 'app', pullNumber: 3 }, payload: { merge_method: 'squash' }, digest: 'g'.repeat(64) })
+    let confirmed = false
+    const api = makeApi([], {
+      // Pre-confirm: returns the proposed record. Post-confirm: returns it as executed (no longer proposed).
+      listExternalWrites: vi.fn(() => Promise.resolve({ writes: [confirmed ? { ...base, status: 'executed', result: 'PR merged' } : base] })),
+      confirmExternalWrite: vi.fn(() => { confirmed = true; return Promise.resolve({ ok: true, status: 'executed', result: 'PR merged' }) }),
+    })
+    render(<I18nProvider><AgentWriteProposals sessionId="s1" api={api} pollMs={1000} /></I18nProvider>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    // Type the PR number to clear the merge friction, then confirm.
+    fireEvent.change(screen.getByPlaceholderText(/PR number/), { target: { value: '3' } })
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Confirm \+ execute/ })); await Promise.resolve() })
+    expect(screen.getByText(/Done: PR merged/)).toBeInTheDocument()
+    // A poll tick now returns it as 'executed' (off 'proposed') — the outcome panel MUST still be visible.
+    await act(async () => { await vi.advanceTimersByTimeAsync(1000) })
+    expect(screen.getByText(/Done: PR merged/)).toBeInTheDocument()
+    // …and after the grace period it finally clears.
+    await act(async () => { await vi.advanceTimersByTimeAsync(8000) })
+    expect(screen.queryByText(/Done: PR merged/)).not.toBeInTheDocument()
   })
 })

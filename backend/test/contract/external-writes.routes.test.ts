@@ -4,6 +4,7 @@
  * content, through the human's per-provider MCP transport. Owner-scoped.
  */
 import { describe, it, expect } from 'vitest'
+import { type SessionState, EXTERNAL_WRITES_MAX } from '@akis/shared'
 import Fastify from 'fastify'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
@@ -11,6 +12,7 @@ import { registerSessionRoutes } from '../../src/api/sessions.routes.js'
 import { buildServices } from '../../src/di/services.js'
 import { Orchestrator } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
+import type { SessionStore } from '../../src/store/SessionStore.js'
 import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { MemoryRemoteMcpAuthStore } from '../../src/agent/mcp/StoreBackedOAuthProvider.js'
@@ -189,6 +191,97 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     const confirm = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
     expect([list.statusCode, propose.statusCode, confirm.statusCode]).toEqual([404, 404, 404]) // existence not even confirmed
     expect(calls).toHaveLength(0) // no outward write fired on the intruder's behalf
+  })
+
+  it('Bug 2: a concurrent version bump during an ATLASSIAN propose is RETRIED (not a 500) — the proposal lands', async () => {
+    // The atlassian propose used to append with a BARE store.update (no retry): a concurrent version
+    // bump threw → Fastify default 500 → the proposal silently lost. It now shares the github recorder's
+    // retry-on-conflict appender. A store whose FIRST update on this session throws ONE version conflict
+    // (then succeeds) exercises that path: the route must reply 200 and record the proposal.
+    const inner = new MockSessionStore()
+    let conflicted = false
+    const flaky: SessionStore = {
+      create: (s) => inner.create(s),
+      get: (id) => inner.get(id),
+      async update(id, patch, expectedVersion) {
+        // Inject exactly one version conflict on the FIRST propose append (an externalWrites patch).
+        if (!conflicted && patch.externalWrites) {
+          conflicted = true
+          await inner.update(id, {}, expectedVersion)                     // a concurrent writer wins first
+          throw new Error(`version conflict: ${expectedVersion + 1} !== ${expectedVersion}`)
+        }
+        return inner.update(id, patch, expectedVersion)
+      },
+      recordApproval: (...a) => inner.recordApproval(...a),
+      recordVerification: (...a) => inner.recordVerification(...a),
+      listByOwner: (o) => inner.listByOwner(o),
+      listSummariesByOwner: (o) => inner.listSummariesByOwner(o),
+    }
+    const services = buildServices({ store: flaky, skillsDir, provider: new MockProvider(), mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    const f = Fastify({ logger: false })
+    registerSessionRoutes(f, { orchestrator: new Orchestrator(services), services, userIdOf: async () => 'owner1', mcpAuthStore: new MemoryRemoteMcpAuthStore() })
+    const id = await newSession(f)
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: PROPOSAL })
+    expect(res.statusCode).toBe(200)                                       // NOT a 500 — the conflict was absorbed
+    expect(conflicted).toBe(true)                                          // the conflict path was actually hit
+    const list = await f.inject({ method: 'GET', url: `/sessions/${id}/external-writes` })
+    expect(list.json().writes).toHaveLength(1)                            // the proposal landed despite the conflict
+  })
+
+  it('Bug 1/3: a confirm of an OLD in-flight record still works after the cap fills with newer proposals (it is never evicted)', async () => {
+    // Propose ONE atlassian write (status 'proposed'), then fill the row to the cap with DISTINCT
+    // proposals — but make the OLDEST record (besides our target) terminal so the appender has
+    // something safe to evict. The STATUS-AWARE appender drops only terminal records, so the original
+    // in-flight 'proposed' record SURVIVES every later propose; a confirm of it still finds it and
+    // EXECUTES (the status-blind slice evicted index 0 → confirm 404, no outcome recorded — bug 1/3).
+    const { f, calls, services } = makeApp({ connected: true })
+    const id = await newSession(f)
+    const target = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: PROPOSAL })).json()
+
+    // Seed the store directly up to EXACTLY the cap: our target ('proposed', oldest) + one terminal
+    // record + (cap-2) more proposed records. Each later route-propose will evict the terminal one,
+    // never our target.
+    const cur = (await services.store.get(id))!
+    const filler: NonNullable<SessionState['externalWrites']> = [
+      cur.externalWrites![0]!, // our target proposal stays at index 0
+      { id: 'term', provider: 'atlassian', action: 'createPage', summary: 't', target: { spaceKey: 'Z' }, payload: { title: 'T', body: 'b' }, status: 'executed', proposedAt: '2026-06-08T00:00:00.000Z', confirmedAt: '2026-06-08T00:00:01.000Z', result: 'done' },
+    ]
+    for (let i = 0; i < EXTERNAL_WRITES_MAX - 2; i++) {
+      filler.push({ id: `f${i}`, provider: 'atlassian', action: 'createPage', summary: `f${i}`, target: { spaceKey: `S${i}` }, payload: { title: `T${i}`, body: `b${i}` }, status: 'proposed', proposedAt: '2026-06-08T00:00:00.000Z' })
+    }
+    await services.store.update(id, { externalWrites: filler }, cur.version)
+    expect((await services.store.get(id))!.externalWrites).toHaveLength(EXTERNAL_WRITES_MAX)
+
+    // A NEW distinct proposal — the row is at cap, so the appender must drop the OLDEST TERMINAL record
+    // ('term'), NOT our in-flight target.
+    const more = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { ...PROPOSAL, payload: { title: 'New', body: 'distinct' } } })
+    expect(more.statusCode).toBe(200)
+    const afterIds = (await services.store.get(id))!.externalWrites!.map(w => w.id)
+    expect(afterIds).toContain(target.id)   // our in-flight record SURVIVED
+    expect(afterIds).not.toContain('term')  // the terminal record was evicted to make room
+
+    // The confirm of the ORIGINAL still-'proposed' record finds it and executes (no eviction-404).
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${target.id}/confirm`, payload: { digest: target.digest } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ ok: true, status: 'executed' })
+    expect(calls).toHaveLength(1) // the outward write fired exactly once, for the surviving record
+  })
+
+  it('Bug 1: a propose into a row FULL of non-terminal records is refused with 409 TooManyPending (no in-flight record evicted)', async () => {
+    const { f, services } = makeApp()
+    const id = await newSession(f)
+    const cur = (await services.store.get(id))!
+    const full: NonNullable<SessionState['externalWrites']> = Array.from({ length: EXTERNAL_WRITES_MAX }, (_, i) => ({
+      id: `p${i}`, provider: 'atlassian', action: 'createPage', summary: `p${i}`,
+      target: { spaceKey: `S${i}` }, payload: { title: `T${i}`, body: `b${i}` },
+      status: 'proposed' as const, proposedAt: '2026-06-08T00:00:00.000Z',
+    }))
+    await services.store.update(id, { externalWrites: full }, cur.version)
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { ...PROPOSAL, payload: { title: 'Z', body: 'z' } } })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().code).toBe('TooManyPending')
+    // The full row of in-flight proposals is untouched — nothing evicted, nothing appended.
+    expect((await services.store.get(id))!.externalWrites).toHaveLength(EXTERNAL_WRITES_MAX)
   })
 
   it('IN-DOUBT guard (#30): the record is durably executing BEFORE the outward call → a retry never re-executes', async () => {

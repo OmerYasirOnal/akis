@@ -88,4 +88,20 @@ describe('ExternalWriteCard (connection-aware publish to Jira/Confluence)', () =
     await waitFor(() => expect(screen.getByText(/Publish history/)).toBeInTheDocument())
     expect(screen.getByText(/ISSUE-9/)).toBeInTheDocument()
   })
+
+  it('a github PROPOSED write does NOT appear in history — AgentWriteProposals owns it (BUG-8, no double-render)', async () => {
+    const writes: ExternalWriteSummary[] = [
+      // Owned by AgentWriteProposals (the confirm surface) — must be dropped from this read-only history.
+      { id: 'gp1', provider: 'github', summary: 'AKIS proposes: merge PR #4', action: 'merge_pull_request', target: { pullNumber: 4 }, payload: { merge_method: 'squash' }, digest: 'gh', status: 'proposed', proposedAt: '2026-06-08T00:00:00Z' },
+      // An EXECUTED github write still belongs in history (it has no confirm card anywhere).
+      { id: 'ge1', provider: 'github', summary: 'merged PR #2', action: 'merge_pull_request', target: { pullNumber: 2 }, payload: {}, digest: 'gh2', status: 'executed', result: 'PR #2 merged', proposedAt: '2026-06-08T00:00:00Z' },
+    ]
+    const api = makeApi({ listExternalWrites: vi.fn(() => Promise.resolve({ writes })) })
+    ui(api)
+    await waitFor(() => expect(screen.getByText(/Publish history/)).toBeInTheDocument())
+    // The proposed github write is filtered out…
+    expect(screen.queryByText(/AKIS proposes: merge PR #4/)).not.toBeInTheDocument()
+    // …but the executed one remains.
+    expect(screen.getByText(/merged PR #2/)).toBeInTheDocument()
+  })
 })

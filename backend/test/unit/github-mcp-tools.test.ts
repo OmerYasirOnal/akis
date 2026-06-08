@@ -549,6 +549,42 @@ describe('ProtoAgent github-mcp gather (SP1 Proto wiring)', () => {
     expect(out.repoContext).toBe('')
   })
 
+  it('Bug 4: a DEGRADED transport + a wired store (propose-only build) injects NO fabricated "gathered" repo context', async () => {
+    // The github-MCP Docker child fails (McpUnavailableError on init) → ZERO github_ READ tools
+    // register. But the propose_github_write tool STILL registers (it only needs a connection + a
+    // store, independent of the read child), so the gather short-circuit does NOT fire and the gather
+    // loop runs. The model returns free text. Previously Proto wrapped ANY non-empty free text in the
+    // "CONNECTED-REPO CONTEXT … gathered from the user's GitHub repo" header though NOTHING was read —
+    // a provenance/honesty break. The fix: emit that header ONLY when a real github_ read registered.
+    const bus = new EventBus()
+    const t = new FakeTransport({ onInit: () => { throw new McpUnavailableError('docker missing') } }) // no reads register
+    const { pool } = poolWith(t)
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'idea', 'owner-1') })
+    let codeUser = ''
+    let gatherSystem = ''
+    let turn = 0
+    const provider: LlmProvider = {
+      name: 'fake', model: 'fake',
+      async chat(req): Promise<ChatResult> {
+        turn++
+        if (turn === 1) { gatherSystem = req.system; return { text: 'I could not read the repo, but here is some guessed context about the stack.' } } // gather: free text, NO read tool was available
+        codeUser = String((req.messages.find(m => m.role === 'user')?.content) ?? '')                                                                  // code production
+        return { text: '{"files":[{"filePath":"index.html","content":"<h1>hi</h1>"}]}' }
+      },
+    }
+    const proto = new ProtoAgent({ bus, provider, store })
+    const out = await proto.run({ sessionId: 's1', laneId: 'main', approved: approvedFor(), githubMcp: { pool, ownerId: 'o', token: SECRET } })
+    expect(out.files.map(f => f.filePath)).toEqual(['index.html'])
+    // The honesty assertions: no fabricated "gathered" header, even though the model returned free text.
+    expect(out.repoContext).toBe('')
+    expect(codeUser).not.toMatch(/CONNECTED-REPO CONTEXT/)
+    // The gather prompt MUST NOT tell the model to "use the github_* tools" when none registered.
+    expect(gatherSystem).not.toMatch(/github_\* tools/i)
+    // The propose tool still registered (a degraded build can still propose) — its guidance is present.
+    expect(gatherSystem).toContain(PROTO_PROPOSE_HINT)
+  })
+
   it('pre-provided repoContext ⇒ Proto does NOT re-gather (the per-iterate caching path)', async () => {
     const bus = new EventBus()
     const t = new FakeTransport({ advertise: [READ_TOOL] })

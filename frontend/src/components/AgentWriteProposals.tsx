@@ -1,4 +1,8 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+
+/** How long a successfully-confirmed card stays pinned after `done` so the outcome panel survives the
+ *  poll tick that flips its server status off 'proposed' (BUG-6). The user dismisses it sooner if they wish. */
+const RESOLVED_GRACE_MS = 8000
 import type { ApiClient, ExternalWriteSummary } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
@@ -98,14 +102,40 @@ const ACTION_KEY: Record<ActionKind, StringKey> = {
   write: 'aw.act.write',
 }
 
-/** One structured field row to render — label key + the already-stringified value (we never JSON-dump). */
-interface FieldRow { label: StringKey; value: string }
+/** One structured field row to render — label key + the already-stringified value (we never JSON-dump).
+ *  `labelArg` carries the raw payload key for the generic catch-all label (aw.f.other = "Other ({k})"),
+ *  so an UNMAPPED digest-bound key still renders with its real name (interpolated at render via fill). */
+interface FieldRow { label: StringKey; value: string; labelArg?: string }
 
 /** Truncate a long body/title preview so the card stays readable; the exact-bytes drawer shows it whole. */
 const preview = (v: unknown, n = 240): string | undefined => { const s = str(v); return s === undefined ? undefined : (s.length > n ? `${s.slice(0, n)}…` : s) }
 
+/** Known payload keys the per-action rows above already render — the catch-all skips these so a key is
+ *  never shown twice. owner/repo/issue_number/pullNumber on TARGET are likewise rendered elsewhere. */
+const KNOWN_PAYLOAD_KEYS = new Set(['method', 'state', 'state_reason', 'event', 'head', 'base', 'merge_method', 'labels', 'reviewers', 'title', 'body'])
+const KNOWN_TARGET_KEYS = new Set(['owner', 'repo', 'issue_number', 'pullNumber'])
+/** A readable label for the well-known remaining merge/PR payload keys; anything else falls back to the
+ *  generic aw.f.other ("Other ({k})") so NO digest-bound field is ever hidden from the structured view. */
+const EXTRA_PAYLOAD_LABEL: Record<string, StringKey> = {
+  commit_title: 'aw.f.commitTitle',
+  commit_message: 'aw.f.commitMessage',
+  draft: 'aw.f.draft',
+  expectedHeadSha: 'aw.f.expectedHeadSha',
+}
+/** Stringify a present payload/target value for display: strings/numbers/booleans read as-is, objects and
+ *  arrays JSON-serialize (so e.g. a nested commit object is still legible, not "[object Object]"). */
+function showValue(v: unknown): string | undefined {
+  if (v === undefined || v === null) return undefined
+  if (typeof v === 'string') return preview(v) ?? undefined
+  if (typeof v === 'number' || typeof v === 'boolean') return String(v)
+  try { const s = JSON.stringify(v); return s === undefined ? undefined : (s.length > 240 ? `${s.slice(0, 240)}…` : s) } catch { return undefined }
+}
+
 /** Extract the per-action structured rows from target+payload — ONLY fields actually present, so the card
- *  never shows a field the digest doesn't bind. The repo (owner/repo) is rendered separately. */
+ *  never shows a field the digest doesn't bind. The repo (owner/repo) is rendered separately. A GENERIC
+ *  catch-all then appends every REMAINING present payload/target key (§5.2: what is shown == what is
+ *  bound == what executes), so a digest-bound field like commit_title/commit_message/draft is never
+ *  invisible to the human confirming behind the default-collapsed exact-bytes drawer. */
 function structuredFields(w: ExternalWriteSummary): FieldRow[] {
   const rows: FieldRow[] = []
   const push = (label: StringKey, value: string | undefined): void => { if (value !== undefined && value !== '') rows.push({ label, value }) }
@@ -125,6 +155,23 @@ function structuredFields(w: ExternalWriteSummary): FieldRow[] {
   if (Array.isArray(p.reviewers) && p.reviewers.length > 0) push('aw.f.reviewers', p.reviewers.filter((x): x is string => typeof x === 'string').join(', '))
   push('aw.f.title', preview(p.title, 120))
   push('aw.f.body', preview(p.body))
+  // CATCH-ALL: every remaining present payload key the known rows didn't consume — keyed label for the
+  // well-known merge/PR keys, otherwise the generic "Other ({k})" carrying the raw key name.
+  for (const k of Object.keys(p)) {
+    if (KNOWN_PAYLOAD_KEYS.has(k)) continue
+    const value = showValue(p[k])
+    if (value === undefined || value === '') continue
+    const mapped = EXTRA_PAYLOAD_LABEL[k]
+    if (mapped !== undefined) rows.push({ label: mapped, value })
+    else rows.push({ label: 'aw.f.other', value, labelArg: k })
+  }
+  // Any remaining target key worth showing (owner/repo + issue/pull are already rendered) — same catch-all.
+  for (const k of Object.keys(w.target)) {
+    if (KNOWN_TARGET_KEYS.has(k)) continue
+    const value = showValue(w.target[k])
+    if (value === undefined || value === '') continue
+    rows.push({ label: 'aw.f.other', value, labelArg: k })
+  }
   return rows
 }
 
@@ -144,8 +191,11 @@ function eventPill(event: string): { cls: string } {
   return { cls: 'bg-white/10 text-slate-300 border-white/20' }
 }
 
-/** A single confirm card for one proposed agent write. */
-function ProposalCard({ w, sessionId, api, onResolved }: { w: ExternalWriteSummary; sessionId: string; api: ApiClient; onResolved: (id: string) => void }) {
+/** A single confirm card for one proposed agent write. `onConfirmed` tells the parent this write just
+ *  resolved so it can keep the card mounted through the next poll tick (the poll flips the server status
+ *  to executed/failed, which would otherwise drop the card and vanish the outcome panel before the user
+ *  reads it). `onResolved` is the FE-only dismiss/cleanup. */
+function ProposalCard({ w, sessionId, api, onConfirmed, onResolved }: { w: ExternalWriteSummary; sessionId: string; api: ApiClient; onConfirmed: (id: string) => void; onResolved: (id: string) => void }) {
   const { t } = useI18n()
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | undefined>()
@@ -173,9 +223,12 @@ function ProposalCard({ w, sessionId, api, onResolved }: { w: ExternalWriteSumma
       // GATE-SAFE: confirm posts the record's OWN server-bound digest verbatim — nothing minted here.
       const r = await api.confirmExternalWrite(sessionId, w.id, w.digest)
       setDone({ ok: r.ok, result: r.result ?? (r.ok ? 'done' : 'failed') })
+      // Tell the parent to PIN this card for a grace period — the next poll will flip its server status
+      // off 'proposed' and would otherwise unmount this outcome panel before the user reads it.
+      onConfirmed(w.id)
     } catch (e) { setErr(ApiError.is(e) ? e.message : String(e)) }
     finally { setBusy(false) }
-  }, [api, sessionId, w.id, w.digest])
+  }, [api, sessionId, w.id, w.digest, onConfirmed])
 
   if (done) {
     return (
@@ -226,8 +279,8 @@ function ProposalCard({ w, sessionId, api, onResolved }: { w: ExternalWriteSumma
           </>
         )}
         {fields.map((f, i) => (
-          <div key={`${f.label}-${i}`} className="contents">
-            <dt className="text-slate-500">{t(f.label)}</dt>
+          <div key={`${f.label}-${f.labelArg ?? ''}-${i}`} className="contents">
+            <dt className="text-slate-500">{f.labelArg !== undefined ? fill(t(f.label), { k: f.labelArg }) : t(f.label)}</dt>
             <dd className="min-w-0 whitespace-pre-wrap break-words text-slate-300">{f.value}</dd>
           </div>
         ))}
@@ -270,9 +323,12 @@ export function AgentWriteProposals({ sessionId, api, pollMs = 4000 }: { session
   const { t } = useI18n()
   const [writes, setWrites] = useState<ExternalWriteSummary[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
-  // Keep the latest dismissed set readable inside the polling closure without re-arming the interval.
-  const dismissedRef = useRef(dismissed)
-  dismissedRef.current = dismissed
+  // Cards confirmed in THIS session, kept pinned for a grace period so their outcome panel survives the
+  // poll tick that flips the server status off 'proposed' (BUG-6). We cache the write object itself so the
+  // card keeps the same `key` (and thus its local `done` panel) even once the poll drops it from `writes`.
+  const [resolved, setResolved] = useState<Map<string, ExternalWriteSummary>>(() => new Map())
+  // Pending grace-timers, so we can clear them on dismiss and on unmount (no setState-after-unmount).
+  const graceTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const load = useCallback((): void => {
     // Promise.resolve().then so a synchronous throw (a partial mock / older api) becomes a handled
@@ -288,18 +344,43 @@ export function AgentWriteProposals({ sessionId, api, pollMs = 4000 }: { session
     return () => clearInterval(id)
   }, [load, pollMs])
 
-  const onResolved = useCallback((id: string): void => setDismissed(prev => new Set(prev).add(id)), [])
+  // Drop a pinned card (and its grace-timer) — used by both Dismiss and the grace-period expiry.
+  const drop = useCallback((id: string): void => {
+    const timer = graceTimers.current.get(id)
+    if (timer !== undefined) { clearTimeout(timer); graceTimers.current.delete(id) }
+    setResolved(prev => { if (!prev.has(id)) return prev; const next = new Map(prev); next.delete(id); return next })
+  }, [])
+
+  // Dismiss = FE-only hide (the proposal stays on the server until confirmed). Also unpins a resolved card.
+  const onResolved = useCallback((id: string): void => { drop(id); setDismissed(prev => new Set(prev).add(id)) }, [drop])
+
+  // A confirm just succeeded — PIN this write so its outcome stays visible across the next poll, then
+  // auto-unpin after the grace period (the user can Dismiss sooner).
+  const onConfirmed = useCallback((id: string): void => {
+    setWrites(cur => { const w = cur.find(x => x.id === id); if (w) setResolved(prev => new Map(prev).set(id, w)); return cur })
+    const existing = graceTimers.current.get(id)
+    if (existing !== undefined) clearTimeout(existing)
+    graceTimers.current.set(id, setTimeout(() => drop(id), RESOLVED_GRACE_MS))
+  }, [drop])
+
+  // Clear any outstanding grace-timers on unmount.
+  useEffect(() => { const timers = graceTimers.current; return () => { for (const tmr of timers.values()) clearTimeout(tmr); timers.clear() } }, [])
 
   // Only PROPOSED, GitHub-provider, not-yet-dismissed proposals get a confirm card. A confirmed/executed
-  // write is carried by ExternalWriteCard's history, not duplicated here.
-  const open = writes.filter(w => w.provider === 'github' && w.status === 'proposed' && !dismissed.has(w.id))
+  // write is carried by ExternalWriteCard's history, not duplicated here — EXCEPT a card we just confirmed,
+  // which stays pinned (from the `resolved` cache) for the grace period so its outcome panel persists.
+  const proposed = writes.filter(w => w.provider === 'github' && w.status === 'proposed' && !dismissed.has(w.id))
+  const seen = new Set(proposed.map(w => w.id))
+  // Pinned cards the live poll no longer returns as 'proposed' (status flipped) — re-add from the cache.
+  const pinned = [...resolved.values()].filter(w => !seen.has(w.id) && !dismissed.has(w.id))
+  const open = [...proposed, ...pinned]
   if (open.length === 0) return null
 
   return (
     <div className="rounded-2xl border border-amber-400/20 bg-amber-400/[0.03] p-4">
       <SectionTitle sub={t('aw.sub')}>{t('aw.title')}</SectionTitle>
       <div className="flex flex-col gap-3">
-        {open.map(w => <ProposalCard key={w.id} w={w} sessionId={sessionId} api={api} onResolved={onResolved} />)}
+        {open.map(w => <ProposalCard key={w.id} w={w} sessionId={sessionId} api={api} onConfirmed={onConfirmed} onResolved={onResolved} />)}
       </div>
     </div>
   )

@@ -1,8 +1,9 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
-import { type WorkflowConfig, type SessionState, type PublishRecord, type ExternalWriteRecord, EXTERNAL_WRITES_MAX, isVerified } from '@akis/shared'
+import { type WorkflowConfig, type SessionState, type PublishRecord, type ExternalWriteRecord, isVerified } from '@akis/shared'
 import { digestExternalWrite, mintApprovedExternalWrite, executeExternalWrite, isAllowedExternalWriteAction, type ExternalWriteProposal } from '../gates/externalWriteGate.js'
 import { recordGithubProposal } from '../gates/recordGithubProposal.js'
+import { appendExternalWrite } from '../gates/appendExternalWrite.js'
 import { mcpTransportFor } from './mcpConnect.routes.js'
 import type { Orchestrator } from '../orchestrator/Orchestrator.js'
 import type { OrchestratorServices } from '../di/services.js'
@@ -310,7 +311,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     // provider:'github', so a github proposal can ONLY ever record under github. It records — never executes.
     if (provider === 'github') {
       const out = await recordGithubProposal(services.store, s.id, { action: b.action ?? '', summary, target: b.target ?? {}, payload: b.payload ?? {} })
-      if ('error' in out) return reply.code(400).send({ error: out.error, code: 'BadAction' })
+      if ('error' in out) {
+        // A full row of in-flight proposals is a state conflict (409 TooManyPending), parity with the
+        // atlassian branch below; everything else (off-list action, bad merge target…) is a 400.
+        if (out.code === 'TooManyPending') return reply.code(409).send({ error: out.error, code: 'TooManyPending' })
+        return reply.code(400).send({ error: out.error, code: 'BadAction' })
+      }
       return reply.send({ id: out.writeId, digest: out.digest, summary })
     }
     if (!b.action || !isAllowedExternalWriteAction(provider, b.action)) return reply.code(400).send({ error: 'action is not on the external-write allow-list', code: 'BadAction' })
@@ -319,8 +325,16 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       summary, target: b.target ?? {}, payload: b.payload ?? {},
       status: 'proposed', proposedAt: new Date().toISOString(),
     }
-    const next = [...(s.externalWrites ?? []), proposal].slice(-EXTERNAL_WRITES_MAX)
-    await services.store.update(s.id, { externalWrites: next }, s.version)
+    // Append via the SHARED appender (the same seam the github recorder uses): a `/version conflict/`-
+    // only read-modify-write retry (a concurrent chat turn / a second propose bumps the version
+    // mid-record — previously this bare append threw → Fastify 500 → the proposal lost), and a
+    // status-aware cap that evicts only the OLDEST TERMINAL record, never an in-flight one. A full
+    // row of non-terminal proposals ⇒ TooManyPending → 409 (a clean refusal, not a silent eviction).
+    const out = await appendExternalWrite(services.store, s.id, proposal)
+    if ('error' in out) {
+      if ('code' in out && out.code === 'TooManyPending') return reply.code(409).send({ error: out.error, code: 'TooManyPending' })
+      return sendError(reply, new Error(out.error))
+    }
     // The digest binds provider/action/target/payload only — `provider` is the SAME narrowed value the
     // allow-list was checked against above, so validate/persist/digest can never diverge.
     const digest = digestExternalWrite({ provider, action: proposal.action, target: proposal.target, payload: proposal.payload })
