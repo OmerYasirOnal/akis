@@ -314,6 +314,12 @@ export function AkisChat({
   // EDITED) text against the run markers — so an edited-then-built card correctly reads "started".
   const isSpecStarted = useCallback((spec: string): boolean => startedSpecs.has(spec.trim()), [startedSpecs])
 
+  // One STABLE no-op for the optional gate/recovery callbacks a standalone caller (or a test) may omit.
+  // The fallback used to be an INLINE `?? (() => {})` per prop per render — a fresh function identity each
+  // render that defeated React.memo(RunBlock), re-rendering every terminal run-block on each active-run
+  // SSE frame. A single shared `noop` keeps onApprove/onConfirm/onNewBuild reference-stable so the memo bails.
+  const noop = useCallback(() => {}, [])
+
   // Append a run marker at the TAIL (the array slot where the SpecCard was approved) so the build
   // renders INLINE, below the chat turns that preceded it — chronology is structural, no timestamp.
   // useCallback-stable (only setNodes + a ref, both stable) so handleBuild below stays stable too.
@@ -528,9 +534,9 @@ export function AkisChat({
                   active={isActive}
                   busy={!!building}
                   api={api}
-                  onApprove={onApprove ?? (() => {})}
-                  onConfirm={onConfirm ?? (() => {})}
-                  onNewBuild={onNewBuild ?? (() => {})}
+                  onApprove={onApprove ?? noop}
+                  onConfirm={onConfirm ?? noop}
+                  onNewBuild={onNewBuild ?? noop}
                   baseUrl={baseUrl}
                   {...(makeClient ? { makeClient } : {})}
                   {...(isActive && onActiveView ? { onView: onActiveView } : {})}

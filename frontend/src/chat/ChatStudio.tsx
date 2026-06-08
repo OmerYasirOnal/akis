@@ -247,7 +247,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // → the same 4 structural gates + pipeline + History. The ONLY caller is the Chat-to-Build
   // approval (AkisChat's SpecCard "Approve & Build"). startBuild RETURNS the new session id so
   // AkisChat can append the inline run marker at its slot; it sets the ACTIVE run here.
-  const startBuild = async (v: string): Promise<string | undefined> => {
+  // useCallback-STABLE so AkisChat's onBuild identity holds across the active run's per-frame
+  // setActiveView re-renders (the memoized RunBlock siblings then bail). Reactive deps only;
+  // syncUrl is a pure inner fn (no reactive closure).
+  const startBuild = useCallback(async (v: string): Promise<string | undefined> => {
     const idea = v.trim(); if (!idea || busy || startingRef.current) return undefined
     startingRef.current = true
     setBusy(true); setActionError(undefined); setStartingSpec(idea)
@@ -286,11 +289,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       return s.id
     } catch (e) { setActionError(actionErrorText(e, t)); setStartingSpec(undefined); return undefined }
     finally { setBusy(false); startingRef.current = false }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, activeSessionId, backendStatus, codeFiles, api, t])
 
   /** Re-open a past build (BOTH History doors route here). Seeds a one-run thread + clean greeting;
-   *  the run-block replays /log + /events. */
-  const openSession = (b: RecentBuild): void => { openWithChat(b.id, b.idea) }
+   *  the run-block replays /log + /events. useCallback-stable so HistoryMenu's onOpen + the studio's
+   *  onNewBuild path don't churn the spine; openWithChat/seedRun are pure inner fns over the reactive
+   *  deps listed (their captured state is mirrored here). */
+  const openSession = useCallback((b: RecentBuild): void => { openWithChat(b.id, b.idea) },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [api, activeSessionId, backendStatus, t])
 
   // Stable across renders, so the gate callbacks keep a stable identity.
   const act = useCallback(async (fn: () => Promise<unknown>): Promise<void> => {
@@ -320,12 +328,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Localized note for a failed/unsupported preview boot (carries the backend's short reason).
   const previewFailNote = (e: { status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; reason?: string }): string =>
     t(e.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed') + (e.reason ? `: ${e.reason}` : '')
-  const runApp = (): Promise<void> => act(async () => {
+  const runApp = useCallback((): Promise<void> => act(async () => {
     if (!activeSessionId) return
     const e = await api.startPreview(activeSessionId)
     if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e))
-  })
-  const newChat = (): void => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [act, activeSessionId, api, t])
+  const newChat = useCallback((): void => {
     // P1-6: 'New build' on a NON-TERMINAL active run must STOP it, not orphan it. Cancel the backend
     // pipeline (api.cancel → Orchestrator.cancel; only sets 'cancelled', NEVER mints) BEFORE clearing.
     if (activeSessionId && !isTerminalStatus(backendStatus)) {
@@ -336,7 +345,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // Drop the persisted spine + remount AkisChat so it re-seeds a clean greeting (no run markers).
     clearThread(); setThreadKey(k => k + 1)
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
-  }
+  }, [activeSessionId, backendStatus, api])
 
   // Auto-run the local preview once a build ships, so the app appears live with no extra click.
   const autoRan = useRef<string | undefined>(undefined)
