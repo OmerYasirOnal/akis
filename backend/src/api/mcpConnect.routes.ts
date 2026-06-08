@@ -26,7 +26,13 @@ export const REMOTE_MCP_PROVIDERS: Record<string, RemoteMcpProviderConfig> = {
   atlassian: {
     serverUrl: 'https://mcp.atlassian.com/v1/mcp/authv2',
     kind: 'streamable-http',
-    scope: 'offline_access read:me read:jira-work write:jira-work read:confluence-content.all write:confluence-content read:confluence-space.summary',
+    // JIRA-ONLY (owner decision 2026-06-08). The Confluence scopes (read:confluence-content.all,
+    // write:confluence-content, read:confluence-space.summary) were REJECTED at Atlassian consent
+    // ("app requested scopes that have not been added to the app") because the connected Atlassian
+    // site/workspace doesn't grant them — and Atlassian fails the WHOLE authorization, so a single
+    // ungranted scope blocks Jira too. Request only Jira; re-add the Confluence scopes when the
+    // owner's Atlassian site enables Confluence (+ Rovo MCP) with those permissions.
+    scope: 'offline_access read:me read:jira-work write:jira-work',
   },
   github: {
     serverUrl: 'https://api.githubcopilot.com/mcp/',

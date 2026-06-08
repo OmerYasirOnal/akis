@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import type { Tier } from '../usage/quota.js'
 
-export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string; tokenVersion?: number; tier?: Tier; stripeCustomerId?: string; avatarUrl?: string }
+export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string; tokenVersion?: number; tier?: Tier; stripeCustomerId?: string; avatarUrl?: string; lastLoginProvider?: AuthProvider }
 
 /** Which login provider an account uses — DERIVED from the externalId namespace prefix
  *  (`github:`/`google:`); a password account (no externalId) is `'password'`. Exported
@@ -14,11 +14,17 @@ export function providerOf(externalId?: string): AuthProvider {
 }
 
 /** The user projection safe to return over the wire — never includes the hash. `provider`
- *  is derived (so the FE can badge how the user signed in) and `avatarUrl` is the provider
- *  picture (only present for OAuth users that exposed one). */
+ *  is the provider used for the MOST-RECENT login (so the FE badges how the user signed in
+ *  THIS time, not whatever identity the account is permanently bound to) — see lastLoginProvider.
+ *  `avatarUrl` is the provider picture (only present for OAuth users that exposed one). */
 export interface PublicUser { id: string; name: string; email: string; provider: AuthProvider; avatarUrl?: string }
 export const toPublic = (u: AuthUser): PublicUser => ({
-  id: u.id, name: u.name, email: u.email, provider: providerOf(u.externalId),
+  // Prefer the recorded last-login provider; fall back to deriving from the bound externalId for
+  // rows written before lastLoginProvider existed (and for password accounts, which have neither —
+  // providerOf(undefined) === 'password'). This is what keeps the badge honest when an account
+  // bound to identity A signs in via identity B (same verified email): the row stays bound to A,
+  // but lastLoginProvider records B, so the badge reflects THIS login.
+  id: u.id, name: u.name, email: u.email, provider: u.lastLoginProvider ?? providerOf(u.externalId),
   // exactOptionalPropertyTypes: only attach avatarUrl when present (never an explicit undefined).
   ...(u.avatarUrl ? { avatarUrl: u.avatarUrl } : {}),
 })
@@ -79,6 +85,7 @@ export class UserStore implements UserStorePort {
    *  identity. New OAuth users have an empty passwordHash (never verifies). The caller
    *  MUST have verified the email with the provider before linking by email. */
   async upsertOAuth(input: { externalId: string; email: string; name: string; avatarUrl?: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null> {
+    const provider = providerOf(input.externalId)
     const byExt = this.byExternalId.get(input.externalId)
     if (byExt) {
       // Returning identity: REFRESH the avatar so an owner who logged in before this feature
@@ -88,29 +95,37 @@ export class UserStore implements UserStorePort {
       // optional field (exactOptionalPropertyTypes). (The in-memory AuthUser has no
       // status/email_verified, so avatar is all that applies.)
       if (input.avatarUrl) byExt.avatarUrl = input.avatarUrl
+      byExt.lastLoginProvider = provider // record the provider used THIS login (badge source of truth)
       return byExt
     }
     const email = input.email.trim().toLowerCase()
     const existing = this.byEmail.get(email)
-    if (existing) { // link this provider identity to the verified-email account
-      // Parity with PgUserStore (`if (byEmail.externalId) return byEmail`): an email account
-      // ALREADY bound to a DIFFERENT identity is returned UNCHANGED — no externalId rebind, no
-      // avatar adoption. Only a FRESH link (no externalId yet) mutates the account, and the avatar
-      // adoption lives INSIDE that block so a second provider can never adopt its picture onto the
-      // first provider's account.
-      if (!existing.externalId) {
-        existing.externalId = input.externalId
-        this.byExternalId.set(input.externalId, existing)
-        // Adopt the provider avatar only when the account has none yet (don't clobber a picture the
-        // user already had). Guard the assignment so a missing avatar never writes an explicit
-        // undefined over the optional field (exactOptionalPropertyTypes).
-        if (!existing.avatarUrl && input.avatarUrl) existing.avatarUrl = input.avatarUrl
+    if (existing) {
+      // record the provider used THIS login FIRST, so it lands on EVERY existing-account path —
+      // the fresh link AND the already-bound-to-a-different-identity case — keeping the badge honest
+      // about how the user signed in NOW even though the bound identity (externalId) never moves.
+      existing.lastLoginProvider = provider
+      if (existing.externalId) {
+        // ALREADY bound to a DIFFERENT identity (parity with Pg `if (byEmail.externalId)`): do NOT
+        // rebind externalId — that identity is permanent and was never persisted under the new
+        // namespace. But DO refresh the avatar when the current login carries one, so the badge AND
+        // the photo both reflect the provider just used. Guard so an absent avatar never writes an
+        // explicit undefined over the optional field (exactOptionalPropertyTypes).
+        if (input.avatarUrl) existing.avatarUrl = input.avatarUrl
+        return existing
       }
+      // FRESH link (no externalId yet): bind this provider identity to the verified-email account.
+      existing.externalId = input.externalId
+      this.byExternalId.set(input.externalId, existing)
+      // Adopt the provider avatar only when the account has none yet (don't clobber a picture the
+      // user already had) — mirrors the Pg COALESCE(avatar_url, $2) link path. Guard the assignment
+      // so a missing avatar never writes an explicit undefined over the optional field.
+      if (!existing.avatarUrl && input.avatarUrl) existing.avatarUrl = input.avatarUrl
       return existing
     }
     // Step 3 (create) — REFUSED when signup is disabled: OAuth must not mint a new account.
     if (opts?.allowCreate === false) return null
-    const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock(), externalId: input.externalId, ...(input.avatarUrl ? { avatarUrl: input.avatarUrl } : {}) }
+    const u: AuthUser = { id: this.genId(), name: input.name.trim() || email, email, passwordHash: '', createdAt: this.clock(), externalId: input.externalId, lastLoginProvider: provider, ...(input.avatarUrl ? { avatarUrl: input.avatarUrl } : {}) }
     this.byEmail.set(email, u); this.byId.set(u.id, u); this.byExternalId.set(input.externalId, u)
     return u
   }

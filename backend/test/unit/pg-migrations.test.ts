@@ -107,6 +107,20 @@ describe('runMigrations', () => {
     expect(texts.some(t => /ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active' CHECK \(status IN \('pending_verification','active','disabled','deleted'\)\)/.test(t))).toBe(true)
   })
 
+  it('adds last_login_provider to users (fresh DDL + idempotent ALTER) for the cross-provider login badge', async () => {
+    // last_login_provider records the provider used for the most-recent login (drives toPublic's
+    // badge). A pre-existing users table must get it via ADD COLUMN IF NOT EXISTS or the upsertOAuth
+    // UPDATE/INSERT that references it fails on an upgraded Postgres. CHECK keeps it in the
+    // AuthProvider value-domain (github|google|password); nullable for password/pre-feature rows.
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    const all = texts.join('\n')
+    expect(all).toMatch(/CREATE TABLE IF NOT EXISTS users[\s\S]*last_login_provider\s+text/)
+    expect(texts.some(t => /ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_provider text/.test(t))).toBe(true)
+    // CHECK constrains the value-domain in both DDL forms (a no-op on a DB that already has the column).
+    expect(all).toMatch(/last_login_provider text CHECK \(last_login_provider IN \('github','google','password'\)\)/)
+  })
+
   it('enforces external_id uniqueness via a dedicated index (so upgraded DBs match fresh ones)', async () => {
     // A fresh DB gets `external_id text UNIQUE` inline, but the ADD COLUMN migration that
     // upgrades a pre-existing users table adds NO constraint — without a dedicated unique

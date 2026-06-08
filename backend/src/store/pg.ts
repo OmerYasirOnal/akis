@@ -46,6 +46,9 @@ CREATE TABLE IF NOT EXISTS users (
   -- is currently WRITE-ONLY: PgUserStore writes 'active' on OAuth INSERT but never SELECTs it back
   -- into AuthUser, so the text-vs-enum mismatch never crosses the row↔user mapper.
   status        text NOT NULL DEFAULT 'active' CHECK (status IN ('pending_verification','active','disabled','deleted')),
+  -- The provider used for the MOST-RECENT login (drives the FE "Signed in via …" badge). NULL for
+  -- password accounts and for rows written before this column; CHECK keeps it in the AuthProvider domain.
+  last_login_provider text CHECK (last_login_provider IN ('github','google','password')),
   created_at    timestamptz NOT NULL DEFAULT now()
 )`
 
@@ -77,6 +80,11 @@ export const ADD_USER_EMAIL_VERIFIED = `ALTER TABLE users ADD COLUMN IF NOT EXIS
  *  is currently WRITE-ONLY (never SELECTed back into AuthUser), so the text-vs-enum type difference
  *  is intentional and safe. */
 export const ADD_USER_STATUS = `ALTER TABLE users ADD COLUMN IF NOT EXISTS status text NOT NULL DEFAULT 'active' CHECK (status IN ('pending_verification','active','disabled','deleted'))`
+/** Idempotent migration: the provider used for the most-recent login (drives the FE login badge).
+ *  Nullable (password accounts + pre-existing rows have none); CHECK keeps it in the AuthProvider
+ *  value-domain. The inline CHECK only applies when the column is freshly added (ADD COLUMN IF NOT
+ *  EXISTS short-circuits otherwise), so re-running is a safe no-op. */
+export const ADD_USER_LAST_LOGIN_PROVIDER = `ALTER TABLE users ADD COLUMN IF NOT EXISTS last_login_provider text CHECK (last_login_provider IN ('github','google','password'))`
 
 /**
  * Idempotent UNIQUE index on external_id. The fresh-table inline `external_id text UNIQUE`
@@ -244,6 +252,7 @@ const MIGRATIONS: readonly string[] = [
   ADD_USER_AVATAR_URL,
   ADD_USER_EMAIL_VERIFIED,
   ADD_USER_STATUS,
+  ADD_USER_LAST_LOGIN_PROVIDER,
   CREATE_USERS_EXTERNAL_ID_UNIQUE,
   CREATE_SESSIONS_TABLE,
   ADD_TEST_EVIDENCE,
