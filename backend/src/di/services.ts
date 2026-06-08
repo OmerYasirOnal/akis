@@ -406,11 +406,14 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     // single-shot. The same knowledge port the SharedContext reads is reused (P3-AGENT-2).
     scribe: new ScribeAgent({
       bus, provider: providerFor('scribe'),
+      // The SAME DI store the route uses — enables the propose_github_write tool (gated on a GitHub
+      // connection inside the choke point) to APPEND a status:'proposed' record. Zero gate authority.
+      store: opts.store,
       ...(opts.mockNeedsClarification !== undefined ? { needsClarification: opts.mockNeedsClarification } : {}),
       ...(ragEnabled ? { knowledge: knowledgeWiring.knowledge, ragEnabled: true } : {}),
       ...(scribePrompt !== undefined ? { systemPrompt: scribePrompt } : {}),
     }),
-    proto: new ProtoAgent({ bus, provider: providerFor('proto'), ...(protoPrompt !== undefined ? { systemPrompt: protoPrompt } : {}) }),
+    proto: new ProtoAgent({ bus, provider: providerFor('proto'), store: opts.store, ...(protoPrompt !== undefined ? { systemPrompt: protoPrompt } : {}) }),
     trace: new TraceAgent({ bus, verifier: resolveVerifier(verifierSpec) }),
     approvalAuthority: createApprovalAuthority(),
     skills,

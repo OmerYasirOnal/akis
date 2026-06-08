@@ -1,7 +1,9 @@
 import type { KnowledgePort } from '../../knowledge/KnowledgePort.js'
+import type { SessionStore } from '../../store/SessionStore.js'
 import type { RegisteredTool } from './ToolRegistry.js'
 import { ToolRegistry } from './ToolRegistry.js'
 import { retrieveKnowledgeTool } from './retrieveKnowledgeTool.js'
+import { proposeGithubWriteTool } from './proposeGithubWriteTool.js'
 import { buildGithubMcpTools, type GithubMcpDeps } from './githubMcpTools.js'
 import { buildAtlassianMcpTools, type AtlassianMcpDeps } from './atlassianMcpTools.js'
 
@@ -60,7 +62,10 @@ export interface AdvisoryToolsWithGithub {
  */
 export async function buildAdvisoryToolsWithGithub(
   capabilities: ReadonlySet<string>,
-  deps: { knowledge?: KnowledgePort; sessionId: string; githubMcp?: GithubMcpDeps; atlassianMcp?: AtlassianMcpDeps },
+  // `store` is OPTIONAL + used ONLY for the propose_github_write capability. It is wired EXACTLY when a
+  // GitHub connection is present (deps.githubMcp) — honest absence: a build with no GitHub connection
+  // never sees the propose tool. The tool only APPENDS a status:'proposed' record (zero gate authority).
+  deps: { knowledge?: KnowledgePort; sessionId: string; githubMcp?: GithubMcpDeps; atlassianMcp?: AtlassianMcpDeps; store?: SessionStore },
 ): Promise<AdvisoryToolsWithGithub> {
   const ragOnly = buildAdvisoryTools(capabilities, deps)
   if (!deps.githubMcp && !deps.atlassianMcp) return { registry: ragOnly, release: NOOP_RELEASE }
@@ -74,6 +79,15 @@ export async function buildAdvisoryToolsWithGithub(
   }
   if (deps.atlassianMcp) {
     try { built.push(await buildAtlassianMcpTools(deps.atlassianMcp)) } catch { /* defensive: RAG-only for this source */ }
+  }
+  // PROPOSE tool (Phase B/C): surfaced under the SAME condition as the github READ tools — only when a
+  // GitHub CONNECTION exists (deps.githubMcp) AND the capability is granted AND a store is wired. It is a
+  // pure store-append (status:'proposed'), independent of the MCP child actually spawning — so a degraded
+  // read-tool build (Docker missing) still records proposals, but a build with NO connection never sees it.
+  // Holds no ref ⇒ a no-op release. It executes NOTHING (the human confirm route is the only executor).
+  if (deps.githubMcp && deps.store && capabilities.has('propose_github_write')) {
+    const proposeTool = proposeGithubWriteTool({ sessionId: deps.sessionId, store: deps.store })
+    built.push({ tools: [proposeTool], release: NOOP_RELEASE })
   }
   const releaseAll = (): void => { for (const b of built) b.release() } // each release is idempotent
   const allTools = built.flatMap(b => b.tools)

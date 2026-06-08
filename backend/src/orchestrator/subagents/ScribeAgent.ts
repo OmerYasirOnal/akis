@@ -10,6 +10,7 @@ import type { KnowledgePort } from '../../knowledge/KnowledgePort.js'
 import { buildAdvisoryTools, buildAdvisoryToolsWithGithub } from '../../agent/tools/advisoryTools.js'
 import { callWithTools } from '../../agent/tools/toolLoop.js'
 import type { McpSessionPool } from '../../agent/mcp/McpSessionPool.js'
+import type { SessionStore } from '../../store/SessionStore.js'
 
 /** Focused system prompt for the additive README pass (ScribeAgent.writeDocs). Grounded + concise;
  *  never invents features (matches AKIS's provenance posture). */
@@ -47,7 +48,7 @@ export type ScribeOutcome =
 const CORE_TOOL_NAMES: readonly ToolName[] = [
   'dispatch_scribe', 'dispatch_proto', 'dispatch_trace', 'dispatch_critic',
   'run_tests', 'request_spec_approval', 'request_push_confirm', 'push_to_github',
-  'retrieve_knowledge', 'ask', 'chat',
+  'retrieve_knowledge', 'propose_github_write', 'ask', 'chat',
 ]
 
 /** Narrow a runtime tool identifier (ToolCall.name is `string`) to a ToolName: a fixed core
@@ -125,6 +126,11 @@ export class ScribeAgent {
       /** Skill-composed base system prompt (P3-AGENT-1). Omitted ⇒ SCRIBE_SYSTEM,
        *  so a no-skills build sends the byte-identical prompt of today. */
       systemPrompt?: string
+      /** DI session store — passed to buildAdvisoryToolsWithGithub so the propose_github_write tool
+       *  can APPEND a status:'proposed' record. Surfaced ONLY when a GitHub connection exists (the
+       *  tool's registration is gated on githubMcp). Absent ⇒ no propose tool (byte-identical). The
+       *  tool holds no gate authority; it never executes (the human confirm route does). */
+      store?: SessionStore
     },
   ) {
     this.base = deps.systemPrompt ?? SCRIBE_SYSTEM
@@ -234,13 +240,19 @@ export class ScribeAgent {
     // failure (no Docker / bad token / server error) drops github tools, so this path degrades to
     // the RAG-only (or, RAG-off, the no-tools) shape, never a crash. Skill injection is already in
     // `this.base`, so it flows into every branch.
-    const caps: ReadonlySet<string> = wantRag ? new Set(['retrieve_knowledge']) : new Set<string>()
+    // CAPS: retrieve_knowledge when RAG is on; propose_github_write ONLY when a GitHub connection is
+    // present (wantGithub) AND a store is wired — so a no-connection build never even names the cap, and
+    // the choke point (advisoryTools) gates registration on the SAME githubMcp condition (honest absence).
+    const caps = new Set<string>()
+    if (wantRag) caps.add('retrieve_knowledge')
+    if (wantGithub && this.deps.store) caps.add('propose_github_write')
     const { registry: tools, release } = await buildAdvisoryToolsWithGithub(
       caps,
       {
         ...(this.deps.knowledge ? { knowledge: this.deps.knowledge } : {}),
         sessionId,
         ...(input.githubMcp ? { githubMcp: input.githubMcp } : {}),
+        ...(this.deps.store ? { store: this.deps.store } : {}),
       },
     )
     // Hints are additive + conditional: the RAG hint ONLY when RAG is on, the github hint ONLY when

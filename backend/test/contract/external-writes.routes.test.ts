@@ -83,6 +83,27 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     expect(bad2.statusCode).toBe(400)
   })
 
+  it('SHARED RECORDER: a github PROPOSE dedupes on content (route + agent tool share one impl) — same writeId, ONE record', async () => {
+    const { f } = makeApp()
+    const id = await newSession(f)
+    const body = { provider: 'github', action: 'add_issue_comment', summary: 'Comment on #42', target: { owner: 'OmerYasirOnal', repo: 'akis', issue_number: 42 }, payload: { body: 'verified — 7 real tests passed' } }
+    const a = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: body })).json()
+    const b = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { ...body, summary: 'a DIFFERENT summary (not part of the digest)' } })).json()
+    expect(b.id).toBe(a.id) // same content ⇒ the recorder returned the existing proposal
+    const list = await f.inject({ method: 'GET', url: `/sessions/${id}/external-writes` })
+    expect(list.json().writes).toHaveLength(1) // ONE card per content
+  })
+
+  it('SHARED RECORDER: a github PROPOSE rejects a colliding target/payload (400, nothing recorded)', async () => {
+    const { f } = makeApp()
+    const id = await newSession(f)
+    // `body` in BOTH target and payload — the recorder's disjoint-key pre-check refuses it.
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { provider: 'github', action: 'add_issue_comment', summary: 'x', target: { owner: 'o', repo: 'r', body: 'in-target' }, payload: { body: 'in-payload' } } })
+    expect(res.statusCode).toBe(400)
+    const list = await f.inject({ method: 'GET', url: `/sessions/${id}/external-writes` })
+    expect(list.json().writes).toHaveLength(0)
+  })
+
   it('PROVIDER-AWARE: a GitHub write CONFIRMS + EXECUTES through the github transport (merged target+payload)', async () => {
     const { f, calls } = makeApp({ connected: true })
     const id = await newSession(f)

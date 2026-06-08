@@ -13,6 +13,7 @@ import { ProtoAgent } from '../../src/orchestrator/subagents/ProtoAgent.js'
 import { mintApprovedSpec } from '../../src/gates/specGate.js'
 import { approveSpec } from '../helpers/tokens.js'
 import { initialSession } from '@akis/shared'
+import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 
 /**
  * Unit tests for the READ-ONLY GitHub-via-MCP TOOL-BUILD layer: githubMcpTools.ts
@@ -563,6 +564,110 @@ describe('ProtoAgent github-mcp gather (SP1 Proto wiring)', () => {
     expect(t.callLog).toHaveLength(0)        // NO github read — the pre-provided context skipped the gather entirely
     expect(codeUser).toContain('PREGATHERED')
     expect(out.repoContext).toBe('\nPREGATHERED\n')
+  })
+})
+
+// ─────────────────────────────────────────────────────────────────────────────
+// propose_github_write — the agent-propose tool, wired into a real build (Scribe).
+// A build with a github connection + a model that emits the tool call ends with
+// EXACTLY ONE proposed record + ZERO executions; a no-connection build never sees it.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('propose_github_write build wiring (Scribe end-to-end)', () => {
+  /** A provider whose FIRST turn emits a propose_github_write tool call, then a spec. */
+  function proposeThenSpecProvider(args: Record<string, unknown>): { provider: LlmProvider; specs: () => string[] } {
+    let turn = 0
+    let advertised: string[] = []
+    const provider: LlmProvider = {
+      name: 'fake', model: 'fake',
+      async chat(req): Promise<ChatResult> {
+        advertised = (req.tools ?? []).map(t => t.name)
+        turn++
+        if (turn === 1) return { toolCalls: [{ name: 'propose_github_write', args, id: 'p1' }] }
+        return { text: SPEC_JSON }
+      },
+    }
+    return { provider, specs: () => advertised }
+  }
+
+  const COMMENT_ARGS = {
+    action: 'add_issue_comment',
+    summary: 'AKIS finished — verified, 7 real tests passed on #42',
+    target: { owner: 'OmerYasirOnal', repo: 'akis', issue_number: 42 },
+    payload: { body: 'AKIS finished. Result: verified — 7 real tests passed.' },
+  }
+
+  it('a github-connected build records EXACTLY ONE proposed record and executes NOTHING', async () => {
+    const bus = new EventBus()
+    const seen = collect(bus, 's1')
+    const t = new FakeTransport({ advertise: [READ_TOOL] }) // a read transport exists, but the model proposes
+    const { pool } = poolWith(t)
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'a todo app', 'owner-1') })
+    const { provider, specs } = proposeThenSpecProvider(COMMENT_ARGS)
+
+    const scribe = new ScribeAgent({ bus, provider, store })
+    const out = await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'a todo app', githubMcp: { pool, ownerId: 'o', token: SECRET } })
+
+    expect(out.type).toBe('spec')
+    // The tool was advertised to the model (the cap registered because a connection + store are present).
+    expect(specs()).toContain('propose_github_write')
+    // EXACTLY ONE proposed record landed; the proposal NEVER executed (no transport.callTool fired it).
+    const got = await store.get('s1')
+    expect(got?.externalWrites).toHaveLength(1)
+    const rec = got!.externalWrites![0]!
+    expect(rec.status).toBe('proposed')                          // ZERO executions
+    expect(rec.provider).toBe('github')
+    expect(rec.action).toBe('add_issue_comment')
+    expect(t.callLog).toHaveLength(0)                            // the agent never reached the MCP write transport
+    expect(rec.confirmedAt).toBeUndefined()
+    // The use surfaced on the live stream under its real display name (ephemeral narration).
+    expect(seen.some(e => e.kind === 'tool_call' && (e as { tool?: string }).tool === 'propose_github_write')).toBe(true)
+    expect(JSON.stringify(seen)).not.toContain(SECRET)
+  })
+
+  it('a model that re-emits the SAME proposal across turns still yields ONE record (dedupe)', async () => {
+    const bus = new EventBus()
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'idea', 'owner-1') })
+    let turn = 0
+    const provider: LlmProvider = {
+      name: 'fake', model: 'fake',
+      async chat(): Promise<ChatResult> {
+        turn++
+        if (turn <= 2) return { toolCalls: [{ name: 'propose_github_write', args: COMMENT_ARGS, id: `p${turn}` }] }
+        return { text: SPEC_JSON }
+      },
+    }
+    const t = new FakeTransport({ advertise: [READ_TOOL] })
+    const { pool } = poolWith(t)
+    const scribe = new ScribeAgent({ bus, provider, store })
+    await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'idea', githubMcp: { pool, ownerId: 'o', token: SECRET } })
+    expect((await store.get('s1'))?.externalWrites).toHaveLength(1) // content-digest dedupe
+  })
+
+  it('honest absence: a build with NO github connection never registers the propose tool', async () => {
+    const bus = new EventBus()
+    const store = new MockSessionStore()
+    await store.create({ ...initialSession('s1', 'idea', 'owner-1') })
+    // The model WOULD emit a propose call on turn 1, but with no connection the tool is never advertised,
+    // so the loop never builds (RAG off + no github ⇒ single-shot) — the proposal can never be recorded.
+    const { provider, specs } = proposeThenSpecProvider(COMMENT_ARGS)
+    const scribe = new ScribeAgent({ bus, provider, store })            // store wired, but NO githubMcp
+    const out = await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'idea' })
+    expect(out.type).toBe('spec')
+    expect(specs()).not.toContain('propose_github_write')              // never advertised
+    expect((await store.get('s1'))?.externalWrites ?? []).toHaveLength(0)
+  })
+
+  it('no store wired ⇒ the propose tool is absent even with a connection (DI guard)', async () => {
+    const bus = new EventBus()
+    const { provider, specs } = proposeThenSpecProvider(COMMENT_ARGS)
+    const t = new FakeTransport({ advertise: [READ_TOOL] })
+    const { pool } = poolWith(t)
+    const scribe = new ScribeAgent({ bus, provider })                  // NO store dep
+    const out = await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'idea', githubMcp: { pool, ownerId: 'o', token: SECRET } })
+    expect(out.type).toBe('spec')
+    expect(specs()).not.toContain('propose_github_write')              // store absent ⇒ tool absent
   })
 })
 

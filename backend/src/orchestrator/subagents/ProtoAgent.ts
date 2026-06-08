@@ -7,6 +7,7 @@ import { chatWithContinuation } from '../../agent/continuation.js'
 import { buildAdvisoryToolsWithGithub } from '../../agent/tools/advisoryTools.js'
 import { callWithTools } from '../../agent/tools/toolLoop.js'
 import type { McpSessionPool } from '../../agent/mcp/McpSessionPool.js'
+import type { SessionStore } from '../../store/SessionStore.js'
 import { nextTs } from '../../events/clock.js'
 import { buildAgentMetrics } from '../../agent/metrics.js'
 import { parseAIJson } from './critic/json-extract.js'
@@ -97,6 +98,11 @@ export class ProtoAgent {
       /** Skill-composed base system prompt (P3-AGENT-1). Omitted ⇒ PROTO_SYSTEM,
        *  so a no-skills build sends the byte-identical prompt of today. */
       systemPrompt?: string
+      /** DI session store — passed to the github gather pass so the propose_github_write tool can
+       *  APPEND a status:'proposed' record. Surfaced ONLY when a GitHub connection exists (the tool's
+       *  registration is gated on githubMcp). Absent ⇒ no propose tool (byte-identical). The tool
+       *  holds no gate authority; it never executes (the human confirm route does). */
+      store?: SessionStore
     },
   ) {
     this.base = deps.systemPrompt ?? PROTO_SYSTEM
@@ -178,10 +184,18 @@ export class ProtoAgent {
   private async gatherGithubContext(input: ProtoInput, onTool: () => void): Promise<string> {
     const { sessionId, laneId } = input
     if (!input.githubMcp) return ''
-    const { registry, release } = await buildAdvisoryToolsWithGithub(new Set<string>(), {
+    // CAPS: propose_github_write ONLY when a store is wired (it is always gated on githubMcp inside the
+    // choke point too). The gather pass is read-only; the propose tool merely RECORDS a status:'proposed'
+    // write the human must confirm — zero gate authority, executes nothing.
+    const caps = new Set<string>()
+    if (this.deps.store) caps.add('propose_github_write')
+    const { registry, release } = await buildAdvisoryToolsWithGithub(caps, {
       sessionId, githubMcp: input.githubMcp,
+      ...(this.deps.store ? { store: this.deps.store } : {}),
     })
-    if (!registry.specs().some(s => s.name.startsWith('github_'))) { release(); return '' }
+    // Proceed when EITHER a github_ read tool OR the propose tool registered (a degraded read-tool build
+    // can still record proposals). Nothing registered ⇒ nothing to do (fail-closed, byte-identical).
+    if (!registry.specs().some(s => s.name.startsWith('github_') || s.name === 'propose_github_write')) { release(); return '' }
     const system = [
       'You are gathering READ-ONLY context from a connected GitHub repo to help write code that matches its existing patterns.',
       'Use the github_* tools to read ONLY what is relevant to the spec (search/list/get a few key files — do NOT exhaustively crawl).',
@@ -196,7 +210,9 @@ export class ProtoAgent {
         {
           onTool: (call, result) => {
             onTool()
-            const tool: ToolName = isGithubTool(call.name) ? call.name : 'chat'
+            // The gather registry holds github_ reads + (when wired) propose_github_write; narrow both
+            // honestly so each surfaces under its real display name, else degrade to 'chat'.
+            const tool: ToolName = isGithubTool(call.name) ? call.name : (call.name === 'propose_github_write' ? 'propose_github_write' : 'chat')
             this.deps.bus.emit({ kind: 'tool_call', tool, args: call.args, agent: 'proto', laneId, sessionId, ts: nextTs() })
             this.deps.bus.emit({ kind: 'tool_result', tool, ok: true, result: { chars: result.length }, agent: 'proto', laneId, sessionId, ts: nextTs() })
           },

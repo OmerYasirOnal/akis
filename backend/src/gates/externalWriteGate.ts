@@ -96,10 +96,18 @@ export class ExternalWriteKeyCollisionError extends Error {
 
 /** The keys present in BOTH `target` and `payload` (own enumerable keys). The `{...target,...payload}`
  *  merge in executeExternalWrite would let payload SILENTLY override any such key — so we reject a
- *  colliding proposal at mint time rather than discover the ambiguity at the transport. */
-function collidingKeys(target: Record<string, unknown>, payload: Record<string, unknown>): string[] {
+ *  colliding proposal at mint time rather than discover the ambiguity at the transport.
+ *
+ *  EXPORTED (as `collidingExternalWriteKeys`) so the PROPOSE side (the route + the agent tool's shared
+ *  recorder) can run the SAME disjoint-key pre-check it will be re-checked against at mint — defense
+ *  in depth, one predicate. Exporting the check is NOT widening authority: it neither mints nor
+ *  executes; the only producer of an ApprovedExternalWrite remains mintApprovedExternalWrite. */
+export function collidingExternalWriteKeys(target: Record<string, unknown>, payload: Record<string, unknown>): string[] {
   return Object.keys(target).filter(k => Object.prototype.hasOwnProperty.call(payload, k))
 }
+
+/** Local alias kept so the existing mint/execute call-sites read unchanged. */
+const collidingKeys = collidingExternalWriteKeys
 
 /**
  * POSITIVE write-action allow-list (mirrors readOnlyAllowlist.frozenReadOnlySet): a FROZEN set of
