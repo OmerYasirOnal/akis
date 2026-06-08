@@ -6,12 +6,14 @@ import { type SqlClient, createPgPool, runMigrations } from '../store/pg.js'
  *  callers and tests that import `SqlClient` from here keep working. */
 export type { SqlClient }
 
-interface Row { id: string; name: string; email: string; password_hash: string; created_at: string | Date; external_id?: string | null; token_version?: number | string | null }
+interface Row { id: string; name: string; email: string; password_hash: string; created_at: string | Date; external_id?: string | null; token_version?: number | string | null; tier?: string | null; stripe_customer_id?: string | null }
 const toUser = (r: Row): AuthUser => ({
   id: r.id, name: r.name, email: r.email, passwordHash: r.password_hash,
   createdAt: r.created_at instanceof Date ? r.created_at.toISOString() : String(r.created_at),
   ...(r.external_id ? { externalId: r.external_id } : {}),
   ...(r.token_version !== null && r.token_version !== undefined ? { tokenVersion: Number(r.token_version) } : {}),
+  ...(r.tier === 'pro' ? { tier: 'pro' as const } : {}),
+  ...(r.stripe_customer_id ? { stripeCustomerId: r.stripe_customer_id } : {}),
 })
 const norm = (e: string): string => e.trim().toLowerCase()
 const PG_UNIQUE_VIOLATION = '23505'
@@ -93,6 +95,19 @@ export class PgUserStore implements UserStorePort {
       }
       throw err
     }
+  }
+
+  async setSubscription(id: string, patch: { tier?: import('../usage/quota.js').Tier; stripeCustomerId?: string }): Promise<AuthUser | undefined> {
+    // COALESCE keeps an unspecified field unchanged (additive). Either field may be set independently.
+    const { rows } = await this.db.query(
+      'UPDATE users SET tier = COALESCE($1, tier), stripe_customer_id = COALESCE($2, stripe_customer_id) WHERE id = $3 RETURNING *',
+      [patch.tier ?? null, patch.stripeCustomerId ?? null, id],
+    )
+    return rows[0] ? toUser(rows[0] as unknown as Row) : undefined
+  }
+  async findByStripeCustomerId(customerId: string): Promise<AuthUser | undefined> {
+    const { rows } = await this.db.query('SELECT * FROM users WHERE stripe_customer_id = $1', [customerId])
+    return rows[0] ? toUser(rows[0] as unknown as Row) : undefined
   }
 }
 

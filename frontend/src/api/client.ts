@@ -71,6 +71,9 @@ export interface HealthInfo {
 /** GET /api/usage projection — the caller's token usage vs. their budget. `budget:0` means
  *  UNLIMITED (single-operator dev): then `remaining:-1` (sentinel) and `resetAt:''`. */
 export interface UsageInfo { usedTokens: number; budget: number; remaining: number; resetAt: string }
+/** Paid-tier status: the caller's plan, whether Stripe is configured, and whether they have a managed
+ *  subscription (drives the Settings → Plan card). Never carries a secret. */
+export interface BillingStatus { tier: 'free' | 'pro'; configured: boolean; hasSubscription: boolean }
 
 /** Per-agent activity counts for the analytics dashboard. */
 export interface AgentStat { agent: string; runs: number; ok: number }
@@ -165,6 +168,14 @@ export class ApiClient {
   /** The authenticated caller's token usage vs. their budget (drives the usage meter). 401 for
    *  an anonymous caller; on a budgeted deployment this powers the "used / budget" indicator. */
   usage(): Promise<UsageInfo> { return this.json<UsageInfo>('/api/usage') }
+
+  /** Paid-tier (billing) — the caller's current plan + whether Stripe is configured at all (so the UI
+   *  hides Upgrade on a deployment with no billing). Never returns a secret. */
+  billingStatus(): Promise<BillingStatus> { return this.json<BillingStatus>('/billing/status') }
+  /** Start the Pro checkout → returns the hosted Stripe Checkout URL to redirect to. */
+  startCheckout(): Promise<{ url: string }> { return this.json<{ url: string }>('/billing/checkout', { method: 'POST' }) }
+  /** Open the Stripe Billing Portal (manage/cancel) → returns the portal URL. */
+  billingPortal(): Promise<{ url: string }> { return this.json<{ url: string }>('/billing/portal', { method: 'POST' }) }
 
   /** `baseSessionId` (Phase B.5): seed the new build with a prior session's app so the
    *  agents EDIT it (merge semantics) instead of regenerating — the follow-up-changes flow.

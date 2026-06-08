@@ -1,6 +1,7 @@
 import type { ApiClient } from '../api/client.js'
 import { AgentsTab } from '../agents/AgentsTab.js'
 import { ProviderKeys } from './ProviderKeys.js'
+import { BillingPlan } from './BillingPlan.js'
 import { GitHubConnection } from './GitHubConnection.js'
 import { McpConnections } from './McpConnections.js'
 import { PublishDestination } from './PublishDestination.js'
@@ -34,6 +35,10 @@ export function SettingsPage({ api }: { api: ApiClient }) {
 
       <Card className="p-5">
         <AccountSettings api={api} />
+      </Card>
+
+      <Card className="p-5">
+        <BillingPlan api={api} />
       </Card>
 
       <Card className="p-5">

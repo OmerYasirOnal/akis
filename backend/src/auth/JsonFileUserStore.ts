@@ -81,4 +81,10 @@ export class JsonFileUserStore implements UserStorePort {
     if (u) this.persist() // a refused create (null) changed nothing — don't rewrite the file
     return u
   }
+  async setSubscription(id: string, patch: { tier?: import('../usage/quota.js').Tier; stripeCustomerId?: string }): Promise<AuthUser | undefined> {
+    const u = await this.inner.setSubscription(id, patch)
+    if (u) this.persist()
+    return u
+  }
+  async findByStripeCustomerId(customerId: string): Promise<AuthUser | undefined> { return this.inner.findByStripeCustomerId(customerId) }
 }

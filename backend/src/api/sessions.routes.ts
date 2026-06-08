@@ -45,6 +45,8 @@ export interface SessionsDeps {
    *  pre-check; an already-running session is never read or aborted. */
   usage?: UsageStorePort
   quota?: QuotaPolicy
+  /** TIER-AWARE quota (paid tier): per-owner policy (free vs pro). Precedence over `quota`; absent ⇒ `quota`. */
+  quotaFor?: (ownerId: string | undefined) => Promise<QuotaPolicy>
   /** Per-user publish destination store (the encrypted SSH key + host/dir/port). Present ⇒ the
    *  POST /sessions/:id/publish action is enabled. Absent ⇒ publish is 409 NoPublishProfile. */
   publishProfiles?: PublishProfileStore
@@ -197,8 +199,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       // an in-flight run). Only when BOTH usage + quota are injected; budget 0 ⇒ unlimited via
       // checkQuota's fast-path (no store read, byte-identical default). A blocked owner gets a
       // clean 429 BEFORE orch.start — no orchestrator/provider call happens.
-      if (deps.usage && deps.quota) {
-        const decision = await checkQuota(deps.usage, deps.quota, ownerId)
+      const quotaPolicy = deps.quotaFor ? await deps.quotaFor(ownerId) : deps.quota
+      if (deps.usage && quotaPolicy) {
+        const decision = await checkQuota(deps.usage, quotaPolicy, ownerId)
         if (!decision.allowed) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt })
       }
       const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}) })

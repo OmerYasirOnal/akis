@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto'
+import type { Tier } from '../usage/quota.js'
 
-export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string; tokenVersion?: number }
+export interface AuthUser { id: string; name: string; email: string; passwordHash: string; createdAt: string; externalId?: string; tokenVersion?: number; tier?: Tier; stripeCustomerId?: string }
 /** The user projection safe to return over the wire — never includes the hash. */
 export interface PublicUser { id: string; name: string; email: string }
 export const toPublic = (u: AuthUser): PublicUser => ({ id: u.id, name: u.name, email: u.email })
@@ -26,6 +27,12 @@ export interface UserStorePort {
    *  and bypass the no-open-signup posture (the no-sandbox RCE guard). Existing-user login/link is
    *  always allowed (the owner can sign in via OAuth). Default allowCreate=true (signup-enabled). */
   upsertOAuth(input: { externalId: string; email: string; name: string }, opts?: { allowCreate?: boolean }): Promise<AuthUser | null>
+  /** Set the user's billing tier + Stripe customer id (the paid-tier webhook). Additive; absent fields
+   *  are left unchanged. Returns the updated user (or undefined if unknown). */
+  setSubscription(id: string, patch: { tier?: Tier; stripeCustomerId?: string }): Promise<AuthUser | undefined>
+  /** Map a Stripe customer id back to the user — for subscription.updated/deleted webhook events that
+   *  carry only the customer, not our userId. Undefined if no user is bound to that customer. */
+  findByStripeCustomerId(customerId: string): Promise<AuthUser | undefined>
 }
 
 /**
@@ -37,6 +44,7 @@ export class UserStore implements UserStorePort {
   private byEmail = new Map<string, AuthUser>()
   private byId = new Map<string, AuthUser>()
   private byExternalId = new Map<string, AuthUser>()
+  private byStripeCustomerId = new Map<string, AuthUser>()
   constructor(private genId: () => string = randomUUID, private clock: () => string = () => new Date().toISOString()) {}
 
   async create(input: { name: string; email: string; passwordHash: string }): Promise<AuthUser> {
@@ -83,6 +91,14 @@ export class UserStore implements UserStorePort {
     if (u) u.name = name.trim()
     return u
   }
+  async setSubscription(id: string, patch: { tier?: Tier; stripeCustomerId?: string }): Promise<AuthUser | undefined> {
+    const u = this.byId.get(id)
+    if (!u) return undefined
+    if (patch.tier !== undefined) u.tier = patch.tier
+    if (patch.stripeCustomerId !== undefined) { u.stripeCustomerId = patch.stripeCustomerId; this.byStripeCustomerId.set(patch.stripeCustomerId, u) }
+    return u
+  }
+  async findByStripeCustomerId(customerId: string): Promise<AuthUser | undefined> { return this.byStripeCustomerId.get(customerId) }
   count(): number { return this.byId.size }
 
   /** Snapshot every user (data only — for the dev-persistence wrapper's save). */
@@ -94,6 +110,7 @@ export class UserStore implements UserStorePort {
       this.byEmail.set(u.email, u)
       this.byId.set(u.id, u)
       if (u.externalId) this.byExternalId.set(u.externalId, u)
+      if (u.stripeCustomerId) this.byStripeCustomerId.set(u.stripeCustomerId, u)
     }
   }
 }

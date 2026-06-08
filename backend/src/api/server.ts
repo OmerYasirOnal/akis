@@ -30,6 +30,7 @@ import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
 import { registerChatRoutes } from './chat.routes.js'
 import { registerUsageRoutes } from './usage.routes.js'
+import { registerBillingRoutes } from './billing.routes.js'
 import { registerOpsRoutes, buildOpsBlock } from './ops.routes.js'
 import { UsageStore, type UsageStorePort } from '../usage/UsageStore.js'
 import { JsonFileUsageStore } from '../usage/JsonFileUsageStore.js'
@@ -440,6 +441,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // the dev JSON file > pure in-memory (test). A single UsageCollector tap accumulates per-agent
   // token spend onto the owning user (chat usage is accounted off-bus by the chat route).
   const quota = resolveQuotaPolicy(env)
+  // TIER-AWARE quota (paid tier): resolve the per-owner policy from the user's tier (pro ⇒
+  // AKIS_PRO_TOKEN_BUDGET, else free). Only when a userStore is present; an anon/unknown owner ⇒ free.
+  // Routes fall back to the fixed `quota` when this is absent (byte-unchanged for a userStore-less setup).
+  const quotaFor = userStore
+    ? async (ownerId: string | undefined): Promise<ReturnType<typeof resolveQuotaPolicy>> => {
+        const u = ownerId ? await userStore.findById(ownerId) : undefined
+        return resolveQuotaPolicy(env, u?.tier === 'pro' ? 'pro' : 'free')
+      }
+    : undefined
   const usageStore: UsageStorePort = deps.usage
     ?? (env.NODE_ENV !== 'production' && !isTestEnv ? new JsonFileUsageStore(quota.periodMs) : new UsageStore({ periodMs: quota.periodMs }))
   new UsageCollector(usageStore).attach(services.bus)
@@ -478,7 +488,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     orchestrator, services, workflowStore, makeOrchestrator, userIdOf,
     // Per-user token QUOTA (multi-tenant): usage ledger + policy threaded so run-start
     // enforcement points fail-closed when over budget (byte-identical when budget 0).
-    usage: usageStore, quota,
+    usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}),
     // Publish (POST-`done`, optional, NON-GATING): the action is enabled only when BOTH the
     // profile store AND the publish seam are wired. Absent ⇒ POST /sessions/:id/publish 409s.
     publishProfiles,
@@ -513,6 +523,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     ...(trustedOrigin ? { publicBaseUrl: trustedOrigin } : {}),
   })
   registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env, signupDisabled })
+  // Paid-tier billing (Stripe). DORMANT until STRIPE_SECRET_KEY+STRIPE_PRICE_PRO are set; needs a
+  // userStore to persist the tier. /billing/status reports configured:false otherwise (FE hides Upgrade).
+  if (userStore) registerBillingRoutes(app, { users: userStore, env, userIdOf })
   // Per-user GitHub connection (connect/status/disconnect). Reuses the SAME userIdOf closure
   // (revocation-aware) so only the authenticated owner reaches their own connection. The
   // connect token is stored in `connections` (encrypted) — NEVER as a session credential.
@@ -527,7 +540,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerPublishRoutes(app, { profiles: publishProfiles, userIdOf })
   registerAnalyticsRoutes(app, { stats })
   // Per-user usage indicator (GET /api/usage; 401 when unauthenticated, mirroring /sessions/mine).
-  registerUsageRoutes(app, { usage: usageStore, quota, requireOwner: userIdOf })
+  registerUsageRoutes(app, { usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), requireOwner: userIdOf })
   // Operator ops view (GET /api/ops; authenticated via hasSession) — the richer StatsCollector
   // snapshot + the operational block (uptime/memory/activeSessions/livePreviews/db).
   registerOpsRoutes(app, { stats, previewRegistry, requireAuth: hasSession, ...(deps.dbPing ? { dbPing: deps.dbPing } : {}) })
@@ -562,7 +575,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       } catch { /* version conflict — re-read once, then give up silently */ }
     }
   }
-  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ownerOf: userIdOf, sessionRead, chatAppend })
+  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), ownerOf: userIdOf, sessionRead, chatAppend })
   // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
   // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
   // them the route is never registered (404) and there is no behavior change when RAG off.

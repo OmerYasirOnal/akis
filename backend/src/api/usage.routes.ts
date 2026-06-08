@@ -5,6 +5,8 @@ import { checkQuota, type QuotaPolicy } from '../usage/quota.js'
 export interface UsageRoutesDeps {
   usage: UsageStorePort
   quota: QuotaPolicy
+  /** TIER-AWARE quota (paid tier): per-owner policy (free vs pro). Precedence over `quota`; absent ⇒ `quota`. */
+  quotaFor?: (ownerId: string | undefined) => Promise<QuotaPolicy>
   /** Resolve the authenticated user id (undefined ⇒ unauthenticated → 401). Mirrors
    *  /sessions/mine: usage is PER-USER, so an anonymous caller gets 401 (not the __anon__ row). */
   requireOwner: (req: FastifyRequest) => Promise<string | undefined>
@@ -19,7 +21,7 @@ export function registerUsageRoutes(app: FastifyInstance, deps: UsageRoutesDeps)
   app.get('/api/usage', async (req, reply) => {
     const ownerId = await deps.requireOwner(req)
     if (!ownerId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
-    const d = await checkQuota(deps.usage, deps.quota, ownerId)
+    const d = await checkQuota(deps.usage, deps.quotaFor ? await deps.quotaFor(ownerId) : deps.quota, ownerId)
     return reply.send({ usedTokens: d.usedTokens, budget: d.budget, remaining: d.remaining, resetAt: d.resetAt })
   })
 }

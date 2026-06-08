@@ -114,6 +114,9 @@ export interface ChatDeps {
    *  (undefined ⇒ anonymous → the shared __anon__ bucket). Absent ⇒ no check (byte-identical). */
   usage?: UsageStorePort
   quota?: QuotaPolicy
+  /** TIER-AWARE quota (paid tier): resolves the per-owner policy (free vs pro budget). When given it
+   *  takes precedence over the fixed `quota`; absent ⇒ the fixed `quota` (byte-unchanged). */
+  quotaFor?: (ownerId: string | undefined) => Promise<QuotaPolicy>
   ownerOf?: (req: FastifyRequest) => Promise<string | undefined>
   /** BUILD-AWARE CHAT (read-only, owner-scoped). Resolves a session the CALLER may access — the
    *  SAME accessibleSession semantics as the gated routes (an owned session is returned only to
@@ -278,8 +281,9 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
   // the 429 resetAt. When usage/quota are not injected, it never blocks and never charges.
   const quotaGate = async (req: FastifyRequest): Promise<{ blocked: true; resetAt: string } | { blocked: false; ownerKey: string }> => {
     const ownerId = deps.ownerOf ? await deps.ownerOf(req) : undefined
-    if (deps.usage && deps.quota) {
-      const decision = await checkQuota(deps.usage, deps.quota, ownerId)
+    const policy = deps.quotaFor ? await deps.quotaFor(ownerId) : deps.quota
+    if (deps.usage && policy) {
+      const decision = await checkQuota(deps.usage, policy, ownerId)
       if (!decision.allowed) return { blocked: true, resetAt: decision.resetAt }
     }
     return { blocked: false, ownerKey: ownerId ?? ANON_OWNER }
