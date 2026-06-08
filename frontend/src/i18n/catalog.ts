@@ -111,6 +111,11 @@ export const STRINGS = {
     'akis.ask': 'Ask AKIS anything…',
     'akis.send': 'Ask',
     'akis.suggestions': 'Suggested replies',
+    'akis.starters.title': 'Not sure where to start? Try one of these:',
+    'akis.starter.1': 'A habit tracker with daily streaks and reminders',
+    'akis.starter.2': 'A team standup bot that collects async updates',
+    'akis.starter.3': 'A URL shortener with click analytics',
+    'akis.starter.4': 'A Markdown notes app with full-text search',
     // ── Chat resilience: distinct error rows, retry, honest empties, truncated spec ──
     'akis.error.label': 'Message failed',
     'akis.error.retry': 'Retry',
@@ -872,6 +877,11 @@ export const STRINGS = {
     'akis.ask': 'AKIS’e bir şey sor…',
     'akis.send': 'Sor',
     'akis.suggestions': 'Önerilen yanıtlar',
+    'akis.starters.title': 'Nereden başlayacağını bilmiyor musun? Şunlardan birini dene:',
+    'akis.starter.1': 'Günlük seri ve hatırlatmalı bir alışkanlık takipçisi',
+    'akis.starter.2': 'Asenkron güncellemeleri toplayan bir takım standup botu',
+    'akis.starter.3': 'Tıklama analizli bir URL kısaltıcı',
+    'akis.starter.4': 'Tam metin aramalı bir Markdown not uygulaması',
     // ── Sohbet dayanıklılığı: ayrı hata satırları, yeniden dene, dürüst boş yanıt, kesilmiş spec ──
     'akis.error.label': 'Mesaj başarısız',
     'akis.error.retry': 'Yeniden dene',
