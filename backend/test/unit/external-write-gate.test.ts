@@ -3,7 +3,7 @@ import {
   digestExternalWrite, mintApprovedExternalWrite, executeExternalWrite,
   ExternalWriteDigestMismatchError, ExternalWriteActionNotAllowedError,
   ExternalWriteKeyCollisionError,
-  isAllowedExternalWriteAction, ATLASSIAN_WRITE_ACTIONS,
+  isAllowedExternalWriteAction, ATLASSIAN_WRITE_ACTIONS, GITHUB_WRITE_ACTIONS, WRITE_ACTIONS_BY_PROVIDER,
   type ExternalWriteProposal,
 } from '../../src/gates/externalWriteGate.js'
 import type { McpTransport, McpToolResult } from '../../src/agent/mcp/McpTransport.js'
@@ -109,13 +109,13 @@ describe('externalWriteGate — execute requires the token + matching proposal',
 
 describe('externalWriteGate — positive write-action allow-list', () => {
   it('the allow-list is the SINGLE predicate; admits known write actions, rejects everything else', () => {
-    expect(isAllowedExternalWriteAction('createPage')).toBe(true)
-    expect(isAllowedExternalWriteAction('createJiraIssue')).toBe(true)
+    expect(isAllowedExternalWriteAction('atlassian', 'createPage')).toBe(true)
+    expect(isAllowedExternalWriteAction('atlassian', 'createJiraIssue')).toBe(true)
     // anything not on the positive set is rejected — including reads and unknown mutators
-    expect(isAllowedExternalWriteAction('deletePage')).toBe(false)
-    expect(isAllowedExternalWriteAction('getPage')).toBe(false)
-    expect(isAllowedExternalWriteAction('')).toBe(false)
-    expect(isAllowedExternalWriteAction('createpage')).toBe(false) // case-sensitive
+    expect(isAllowedExternalWriteAction('atlassian', 'deletePage')).toBe(false)
+    expect(isAllowedExternalWriteAction('atlassian', 'getPage')).toBe(false)
+    expect(isAllowedExternalWriteAction('atlassian', '')).toBe(false)
+    expect(isAllowedExternalWriteAction('atlassian', 'createpage')).toBe(false) // case-sensitive
   })
 
   it('the allow-list set is immutable in FACT — add/delete/clear throw (cannot be widened)', () => {
@@ -124,6 +124,14 @@ describe('externalWriteGate — positive write-action allow-list', () => {
     expect(() => (ATLASSIAN_WRITE_ACTIONS as Set<string>).clear()).toThrow(TypeError)
     expect(ATLASSIAN_WRITE_ACTIONS.has('deletePage')).toBe(false)
     expect(ATLASSIAN_WRITE_ACTIONS.has('createPage')).toBe(true)
+  })
+
+  it('the GITHUB allow-list set is ALSO immutable in FACT — add/delete/clear throw', () => {
+    expect(() => (GITHUB_WRITE_ACTIONS as Set<string>).add('delete_file')).toThrow(TypeError)
+    expect(() => (GITHUB_WRITE_ACTIONS as Set<string>).delete('issue_write')).toThrow(TypeError)
+    expect(() => (GITHUB_WRITE_ACTIONS as Set<string>).clear()).toThrow(TypeError)
+    expect(GITHUB_WRITE_ACTIONS.has('delete_file')).toBe(false)
+    expect(GITHUB_WRITE_ACTIONS.has('issue_write')).toBe(true)
   })
 
   it('mint REFUSES a proposal whose target/payload keys COLLIDE (the {...target,...payload} merge would silently override)', () => {
@@ -162,6 +170,107 @@ describe('externalWriteGate — positive write-action allow-list', () => {
     const offListToken = { ...token, digest: digestExternalWrite(offList) } as typeof token
     await expect(executeExternalWrite(offListToken, t, offList)).rejects.toThrow(ExternalWriteActionNotAllowedError)
     expect(calls).toHaveLength(0)
+  })
+})
+
+describe('externalWriteGate — PROVIDER-AWARE allow-list (phase 1: GitHub writes)', () => {
+  it('admits each provider its OWN actions and REJECTS the other provider\'s actions (no cross-provider smuggling)', () => {
+    // github actions are valid under github…
+    expect(isAllowedExternalWriteAction('github', 'issue_write')).toBe(true)
+    expect(isAllowedExternalWriteAction('github', 'add_issue_comment')).toBe(true)
+    expect(isAllowedExternalWriteAction('github', 'pull_request_review_write')).toBe(true)
+    // …and INVALID under atlassian
+    expect(isAllowedExternalWriteAction('atlassian', 'issue_write')).toBe(false)
+    expect(isAllowedExternalWriteAction('atlassian', 'pull_request_review_write')).toBe(false)
+    // and vice-versa: atlassian actions are invalid under github
+    expect(isAllowedExternalWriteAction('github', 'createPage')).toBe(false)
+    expect(isAllowedExternalWriteAction('github', 'createJiraIssue')).toBe(false)
+    // unknown github action still rejected (flat github-mcp-server names DON'T exist on this server)
+    expect(isAllowedExternalWriteAction('github', 'create_issue')).toBe(false)
+    expect(isAllowedExternalWriteAction('github', 'delete_file')).toBe(false)
+  })
+
+  it('mint THROWS ExternalWriteActionNotAllowedError for an OFF-PROVIDER action (github action under atlassian)', () => {
+    const p = proposal({ provider: 'atlassian', action: 'issue_write' })
+    expect(() => mintApprovedExternalWrite(p, digestExternalWrite(p))).toThrow(ExternalWriteActionNotAllowedError)
+  })
+
+  it('mint THROWS for an atlassian action proposed under github (vice-versa)', () => {
+    const p = proposal({ provider: 'github', action: 'createPage', target: { owner: 'me' }, payload: { title: 'X' } })
+    expect(() => mintApprovedExternalWrite(p, digestExternalWrite(p))).toThrow(ExternalWriteActionNotAllowedError)
+  })
+
+  it('mints + executes a valid GITHUB write (issue_write) end-to-end through the gate', async () => {
+    const p = proposal({
+      provider: 'github', action: 'issue_write',
+      summary: 'Open issue "Bug: crash"',
+      target: { owner: 'OmerYasirOnal', repo: 'akis' },
+      payload: { method: 'create', title: 'Bug: crash', body: 'steps…' },
+    })
+    const token = mintApprovedExternalWrite(p, digestExternalWrite(p))
+    const { t, calls } = fakeTransport({ text: 'created issue #7', isError: false })
+    const res = await executeExternalWrite(token, t, p)
+    expect(res).toEqual({ ok: true, text: 'created issue #7' })
+    expect(calls).toEqual([{ name: 'issue_write', args: { owner: 'OmerYasirOnal', repo: 'akis', method: 'create', title: 'Bug: crash', body: 'steps…' } }])
+  })
+
+  it('execute REFUSES an off-provider action (defense-in-depth, after a digest-matching swap)', async () => {
+    // mint a clean github proposal, then present an atlassian-only action with a re-derived matching
+    // digest under provider github — must still be refused at execute.
+    const p = proposal({ provider: 'github', action: 'issue_write', target: { owner: 'me', repo: 'r' }, payload: { method: 'create', title: 'X' } })
+    const token = mintApprovedExternalWrite(p, digestExternalWrite(p))
+    const offProvider = { ...p, action: 'createPage' } as ExternalWriteProposal
+    const offToken = { ...token, digest: digestExternalWrite(offProvider) } as typeof token
+    const { t, calls } = fakeTransport()
+    await expect(executeExternalWrite(offToken, t, offProvider)).rejects.toThrow(ExternalWriteActionNotAllowedError)
+    expect(calls).toHaveLength(0)
+  })
+
+  // PIN the GitHub write-tool names to what the connected GitHub remote MCP (api.githubcopilot.com/mcp)
+  // ACTUALLY advertises — captured LIVE 2026-06-08 via tools/list against the owner's connection. If
+  // the server renames/removes one of these, this test fails LOUDLY (a name mismatch otherwise silently
+  // refuses every legitimate write — the exact bug class STEP A guards against).
+  it('GITHUB_WRITE_ACTIONS is pinned to the LIVE github-remote-MCP tool names (NOT the flat github-mcp-server names)', () => {
+    // 8 actions: 3 issue/review writes (phase 1) + 5 PULL-REQUEST writes (phase A). Verified live
+    // 2026-06-08 against api.githubcopilot.com/mcp — there is NO consolidated `pull_request_write`.
+    expect([...GITHUB_WRITE_ACTIONS].sort()).toEqual([
+      'add_issue_comment',
+      'create_pull_request',
+      'issue_write',
+      'merge_pull_request',
+      'pull_request_review_write',
+      'request_copilot_review',
+      'update_pull_request',
+      'update_pull_request_branch',
+    ])
+    // The flat github-mcp-server names DO NOT EXIST on api.githubcopilot.com/mcp — assert they are NOT
+    // on the set, so a future copy-paste of the "standard" names is caught (those would refuse all writes).
+    for (const flat of ['create_issue', 'update_issue', 'add_issue_comment_legacy', 'create_pull_request_review']) {
+      expect(GITHUB_WRITE_ACTIONS.has(flat)).toBe(false)
+    }
+    // NEGATIVE pin: there is NO consolidated flat `pull_request_write` — the real tools are the five
+    // separate names above. Guessing the flat name would silently refuse every PR write.
+    expect(GITHUB_WRITE_ACTIONS.has('pull_request_write')).toBe(false)
+  })
+
+  it('PR writes are admitted under github and REJECTED under atlassian (merge is provider-scoped like the rest)', () => {
+    // The 5 PR write actions are valid under github…
+    for (const a of ['create_pull_request', 'update_pull_request', 'merge_pull_request', 'update_pull_request_branch', 'request_copilot_review']) {
+      expect(isAllowedExternalWriteAction('github', a)).toBe(true)
+    }
+    // …and the IRREVERSIBLE merge is the canonical positive/negative pair the requirements call out.
+    expect(isAllowedExternalWriteAction('github', 'merge_pull_request')).toBe(true)
+    expect(isAllowedExternalWriteAction('atlassian', 'merge_pull_request')).toBe(false)
+    // the guessed flat name is on NEITHER provider's set
+    expect(isAllowedExternalWriteAction('github', 'pull_request_write')).toBe(false)
+    expect(isAllowedExternalWriteAction('atlassian', 'pull_request_write')).toBe(false)
+  })
+
+  it('WRITE_ACTIONS_BY_PROVIDER maps each provider to its own set and the two sets are DISJOINT', () => {
+    expect(WRITE_ACTIONS_BY_PROVIDER.atlassian).toBe(ATLASSIAN_WRITE_ACTIONS)
+    expect(WRITE_ACTIONS_BY_PROVIDER.github).toBe(GITHUB_WRITE_ACTIONS)
+    const intersection = [...GITHUB_WRITE_ACTIONS].filter(a => ATLASSIAN_WRITE_ACTIONS.has(a))
+    expect(intersection).toEqual([]) // no name is valid for both providers
   })
 })
 

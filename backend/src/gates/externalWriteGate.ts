@@ -26,8 +26,11 @@ import type { McpTransport } from '../agent/mcp/McpTransport.js'
  * verified-real, push) — it neither reads nor mints any of them.
  */
 
-/** The provider an external write targets. Extensible; today only Atlassian (Jira/Confluence). */
-export type ExternalWriteProvider = 'atlassian'
+/** The provider an external write targets. Extensible; today Atlassian (Jira/Confluence) + GitHub
+ *  (issues/PR reviews via the connected remote MCP). Each provider has its OWN write allow-list
+ *  (WRITE_ACTIONS_BY_PROVIDER) — a name valid for one is invalid for the other, so a proposal can
+ *  never smuggle an action across providers. */
+export type ExternalWriteProvider = 'atlassian' | 'github'
 
 /**
  * An agent's PROPOSED external write — recorded during a build, executed only after human confirm.
@@ -111,10 +114,10 @@ function collidingKeys(target: Record<string, unknown>, payload: Record<string, 
  * `add`/`delete`/`clear` are prototype mutators — so we neutralize them on THIS instance (they
  * throw) and freeze the object, making the set immutable in fact, not merely by convention.
  */
-function frozenWriteActionSet(names: readonly string[]): ReadonlySet<string> {
+function frozenWriteActionSet(label: string, names: readonly string[]): ReadonlySet<string> {
   const set = new Set<string>(names)
   const deny = (op: string) => (): never => {
-    throw new TypeError(`ATLASSIAN_WRITE_ACTIONS is immutable: cannot ${op}() the write allow-list`)
+    throw new TypeError(`${label} is immutable: cannot ${op}() the write allow-list`)
   }
   Object.defineProperties(set, {
     add: { value: deny('add'), writable: false, configurable: false },
@@ -129,15 +132,62 @@ function frozenWriteActionSet(names: readonly string[]): ReadonlySet<string> {
  *  TODO(wiring slice): once the Atlassian MCP bridge lands, pin this set against the tool names the
  *  provider ACTUALLY advertises (snapshot/intersection test, like readOnlyAllowlist's) — a name
  *  mismatch here would silently refuse every legitimate write. */
-export const ATLASSIAN_WRITE_ACTIONS: ReadonlySet<string> = frozenWriteActionSet([
+export const ATLASSIAN_WRITE_ACTIONS: ReadonlySet<string> = frozenWriteActionSet('ATLASSIAN_WRITE_ACTIONS', [
   'createPage',       // Confluence: create a page
   'createJiraIssue',  // Jira: create an issue
 ])
 
-/** True iff `action` is on the positive external-write allow-list. The single predicate the gate
- *  uses to admit a proposed write tool. */
-export function isAllowedExternalWriteAction(action: string): boolean {
-  return ATLASSIAN_WRITE_ACTIONS.has(action)
+/**
+ * The ONLY GitHub write-tool names a proposal may invoke — PINNED to what the connected GitHub remote
+ * MCP (api.githubcopilot.com/mcp) ACTUALLY advertises (verified live 2026-06-08 against the owner's
+ * connection via tools/list). CRITICAL: this server does NOT use the flat `github-mcp-server` names
+ * (`create_issue`/`update_issue`/`create_pull_request_review`) — those tools DO NOT EXIST here, so
+ * pinning them would silently refuse every legitimate write. The real shapes are method-consolidated:
+ *  - `issue_write`               → BOTH create AND close/update an issue (payload.method 'create'|'update';
+ *                                  close = method:'update' + state:'closed'). Covers 2 of the 4 logical actions.
+ *  - `add_issue_comment`         → comment on an issue OR a PR (PR number passed as issue_number).
+ *  - `pull_request_review_write` → create/submit a pull-request review (payload.method 'create', event APPROVE/
+ *                                  REQUEST_CHANGES/COMMENT).
+ * PULL-REQUEST writes (verified live 2026-06-08 against api.githubcopilot.com/mcp): there is NO
+ * consolidated `pull_request_write` — these are FIVE separate, real tool names. Each is a distinct
+ * logical action a human confirms one at a time; merge is IRREVERSIBLE and called out below.
+ *  - `create_pull_request`        → open a PR (target owner/repo; payload title/head/base/body/draft).
+ *  - `update_pull_request`        → edit / CLOSE a PR / request reviewers (target owner/repo/pullNumber;
+ *                                   payload title/body/state:'closed'/base/draft/reviewers[]).
+ *  - `merge_pull_request`         → MERGE a PR — IRREVERSIBLE (target owner/repo/pullNumber; payload
+ *                                   merge_method merge|squash|rebase, commit_title, commit_message).
+ *  - `update_pull_request_branch` → sync a PR branch with its base (target owner/repo/pullNumber;
+ *                                   payload expectedHeadSha).
+ *  - `request_copilot_review`     → request a Copilot review (target owner/repo/pullNumber; no payload).
+ * The github-mcp-server-standard test (external-write-gate.test.ts) pins these AND records the
+ * standard-name divergence so a future server change that reverts to flat names is caught. */
+export const GITHUB_WRITE_ACTIONS: ReadonlySet<string> = frozenWriteActionSet('GITHUB_WRITE_ACTIONS', [
+  'issue_write',                  // create OR close/update an issue (method: 'create' | 'update')
+  'add_issue_comment',            // add an issue/PR comment
+  'pull_request_review_write',    // create a pull-request review (method: 'create')
+  'create_pull_request',          // open a PR (payload title/head/base/body/draft)
+  'update_pull_request',          // edit / CLOSE a PR / request reviewers (payload state:'closed', reviewers[])
+  'merge_pull_request',           // MERGE a PR — IRREVERSIBLE (payload merge_method merge|squash|rebase)
+  'update_pull_request_branch',   // sync a PR branch with its base (payload expectedHeadSha)
+  'request_copilot_review',       // request a Copilot review (no payload)
+])
+
+/**
+ * The write allow-list PER provider. The gate admits an action ONLY against the set for THAT proposal's
+ * provider, so a github tool name is invalid under 'atlassian' and vice-versa — provider and action are
+ * bound together, never independently widenable. (`Record<ExternalWriteProvider, …>` makes adding a
+ * provider to the union a compile error here until its set is supplied.)
+ */
+export const WRITE_ACTIONS_BY_PROVIDER: Record<ExternalWriteProvider, ReadonlySet<string>> = {
+  atlassian: ATLASSIAN_WRITE_ACTIONS,
+  github: GITHUB_WRITE_ACTIONS,
+}
+
+/** True iff `action` is on the positive external-write allow-list FOR THAT PROVIDER. The single
+ *  predicate the gate uses to admit a proposed write tool — provider-scoped, so an action allowed for
+ *  one provider is rejected for another. An unknown provider has no set → rejects everything. */
+export function isAllowedExternalWriteAction(provider: ExternalWriteProvider, action: string): boolean {
+  return WRITE_ACTIONS_BY_PROVIDER[provider]?.has(action) ?? false
 }
 
 /**
@@ -159,7 +209,7 @@ export type ApprovedExternalWrite = {
  * (a swap/tamper between display and confirm), minting throws and no write can execute.
  */
 export function mintApprovedExternalWrite(proposal: ExternalWriteProposal, confirmedDigest: string): ApprovedExternalWrite {
-  if (!isAllowedExternalWriteAction(proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
+  if (!isAllowedExternalWriteAction(proposal.provider, proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
   // DISJOINT-key invariant: executeExternalWrite merges `{...target,...payload}`; if a key appears in
   // both, payload would silently override target with no signal to the confirming human. Refuse here
   // so a proposal can only be approved when the merge is unambiguous.
@@ -187,7 +237,7 @@ export async function executeExternalWrite(
   // action swap already fails the comparison. This check defends the remaining case — a proposal
   // whose digest matches but whose action is off-list (e.g. the allow-list shrank after mint, or a
   // colliding digest was found). Defense-in-depth; do not delete as "already covered by the digest".
-  if (!isAllowedExternalWriteAction(proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
+  if (!isAllowedExternalWriteAction(proposal.provider, proposal.action)) throw new ExternalWriteActionNotAllowedError(proposal.action)
   if (token.writeId !== proposal.id || token.digest !== digestExternalWrite(proposal)) {
     throw new ExternalWriteDigestMismatchError()
   }
