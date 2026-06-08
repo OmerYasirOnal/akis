@@ -3,6 +3,7 @@ import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
+import { PasswordInput } from '../ui/PasswordInput.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
 import { OAuthButtons } from './OAuthButtons.js'
@@ -40,7 +41,7 @@ export function Signup({ api }: { api: ApiClient }) {
           <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label={t('auth.password')} hint={t('auth.pwHint')}>
-          <Input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
         <Button type="submit" full disabled={busy || !name || !email || password.length < 8}>{busy ? '…' : t('auth.signup.cta')}</Button>
