@@ -529,3 +529,24 @@ Root cause is a **chain of nested `overflow-y/-auto` ancestors**, not CodeBrowse
 So CodeBrowser establishes its own internal scroll region (correct), but it sits inside the `aside`'s `overflow-y-auto` — the aside also scrolls because the rail's stacked siblings (TrustReportCard/PublishButton/proposals/PreviewPanel `:455-465`) overflow it. Two scrollbars appear: the aside's and CodeBrowser's inner viewer.
 
 Minimal fix: the rail's scroll should live on the **content wrapper**, not double up with the panel's own `h-full` regions. Either (1) when the active inner tab is `code`/`trust`, the panel manages its own scroll, so the `aside` `overflow-y-auto` `:439` double-counts — change the aside to `overflow-hidden` and give the *stacked cards group* its own single `overflow-y-auto` wrapper, leaving `PreviewPanel`/`CodeBrowser` `h-full` regions to scroll internally; or (2) simplest: make `PreviewPanel`'s root `min-h-0` so its `flex-1` children own the scroll, and switch `aside:439` from `overflow-y-auto` to `overflow-hidden flex flex-col` with the cards in a `min-h-0 overflow-y-auto` sub-div. The load-bearing edit is `ChatStudio.tsx:439` (`overflow-y-auto` → `overflow-hidden` + an inner scroll wrapper); CodeBrowser already scrolls correctly on its own (`:53,:55,:86`) and needs no change.
+
+## 14. Independent fresh-review reconciliation — FINAL v1 build scope
+
+A zero-context independent senior review (2026-06-09) returned **proceed-with-changes**. Accepted below; this section SUPERSEDES any conflicting text in §1–§13 and defines the **v1 build scope** (YAGNI-trimmed). Confirmed solid (do not relitigate): gate-safety CLEAN, iframe sandbox preserved, chat-spine tree-slot, zero-dep `useResizable`, W3C splitter a11y, all file:line groundings accurate.
+
+### Accepted corrections (supersede prior)
+- **i18n is NOT a blocker (withdraws C1/Feas-HIGH framing).** The repo HAS interpolation: `fill(t(key), vars)` (`AgentWriteProposals.tsx:185`, `{n}` templates + parity test). The width readout = `fill(t('preview.device.width'), { n: String(width) })` OR JSX composition — both fine.
+- **H2 — auto-open on `view.preview.ready` (corrects §7).** Open when `view.preview.ready === true` (URL guaranteed embeddable, `viewModel.ts:123/126`), NEVER on `starting`.
+- **H1 — explicit drawer height budget (corrects §6/C2; §6 single-wrapper text is void).** Drawer `flex flex-col h-full`; region A (gate cards) `shrink-0 overflow-y-auto max-h-[50vh]`; region B (PreviewPanel) `flex-1 min-h-0`; add `min-h-0` to PreviewPanel root (`:64`) and RELAX the iframe band clamp (`:136`) to a small floor inside the bounded parent. Live-verify: ONE scrollbar on Kod.
+- **H3 — mobile overlay reuses `ModelPicker.tsx` a11y verbatim:** `role=dialog aria-modal`, Escape, focus-into-on-open, focus-restore-on-close, body scroll-lock (`overscroll-behavior:contain`).
+- **M5 — #35 reopen:** SEPARATE `drawerAutoOpened` ref pre-seeded in `seedRun` (`:152`) alongside `autoRan`; reopen = already-opened, fresh `ready` still fires once.
+- **M1 — persistence guards:** on `<lg` ignore persisted `open:true` (require FAB tap); re-clamp rehydrated `ratio` vs CURRENT viewport before paint (28rem chat floor).
+- **M2 — closed iframe:** gate iframe mount on first-open (no invisible preview boot); stays mounted after.
+- **M3 — default ratio:** breakpoint-derived (46/48/50%) until first drag, then persisted flat ratio wins.
+- **M4 — toolbar budget:** device buttons icon-only + px-badge readout; DeviceToggle hidden unless `activeTab==='preview'`.
+- **L1** `aria-valuenow`=drawer width % + localized `aria-valuetext` (via `fill`). **L2** snap only on `pointerup`. **L3** desktop edge-tab keeps verified/unverified dot. **L5** DeviceFrame WRAPS the existing `<iframe>` verbatim (`sandbox`+`allow="clipboard-write"`, no `allow-same-origin`).
+
+### v1 build scope (ship this)
+**IN:** drawer shell (chat-first; desktop push-split via `paddingRight:var(--preview-w)`; mobile full-screen overlay w/ ModelPicker a11y); `useResizable` (CSS-var + pointer-capture + rAF + persisted ratio + keyboard/ARIA splitter); device toggle = **Responsive (default) · Mobil 390 · Masaüstü/Fit** (iframe LOGICAL width; Desktop = `min(1280,paneWidth)` + horizontal scroll when narrower); two-region height fix; auto-open on `ready`; the `drawerAutoOpened` #35 ref; persistence + viewport re-clamp.
+**DEFERRED to v2 (intentional cut):** rotate (w↔h), Tablet 768 preset, desktop `ResizeObserver` scale-to-fit (RO-loop risk). ~60% of the proposed surface for ~95% of the value.
+
