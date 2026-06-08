@@ -61,8 +61,9 @@ describe('PgUserStore', () => {
     const upd = calls.find(c => c.text.startsWith('UPDATE'))!
     expect(upd.text).toMatch(/avatar_url = COALESCE\(\$1, avatar_url\)/)
     expect(upd.text).toMatch(/email_verified = true/)
+    expect(upd.text).toMatch(/last_login_provider = \$2/) // records the provider used this login
     expect(upd.text).not.toMatch(/status/) // never re-activates a disabled account
-    expect(upd.params).toEqual(['https://av/new', 'id1'])
+    expect(upd.params).toEqual(['https://av/new', 'github', 'id1'])
     expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
   })
 
@@ -74,55 +75,67 @@ describe('PgUserStore', () => {
     ])
     const u = (await new PgUserStore(db).upsertOAuth({ externalId: 'github:7', email: 'ada@akis.dev', name: 'Ada' }))!
     expect(u.avatarUrl).toBe('https://av/old')
-    expect(calls.find(c => c.text.startsWith('UPDATE'))!.params).toEqual([null, 'id1'])
+    expect(calls.find(c => c.text.startsWith('UPDATE'))!.params).toEqual([null, 'github', 'id1'])
   })
 
   it('upsertOAuth links a verified-email account to the identity (UPDATE, no INSERT) and marks it verified — but NOT active', async () => {
     const { db, calls } = fakeDb([
       { match: s => s.includes('WHERE external_id'), rows: () => [] },
       { match: s => s.includes('WHERE email'), rows: () => [row({ email: 'ada@akis.dev' })] },
-      // The link UPDATE sets external_id + email_verified + COALESCE(avatar_url, $2),
-      // and RETURNING * gives back the linked row (now carrying the identity + adopted avatar).
-      { match: s => s.startsWith('UPDATE'), rows: p => [row({ id: 'id1', external_id: p[0] as string, avatar_url: p[1] as string })] },
+      // The link UPDATE sets external_id + email_verified + COALESCE(avatar_url, $2) + last_login_provider,
+      // and RETURNING * gives back the linked row (now carrying the identity + adopted avatar + provider).
+      { match: s => s.startsWith('UPDATE'), rows: p => [row({ id: 'id1', external_id: p[0] as string, avatar_url: p[1] as string, last_login_provider: p[2] as string })] },
     ])
     const u = (await new PgUserStore(db).upsertOAuth({ externalId: 'github:7', email: 'ada@akis.dev', name: 'Ada', avatarUrl: 'https://av/7' }))!
     expect(u.id).toBe('id1'); expect(u.externalId).toBe('github:7'); expect(u.avatarUrl).toBe('https://av/7')
+    expect(u.lastLoginProvider).toBe('github') // RETURNING * round-trips the recorded login provider
     const upd = calls.find(c => c.text.startsWith('UPDATE'))!
     expect(upd.text).toMatch(/email_verified = true/)
+    expect(upd.text).toMatch(/last_login_provider = \$3/) // records the provider used this login
     // Linking must NOT auto-reactivate the account (no `status='active'` write).
     expect(upd.text).not.toMatch(/status/)
     expect(upd.text).toMatch(/COALESCE\(avatar_url, \$2\)/)
-    expect(upd.params).toEqual(['github:7', 'https://av/7', 'id1'])
+    expect(upd.params).toEqual(['github:7', 'https://av/7', 'github', 'id1'])
     expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
   })
 
-  it('upsertOAuth does NOT rebind an email account already bound to a different identity (parity with in-memory)', async () => {
-    // byExt miss, but the email account already carries external_id 'github:old'.
-    // A new login with 'github:new' must NOT clobber the DB and must return the
-    // ORIGINAL identity (the in-memory store returns `existing` unchanged) — never a
-    // fabricated externalId that was never persisted.
+  it('upsertOAuth does NOT rebind an email account already bound to a different identity, but records the login provider + refreshes the avatar (the cross-provider badge fix)', async () => {
+    // REPRODUCES the bug: the email account is already bound to external_id 'github:115497334'.
+    // A login via google with the SAME email must NOT clobber external_id (don't-clobber-identity),
+    // must NOT touch status, but MUST set last_login_provider='google' (so the badge reflects THIS
+    // login) and COALESCE($newAvatar, avatar_url) (so the photo follows it too).
     const { db, calls } = fakeDb([
       { match: s => s.includes('WHERE external_id'), rows: () => [] },
-      { match: s => s.includes('WHERE email'), rows: () => [row({ id: 'id1', external_id: 'github:old' })] },
+      { match: s => s.includes('WHERE email'), rows: () => [row({ id: 'id1', external_id: 'github:115497334' })] },
+      // The branch UPDATE: external_id is UNTOUCHED, so RETURNING * still carries 'github:115497334'.
+      { match: s => s.startsWith('UPDATE'), rows: p => [row({ id: 'id1', external_id: 'github:115497334', last_login_provider: p[0] as string, avatar_url: (p[1] as string) ?? null })] },
     ])
-    const u = (await new PgUserStore(db).upsertOAuth({ externalId: 'github:new', email: 'ada@akis.dev', name: 'Ada' }))!
-    expect(u.externalId).toBe('github:old')
-    expect(calls.some(c => c.text.startsWith('UPDATE'))).toBe(false)
+    const u = (await new PgUserStore(db).upsertOAuth({ externalId: 'google:200', email: 'engomeryasironal@gmail.com', name: 'Omer', avatarUrl: 'https://av/G' }))!
+    expect(u.externalId).toBe('github:115497334') // identity preserved — never clobbered
+    expect(u.lastLoginProvider).toBe('google')    // badge source reflects the provider used this login
+    expect(u.avatarUrl).toBe('https://av/G')
+    const upd = calls.find(c => c.text.startsWith('UPDATE'))!
+    expect(upd.text).toMatch(/last_login_provider = \$1/)
+    expect(upd.text).toMatch(/avatar_url = COALESCE\(\$2, avatar_url\)/)
+    expect(upd.text).not.toMatch(/external_id/) // the bound identity is never written
+    expect(upd.text).not.toMatch(/status/)      // never re-activates a disabled account
+    expect(upd.params).toEqual(['google', 'https://av/G', 'id1'])
     expect(calls.some(c => c.text.startsWith('INSERT'))).toBe(false)
   })
 
   it('upsertOAuth inserts a new empty-password user with external_id + avatar when nothing matches, created verified + active', async () => {
     const { db, calls } = fakeDb([
       { match: s => s.startsWith('SELECT'), rows: () => [] },
-      { match: s => s.startsWith('INSERT'), rows: p => [row({ id: p[0] as string, name: p[1] as string, email: p[2] as string, password_hash: p[3] as string, external_id: p[4] as string, avatar_url: p[5] as string })] },
+      { match: s => s.startsWith('INSERT'), rows: p => [row({ id: p[0] as string, name: p[1] as string, email: p[2] as string, password_hash: p[3] as string, external_id: p[4] as string, avatar_url: p[5] as string, last_login_provider: p[6] as string })] },
     ])
     const u = (await new PgUserStore(db, () => 'oauth-id').upsertOAuth({ externalId: 'github:9', email: 'New@akis.dev', name: 'New', avatarUrl: 'https://av/9' }))!
-    expect(u.id).toBe('oauth-id'); expect(u.avatarUrl).toBe('https://av/9')
+    expect(u.id).toBe('oauth-id'); expect(u.avatarUrl).toBe('https://av/9'); expect(u.lastLoginProvider).toBe('github')
     const ins = calls.find(c => c.text.startsWith('INSERT'))!
     // OAuth create = provider-verified ⇒ email_verified=true + status='active' baked into the SQL.
     expect(ins.text).toMatch(/email_verified/); expect(ins.text).toMatch(/status/)
     expect(ins.text).toMatch(/true,'active'/)
-    expect(ins.params).toEqual(['oauth-id', 'New', 'new@akis.dev', '', 'github:9', 'https://av/9'])
+    expect(ins.text).toMatch(/last_login_provider/) // records the provider used this login
+    expect(ins.params).toEqual(['oauth-id', 'New', 'new@akis.dev', '', 'github:9', 'https://av/9', 'github'])
   })
 
   it('upsertOAuth create passes avatar=null when the profile has none (no explicit undefined into SQL)', async () => {
@@ -131,6 +144,6 @@ describe('PgUserStore', () => {
       { match: s => s.startsWith('INSERT'), rows: p => [row({ id: p[0] as string, external_id: p[4] as string })] },
     ])
     await new PgUserStore(db, () => 'oauth-id').upsertOAuth({ externalId: 'google:11', email: 'np@akis.dev', name: 'NP' })
-    expect(calls.find(c => c.text.startsWith('INSERT'))!.params).toEqual(['oauth-id', 'NP', 'np@akis.dev', '', 'google:11', null])
+    expect(calls.find(c => c.text.startsWith('INSERT'))!.params).toEqual(['oauth-id', 'NP', 'np@akis.dev', '', 'google:11', null, 'google'])
   })
 })

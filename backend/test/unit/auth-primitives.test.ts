@@ -186,17 +186,32 @@ describe('UserStore', () => {
     expect(g).toEqual({ id: '1', name: 'A', email: 'a@b.com', provider: 'google' })
     expect('avatarUrl' in g).toBe(false)
   })
+  it('toPublic prefers lastLoginProvider over the bound externalId (the cross-provider badge fix)', () => {
+    const base = { id: '1', name: 'A', email: 'a@b.com', passwordHash: 'secret', createdAt: 'x' } satisfies Partial<AuthUser>
+    // Account bound to a github identity, but the most-recent login was via google: the badge must
+    // reflect THIS login (google), not the permanently-bound identity (github).
+    expect(toPublic({ ...base, externalId: 'github:115497334', lastLoginProvider: 'google' }).provider).toBe('google')
+    // Fallback: with no lastLoginProvider recorded (a pre-feature row) it derives from externalId.
+    expect(toPublic({ ...base, externalId: 'github:115497334' }).provider).toBe('github')
+    // A password account with no externalId and no lastLoginProvider stays 'password'.
+    expect(toPublic({ ...base }).provider).toBe('password')
+  })
   it('upsertOAuth binds by externalId and links a (verified) email account to that identity', async () => {
     const s = new UserStore()
     const a = await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' }) // allowCreate defaults true → never null here
     expect(a).not.toBeNull()
-    // same identity returns the same user
-    expect((await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' }))?.id).toBe(a?.id)
+    expect(a?.lastLoginProvider).toBe('github') // create path records the login provider
+    // same identity returns the same user (byExt-returning path also records the login provider)
+    const again = await s.upsertOAuth({ externalId: 'github:1', email: 'ada@akis.dev', name: 'Ada' })
+    expect(again?.id).toBe(a?.id)
+    expect(again?.lastLoginProvider).toBe('github')
     // a password account is linked to the identity when the (verified) email matches
     const pw = await s.create({ name: 'Bo', email: 'bo@akis.dev', passwordHash: 'h' })
+    expect(pw.lastLoginProvider).toBeUndefined() // password create has none → toPublic falls back to 'password'
     const linked = await s.upsertOAuth({ externalId: 'google:2', email: 'BO@akis.dev', name: 'Bo' })
     expect(linked?.id).toBe(pw.id)
     expect((await s.findById(pw.id))?.externalId).toBe('google:2')
+    expect((await s.findById(pw.id))?.lastLoginProvider).toBe('google') // link path records the login provider
   })
   it('upsertOAuth sets avatarUrl on create and surfaces it via toPublic', async () => {
     const s = new UserStore()
@@ -221,25 +236,33 @@ describe('UserStore', () => {
     expect(refreshed?.avatarUrl).toBe('https://av/keep')
     expect((await s.findByEmail('keep@akis.dev'))?.avatarUrl).toBe('https://av/keep')
   })
-  it('upsertOAuth returns an email account ALREADY bound to identity A unchanged when a DIFFERENT identity B logs in with that email (Pg parity)', async () => {
-    // Parity with PgUserStore (`if (byEmail.externalId) return byEmail`): once an email is bound
-    // to one provider identity, a second provider that happens to share the verified email must NOT
-    // rebind the externalId NOR adopt its avatar onto the first provider's account — the account is
-    // returned with NO mutation. (Without this, identity B's avatar would land on identity A.)
+  it('upsertOAuth on an email bound to identity A, when a DIFFERENT identity B logs in, PRESERVES A but records B as the login provider (the cross-provider badge fix; Pg parity)', async () => {
+    // REPRODUCES the bug: an account bound to A (github) whose owner later signs in via B (google)
+    // with the SAME verified email. The bound externalId must NOT move (don't-clobber-identity), but
+    // the badge must reflect THIS login — so lastLoginProvider becomes 'google' and toPublic('provider')
+    // is 'google', while external_id stays 'github:115497334'. B's avatar follows the current login too.
     const s = new UserStore()
-    // identity A links/creates the account (no avatar yet, so a clobber would be visible).
-    const a = await s.upsertOAuth({ externalId: 'github:100', email: 'shared@akis.dev', name: 'Shared' })
-    expect(a?.externalId).toBe('github:100')
+    // identity A links/creates the account (no avatar yet, so a refresh would be visible).
+    const a = await s.upsertOAuth({ externalId: 'github:115497334', email: 'engomeryasironal@gmail.com', name: 'Omer' })
+    expect(a?.externalId).toBe('github:115497334')
+    expect(a?.lastLoginProvider).toBe('github')
+    expect(toPublic(a!).provider).toBe('github')
     expect(a?.avatarUrl).toBeUndefined()
-    // identity B logs in with the SAME email, carrying an avatar.
-    const b = await s.upsertOAuth({ externalId: 'google:200', email: 'shared@akis.dev', name: 'Shared', avatarUrl: 'https://av/B' })
-    // Same row, still bound to A, and B's avatar was NOT adopted.
+    // identity B (google) logs in with the SAME email, carrying an avatar.
+    const b = await s.upsertOAuth({ externalId: 'google:200', email: 'engomeryasironal@gmail.com', name: 'Omer', avatarUrl: 'https://av/B' })
+    // Same row, the bound identity is STILL A (github), but the badge + avatar reflect THIS login (B).
     expect(b?.id).toBe(a?.id)
-    expect(b?.externalId).toBe('github:100')
-    expect(b?.avatarUrl).toBeUndefined()
+    expect(b?.externalId).toBe('github:115497334') // identity preserved — never clobbered
+    expect(b?.lastLoginProvider).toBe('google')
+    expect(toPublic(b!).provider).toBe('google') // badge reflects the provider used THIS login
+    expect(b?.avatarUrl).toBe('https://av/B')
     // The cross-index for B's identity was never created (no rebind), so A still owns the email.
-    expect((await s.findByEmail('shared@akis.dev'))?.externalId).toBe('github:100')
-    expect((await s.findByEmail('shared@akis.dev'))?.avatarUrl).toBeUndefined()
+    expect((await s.findByEmail('engomeryasironal@gmail.com'))?.externalId).toBe('github:115497334')
+    expect((await s.findByEmail('engomeryasironal@gmail.com'))?.lastLoginProvider).toBe('google')
+    // And a subsequent github login flips the badge back to github (still no rebind).
+    const c = await s.upsertOAuth({ externalId: 'github:115497334', email: 'engomeryasironal@gmail.com', name: 'Omer' })
+    expect(c?.lastLoginProvider).toBe('github')
+    expect(c?.externalId).toBe('github:115497334')
   })
   it('upsertOAuth adopts an avatar on link only when absent, and never clobbers an existing one', async () => {
     const s = new UserStore()
