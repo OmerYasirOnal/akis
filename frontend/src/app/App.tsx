@@ -28,8 +28,8 @@ const BASE = (import.meta.env?.VITE_API_BASE as string | undefined) ?? ''
 function Brand() {
   const { t } = useI18n()
   return (
-    <Link to="/" className="flex items-center gap-3">
-      <AkisLogo size={34} className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
+    <Link to="/" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+      <AkisLogo size={34} alt="" className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
       <div className="hidden sm:block">
         <div className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-base font-extrabold leading-tight text-transparent">{t('app.title')}</div>
       </div>
@@ -41,7 +41,7 @@ function NavLink({ to, label }: { to: string; label: string }) {
   const { path } = useRouter()
   const active = path === to
   return (
-    <Link to={to} className={`rounded-lg px-3 py-1.5 text-sm transition ${active ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>{label}</Link>
+    <Link to={to} className={`rounded-lg px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${active ? 'bg-white/10 text-slate-100' : 'text-slate-300 hover:text-slate-100'}`}>{label}</Link>
   )
 }
 
@@ -102,7 +102,7 @@ function AppFrame({ api }: { api: ApiClient }) {
           <div className="flex items-center gap-2">
             <DemoBadge api={api} />
             <button onClick={() => setLocale(locale === 'en' ? 'tr' : 'en')} aria-label={t('nav.toggleLanguage')}
-              className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-slate-300 hover:border-white/20">{locale.toUpperCase()}</button>
+              className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-slate-300 transition hover:border-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">{locale.toUpperCase()}</button>
             <div className="hidden text-right sm:block">
               <div className="text-xs font-medium text-slate-200">{user?.name}</div>
             </div>
@@ -145,8 +145,8 @@ function PublicDocs() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
       <header className="mb-8 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-3">
-          <AkisLogo size={30} className="drop-shadow-[0_0_14px_rgba(7,209,175,0.5)]" />
+        <Link to="/" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+          <AkisLogo size={30} alt="" className="drop-shadow-[0_0_14px_rgba(7,209,175,0.5)]" />
           <span className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-sm font-extrabold text-transparent">{t('app.title')}</span>
         </Link>
         <Link to="/login" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-slate-200 hover:border-white/20">{t('landing.cta.signin')}</Link>
