@@ -287,6 +287,9 @@ export const STRINGS = {
     'tests.fail': 'FAIL',
     'tests.scenarios': 'Scenarios',
     'tests.p95': 'p95',
+    // Honesty: a genuinely-unmeasured metric reads as honest-absent (tooltip), not broken. AKIS
+    // NEVER fabricates a number — '—' stays '—', the title just says WHY it's empty.
+    'tests.notMeasured': 'Not measured for this run',
     // ── Trust Report (auditable evidence behind the green checkmark) ──
     'trust.tab': 'Trust',
     'trust.title': 'Trust report',
@@ -1069,6 +1072,7 @@ export const STRINGS = {
     'tests.fail': 'KALDI',
     'tests.scenarios': 'Senaryolar',
     'tests.p95': 'p95',
+    'tests.notMeasured': 'Bu çalışma için ölçülmedi',
     // ── Güven Raporu (yeşil onayın arkasındaki denetlenebilir kanıt) ──
     'trust.tab': 'Güven',
     'trust.title': 'Güven raporu',

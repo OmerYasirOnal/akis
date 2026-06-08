@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PreviewPanel } from './PreviewPanel.js'
+import { TestStats } from './TestStats.js'
 import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
 import type { TestEvidence } from '@akis/shared'
@@ -255,5 +256,54 @@ describe('PreviewPanel', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('TestStats — scenario count + honest absent-metric display', () => {
+  const ranNoCounters: SessionView['tests'] = { testsRun: 3, passed: true, ran: true }
+
+  it('surfaces the REAL scenario count (passed/total) from evidence when the live counters are absent', () => {
+    // The boot-smoke case: verify ran (3 tests) but no test_stats/test_progress fired, so
+    // scenariosBuilt is undefined — the strip used to show '—'. The evidence DOES list scenarios.
+    renderI18n(<TestStats stats={ranNoCounters} evidence={evidence} />)
+    // evidence has 2 scenarios, both passed → '2/2' under the Scenarios cell (not '—').
+    expect(screen.getByText('2/2')).toBeInTheDocument()
+  })
+
+  it('prefers the live built/running counters over the evidence fallback when present', () => {
+    const withCounters: SessionView['tests'] = { ...ranNoCounters, scenariosBuilt: 5, scenariosRunning: 4 }
+    renderI18n(<TestStats stats={withCounters} evidence={evidence} />)
+    expect(screen.getByText('4/5')).toBeInTheDocument()
+    expect(screen.queryByText('2/2')).toBeNull() // the evidence fallback is NOT used
+  })
+
+  it('keeps Scenarios honest ("—" + not-measured tooltip) when neither counters nor evidence have scenarios', () => {
+    const noScenarios: TestEvidence = { ...evidence, scenarios: [] }
+    const { container } = renderI18n(<TestStats stats={ranNoCounters} evidence={noScenarios} />)
+    // The Scenarios cell shows '—' (honest), and its container carries the not-measured title.
+    const scenariosLabel = screen.getByText(STRINGS.en['tests.scenarios'])
+    const scenariosCell = scenariosLabel.parentElement as HTMLElement
+    expect(scenariosCell).toHaveAttribute('title', STRINGS.en['tests.notMeasured'])
+    expect(scenariosCell.textContent).toContain('—')
+    void container
+  })
+
+  it('keeps p95 honestly absent ("—" + not-measured tooltip) — never fabricated from durationMs', () => {
+    renderI18n(<TestStats stats={ranNoCounters} evidence={evidence} />)
+    const p95Label = screen.getByText(STRINGS.en['tests.p95'])
+    const p95Cell = p95Label.parentElement as HTMLElement
+    expect(p95Cell).toHaveAttribute('title', STRINGS.en['tests.notMeasured'])
+    expect(p95Cell.textContent).toContain('—')
+    // honesty: the summed durationMs (500) is NOT shown as a fake p95.
+    expect(p95Cell.textContent).not.toContain('500')
+  })
+
+  it('shows a real p95 (and NO not-measured tooltip) when the live counter carries one', () => {
+    const withP95: SessionView['tests'] = { ...ranNoCounters, p95Ms: 42 }
+    renderI18n(<TestStats stats={withP95} />)
+    const p95Label = screen.getByText(STRINGS.en['tests.p95'])
+    const p95Cell = p95Label.parentElement as HTMLElement
+    expect(p95Cell.textContent).toContain('42ms')
+    expect(p95Cell).not.toHaveAttribute('title')
   })
 })

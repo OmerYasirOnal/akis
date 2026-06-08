@@ -307,7 +307,9 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
         </div>
       )}
 
-      <TestStats stats={view.tests} />
+      {/* `testEvidence` lets the strip surface the REAL scenario count (the same structured
+          evidence the Trust tab renders) when the live counters don't fire — never invents data. */}
+      <TestStats stats={view.tests} evidence={testEvidence} />
       </>
       )}
     </div>
