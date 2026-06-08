@@ -69,6 +69,30 @@ describe('CONTRACT: external-write routes (propose → human-confirm → execute
     expect(res.statusCode).toBe(400)
   })
 
+  it('PROVIDER-AWARE: a GitHub action is accepted under provider github but REJECTED under atlassian', async () => {
+    const { f } = makeApp()
+    const id = await newSession(f)
+    // github action under github → 200 (on the github allow-list)
+    const ok = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { provider: 'github', action: 'issue_write', summary: 'Open issue', target: { owner: 'OmerYasirOnal', repo: 'akis' }, payload: { method: 'create', title: 'Bug' } } })
+    expect(ok.statusCode).toBe(200)
+    // SAME github action under atlassian → 400 (off that provider's set — no cross-provider smuggle)
+    const bad = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { provider: 'atlassian', action: 'issue_write', summary: 'x', target: {}, payload: {} } })
+    expect(bad.statusCode).toBe(400)
+    // and an atlassian action under github → 400 (vice-versa)
+    const bad2 = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { provider: 'github', action: 'createPage', summary: 'x', target: {}, payload: {} } })
+    expect(bad2.statusCode).toBe(400)
+  })
+
+  it('PROVIDER-AWARE: a GitHub write CONFIRMS + EXECUTES through the github transport (merged target+payload)', async () => {
+    const { f, calls } = makeApp({ connected: true })
+    const id = await newSession(f)
+    const { id: writeId, digest } = (await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes`, payload: { provider: 'github', action: 'issue_write', summary: 'Open issue "Bug"', target: { owner: 'OmerYasirOnal', repo: 'akis' }, payload: { method: 'create', title: 'Bug', body: 'repro' } } })).json()
+    const res = await f.inject({ method: 'POST', url: `/sessions/${id}/external-writes/${writeId}/confirm`, payload: { digest } })
+    expect(res.statusCode).toBe(200)
+    expect(res.json()).toMatchObject({ ok: true, status: 'executed' })
+    expect(calls).toEqual([{ name: 'issue_write', args: { owner: 'OmerYasirOnal', repo: 'akis', method: 'create', title: 'Bug', body: 'repro' } }])
+  })
+
   it('CONFIRM with the matching digest EXECUTES via the transport + marks executed', async () => {
     const { f, calls } = makeApp({ connected: true })
     const id = await newSession(f)

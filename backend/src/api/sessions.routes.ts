@@ -291,17 +291,21 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     const s = await accessibleSession(req, req.params.id)
     if (!s) return notFound(reply, req.params.id)
     const b = req.body ?? {}
-    if (!b.action || !isAllowedExternalWriteAction(b.action)) return reply.code(400).send({ error: 'action is not on the external-write allow-list', code: 'BadAction' })
+    // PROVIDER-AWARE allow-list: the action must be on the set for THIS proposal's provider (a github
+    // tool is invalid under atlassian and vice-versa). `provider` defaults to 'atlassian' (back-compat
+    // with the original Atlassian-only propose); an unknown provider has no set → rejected here.
+    const provider = (b.provider ?? 'atlassian') as ExternalWriteProposal['provider']
+    if (!b.action || !isAllowedExternalWriteAction(provider, b.action)) return reply.code(400).send({ error: 'action is not on the external-write allow-list', code: 'BadAction' })
     const proposal: ExternalWriteRecord = {
-      id: randomUUID(), provider: b.provider ?? 'atlassian', action: b.action,
+      id: randomUUID(), provider, action: b.action,
       summary: (b.summary ?? b.action).slice(0, 200), target: b.target ?? {}, payload: b.payload ?? {},
       status: 'proposed', proposedAt: new Date().toISOString(),
     }
     const next = [...(s.externalWrites ?? []), proposal].slice(-EXTERNAL_WRITES_MAX)
     await services.store.update(s.id, { externalWrites: next }, s.version)
-    // The digest binds provider/action/target/payload only (the gate's strict provider union; the
-    // record keeps provider as a widenable string for forward-compat).
-    const digest = digestExternalWrite({ provider: proposal.provider as ExternalWriteProposal['provider'], action: proposal.action, target: proposal.target, payload: proposal.payload })
+    // The digest binds provider/action/target/payload only — `provider` is the SAME narrowed value the
+    // allow-list was checked against above, so validate/persist/digest can never diverge.
+    const digest = digestExternalWrite({ provider, action: proposal.action, target: proposal.target, payload: proposal.payload })
     return reply.send({ id: proposal.id, digest, summary: proposal.summary })
   })
 
