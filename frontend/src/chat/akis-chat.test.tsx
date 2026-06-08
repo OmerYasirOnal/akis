@@ -340,3 +340,35 @@ describe('AkisChat — streaming text smoothing', () => {
     expect(screen.queryByText(/akis-suggest/)).toBeNull()
   })
 })
+
+describe('AkisChat cold-start starter prompts', () => {
+  const STARTER1 = 'A habit tracker with daily streaks and reminders'
+
+  it('offers tappable starter prompts on a fresh thread (just the greeting, no active build)', () => {
+    const api = new ApiClient('', chatFetch('ok'))
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    expect(screen.getByText('Not sure where to start? Try one of these:')).toBeInTheDocument()
+    // all four example builds render as buttons that the user can tap directly
+    expect(screen.getByRole('button', { name: STARTER1 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'A URL shortener with click analytics' })).toBeInTheDocument()
+  })
+
+  it('tapping a starter sends it directly (no typing) and then the starters disappear', async () => {
+    const api = new ApiClient('', chatFetch('Great — let’s build it.'))
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    await userEvent.click(screen.getByRole('button', { name: STARTER1 }))
+    // the tapped prompt becomes the user message...
+    await waitFor(() => expect(screen.getByText('Great — let’s build it.')).toBeInTheDocument())
+    expect(screen.getByText(STARTER1)).toBeInTheDocument() // user bubble
+    // ...and once the thread has moved past the lone greeting, the starters are gone
+    expect(screen.queryByText('Not sure where to start? Try one of these:')).toBeNull()
+    expect(screen.queryByRole('button', { name: STARTER1 })).toBeNull()
+  })
+
+  it('does NOT show starters once a build is active (activeSessionId set)', () => {
+    const api = new ApiClient('', chatFetch('ok'))
+    render(<I18nProvider><AkisChat api={api} activeSessionId="s1" /></I18nProvider>)
+    expect(screen.queryByText('Not sure where to start? Try one of these:')).toBeNull()
+    expect(screen.queryByRole('button', { name: STARTER1 })).toBeNull()
+  })
+})

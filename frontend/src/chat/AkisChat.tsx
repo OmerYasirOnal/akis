@@ -554,6 +554,29 @@ export function AkisChat({
           </div>
         )
       })()}
+      {/* Cold-start starter prompts: when the thread is just AKIS's greeting (no build started
+          yet), offer a few tappable example builds so the empty canvas has an answer affordance
+          instead of a blank box — reuses the SAME sendText() path + chip styling as the
+          akis-suggest chips above. Disappears as soon as the user sends anything. */}
+      {(() => {
+        const first = nodes[0]
+        const coldStart = !busy && !activeSessionId && nodes.length === 1 && !!first && isMsg(first) && first.role === 'assistant'
+        if (!coldStart) return null
+        const starters = [t('akis.starter.1'), t('akis.starter.2'), t('akis.starter.3'), t('akis.starter.4')]
+        return (
+          <div className="flex flex-col gap-2">
+            <p className="text-xs text-slate-400">{t('akis.starters.title')}</p>
+            <div className="flex flex-wrap gap-2">
+              {starters.map((s, i) => (
+                <button key={i} type="button" onClick={() => sendText(s)}
+                  className="rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.06] px-3 py-1.5 text-xs text-teal-200 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        )
+      })()}
       {/* Visibility chip: show WHICH model + effort + mode is active near the composer.
           Opus review M2: NOT hostage to /health — the chip renders once the provider catalog
           loads; a failed health probe only degrades the badge (neutral), never hides the
