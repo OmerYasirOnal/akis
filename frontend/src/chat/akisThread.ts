@@ -93,7 +93,11 @@ export function isNearBottom(el: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' 
  *  If the local spine already anchors this run (has its run marker), it is the richest copy
  *  (it includes the pre-build, sessionId-less turns the server can never hold) → keep it.
  *  Otherwise (cleared storage / another device) rebuild from the server turns. Adjacent
- *  identical (role,content) pairs are de-duplicated. Pure + storage-free. */
+ *  identical (role,content) pairs are de-duplicated. Pure + storage-free.
+ *  NOTE: in the keep-local branch, newer SERVER turns (e.g. follow-up turns made on ANOTHER device
+ *  about the same build) are intentionally NOT merged in — staleness is accepted over the re-dedupe
+ *  complexity that merging two diverged spines would need (no per-turn ids/timestamps to align on).
+ *  Do not "also merge server turns here": it reintroduces the duplicate-turn class this branch avoids. */
 export function mergeSpine(args: {
   local: readonly ThreadNode[]
   serverTurns: readonly { role: 'user' | 'assistant'; content: string }[]

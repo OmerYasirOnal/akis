@@ -76,11 +76,22 @@ describe('ChatStudio F5/deep-link rehydrate — the persisted conversation survi
       id: 's1', idea: 'note app', status: 'done', version: 1,
       chat: [{ role: 'assistant', content: 'on it', at: '' }],
     })))
+    // MASKING GUARD: the pre-build turn is already in localStorage, so AkisChat renders it on its
+    // INITIAL mount — BEFORE the async deep-link chain (listMySessions → openWithChat → getSession →
+    // seedRun) reseeds. A naive `getByText('a note app please')` therefore passes even against the OLD
+    // overwrite seed (it never observes the post-reseed state). Spy on getSession and wait for the
+    // deep-link's call with 's1' so we deterministically observe AFTER the reseed has run.
+    const getSessionSpy = vi.spyOn(api, 'getSession')
     const fake = new FakeStream()
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
-    // waitFor re-queries fresh each poll, so it is resilient to the AkisChat remount (threadKey++)
-    // the reopen seed triggers — the merged spine still carries the pre-build user turn.
+    // The reseed chain has fired (the deep-link's getSession('s1') resolved → seedRun ran mergeSpine).
+    await waitFor(() => expect(getSessionSpy).toHaveBeenCalledWith('s1'))
+    // Now assert the pre-build turn survived the reseed — in BOTH the visible thread AND the persisted
+    // spine (the old overwrite seed dropped it from both; the merge keeps it).
     await waitFor(() => expect(screen.getByText('a note app please')).toBeInTheDocument())
+    expect(JSON.parse(localStorage.getItem('akis_chat_thread')!)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ content: 'a note app please' })]),
+    )
   })
 })
 
