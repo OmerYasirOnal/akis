@@ -242,6 +242,10 @@ export const STRINGS = {
     'preview.device.desktop': 'Desktop',
     'preview.device.label': 'Preview width',
     'preview.device.unit': 'px',
+    // P2.4 fluid drag-to-resize: a slider on the frame's right edge sets an ARBITRARY logical width so
+    // the user can verify the generated app at any breakpoint (meta-responsiveness).
+    'preview.device.custom': 'Custom width',
+    'preview.device.customHint': 'Drag or use arrow keys to set a custom width',
     'preview.rotate': 'Rotate',
     // ── Publish to your own server (OCI) — POST-`done`, optional, NON-GATING ──
     'publish.title': 'Publish to your server',
@@ -1059,6 +1063,10 @@ export const STRINGS = {
     'preview.device.desktop': 'Masaüstü',
     'preview.device.label': 'Önizleme genişliği',
     'preview.device.unit': 'px',
+    // P2.4 akışkan sürükle-boyutlandır: çerçevenin sağ kenarındaki kaydırıcı KEYFÎ bir mantıksal
+    // genişlik ayarlar; böylece kullanıcı üretilen uygulamayı her kırılma noktasında doğrulayabilir.
+    'preview.device.custom': 'Özel genişlik',
+    'preview.device.customHint': 'Özel genişlik için sürükleyin veya ok tuşlarını kullanın',
     'preview.rotate': 'Döndür',
     // ── Kendi sunucuna yayınla (OCI) — `done` SONRASI, isteğe bağlı, KAPI DEĞİL ──
     'publish.title': 'Sunucuna yayınla',
