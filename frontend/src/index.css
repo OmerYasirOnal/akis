@@ -84,11 +84,14 @@ code, pre, .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regu
    seam (Bug A). `scrollbar-gutter: stable` reserves the track width so the conversation never
    reflows as content crosses the overflow threshold, and the thin teal thumb sits over a
    transparent track so it reads as part of the cosmic theme, not a system chrome strip. */
-.akis-scroll { scrollbar-width: thin; scrollbar-color: rgba(7,209,175,.45) transparent; scrollbar-gutter: stable; }
-.akis-scroll::-webkit-scrollbar { width: 10px; height: 10px; }
+/* A subtle, NEUTRAL scrollbar (standards: the scrollbar is chrome, not a brand element). A faint slate
+   thumb that only lifts slightly on hover — so it never reads as a prominent teal "bar" beside the
+   preview drawer. Thin (8px) with a stable gutter so it never fuses to the chat↔drawer seam. */
+.akis-scroll { scrollbar-width: thin; scrollbar-color: rgba(148,163,184,.26) transparent; scrollbar-gutter: stable; }
+.akis-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
 .akis-scroll::-webkit-scrollbar-track { background: transparent; }
-.akis-scroll::-webkit-scrollbar-thumb { background: rgba(7,209,175,.40); border-radius: 99px; border: 3px solid transparent; background-clip: padding-box; }
-.akis-scroll::-webkit-scrollbar-thumb:hover { background: rgba(7,209,175,.6); }
+.akis-scroll::-webkit-scrollbar-thumb { background: rgba(148,163,184,.26); border-radius: 99px; border: 2px solid transparent; background-clip: padding-box; }
+.akis-scroll::-webkit-scrollbar-thumb:hover { background: rgba(148,163,184,.45); }
 
 @media (prefers-reduced-motion: reduce) {
   .akis-stars, .akis-stars::after, .akis-aurora { animation: none; }
