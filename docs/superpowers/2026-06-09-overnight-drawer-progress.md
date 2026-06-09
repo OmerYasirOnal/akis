@@ -20,6 +20,15 @@ A complete **Codex/Claude-artifacts-style preview experience** + a real **chat s
 - **Perf**: `memo(RunBlock)` + stabilized callbacks → SSE frames no longer re-render the whole chat spine (only the active run + rail).
 - **Metrics strip**: surfaces the real scenario count; genuinely-absent metrics (P95) stay honest `—` with a tooltip.
 
+### Round 2 — refinements & a11y/i18n/UX hardening (C4, D1–D3)
+- **C4**: refresh-preview button (reloads the running app's iframe, same URL, no backend call) + double-click the resize separator to reset to default width.
+- **D1** (a11y/i18n/honesty): Analytics per-run now shows the **localized** status (was leaking raw enums like `awaiting_push_confirm`); `prefers-reduced-motion` now also stops Tailwind `animate-spin`/`animate-pulse`; save-success is announced to screen readers (`role="status"`); SSH-key textarea uses the shared focus ring; two raw-English AT strings localized.
+- **D2**: Settings cards show a spinner while their first fetch is in flight (no more blank gap); CodeBrowser "copy all files".
+- **D3**: HistoryMenu keyboard navigation (focus-on-open + roving arrows + Home/End + Escape returns focus to the trigger), mirroring ModelPicker.
+- Plus a regression test for the ProviderKeys loading state.
+
+**Branch totals:** 24 commits, 36 files (+2191/−272). Full FE suite **591 tests green**, tsc 0, build ✓ at HEAD. Every batch independently reviewed (gate-keeper + reviewer); a final whole-branch gate-keeper certifies the cumulative diff merge-safe.
+
 ## Design trail (also on the branch)
 - Spec: `docs/superpowers/specs/2026-06-09-preview-drawer-design.md` (research → design → 3-lens adversarial review → independent fresh-review reconciliation → v1 scope).
 - Plan: `docs/superpowers/plans/2026-06-09-studio-preview-drawer.md`.
