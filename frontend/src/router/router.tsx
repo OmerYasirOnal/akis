@@ -31,14 +31,15 @@ export function useRouter(): RouterValue {
   return ctx
 }
 
-/** An <a> that navigates client-side (honoring modifier-clicks / new-tab). */
-export function Link({ to, className, children, onClick }: { to: string; className?: string; children: ReactNode; onClick?: () => void }) {
+/** An <a> that navigates client-side (honoring modifier-clicks / new-tab). `ariaCurrent`
+ *  forwards aria-current (e.g. "page" for the active nav item) onto the anchor for AT. */
+export function Link({ to, className, children, onClick, ariaCurrent }: { to: string; className?: string; children: ReactNode; onClick?: () => void; ariaCurrent?: 'page' }) {
   const { navigate } = useRouter()
   const handle = (e: MouseEvent): void => {
     if (e.defaultPrevented || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return
     e.preventDefault(); onClick?.(); navigate(to)
   }
-  return <a href={to} onClick={handle} {...(className ? { className } : {})}>{children}</a>
+  return <a href={to} onClick={handle} {...(className ? { className } : {})} {...(ariaCurrent ? { 'aria-current': ariaCurrent } : {})}>{children}</a>
 }
 
 /** Imperative redirect: renders nothing, navigates (replace) on mount. */

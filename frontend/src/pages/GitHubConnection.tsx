@@ -56,7 +56,15 @@ export function GitHubConnection({ api }: { api: ApiClient }) {
       )}
       {err && <div className="mb-3"><ErrorNote>{err}</ErrorNote></div>}
 
-      {status === undefined ? null : !status.configured ? (
+      {/* While the first status fetch is in flight (status still undefined, before the catch sets a
+          default) show an inline spinner row — mirrors HistoryPage — so a slow link never leaves a
+          blank card body. */}
+      {status === undefined ? (
+        <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-4 text-sm text-slate-400">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#07D1AF]/40 border-t-[#07D1AF]" />
+          {t('settings.loading')}
+        </div>
+      ) : !status.configured ? (
         <div className="text-sm text-slate-400">{t('settings.github.notConfigured')}</div>
       ) : status.connected ? (
         <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">

@@ -24,6 +24,17 @@ export function SpecCard({ spec, onBuild, building, started, startedSpec, isSpec
   // the EDITED text, which only currentSpec — not the original detected fence — equals).
   const isStarted = !!started || (!!startedSpec && startedSpec.trim() === currentSpec.trim()) || (isSpecStarted?.(currentSpec) ?? false)
   const canEdit = !building && !isStarted
+  // H1-Fix-B: once the build has STARTED, the approved spec is no longer the thing being read — it
+  // was eating ~60vh above the live activity. Collapse its body by default to a one-line summary
+  // chip + a "Show spec" toggle. `expanded` is user intent (lets them re-reveal it); we DEFAULT it
+  // to !isStarted via the effect below so a fresh card is open and a started card is collapsed.
+  const [expanded, setExpanded] = useState(!isStarted)
+  // Re-sync the default whenever started-state flips (a card that transitions to "started" while
+  // mounted should auto-collapse) or the spec text changes (a new card resets to open). Editing
+  // force-opens so the textarea is always usable.
+  useEffect(() => { setExpanded(!isStarted) }, [isStarted, spec])
+  const showBody = expanded || editing
+  const specTitle = titleFromSpec(currentSpec)
 
   const download = (): void => {
     const blob = new Blob([currentSpec], { type: 'text/markdown;charset=utf-8' })
@@ -44,18 +55,44 @@ export function SpecCard({ spec, onBuild, building, started, startedSpec, isSpec
           <div className="text-xs text-slate-400">{t('spec.card.hint')}</div>
         </div>
       </div>
-      <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 px-4 py-3">
-        {editing ? (
-          <textarea
-            aria-label={t('spec.editLabel')}
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            className="min-h-64 w-full resize-y bg-transparent text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500"
-          />
-        ) : (
-          <Markdown content={currentSpec} />
-        )}
-      </div>
+      {showBody ? (
+        <>
+          {/* When the build has started but the body is shown (user re-opened it), offer a way to
+              re-collapse so it stops dominating again. Hidden for a not-yet-started card (the body
+              is the point) and while editing (the textarea must stay open). */}
+          {isStarted && !editing && (
+            <button type="button" onClick={() => setExpanded(false)}
+              className="mb-2 text-xs font-medium text-teal-300 hover:text-teal-200">
+              {t('spec.hide')}
+            </button>
+          )}
+          <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 px-4 py-3">
+            {editing ? (
+              <textarea
+                aria-label={t('spec.editLabel')}
+                value={draft}
+                onChange={e => setDraft(e.target.value)}
+                className="min-h-64 w-full resize-y bg-transparent text-sm leading-6 text-slate-100 outline-none placeholder:text-slate-500"
+              />
+            ) : (
+              <Markdown content={currentSpec} />
+            )}
+          </div>
+        </>
+      ) : (
+        // Collapsed (started) state: a one-line summary chip + a "Show spec" toggle, so the approved
+        // spec stops eating ~60vh above the live build activity (H1-Fix-B).
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/40 px-4 py-2.5">
+          <div className="min-w-0">
+            <div className="truncate text-sm text-slate-200" title={specTitle}>{specTitle}</div>
+            <div className="text-xs text-emerald-300/80">{t('spec.collapsed')}</div>
+          </div>
+          <button type="button" onClick={() => setExpanded(true)}
+            className="shrink-0 rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-white/30">
+            {t('spec.show')}
+          </button>
+        </div>
+      )}
       <div className="mt-3 flex flex-wrap gap-2">
         {canEdit && (editing ? (
           <>
@@ -88,6 +125,15 @@ export function SpecCard({ spec, onBuild, building, started, startedSpec, isSpec
       </div>
     </div>
   )
+}
+
+/** The spec's first markdown heading (the human title), or its first non-empty line trimmed, for
+ *  the collapsed summary chip — never blank (falls back to a generic line so the chip always reads). */
+function titleFromSpec(spec: string): string {
+  const heading = /^[ \t]*#{1,6}[ \t]+(.+)$/m.exec(spec)?.[1]?.trim()
+  if (heading) return heading
+  const firstLine = spec.split('\n').map(l => l.trim()).find(l => l.length > 0)
+  return firstLine ?? 'Spec'
 }
 
 /** Derive a filename slug from the spec's first markdown heading; else "akis-spec". */

@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback, memo, type FormEvent, type ReactNode } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, memo, type FormEvent, type ReactNode } from 'react'
 import type { ApiClient, ProviderInfo, ChatOverrides, UsageInfo } from '../api/client.js'
 import { ApiError } from '../api/client.js'
 import { getProvidersCached, getModeCached } from '../api/providersCache.js'
@@ -53,6 +53,20 @@ function isStreaming(n: ThreadEntry): boolean {
   return isMsg(n) && (n as ChatMsg).streaming === true
 }
 
+/** Whether the user prefers reduced motion — read defensively (a throw / missing matchMedia must
+ *  never break a scroll). FAIL CLOSED to `true` here (skip smooth-scroll) so a motion-sensitive
+ *  user is never given an animated jump; an env without matchMedia (jsdom) also gets the instant
+ *  jump, which keeps the tests deterministic. */
+function prefersReducedMotion(): boolean {
+  try {
+    return typeof window === 'undefined' || typeof window.matchMedia !== 'function'
+      ? true
+      : window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch {
+    return true
+  }
+}
+
 /** Drop the live streaming placeholder (used on finalize + on a stream failure). Run markers
  *  and completed messages are untouched. */
 function dropPlaceholder(nodes: ThreadEntry[]): ThreadEntry[] {
@@ -98,7 +112,10 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
   return (
     <div className="flex items-start gap-3">
       <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
-      <div className="min-w-0 max-w-[90%] space-y-3 sm:max-w-[80%]">
+      {/* Bounded reading measure (~46rem): a long AKIS reply no longer runs edge-to-edge on a wide
+          window (the owner's "yazı çizgilere taşıyor"). Slightly wider than an agent bubble so the
+          spec-card document preview it can contain isn't cramped. */}
+      <div className="min-w-0 max-w-[46rem] flex-1 space-y-3">
         {detected
           ? (
             <>
@@ -204,6 +221,15 @@ export function AkisChat({
   const inputRef = useRef<HTMLInputElement>(null)
   const scrollRef = useRef<HTMLDivElement>(null)
   const stickToBottom = useRef(true) // false once the user scrolls up (auto-scroll guard)
+  // Each run marker's wrapper <div>, keyed by sessionId — so when a build STARTS we scroll that
+  // run's HEADER to the top of the viewport (block:'start') instead of yanking the whole column to
+  // its very bottom (the "kayıyor" feeling, H3). The activity then grows DOWNWARD into view, the
+  // natural "watch it work" reading order.
+  const runRefs = useRef(new Map<string, HTMLDivElement>())
+  // The sessionId of a JUST-appended run whose header we want scrolled to the top of the viewport
+  // once its wrapper has mounted. Consumed (cleared) by the layout effect below — a ref, not state,
+  // so arming it never triggers an extra render.
+  const pendingRunScroll = useRef<string | undefined>(undefined)
 
   // Persist the WHOLE spine on every change so it survives a build start + reload: chat messages
   // AND run markers serialize to the same key. Strip the transient streaming placeholder/flag so a
@@ -244,12 +270,35 @@ export function AkisChat({
     return () => { alive = false }
   }, [api])
 
-  // Auto-scroll to the latest message/card — UNLESS the user scrolled up to read history.
+  // Auto-scroll to the latest message/card — UNLESS the user scrolled up to read history, OR a
+  // build just started (then the run-header scroll below owns the viewport so we don't yank to the
+  // very bottom past the activity, H3).
   useEffect(() => {
     const el = scrollRef.current
-    if (el && stickToBottom.current) { el.scrollTop = el.scrollHeight; setAtBottom(true) }
-    else if (el) setAtBottom(isNearBottom(el)) // new content arrived while scrolled up → reveal the pill
+    if (!el) return
+    // NB: on a build-start commit `appendRun` has set stickToBottom=false, so the jump branch below is
+    // skipped and the run-header layout effect (block:'start') owns the viewport (H3) — no extra guard needed.
+    if (stickToBottom.current) { el.scrollTop = el.scrollHeight; setAtBottom(true) }
+    else setAtBottom(isNearBottom(el)) // new content arrived while scrolled up → reveal the pill
   }, [nodes, busy])
+
+  // When a build STARTS, scroll its run HEADER to the TOP of the visible area (block:'start')
+  // instead of bottom-pinning the column — the activity then grows downward into view (the
+  // "watch it work" reading order). Layout effect so it runs after the wrapper has mounted but
+  // before paint (no flash of the old scroll position). Respects reduced motion (no smooth jump).
+  useLayoutEffect(() => {
+    const id = pendingRunScroll.current
+    if (!id) return
+    const target = runRefs.current.get(id)
+    if (target) {
+      // Guard: jsdom (tests) + very old browsers lack scrollIntoView — never let a missing DOM API
+      // break a build start. The behavior is intent-driven anyway (the run still renders).
+      if (typeof target.scrollIntoView === 'function') {
+        target.scrollIntoView({ block: 'start', behavior: prefersReducedMotion() ? 'auto' : 'smooth' })
+      }
+      pendingRunScroll.current = undefined
+    }
+  }, [nodes])
 
   // The set of spec texts that ALREADY started a build — derived from the run markers in the spine
   // (each run marker's `idea` is the exact spec text passed to startBuild). PER-spec started state:
@@ -265,11 +314,21 @@ export function AkisChat({
   // EDITED) text against the run markers — so an edited-then-built card correctly reads "started".
   const isSpecStarted = useCallback((spec: string): boolean => startedSpecs.has(spec.trim()), [startedSpecs])
 
+  // One STABLE no-op for the optional gate/recovery callbacks a standalone caller (or a test) may omit.
+  // The fallback used to be an INLINE `?? (() => {})` per prop per render — a fresh function identity each
+  // render that defeated React.memo(RunBlock), re-rendering every terminal run-block on each active-run
+  // SSE frame. A single shared `noop` keeps onApprove/onConfirm/onNewBuild reference-stable so the memo bails.
+  const noop = useCallback(() => {}, [])
+
   // Append a run marker at the TAIL (the array slot where the SpecCard was approved) so the build
   // renders INLINE, below the chat turns that preceded it — chronology is structural, no timestamp.
   // useCallback-stable (only setNodes + a ref, both stable) so handleBuild below stays stable too.
+  // H3: we do NOT re-arm stickToBottom here (that was the bottom-pin "kayıyor"). Instead we arm a
+  // run-header scroll so the new build's header lands at the TOP of the viewport — the activity
+  // grows downward into view rather than the column jumping to its very bottom past it.
   const appendRun = useCallback((sessionId: string, idea: string): void => {
-    stickToBottom.current = true
+    pendingRunScroll.current = sessionId
+    stickToBottom.current = false // following the bottom would fight the header-to-top scroll
     setNodes(ns => [...ns, { role: 'run', sessionId, idea: idea.trim() }])
   }, [])
 
@@ -457,30 +516,40 @@ export function AkisChat({
           // the chronological agent bubbles. Only the ACTIVE run stays live; older runs fold once.
           if (isRun(m)) {
             const isActive = m.sessionId === activeSessionId
+            const runId = m.sessionId
             return (
-              <RunBlock
-                key={m.sessionId}
-                sessionId={m.sessionId}
-                idea={m.idea}
-                terminal={!isActive}
-                active={isActive}
-                busy={!!building}
-                api={api}
-                onApprove={onApprove ?? (() => {})}
-                onConfirm={onConfirm ?? (() => {})}
-                onNewBuild={onNewBuild ?? (() => {})}
-                baseUrl={baseUrl}
-                {...(makeClient ? { makeClient } : {})}
-                {...(isActive && onActiveView ? { onView: onActiveView } : {})}
-                {...(onReactivate ? { onReactivate } : {})}
-                {...(onActionError ? { onActionError } : {})}
-              />
+              // Wrapper carries a ref into runRefs (keyed by sessionId) so a just-started build's
+              // HEADER can be scrolled to the top of the viewport (H3) — scroll-margin keeps it a
+              // hair below the column edge. The wrapper is layout-neutral (no padding/border).
+              <div
+                key={runId}
+                data-run-id={runId}
+                className="scroll-mt-2"
+                ref={(el) => { if (el) runRefs.current.set(runId, el); else runRefs.current.delete(runId) }}
+              >
+                <RunBlock
+                  sessionId={runId}
+                  idea={m.idea}
+                  terminal={!isActive}
+                  active={isActive}
+                  busy={!!building}
+                  api={api}
+                  onApprove={onApprove ?? noop}
+                  onConfirm={onConfirm ?? noop}
+                  onNewBuild={onNewBuild ?? noop}
+                  baseUrl={baseUrl}
+                  {...(makeClient ? { makeClient } : {})}
+                  {...(isActive && onActiveView ? { onView: onActiveView } : {})}
+                  {...(onReactivate ? { onReactivate } : {})}
+                  {...(onActionError ? { onActionError } : {})}
+                />
+              </div>
             )
           }
           if (m.role === 'user') {
             return (
               <div key={i} className="flex justify-end">
-                <div className="max-w-[90%] break-words rounded-2xl rounded-br-sm bg-gradient-to-br from-[#07D1AF]/90 to-violet-500/90 px-4 py-2 text-slate-950 sm:max-w-[80%]">{m.content}</div>
+                <div className="max-w-[42rem] break-words rounded-2xl rounded-br-sm bg-gradient-to-br from-[#07D1AF]/90 to-violet-500/90 px-4 py-3 text-slate-950">{m.content}</div>
               </div>
             )
           }
@@ -489,7 +558,7 @@ export function AkisChat({
             return (
               <div key={i} role="alert" className="flex items-start gap-3">
                 <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-rose-400/40 bg-rose-500/15 text-[11px] font-black text-rose-300" aria-hidden="true">!</div>
-                <div className="min-w-0 max-w-[80%] rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-200">
+                <div className="min-w-0 max-w-[42rem] rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-200">
                   <div className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-rose-300/80">{t('akis.error.label')}</div>
                   <div>{m.content}</div>
                   {isLast && lastUser.current !== undefined && (
@@ -516,6 +585,31 @@ export function AkisChat({
             />
           )
         })}
+        {/* Cold-start starter prompts: when the thread is just AKIS's greeting (no build started
+            yet), offer a few tappable example builds so the empty canvas has an answer affordance
+            instead of a blank box — reuses the SAME sendText() path + chip styling as the
+            akis-suggest chips. Rendered INSIDE the scroll area directly under the greeting bubble
+            so the greeting + its answer-affordances read as one onboarding unit (not a far-away
+            footer band). Disappears as soon as the user sends anything. */}
+        {(() => {
+          const first = nodes[0]
+          const coldStart = !busy && !activeSessionId && nodes.length === 1 && !!first && isMsg(first) && first.role === 'assistant'
+          if (!coldStart) return null
+          const starters = [t('akis.starter.1'), t('akis.starter.2'), t('akis.starter.3'), t('akis.starter.4')]
+          return (
+            <div className="ml-11 flex flex-col gap-2">
+              <p className="text-xs text-slate-400">{t('akis.starters.title')}</p>
+              <div className="flex flex-wrap gap-2">
+                {starters.map((s, i) => (
+                  <button key={i} type="button" onClick={() => sendText(s)}
+                    className="rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.06] px-3 py-1.5 text-xs text-teal-200 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
         {/* The transient "Workflow is starting…" card (after Approve, before the run marker lands).
             The build ITSELF is an inline RunBlock at its run-marker slot — NOT a trailing injection. */}
         {starting && (
@@ -551,29 +645,6 @@ export function AkisChat({
                 {s}
               </button>
             ))}
-          </div>
-        )
-      })()}
-      {/* Cold-start starter prompts: when the thread is just AKIS's greeting (no build started
-          yet), offer a few tappable example builds so the empty canvas has an answer affordance
-          instead of a blank box — reuses the SAME sendText() path + chip styling as the
-          akis-suggest chips above. Disappears as soon as the user sends anything. */}
-      {(() => {
-        const first = nodes[0]
-        const coldStart = !busy && !activeSessionId && nodes.length === 1 && !!first && isMsg(first) && first.role === 'assistant'
-        if (!coldStart) return null
-        const starters = [t('akis.starter.1'), t('akis.starter.2'), t('akis.starter.3'), t('akis.starter.4')]
-        return (
-          <div className="flex flex-col gap-2">
-            <p className="text-xs text-slate-400">{t('akis.starters.title')}</p>
-            <div className="flex flex-wrap gap-2">
-              {starters.map((s, i) => (
-                <button key={i} type="button" onClick={() => sendText(s)}
-                  className="rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.06] px-3 py-1.5 text-xs text-teal-200 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
-                  {s}
-                </button>
-              ))}
-            </div>
           </div>
         )
       })()}

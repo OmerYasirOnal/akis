@@ -56,7 +56,15 @@ export function PublishDestination({ api }: { api: ApiClient }) {
 
       {err && <div className="mb-3"><ErrorNote>{err}</ErrorNote></div>}
 
-      {status === undefined ? null : !status.configured ? (
+      {/* In-flight first fetch (status undefined AND no error yet): an inline spinner row instead of a
+          blank gap — mirrors HistoryPage. A failed fetch keeps status undefined but sets `err`, which
+          renders above, so the spinner only shows during a genuine load. */}
+      {status === undefined && !err ? (
+        <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-4 text-sm text-slate-400">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#07D1AF]/40 border-t-[#07D1AF]" />
+          {t('settings.loading')}
+        </div>
+      ) : status === undefined ? null : !status.configured ? (
         <div className="text-sm text-slate-400">{t('settings.publish.notConfigured')}</div>
       ) : status.present ? (
         <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
@@ -109,7 +117,7 @@ export function PublishDestination({ api }: { api: ApiClient }) {
               onChange={e => setSshPrivateKey(e.target.value)}
               rows={5}
               placeholder={'-----BEGIN OPENSSH PRIVATE KEY-----'}
-              className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-600 focus:border-teal-400/40 focus:outline-none"
+              className="w-full rounded-lg border border-white/10 bg-black/30 px-3 py-2 font-mono text-xs text-slate-100 placeholder:text-slate-600 focus:border-[#07D1AF] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
             />
           </Field>
           <div>

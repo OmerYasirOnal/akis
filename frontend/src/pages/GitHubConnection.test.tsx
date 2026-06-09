@@ -24,6 +24,22 @@ afterEach(() => {
 })
 
 describe('GitHubConnection', () => {
+  it('shows a loading row while the first status fetch is in flight, then the content', async () => {
+    // A deferred status response: the loading row must show until it resolves.
+    let resolveStatus!: (s: GitHubConnectionStatus) => void
+    const pending = new Promise<GitHubConnectionStatus>(r => { resolveStatus = r })
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/auth/github/status')) return { ok: true, status: 200, json: async () => pending } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response
+    })
+    wrap(new ApiClient('', fetchFn))
+    expect(await screen.findByText(/Loading…/)).toBeInTheDocument()
+    // Resolve → loading row gone, real content shown.
+    resolveStatus({ connected: false, configured: false })
+    expect(await screen.findByText(/not configured on this server/i)).toBeInTheDocument()
+    expect(screen.queryByText(/Loading…/)).not.toBeInTheDocument()
+  })
+
   it('configured:false renders the not-configured note with NO connect button', async () => {
     const { api } = fakeApi({ connected: false, configured: false })
     wrap(api)

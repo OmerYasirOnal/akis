@@ -169,6 +169,11 @@ export const STRINGS = {
     'spec.build': 'Approve & Build',
     'spec.building': 'Starting workflow…',
     'spec.started': 'Workflow started',
+    // Once a spec has started building, its full body is collapsed (it stops eating ~60vh above the
+    // live activity) — a one-line summary chip + a toggle to re-reveal it (H1-Fix-B).
+    'spec.show': 'Show spec',
+    'spec.hide': 'Hide spec',
+    'spec.collapsed': 'Spec approved — building',
     'workflow.starting.title': 'Workflow is starting',
     'workflow.starting.body': 'Creating the run session and attaching the live agent stream.',
     'workflow.starting.elapsed': 'Elapsed',
@@ -187,16 +192,6 @@ export const STRINGS = {
     'preview.verified': 'verified',
     'preview.unverified': 'unverified',
     'preview.run': 'Run app',
-    'preview.collapse': 'Collapse preview',
-    'preview.expand': 'Expand preview',
-    'preview.collapsed': 'Preview',
-    'preview.tab.chat': 'Chat',
-    // Mobile pane-switcher tab → the live preview pane. Must NOT read "Preview" — that collides by
-    // accessible name with PreviewPanel's inner Preview tab once a run emits code files.
-    'preview.tab.live': 'Live view',
-    // Outer mobile pane-switcher tablist label — distinct from PreviewPanel's inner "Live preview"
-    // tablist so a screen reader can tell the two tablists apart.
-    'preview.pane.switcher': 'View',
     'preview.starting': 'starting…',
     'preview.booting': 'Booting the app…',
     'preview.rendering': 'Rendering your app…',
@@ -211,6 +206,23 @@ export const STRINGS = {
     'preview.unsupported': 'This app can’t be previewed live.',
     'preview.retry': 'Retry',
     'preview.bootSlow': 'Still booting — taking longer than expected.',
+    // ── Preview header actions (only when the URL is embeddable /preview/) ──
+    'preview.openTab': 'Open in new tab',
+    'preview.copyUrl': 'Copy URL',
+    'preview.refresh': 'Refresh preview',
+    // ── Preview drawer + device toggle ──
+    'preview.open': 'Open preview',
+    'preview.close': 'Close preview',
+    'preview.resize': 'Resize preview',
+    'preview.resizeValue': 'Preview {n}% of width',
+    'preview.resetHint': 'Drag to resize · double-click to reset width',
+    'preview.device.responsive': 'Responsive',
+    'preview.device.mobile': 'Mobile',
+    'preview.device.tablet': 'Tablet',
+    'preview.device.desktop': 'Desktop',
+    'preview.device.label': 'Preview width',
+    'preview.device.unit': 'px',
+    'preview.rotate': 'Rotate',
     // ── Publish to your own server (OCI) — POST-`done`, optional, NON-GATING ──
     'publish.title': 'Publish to your server',
     'publish.publish': 'Publish',
@@ -227,6 +239,7 @@ export const STRINGS = {
     'code.files': 'files',
     'code.empty': 'No code yet — files appear here once the agents finish writing the app.',
     'code.lines': 'lines',
+    'code.copyAll': 'Copy all',
     'copy.file': 'Copy file',
     'copy.codeBlock': 'Copy code',
     // ── Build history (studio redesign) ──
@@ -277,6 +290,9 @@ export const STRINGS = {
     'tests.fail': 'FAIL',
     'tests.scenarios': 'Scenarios',
     'tests.p95': 'p95',
+    // Honesty: a genuinely-unmeasured metric reads as honest-absent (tooltip), not broken. AKIS
+    // NEVER fabricates a number — '—' stays '—', the title just says WHY it's empty.
+    'tests.notMeasured': 'Not measured for this run',
     // ── Trust Report (auditable evidence behind the green checkmark) ──
     'trust.tab': 'Trust',
     'trust.title': 'Trust report',
@@ -304,6 +320,8 @@ export const STRINGS = {
     'nav.docs': 'Docs',
     'nav.logout': 'Sign out',
     'nav.toggleLanguage': 'Switch language',
+    'nav.primary': 'Primary',
+    'a11y.skipToContent': 'Skip to content',
     'mode.demo.badge': 'DEMO · mock-verified',
     'mode.demo.title': 'Demo mode: builds use a mock provider and/or mock verification — "verified" is NOT from real tests. To run live, real-verified builds, add a provider key in Settings.',
     'common.loading': 'Loading…',
@@ -319,6 +337,7 @@ export const STRINGS = {
     'auth.password.show': 'Show password',
     'auth.password.hide': 'Hide password',
     'auth.name': 'Name',
+    'auth.namePlaceholder': 'Ada Lovelace',
     'auth.noAccount': 'New to AKIS?',
     'auth.haveAccount': 'Already have an account?',
     'auth.pwHint': 'At least 8 characters.',
@@ -362,6 +381,7 @@ export const STRINGS = {
     'billing.ok.success': 'You’re on Pro — thanks! Your plan is active.',
     'billing.ok.cancel': 'Checkout cancelled — you’re still on the Free plan.',
     'settings.sub': 'Your account, agents, and workflow defaults.',
+    'settings.loading': 'Loading…',
     'settings.keys.title': 'Provider keys',
     'settings.keys.sub': 'Connect your own AI provider keys (stored encrypted on the server, never echoed).',
     'settings.keys.connected': 'Connected',
@@ -369,6 +389,7 @@ export const STRINGS = {
     'settings.keys.save': 'Save',
     'settings.keys.remove': 'Remove',
     'settings.keys.placeholder': 'Paste API key…',
+    'settings.keys.aria': '{provider} key',
     // ── Per-user GitHub connection ──
     'settings.github.title': 'GitHub delivery',
     'settings.github.sub': 'Connect your GitHub so AKIS ships verified builds to a repo you own.',
@@ -937,6 +958,11 @@ export const STRINGS = {
     'spec.build': 'Onayla & Build',
     'spec.building': 'Workflow başlıyor…',
     'spec.started': 'Workflow başladı',
+    // Bir spec build’e başladığında tüm gövdesi katlanır (canlı etkinliğin üstünde ~60vh yer
+    // kaplamayı bırakır) — tek satırlık özet + tekrar açmak için bir düğme (H1-Fix-B).
+    'spec.show': 'Spec’i göster',
+    'spec.hide': 'Spec’i gizle',
+    'spec.collapsed': 'Spec onaylandı — inşa ediliyor',
     'workflow.starting.title': 'Workflow başlıyor',
     'workflow.starting.body': 'Çalışma oturumu oluşturuluyor ve canlı ajan akışı bağlanıyor.',
     'workflow.starting.elapsed': 'Geçen süre',
@@ -955,14 +981,6 @@ export const STRINGS = {
     'preview.verified': 'doğrulandı',
     'preview.unverified': 'doğrulanmadı',
     'preview.run': 'Uygulamayı çalıştır',
-    'preview.collapse': 'Önizlemeyi daralt',
-    'preview.expand': 'Önizlemeyi aç',
-    'preview.collapsed': 'Önizleme',
-    'preview.tab.chat': 'Sohbet',
-    // Canlı görünüm — "Önizleme" ile çakışmasın (PreviewPanel'in iç "Önizleme" sekmesi).
-    'preview.tab.live': 'Canlı görünüm',
-    // Mobil bölme değiştirici tablist etiketi — iç "Canlı önizleme" tablist'inden ayırt edilebilir.
-    'preview.pane.switcher': 'Görünüm',
     'preview.starting': 'başlıyor…',
     'preview.booting': 'Uygulama başlatılıyor…',
     'preview.rendering': 'Uygulaman çiziliyor…',
@@ -977,6 +995,23 @@ export const STRINGS = {
     'preview.unsupported': 'Bu uygulama canlı önizlenemiyor.',
     'preview.retry': 'Yeniden dene',
     'preview.bootSlow': 'Hâlâ başlatılıyor — beklenenden uzun sürüyor.',
+    // ── Önizleme başlık eylemleri (yalnızca URL gömülebilir /preview/ olduğunda) ──
+    'preview.openTab': 'Yeni sekmede aç',
+    'preview.copyUrl': "URL'yi kopyala",
+    'preview.refresh': 'Önizlemeyi yenile',
+    // ── Önizleme çekmecesi + cihaz geçişi ──
+    'preview.open': 'Önizlemeyi aç',
+    'preview.close': 'Önizlemeyi kapat',
+    'preview.resize': 'Önizlemeyi yeniden boyutlandır',
+    'preview.resizeValue': "Önizleme genişliğin %{n}'i",
+    'preview.resetHint': 'Boyutlandırmak için sürükleyin · genişliği sıfırlamak için çift tıklayın',
+    'preview.device.responsive': 'Esnek',
+    'preview.device.mobile': 'Mobil',
+    'preview.device.tablet': 'Tablet',
+    'preview.device.desktop': 'Masaüstü',
+    'preview.device.label': 'Önizleme genişliği',
+    'preview.device.unit': 'px',
+    'preview.rotate': 'Döndür',
     // ── Kendi sunucuna yayınla (OCI) — `done` SONRASI, isteğe bağlı, KAPI DEĞİL ──
     'publish.title': 'Sunucuna yayınla',
     'publish.publish': 'Yayınla',
@@ -993,6 +1028,7 @@ export const STRINGS = {
     'code.files': 'dosya',
     'code.empty': 'Henüz kod yok — ajanlar uygulamayı yazmayı bitirince dosyalar burada görünür.',
     'code.lines': 'satır',
+    'code.copyAll': 'Tümünü kopyala',
     'copy.file': 'Dosyayı kopyala',
     'copy.codeBlock': 'Kodu kopyala',
     // P1-CORE-1: çalıştırma başına "bu sonuç simüle edildi" rozeti — verify gate kartında ve
@@ -1047,6 +1083,7 @@ export const STRINGS = {
     'tests.fail': 'KALDI',
     'tests.scenarios': 'Senaryolar',
     'tests.p95': 'p95',
+    'tests.notMeasured': 'Bu çalışma için ölçülmedi',
     // ── Güven Raporu (yeşil onayın arkasındaki denetlenebilir kanıt) ──
     'trust.tab': 'Güven',
     'trust.title': 'Güven raporu',
@@ -1074,6 +1111,8 @@ export const STRINGS = {
     'nav.docs': 'Dökümantasyon',
     'nav.logout': 'Çıkış yap',
     'nav.toggleLanguage': 'Dili değiştir',
+    'nav.primary': 'Birincil',
+    'a11y.skipToContent': 'İçeriğe geç',
     'mode.demo.badge': 'DEMO · sahte doğrulama',
     'mode.demo.title': 'Demo modu: derlemeler bir taklit sağlayıcı ve/veya taklit doğrulama kullanır — "doğrulandı" GERÇEK testlerden gelmez. Canlı, gerçekten doğrulanmış derlemeler için Ayarlar’dan bir sağlayıcı anahtarı ekleyin.',
     'common.loading': 'Yükleniyor…',
@@ -1089,6 +1128,7 @@ export const STRINGS = {
     'auth.password.show': 'Parolayı göster',
     'auth.password.hide': 'Parolayı gizle',
     'auth.name': 'İsim',
+    'auth.namePlaceholder': 'Ada Lovelace',
     'auth.noAccount': 'AKIS’te yeni misin?',
     'auth.haveAccount': 'Zaten hesabın var mı?',
     'auth.pwHint': 'En az 8 karakter.',
@@ -1132,6 +1172,7 @@ export const STRINGS = {
     'billing.ok.success': 'Pro’dasın — teşekkürler! Planın aktif.',
     'billing.ok.cancel': 'Ödeme iptal edildi — hâlâ Ücretsiz plandasın.',
     'settings.sub': 'Hesabın, ajanların ve varsayılan iş akışların.',
+    'settings.loading': 'Yükleniyor…',
     'settings.keys.title': 'Sağlayıcı anahtarları',
     'settings.keys.sub': 'Kendi AI sağlayıcı anahtarlarını bağla (sunucuda şifreli saklanır, asla geri gösterilmez).',
     'settings.keys.connected': 'Bağlı',
@@ -1139,6 +1180,7 @@ export const STRINGS = {
     'settings.keys.save': 'Kaydet',
     'settings.keys.remove': 'Kaldır',
     'settings.keys.placeholder': 'API anahtarını yapıştır…',
+    'settings.keys.aria': '{provider} anahtarı',
     // ── Kullanıcıya özel GitHub bağlantısı ──
     'settings.github.title': 'GitHub teslimatı',
     'settings.github.sub': 'GitHub hesabını bağla, AKIS doğrulanmış yapıları senin sahip olduğun bir depoya göndersin.',

@@ -30,3 +30,24 @@ describe('auth.oauth.* i18n lockstep', () => {
     }
   })
 })
+
+/**
+ * Localized assistive-tech strings that replaced hardcoded English: the provider-key aria-label
+ * template (settings.keys.aria, interpolates {provider}) and the signup name placeholder
+ * (auth.namePlaceholder). Both must exist in BOTH locales, and the aria template must keep its
+ * {provider} placeholder in both so the FE `fill` never leaks a literal "{provider}".
+ */
+describe('localized AT strings (provider-key aria + signup name placeholder)', () => {
+  it('carries settings.keys.aria + auth.namePlaceholder in BOTH locales', () => {
+    for (const k of ['settings.keys.aria', 'auth.namePlaceholder'] as const) {
+      expect(STRINGS.en[k]).toBeTruthy()
+      expect((STRINGS.tr as Record<string, string>)[k]).toBeTruthy()
+    }
+  })
+
+  it('settings.keys.aria keeps the {provider} placeholder in both locales', () => {
+    for (const loc of ['en', 'tr'] as const) {
+      expect((STRINGS[loc] as Record<string, string>)['settings.keys.aria']).toContain('{provider}')
+    }
+  })
+})

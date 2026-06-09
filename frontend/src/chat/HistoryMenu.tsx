@@ -13,11 +13,31 @@ export function HistoryMenu({ builds, onOpen }: { builds: RecentBuild[]; onOpen:
   const { t } = useI18n()
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  // The trigger button — Escape (and outside-click is mouse) returns focus here so keyboard users
+  // aren't dropped onto <body> when the menu closes (mirrors ModelPicker's prevFocus restore).
+  const triggerRef = useRef<HTMLButtonElement>(null)
+  // The popup panel — keyboard nav queries its live [role=menuitem] elements (ModelPicker idiom:
+  // read the rendered DOM at event time rather than maintaining a parallel ref array).
+  const menuRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open) return
     const onDoc = (e: MouseEvent): void => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
-    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') setOpen(false) }
+    // MENU A11Y: roving focus across [role=menuitem]. On open, focus the first item. Arrow keys move
+    // (clamped, matching ModelPicker's non-wrapping Tab trap), Home/End jump to the ends, Escape
+    // closes + restores focus to the trigger. Mouse/click selection is untouched.
+    const items = (): HTMLElement[] => menuRef.current ? Array.from(menuRef.current.querySelectorAll<HTMLElement>('[role="menuitem"]')) : []
+    items()[0]?.focus() // focus the first item on open
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.key === 'Escape') { setOpen(false); triggerRef.current?.focus(); return }
+      const f = items()
+      if (f.length === 0) return
+      const idx = f.findIndex(el => el === document.activeElement)
+      if (e.key === 'ArrowDown') { e.preventDefault(); f[Math.min(idx + 1, f.length - 1)]?.focus() }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); f[Math.max(idx - 1, 0)]?.focus() }
+      else if (e.key === 'Home') { e.preventDefault(); f[0]?.focus() }
+      else if (e.key === 'End') { e.preventDefault(); f[f.length - 1]?.focus() }
+    }
     document.addEventListener('mousedown', onDoc)
     document.addEventListener('keydown', onKey)
     return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey) }
@@ -26,6 +46,7 @@ export function HistoryMenu({ builds, onOpen }: { builds: RecentBuild[]; onOpen:
   return (
     <div ref={ref} className="relative">
       <button
+        ref={triggerRef}
         onClick={() => setOpen(o => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
@@ -35,7 +56,7 @@ export function HistoryMenu({ builds, onOpen }: { builds: RecentBuild[]; onOpen:
         <span aria-hidden className="text-[9px]">▾</span>
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 z-20 mt-1 max-h-[70vh] w-80 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/95 p-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-md sm:max-h-96 sm:w-96">
+        <div ref={menuRef} role="menu" className="absolute right-0 z-20 mt-1 max-h-[70vh] w-80 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/95 p-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-md sm:max-h-96 sm:w-96">
           {builds.length === 0
             ? <div className="px-3 py-3 text-xs text-slate-500">{t('history.empty')}</div>
             : builds.map(b => (

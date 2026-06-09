@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { ChatThread, RecoveryBubble, ChatBubble } from './ChatThread.js'
@@ -108,6 +108,32 @@ describe('ChatStudio', () => {
     expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('on build start, scrolls the run HEADER to the top (block:start) instead of the column bottom (H3)', async () => {
+    // jsdom has no scrollIntoView — install a spy so we can assert WHAT the auto-scroll targets.
+    const spy = vi.fn()
+    Object.defineProperty(Element.prototype, 'scrollIntoView', { value: spy, configurable: true, writable: true })
+    try {
+      const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+        if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+        if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: SPEC_REPLY }), text: async () => '' } as unknown as Response
+        if (path.endsWith('/sessions') && init?.method === 'POST') return { ok: true, status: 201, json: async () => ({ id: 's1', status: 'awaiting_spec_approval', version: 1 }), text: async () => '' } as unknown as Response
+        return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+      })
+      const api = new ApiClient('', fetchFn)
+      const fake = new FakeStream()
+      render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+      await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
+      await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+
+      // The run marker mounts → its wrapper header is scrolled to the TOP of the viewport.
+      await waitFor(() => expect(spy).toHaveBeenCalled())
+      expect(spy).toHaveBeenCalledWith(expect.objectContaining({ block: 'start' }))
+    } finally {
+      delete (Element.prototype as unknown as { scrollIntoView?: unknown }).scrollIntoView
+    }
+  })
+
   it('keeps the user in chat while the workflow starts from the approved spec', async () => {
     const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
       if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
@@ -126,10 +152,14 @@ describe('ChatStudio', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: 'Workflow started' })).toBeDisabled())
     expect(screen.getAllByLabelText(/ask akis/i).length).toBeGreaterThanOrEqual(1)
     act(() => fake.emit(ev({ kind: 'done', verified: true, provider: 'mock' }), 1))
-    await userEvent.click(screen.getByRole('button', { name: 'Collapse preview' }))
-    expect(screen.getByRole('button', { name: 'Expand preview' })).toBeInTheDocument()
-    // The collapsed-rail vertical label (a <span>, not the mobile Chat/Preview tab <button>).
-    expect(screen.getByText('Preview', { selector: 'span' })).toBeInTheDocument()
+    // The preview now lives in a slide-in DRAWER (the in-flow Collapse/Expand <aside> was retired).
+    // Closed-by-default → the edge-tab "Open preview" reopens it; the ✕ closes it back. Exercise both.
+    const drawer = await screen.findByTestId('preview-drawer')
+    expect(drawer).toHaveAttribute('aria-hidden', 'true')
+    await userEvent.click(screen.getByTestId('preview-edge-tab')) // "Open preview"
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'false'))
+    await userEvent.click(screen.getByRole('button', { name: 'Close preview' }))
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
   })
 
   it('a follow-up approved spec EDITS the prior app: startSession carries baseSessionId once the prior session produced code', async () => {
@@ -165,8 +195,12 @@ describe('ChatStudio', () => {
     await userEvent.click(approves[approves.length - 1]!)
     await waitFor(() => expect(sessionBodies.length).toBe(2))
     expect(sessionBodies[1]).toMatchObject({ baseSessionId: 's1' })
-    // UX honesty: the edit-mode disclosure badge renders for the new session.
-    await waitFor(() => expect(screen.getByText(/Editing the previous app/)).toBeInTheDocument())
+    // UX honesty: the edit-mode disclosure badge renders for the new session — surfaced BOTH above
+    // the chat AND inside the preview drawer's cards (the user judges the merged result in the drawer,
+    // so the merge-over-base fact must travel there too).
+    await waitFor(() => expect(screen.getAllByText(/Editing the previous app/).length).toBeGreaterThanOrEqual(1))
+    const drawer = await screen.findByTestId('preview-drawer')
+    await waitFor(() => expect(within(drawer).getByText(/Editing the previous app/)).toBeInTheDocument())
   })
 
   it('a follow-up build does NOT carry baseSessionId when the prior session produced no code', async () => {

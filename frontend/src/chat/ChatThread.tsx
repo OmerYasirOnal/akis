@@ -21,6 +21,19 @@ const ROLE_TINT: Record<string, string> = {
   trace: 'from-emerald-400/30 to-emerald-400/5 text-emerald-200',
   critic: 'from-amber-400/30 to-amber-400/5 text-amber-200',
 }
+/** Per-role LEFT-BORDER accent for the agent bubble (the same identity hue as the avatar, drawn
+ *  as a solid 2px stripe) so AKIS/Scribe/Proto/Trace/Critic are scannable at a distance — the
+ *  monochrome-bubbles fix (M5). A subtle accent, not a full-color card. Unknown roles fall back. */
+const ROLE_ACCENT: Record<string, string> = {
+  orchestrator: 'border-l-teal-400/50',
+  scribe: 'border-l-sky-400/50',
+  proto: 'border-l-violet-400/50',
+  trace: 'border-l-emerald-400/50',
+  critic: 'border-l-amber-400/50',
+}
+/** A comfortable reading measure (~75ch) so a long agent line never runs edge-to-edge on a wide
+ *  window — the owner's "yazı çizgilere taşıyor" fix. Shared by every left-aligned bubble. */
+const BUBBLE_MEASURE = 'max-w-[42rem]'
 const AKIS_NAME: Record<string, string> = { orchestrator: 'AKIS', scribe: 'Scribe', proto: 'Proto', trace: 'Trace', critic: 'Critic' }
 const dot = (ok?: boolean, done?: boolean): string => ok === false ? 'bg-rose-400' : done ? 'bg-emerald-400' : 'bg-teal-400 animate-pulse'
 
@@ -40,7 +53,7 @@ export function Avatar({ role }: { role: string }) {
 export function UserBubble({ m }: { m: UserMsg }) {
   return (
     <div className="flex justify-end">
-      <div className="max-w-[80%] rounded-2xl rounded-br-sm bg-gradient-to-br from-teal-500/90 to-violet-500/90 px-4 py-2 text-slate-950">{m.text}</div>
+      <div className="max-w-[42rem] break-words rounded-2xl rounded-br-sm bg-gradient-to-br from-teal-500/90 to-violet-500/90 px-4 py-3 text-slate-950">{m.text}</div>
     </div>
   )
 }
@@ -57,7 +70,10 @@ export function AgentBubble({ m }: { m: AgentMsg }) {
   return (
     <div className="flex items-start gap-3">
       <Avatar role={m.agent} />
-      <div className="max-w-[80%] rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-3">
+      {/* Bounded reading measure + a per-role left-accent stripe (M5/M6): the bubble is no longer a
+          flat monochrome box — the role hue on the avatar is echoed as a 2px left border so the
+          conversation is scannable, and the ~42rem cap keeps long lines off the right edge. */}
+      <div className={`${BUBBLE_MEASURE} rounded-2xl rounded-tl-sm border border-l-2 border-white/10 ${ROLE_ACCENT[m.agent] ?? 'border-l-slate-500/40'} bg-white/[0.03] px-4 py-3`}>
         <div className="mb-1 flex items-center gap-2 text-sm font-semibold text-slate-100">
           <span title={t(`roster.status.${m.ok === false ? 'failed' : m.done ? 'done' : 'working'}`)} className={`h-2 w-2 rounded-full ${dot(m.ok, m.done)}`} />{AKIS_NAME[m.agent] ?? m.agent}
           {/* Coalesced re-runs (critic-driven iterate loop): show "↻N" so one bubble conveys "revised

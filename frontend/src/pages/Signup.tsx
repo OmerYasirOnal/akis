@@ -35,7 +35,7 @@ export function Signup({ api }: { api: ApiClient }) {
       <div className="mb-4"><OAuthButtons api={api} /></div>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.name')}>
-          <Input autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Ada Lovelace" required />
+          <Input autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder={t('auth.namePlaceholder')} required />
         </Field>
         <Field label={t('auth.email')}>
           <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />

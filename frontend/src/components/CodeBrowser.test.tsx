@@ -66,6 +66,18 @@ describe('CodeBrowser', () => {
     expect(writeText).toHaveBeenCalledWith('export const x = 1\nconsole.log(x)')
   })
 
+  it('copies ALL files as path-labelled fenced blocks joined by a blank line', async () => {
+    const writeText = vi.fn(() => Promise.resolve())
+    const user = userEvent.setup()
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText }, configurable: true })
+    renderI18n(<CodeBrowser files={files} />)
+    await user.click(screen.getByRole('button', { name: 'Copy all' }))
+    // Files are sorted (README.md before src/index.ts); each fenced block is ```path\ncontent```.
+    expect(writeText).toHaveBeenCalledWith(
+      '```README.md\n# Hello\n```\n\n```src/index.ts\nexport const x = 1\nconsole.log(x)\n```',
+    )
+  })
+
   it('renders an empty state when there are no files (no crash)', () => {
     renderI18n(<CodeBrowser files={[]} />)
     expect(screen.getByText(/No code yet/i)).toBeInTheDocument()

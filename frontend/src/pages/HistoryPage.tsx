@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ApiClient, SessionSummary } from '../api/client.js'
+import { SectionTitle } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { useRouter } from '../router/router.js'
 import { ideaTitle } from '../chat/recentBuilds.js'
@@ -29,10 +30,7 @@ export function HistoryPage({ api }: { api: ApiClient }) {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-2xl font-extrabold text-transparent">{t('history.title')}</h1>
-        <p className="mt-1 text-sm text-slate-400">{t('history.sub')}</p>
-      </div>
+      <SectionTitle sub={t('history.sub')}>{t('history.title')}</SectionTitle>
 
       {builds === undefined && !failed ? (
         <div className="flex items-center gap-3 rounded-2xl border border-white/10 bg-white/[0.02] px-4 py-6 text-sm text-slate-400">
