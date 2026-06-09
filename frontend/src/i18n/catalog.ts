@@ -231,6 +231,10 @@ export const STRINGS = {
     'preview.resize': 'Resize preview',
     'preview.resizeValue': 'Preview {n}% of width',
     'preview.resetHint': 'Drag to resize · double-click to reset width',
+    // Mobile bottom-sheet grip (the drag handle at the top of the <lg preview sheet). The aria-label
+    // names the control; the hint explains the snap gesture for pointer + AT users.
+    'preview.sheetGrip': 'Resize preview sheet',
+    'preview.sheetGripHint': 'Drag up or down to resize · tap to expand',
     'preview.device.responsive': 'Responsive',
     'preview.device.mobile': 'Mobile',
     'preview.device.tablet': 'Tablet',
@@ -1039,6 +1043,10 @@ export const STRINGS = {
     'preview.resize': 'Önizlemeyi yeniden boyutlandır',
     'preview.resizeValue': "Önizleme genişliğin %{n}'i",
     'preview.resetHint': 'Boyutlandırmak için sürükleyin · genişliği sıfırlamak için çift tıklayın',
+    // Mobil alt-sayfa tutamacı (<lg önizleme sayfasının üstündeki sürükleme tutamacı). aria-label
+    // denetimi adlandırır; ipucu, işaretçi ve AT kullanıcıları için yapışma hareketini açıklar.
+    'preview.sheetGrip': 'Önizleme sayfasını yeniden boyutlandır',
+    'preview.sheetGripHint': 'Boyutlandırmak için yukarı/aşağı sürükleyin · genişletmek için dokunun',
     'preview.device.responsive': 'Esnek',
     'preview.device.mobile': 'Mobil',
     'preview.device.tablet': 'Tablet',

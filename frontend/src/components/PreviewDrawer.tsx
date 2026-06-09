@@ -1,5 +1,17 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import { useI18n } from '../i18n/I18nContext.js'
+import { loadSnap, saveSnap, snapUp, snapDown, nearestSnap, SNAP_HEIGHT, SNAP_ORDER, type SheetSnap } from './bottomSheetSnap.js'
+
+/** Whether the user prefers reduced motion — read defensively (mirrors AkisChat's helper). FAIL CLOSED
+ *  to `true` (no animation) so a motion-sensitive user is never given an animated snap; jsdom (no
+ *  matchMedia) also gets the instant path, keeping the bottom-sheet tests deterministic. */
+function prefersReducedMotion(): boolean {
+  try {
+    return typeof window === 'undefined' || typeof window.matchMedia !== 'function'
+      ? true
+      : window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  } catch { return true }
+}
 
 /** Fill {n}/{base} placeholders in a string (the catalog carries the template). Same local helper idiom
  *  as AgentWriteProposals.tsx — i18n keeps templates; the FE interpolates at render. */
@@ -143,8 +155,88 @@ export function PreviewDrawer({
   // useState's initializer so a later `open` flip can't retroactively pop the overlay open.
   const [mobileOpen, setMobileOpen] = useState(() => allowAutoOpen && open)
   const fabRef = useRef<HTMLButtonElement>(null)
-  const overlayRef = useRef<HTMLDivElement>(null)
+  // The mobile sheet panel — both the focus-trap container (queried for focusables) and the element
+  // whose live height the grip drag reads. One ref serves both since they're the same DOM node.
+  const sheetRef = useRef<HTMLDivElement>(null)
   const closeMobile = useCallback(() => { onClose(); setMobileOpen(false) }, [onClose])
+
+  // --- BOTTOM-SHEET SNAP (<lg). The mobile preview is a draggable bottom-sheet with three snap points
+  // (peek/half/full) so a phone user can pull the running app up to inspect it — the side-by-side split
+  // only exists at lg+. The current snap is persisted (loadSnap) so the sheet reopens at the size the
+  // user last chose. `data-snap` exposes it for tests. A grip at the top drives the snap: a TAP steps
+  // up (peek→half→full, cycling back from full) and a DRAG settles to the nearest snap on release;
+  // dragging the grip below peek closes the sheet entirely. Under prefers-reduced-motion the height
+  // change is INSTANT (no transition) — the grip's drag is always 1:1 regardless.
+  const [snap, setSnap] = useState<SheetSnap>(() => loadSnap())
+  useEffect(() => { saveSnap(snap) }, [snap])
+  const gripRef = useRef<HTMLDivElement>(null)
+  // Live-drag height (px) while a grip drag is in progress; null = not dragging (sheet uses the snap's
+  // CSS height). Writing px directly keeps the drag 1:1 with the finger; on release we map to a snap.
+  const [dragHeight, setDragHeight] = useState<number | null>(null)
+  const dragStartY = useRef(0)
+  const dragStartH = useRef(0)
+  const sheetDragging = useRef(false)
+  // Did the pointer actually MOVE? A pure tap (no movement) steps the snap up; a real drag settles to
+  // the nearest snap. Tracked so a tap-to-expand isn't mistaken for a zero-delta drag (which would
+  // re-snap to the SAME height and feel inert).
+  const movedRef = useRef(false)
+  const reduced = prefersReducedMotion()
+
+  const onGripMove = useCallback((e: PointerEvent): void => {
+    if (!sheetDragging.current) return
+    const dy = dragStartY.current - e.clientY // up = positive (taller)
+    if (Math.abs(dy) > 4) movedRef.current = true
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 800
+    // Clamp the live height to [0 .. full] so the sheet can't grow past the screen nor invert.
+    const next = Math.max(0, Math.min(dragStartH.current + dy, vh * 0.92))
+    setDragHeight(next)
+  }, [])
+
+  const onGripUp = useCallback((e: PointerEvent): void => {
+    if (!sheetDragging.current) return
+    sheetDragging.current = false
+    document.removeEventListener('pointermove', onGripMove)
+    document.removeEventListener('pointerup', onGripUp)
+    try { gripRef.current?.releasePointerCapture(e.pointerId) } catch { /* capture may be gone */ }
+    const vh = typeof window !== 'undefined' ? window.innerHeight : 800
+    const h = dragHeight
+    setDragHeight(null)
+    if (!movedRef.current) {
+      // A pure TAP: step up one snap, cycling full→peek so a single control reaches every size.
+      setSnap(s => (s === 'full' ? SNAP_ORDER[0]! : snapUp(s)))
+      return
+    }
+    // A real DRAG: if released below the peek band, close the sheet; otherwise settle to the nearest snap.
+    if (h !== null && h < 70) { closeMobile(); return }
+    if (h !== null) setSnap(nearestSnap(h, vh))
+  }, [onGripMove, dragHeight, closeMobile])
+
+  const onGripDown = useCallback((e: React.PointerEvent<HTMLDivElement>): void => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    sheetDragging.current = true
+    movedRef.current = false
+    dragStartY.current = e.clientY
+    // Seed the drag from the sheet's CURRENT rendered height so the grab is 1:1 from where it sits.
+    dragStartH.current = sheetRef.current?.getBoundingClientRect().height ?? 0
+    try { gripRef.current?.setPointerCapture(e.pointerId) } catch { /* non-fatal: doc listeners track it */ }
+    document.addEventListener('pointermove', onGripMove)
+    document.addEventListener('pointerup', onGripUp)
+  }, [onGripMove, onGripUp])
+
+  // Keyboard snap control on the grip: ArrowUp/ArrowDown step the snap; Enter cycles up. Gives keyboard
+  // users the same reach as the pointer drag (the drag itself is pointer-only).
+  const onGripKey = useCallback((e: React.KeyboardEvent<HTMLDivElement>): void => {
+    if (e.key === 'ArrowUp') { e.preventDefault(); setSnap(snapUp) }
+    else if (e.key === 'ArrowDown') { e.preventDefault(); setSnap(snapDown) }
+    else if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setSnap(s => (s === 'full' ? SNAP_ORDER[0]! : snapUp(s))) }
+  }, [])
+
+  // Defensive cleanup: drop the grip drag listeners if the drawer unmounts mid-drag (session switch).
+  useEffect(() => () => {
+    document.removeEventListener('pointermove', onGripMove)
+    document.removeEventListener('pointerup', onGripUp)
+  }, [onGripMove, onGripUp])
 
   // MOBILE A11Y — mirrors ModelPicker VERBATIM in spirit (#10 modal contract): on open, focus moves INTO the
   // panel (first focusable = the ✕); Escape closes; Tab is TRAPPED inside the dialog; body scroll is locked
@@ -152,7 +244,10 @@ export function PreviewDrawer({
   // is RESTORED to the FAB that opened it. Only wires up while the overlay is actually open.
   useEffect(() => {
     if (!mobileOpen) return
-    const panel = overlayRef.current
+    // The focus-trap container is the SHEET panel (grip + header ✕ + body) — sheetRef — so the trap
+    // covers every control in the sheet, and the first focusable is the grip (then the ✕). The grip is
+    // a slider, so focusing it lets keyboard users adjust the snap immediately.
+    const panel = sheetRef.current
     const focusables = (): HTMLElement[] =>
       panel ? Array.from(panel.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])')) : []
     focusables()[0]?.focus() // focus the first control on open
@@ -304,28 +399,61 @@ export function PreviewDrawer({
       <span aria-hidden="true">{t('preview.open')}</span>
     </button>
 
-    {/* MOBILE OVERLAY (<lg only) — a full-screen `role=dialog aria-modal` shell mirroring ModelPicker's a11y
-        (Escape close, focus-into-on-open, focus-restore-to-FAB-on-close, body scroll-lock). It reuses the SAME
-        two regions (cards + preview) — the slots are rendered a second time here; only one branch is visible
-        per breakpoint (CSS `lg:hidden` vs `hidden lg:flex`). Resize is disabled on mobile (no separator). */}
+    {/* MOBILE BOTTOM-SHEET (<lg only) — a draggable `role=dialog aria-modal` sheet pinned to the bottom of
+        the screen with three snap points (peek/half/full). It mirrors ModelPicker's a11y (Escape close,
+        focus-into-on-open, focus-restore-to-FAB-on-close, body scroll-lock, overscroll-contain) and reuses
+        the SAME two regions (cards + preview) as the desktop drawer. A grip at the top adjusts the snap (drag
+        or tap); the persisted snap (loadSnap/saveSnap) reopens it at the last size. Only one branch is visible
+        per breakpoint (CSS `lg:hidden` vs `hidden lg:flex`). */}
     {mobileOpen && (
       <div
-        role="dialog"
-        aria-modal="true"
-        aria-label={t('preview.title')}
-        className="fixed inset-0 z-50 flex flex-col bg-black/70 lg:hidden"
-        // Tapping the scrim (outside the panel) dismisses — inner clicks stopPropagation below.
+        // SCRIM — tapping outside the sheet dismisses; overscroll-contain keeps a scroll inside the sheet
+        // from chaining to the page beneath. The scrim sits below the sheet but above the page (z-50).
+        className="fixed inset-0 z-50 bg-black/70 lg:hidden"
         onClick={closeMobile}
-        // overscroll-behavior:contain so a scroll inside the overlay can't chain to the page underneath.
         style={{ overscrollBehavior: 'contain' }}
       >
         <div
-          ref={overlayRef}
+          ref={sheetRef}
+          role="dialog"
+          aria-modal="true"
+          aria-label={t('preview.title')}
+          data-testid="preview-sheet"
+          data-snap={snap}
           onClick={e => e.stopPropagation()}
-          className="flex h-full min-h-0 flex-col border-l border-white/10 bg-[#0B1220] shadow-2xl"
+          // BOTTOM-SHEET: pinned to the bottom edge, rounded top corners, height = the live drag height (1:1
+          // with the finger) or the current snap's CSS height. `overflow-hidden` clips the body at the peek
+          // band so only the header + tabs show. The height transition is enabled ONLY when not dragging and
+          // motion is allowed (prefers-reduced-motion → instant snap). overscroll-contain on the sheet too.
+          className={`absolute inset-x-0 bottom-0 flex flex-col overflow-hidden rounded-t-2xl border-t border-white/10 bg-[#0B1220] shadow-2xl ${dragHeight === null && !reduced ? 'transition-[height] duration-300 ease-out' : ''}`}
+          style={{ height: dragHeight !== null ? `${dragHeight}px` : SNAP_HEIGHT[snap], overscrollBehavior: 'contain' }}
         >
+          {/* GRIP — the drag handle. role=slider exposes the snap to AT (min=peek 0 .. max=full 2); ArrowUp/
+              ArrowDown step it, Enter cycles. touch-action:none so the browser doesn't steal the vertical
+              drag as a page scroll. ≥44px tall tap/drag band (WCAG 2.5.5). The visible pill is centered. */}
+          <div
+            ref={gripRef}
+            role="slider"
+            tabIndex={0}
+            aria-label={t('preview.sheetGrip')}
+            aria-description={t('preview.sheetGripHint')}
+            title={t('preview.sheetGripHint')}
+            aria-orientation="vertical"
+            aria-valuemin={0}
+            aria-valuemax={SNAP_ORDER.length - 1}
+            aria-valuenow={SNAP_ORDER.indexOf(snap)}
+            aria-valuetext={snap}
+            aria-controls={drawerId}
+            onPointerDown={onGripDown}
+            onKeyDown={onGripKey}
+            style={{ touchAction: 'none' }}
+            className="flex h-11 shrink-0 cursor-grab touch-none items-center justify-center active:cursor-grabbing focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[#07D1AF]/50"
+          >
+            <span aria-hidden="true" className="h-1.5 w-10 rounded-full bg-white/25" />
+          </div>
+
           {/* HEADER — one piece of chrome (mirrors the desktop drawer): preview title + close (✕). */}
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-2">
             <span className="truncate text-sm font-semibold text-slate-200">{t('preview.title')}</span>
             {/* ≥44px touch target (WCAG 2.5.5): h-11/w-11 box around the glyph. */}
             <button
@@ -338,9 +466,12 @@ export function PreviewDrawer({
             </button>
           </div>
 
-          {/* BODY — the same two scroll regions as the desktop drawer (H1). px-4 py-4 = chat padding parity. */}
-          <div className="flex h-full min-h-0 flex-col">
-            <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:50vh]">{cards}</div>
+          {/* BODY — the same two scroll regions as the desktop drawer (H1). At the peek snap the sheet height
+              clips this whole band (overflow-hidden above), so peek shows only the header + tabs; half/full
+              reveal the regions. min-h-0 lets the inner DeviceFrame scroll. The focus-trap container is the
+              SHEET panel (sheetRef), so it spans the grip + ✕ + this body. px-4 = chat parity. */}
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:40vh]">{cards}</div>
             <div className="min-h-0 flex-1">{preview}</div>
           </div>
         </div>

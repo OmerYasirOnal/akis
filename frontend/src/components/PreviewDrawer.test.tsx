@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PreviewDrawer } from './PreviewDrawer.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
@@ -237,5 +237,106 @@ describe('PreviewDrawer (mobile overlay)', () => {
     // No FAB tap → overlay never opened → Escape is inert (the desktop drawer owns no keyboard close).
     await userEvent.keyboard('{Escape}')
     expect(onClose).not.toHaveBeenCalled()
+  })
+})
+
+describe('PreviewDrawer (mobile bottom-sheet snaps)', () => {
+  // The mobile overlay is a draggable bottom-sheet with three snap points (peek/half/full). The current
+  // snap is exposed via `data-snap` (testable) and persisted to localStorage. A grip at the top adjusts
+  // the snap (drag on a real device; ArrowUp/ArrowDown/Enter for keyboard, exercised here). jsdom has no
+  // layout, so we drive the keyboard path + persistence rather than a pixel drag.
+  beforeEach(() => { localStorage.clear() })
+
+  it('opens at the default snap (half) and exposes it via data-snap', async () => {
+    renderDrawer({ open: true })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const sheet = screen.getByTestId('preview-sheet')
+    expect(sheet).toHaveAttribute('data-snap', 'half')
+    // The sheet IS the dialog (the bottom-sheet replaced the full-screen overlay).
+    expect(sheet).toHaveAttribute('role', 'dialog')
+    expect(sheet).toHaveAttribute('aria-modal', 'true')
+  })
+
+  it('reopens at the PERSISTED snap (full) after a prior session left it there', async () => {
+    localStorage.setItem('akis_preview_sheet_snap', 'full')
+    renderDrawer({ open: true })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    expect(screen.getByTestId('preview-sheet')).toHaveAttribute('data-snap', 'full')
+  })
+
+  it('the grip is a role=slider with the snap value; ArrowUp/ArrowDown step the snap and persist it', async () => {
+    renderDrawer({ open: true }) // starts at the default 'half'
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const sheet = screen.getByTestId('preview-sheet')
+    const grip = within(sheet).getByRole('slider')
+    // The slider exposes the snap: half = index 1 of [peek, half, full].
+    expect(grip).toHaveAttribute('aria-valuemin', '0')
+    expect(grip).toHaveAttribute('aria-valuemax', '2')
+    expect(grip).toHaveAttribute('aria-valuenow', '1')
+    expect(grip).toHaveAttribute('aria-valuetext', 'half')
+
+    grip.focus()
+    await userEvent.keyboard('{ArrowUp}') // half → full
+    expect(sheet).toHaveAttribute('data-snap', 'full')
+    expect(grip).toHaveAttribute('aria-valuenow', '2')
+    expect(localStorage.getItem('akis_preview_sheet_snap')).toBe('full')
+
+    await userEvent.keyboard('{ArrowDown}') // full → half
+    await userEvent.keyboard('{ArrowDown}') // half → peek
+    expect(sheet).toHaveAttribute('data-snap', 'peek')
+    expect(localStorage.getItem('akis_preview_sheet_snap')).toBe('peek')
+  })
+
+  it('Enter on the grip cycles the snap up (full wraps back to peek) for single-control reach', async () => {
+    localStorage.setItem('akis_preview_sheet_snap', 'full')
+    renderDrawer({ open: true })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const sheet = screen.getByTestId('preview-sheet')
+    within(sheet).getByRole('slider').focus()
+    await userEvent.keyboard('{Enter}') // full wraps → peek
+    expect(sheet).toHaveAttribute('data-snap', 'peek')
+  })
+
+  it('the grip is a ≥44px drag/tap band (h-11) with touch-action:none so it owns the vertical drag', async () => {
+    renderDrawer({ open: true })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const grip = within(screen.getByTestId('preview-sheet')).getByRole('slider')
+    expect(grip.className).toContain('h-11')
+    expect(grip.className).toContain('touch-none')
+    expect(grip.style.touchAction).toBe('none')
+  })
+
+  it('the sheet is bottom-pinned with a snap-driven height (data-snap drives the rendered size)', async () => {
+    renderDrawer({ open: true })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const sheet = screen.getByTestId('preview-sheet')
+    // Bottom-pinned, rounded-top sheet — not a full-screen inset-0 overlay anymore.
+    expect(sheet.className).toContain('bottom-0')
+    expect(sheet.className).toContain('rounded-t-2xl')
+    // Default 'half' snap → 55dvh height inline (peek/full would be 120px/92dvh).
+    expect(sheet.style.height).toBe('55dvh')
+  })
+
+  it('under reduced-motion (jsdom has no matchMedia → fail-closed) the snap height change is INSTANT (no transition)', async () => {
+    renderDrawer({ open: true })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const sheet = screen.getByTestId('preview-sheet')
+    // prefersReducedMotion() fails closed to true when matchMedia is absent → no height transition class.
+    expect(sheet.className).not.toContain('transition-[height]')
+  })
+
+  it('tapping the scrim (outside the sheet) dismisses; a tap inside the sheet does not', async () => {
+    const onClose = vi.fn()
+    renderDrawer({ open: true, onClose })
+    await userEvent.click(screen.getByTestId('preview-fab'))
+    const sheet = screen.getByTestId('preview-sheet')
+    // A click INSIDE the sheet must not bubble to the scrim's dismiss handler.
+    await userEvent.click(sheet)
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByTestId('preview-sheet')).toBeInTheDocument()
+    // A click on the scrim (the sheet's parent, outside the panel) dismisses.
+    await userEvent.click(sheet.parentElement!)
+    expect(onClose).toHaveBeenCalled()
+    expect(screen.queryByTestId('preview-sheet')).toBeNull()
   })
 })
