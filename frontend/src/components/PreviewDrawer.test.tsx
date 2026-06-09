@@ -95,17 +95,20 @@ describe('PreviewDrawer (desktop)', () => {
     expect(drawer).toHaveStyle({ transform: 'translateX(0)' })
   })
 
-  // SEAM CALM-DOWN (standards pass): ONE divider on the seam. The aside keeps the single `border-l` hairline
-  // and (when OPEN) a single soft teal-tinted left-edge inline boxShadow for elevation — the heavy
-  // `shadow-2xl` was dropped so border + shadow + glow aren't all stacked into a "prominent vertical bar".
-  it('the open drawer seam is ONE divider: border-l hairline + soft inline shadow, NOT a stacked shadow-2xl', () => {
+  // SEAM CLEAN-UP (owner feedback 3 — "the chat↔drawer seam STILL reads as stuck-together"): the seam is
+  // exactly ONE 1px divider — the `border-l` hairline — and NOTHING competes with it. The old inline
+  // boxShadow stacked a SECOND teal line ON the seam (`-1px 0 0 0 rgba(7,209,175,0.12)`) plus a heavy dark
+  // `-12px 0 32px -8px rgba(0,0,0,0.55)` bleed that fused chat + drawer into one dark mass. Both are gone;
+  // the only elevation is a SOFT shadow that falls LEFT (no on-seam line, no heavy black).
+  it('the open drawer seam is ONE clean divider: a single border-l, NO second on-seam line, NO heavy black bleed', () => {
     renderDrawer({ open: true })
     const drawer = screen.getByTestId('preview-drawer')
     expect(drawer.className).toContain('border-l')
-    // The heavy utility shadow is gone (it would stack with the border + inline glow on the seam).
     expect(drawer.className).not.toContain('shadow-2xl')
-    // The single elevation cue is the inline left-edge boxShadow (teal-tinted), applied only when open.
-    expect(drawer.style.boxShadow).toContain('rgba(7,209,175,0.12)')
+    // No competing SECOND line painted on the exact seam (the retired teal inset).
+    expect(drawer.style.boxShadow).not.toContain('-1px 0 0 0')
+    // No heavy near-opaque black bleed onto the chat (the retired 0.55 alpha mass).
+    expect(drawer.style.boxShadow).not.toContain('0.55')
   })
 
   it('the closed drawer carries no elevation shadow (nothing off-screen to elevate)', () => {

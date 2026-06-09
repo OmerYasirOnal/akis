@@ -603,6 +603,17 @@ describe('ChatStudio — preview drawer (push-split shell + auto-open on ready)'
     await Promise.resolve()
     await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
   })
+
+  // SEAM (owner feedback 3 — the chat must not look STUCK to the drawer): the single reading column keeps
+  // a right seam gutter (lg:pr-6) so the conversation (and its scrollbar) never abuts the chat↔drawer seam.
+  it('the reading column keeps a right seam gutter so the chat never abuts the drawer seam', async () => {
+    await startLiveBuild()
+    await screen.findByTestId('preview-drawer')
+    const cols = Array.from(document.querySelectorAll<HTMLElement>('.max-w-3xl'))
+    expect(cols).toHaveLength(1)
+    // The shared column carries the lg seam gutter so the chat (incl. its scrollbar) stays clear of the seam.
+    expect(cols[0]!.className).toMatch(/lg:pr-6/)
+  })
 })
 
 // ── LOW-2 (no first-frame flash): a persisted-OPEN drawer must paint at the RIGHT width on the very

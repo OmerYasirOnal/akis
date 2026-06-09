@@ -296,17 +296,20 @@ export function PreviewDrawer({
       // makes the iframe ignore pointer events DURING a drag so it can't swallow the gesture.
       // MOTION (Task: polish): the slide is `motion-safe:` so it collapses to an INSTANT snap under
       // prefers-reduced-motion (a11y) — duration-300 ease-out reads as a smooth glide on a pro surface.
-      // SEAM (standards calm-down): ONE divider on the seam — the `border-l border-white/10` hairline. When
-      // OPEN the drawer ALSO carries a SINGLE soft teal-tinted left-edge inline boxShadow as its elevation
-      // cue; the heavy `shadow-2xl` was dropped so border + shadow + glow are not all stacked on the seam
-      // (the "prominent vertical bar"). Closed → no shadow (nothing off-screen to elevate).
+      // SEAM (owner feedback 3 — the chat↔drawer seam must NOT read as stuck/fused): the boundary is
+      // exactly ONE clean 1px divider — the `border-l border-white/10` hairline. Two things that made it
+      // read as "stuck" were dropped: (1) the SECOND teal line painted ON the seam (`-1px 0 0 0
+      // rgba(7,209,175,0.12)`) — competing with the border — and (2) the HEAVY near-opaque black bleed
+      // (`-12px 0 32px -8px rgba(0,0,0,0.55)`) that fused chat + drawer into one dark mass. When OPEN the
+      // drawer carries only a SOFT, light shadow that falls to the LEFT for a gentle lift (no on-seam line,
+      // no heavy black). Closed → no shadow (nothing off-screen to elevate).
       style={{
         transform: open ? 'translateX(0)' : 'translateX(100%)',
         // WIDTH DECOUPLED FROM OPEN (Issue 1): always the REAL ratio*containerWidth (`--preview-drawer-w`),
         // never 0 — so `translateX(100%)` carries the FULL drawer (header/✕/body) genuinely off-screen when
         // closed. The chat reflow gates on `open` via the SEPARATE `--preview-w` padding var on the shell.
         width: 'var(--preview-drawer-w)',
-        ...(open ? { boxShadow: '-12px 0 32px -8px rgba(0,0,0,0.55), -1px 0 0 0 rgba(7,209,175,0.12)' } : {}),
+        ...(open ? { boxShadow: '-16px 0 40px -24px rgba(0,0,0,0.4)' } : {}),
       }}
       // `overflow-hidden` (Issue 1/2) clips any region-B content during the slide + at narrow widths so the
       // collapsing/sliding box can never spill at the right edge. z-20: BELOW the FAB (z-40) and the mobile
@@ -334,19 +337,21 @@ export function PreviewDrawer({
         onDoubleClick={onReset}
         onPointerDown={onPointerDown}
         style={{ touchAction: 'none' }}
-        // The grab strip sits FLUSH inside the aside's left edge (no `-translate-x-1/2`): the aside now carries
-        // `overflow-hidden` (Issue 1), which would clip the outer half of a half-outside strip and shrink the
-        // 12px hit-area to 6px. Keeping the full w-3 strip inside preserves the grab target; the visible
-        // hairline stays centered within it via `justify-center`.
-        className="group absolute inset-y-0 left-0 z-10 flex w-3 cursor-col-resize items-center justify-center focus:outline-none"
+        // GRAB (owner feedback 3 — the seam resize bar must not look/feel broken): the grab strip sits FLUSH
+        // inside the aside's left edge (no `-translate-x-1/2`): the aside carries `overflow-hidden` (Issue 1),
+        // which would clip the outer half of a half-outside strip. A 16px (w-4) hit-strip, lifted above the
+        // body (`z-10` — the region A/B content is non-positioned so the positioned handle wins) and over the
+        // iframe during a drag (`[&.is-dragging_iframe]` on the aside), gives a real, intentional grab target;
+        // `touch-action:none` lets it own the horizontal drag. The visible hairline stays centered.
+        className="group absolute inset-y-0 left-0 z-10 flex w-4 cursor-col-resize touch-none select-none items-center justify-center focus:outline-none"
       >
-        {/* The visible hairline grows on hover/focus — the hit-area (w-3) stays wide for easy grabbing.
-            KEYBOARD FOCUS (a11y): the global :focus-visible teal outline is suppressed here (the handle
-            is a 12px hit-strip, so an offset outline would float oddly), so the hairline itself becomes
-            the focus affordance — it THICKENS to a 2px teal bar with a soft glow on group-focus-visible,
-            giving keyboard users a clear, in-place focus ring. Hover only tints (no width jump). The
-            color/size change is `motion-safe:` so it's instant under reduced-motion. */}
-        <span className="h-full w-px bg-white/10 motion-safe:transition-all group-hover:bg-[#07D1AF]/60 group-focus-visible:w-0.5 group-focus-visible:bg-[#07D1AF] group-focus-visible:shadow-[0_0_6px_rgba(7,209,175,0.7)]" aria-hidden="true" />
+        {/* A clean, discoverable hairline: a 1.5px rounded bar that tints teal on hover (the handle is now
+            SECONDARY to the top-right toggle, so it stays subtle but unmistakably a handle). KEYBOARD FOCUS
+            (a11y): the global :focus-visible teal outline is suppressed here (the handle is a thin hit-strip,
+            so an offset outline would float oddly), so the hairline itself becomes the focus affordance — it
+            thickens to a 2px teal bar with a soft glow on group-focus-visible. `motion-safe:` so it's instant
+            under reduced-motion. */}
+        <span className="h-full w-0.5 rounded-full bg-white/10 motion-safe:transition-all group-hover:bg-[#07D1AF]/60 group-focus-visible:w-0.5 group-focus-visible:bg-[#07D1AF] group-focus-visible:shadow-[0_0_6px_rgba(7,209,175,0.7)]" aria-hidden="true" />
       </div>
 
       {/* HEADER — one piece of chrome (Issue 2c/§2b): a labeled chrome row (preview title + ✕) so the close
