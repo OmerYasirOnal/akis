@@ -1,18 +1,33 @@
 # AKIS — Bitirme Raporu (Graduation Report)
 
-Final graduation report for the AKIS platform, prepared to the **FSMVÜ
-Mühendislik Fakültesi — Lisans Bitirme Projesi Yazım Kılavuzu (Ek-3)** format.
+Graduation report for the AKIS platform, prepared to the **FSMVÜ Mühendislik
+Fakültesi — Lisans Bitirme Projesi Yazım Kılavuzu (Ek-3)** format. The report is
+delivered in **two complete versions** — one fully Turkish, one fully English —
+with identical structure, figures, tables, and numbering. Each version keeps the
+standard bilingual abstract pair (Türkçe **ÖZET** + English **ABSTRACT**).
+
+Project title:
+- **TR:** LLM AJANLARI İLE YAPAY ZEKÂ TABANLI ETKİLEŞİMLİ YAZILIM GELİŞTİRME PLATFORMU
+- **EN:** ARTIFICIAL INTELLIGENCE–POWERED INTERACTIVE SOFTWARE DEVELOPMENT PLATFORM WITH LLM AGENTS
 
 ## Contents
 
 | File | Description |
 | --- | --- |
-| `AKIS_bitirme_raporu_final.docx` | The report (Word). Open in Word/Google Docs. |
+| `AKIS_Bitirme_Raporu_TR.docx` | The report, fully in Turkish (Türkçe kapak + başlıklar + gövde). |
+| `AKIS_Graduation_Report_EN.docx` | The report, fully in English. |
 | `AKIS_report_data.xlsx` | Companion spreadsheet — every table (5.1, 5.2, 8.1, 8.2, 8.3, 9.1) on its own sheet, plus the data behind each generated chart. |
 | `charts/` | The 5 generated figures (PNG) embedded in the report. |
 | `scripts/gen_charts.py` | Regenerates the charts (matplotlib). |
 | `scripts/gen_xlsx.py` | Rebuilds the `.xlsx` from the report tables + chart data. |
-| `scripts/surgery.py` | Reproducible docx edits (captions, lists, cross-refs, references, résumé). |
+| `scripts/build_en.py` | Cleans spaced dashes from the base report → English deliverable. |
+| `scripts/build_tr.py` | Applies the Turkish translation map → Turkish deliverable. |
+| `scripts/tr_translation_map.py` | The full TR translation map (paragraphs, captions, lists, tables). |
+| `scripts/surgery.py` | Reproducible docx edits on the base (captions, lists, cross-refs, references, résumé). |
+
+> Report language/punctuation: no spaced dashes (` — ` / ` - `) are used between
+> words; appositive clauses use parentheses, label lists use colons. The
+> non-spaced dash in the English title is intentional.
 
 ## Figures
 
