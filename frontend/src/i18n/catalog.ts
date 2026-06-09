@@ -226,6 +226,8 @@ export const STRINGS = {
     // ── Preview drawer + device toggle ──
     'preview.open': 'Open preview',
     'preview.close': 'Close preview',
+    // Short visible label on the header toggle button (aria-label stays the fuller 'preview.open').
+    'preview.label': 'Preview',
     'preview.resize': 'Resize preview',
     'preview.resizeValue': 'Preview {n}% of width',
     'preview.resetHint': 'Drag to resize · double-click to reset width',
@@ -1032,6 +1034,8 @@ export const STRINGS = {
     // ── Önizleme çekmecesi + cihaz geçişi ──
     'preview.open': 'Önizlemeyi aç',
     'preview.close': 'Önizlemeyi kapat',
+    // Üstbilgi geçiş düğmesindeki kısa görünür etiket (aria-label daha açık 'preview.open' olarak kalır).
+    'preview.label': 'Önizleme',
     'preview.resize': 'Önizlemeyi yeniden boyutlandır',
     'preview.resizeValue': "Önizleme genişliğin %{n}'i",
     'preview.resetHint': 'Boyutlandırmak için sürükleyin · genişliği sıfırlamak için çift tıklayın',
