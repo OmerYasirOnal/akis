@@ -41,8 +41,10 @@ export function AkisTranscript({ messages }: { messages: AkisMsg[] }) {
                 <div key={i} className="rounded-xl border border-rose-500/30 bg-rose-500/10 px-3 py-1.5 text-sm text-rose-200">{m.content}</div>
               )
             }
+            // DE-LAYERED (P1.1): an assistant turn reads as plain text on the surface — no
+            // card-in-card box (only structured artifacts + the tinted user turn carry a frame).
             return (
-              <div key={i} className="rounded-xl border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-slate-200">
+              <div key={i} className="max-w-[70ch] px-1 text-sm leading-relaxed text-slate-200">
                 <Markdown content={m.content} />
               </div>
             )

@@ -293,6 +293,33 @@ describe('ChatStudio', () => {
     await waitFor(() => expect(writeText).toHaveBeenCalledWith(PLAIN_REPLY))
   })
 
+  it('de-layers the chat: a plain assistant reply renders WITHOUT a bordered box; the user turn keeps a tint', async () => {
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: PLAIN_REPLY }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hello there{Enter}')
+    await waitFor(() => expect(screen.getByText(PLAIN_REPLY)).toBeInTheDocument())
+
+    // The assistant reply text sits in a plain (un-boxed) measure — NO wrapper from the text up to
+    // the AK-avatar row carries the bordered white-fill bubble (the card-in-card we removed).
+    let el: HTMLElement | null = screen.getByText(PLAIN_REPLY)
+    const boxed: string[] = []
+    while (el && !el.className.includes('items-start')) { // stop at the avatar+content flex row
+      if (/\bborder\b/.test(el.className) || /bg-white\/\[0\.04\]/.test(el.className)) boxed.push(el.className)
+      el = el.parentElement
+    }
+    expect(boxed).toEqual([]) // plain text — no bordered / white-fill assistant box
+    // The user turn keeps its tinted gradient bubble.
+    const user = screen.getByText('hello there').closest('div')!
+    expect(user.className).toMatch(/from-\[#07D1AF\]/)
+  })
+
   it('does NOT add a Copy reply for the in-flight bubble while the reply is still streaming', async () => {
     let resolveChat: ((r: Response) => void) | undefined
     const fetchFn = vi.fn(async (path: string) => {

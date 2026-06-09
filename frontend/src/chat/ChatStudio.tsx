@@ -546,15 +546,18 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         // would LAG the live cursor, so the shell carries `.is-dragging` for the drag and
         // `[.is-dragging_&]:!transition-none` drops the ease → the split tracks the pointer 1:1. The next
         // render after release restores the committed value with the transition back on (no flash).
-        // FOREGROUND SURFACE (Issue 3 — cohesion): the chat was `bg-white/[0.02]` (2% white = effectively
-        // invisible) with a diffuse outward violet page-glow, so the conversation melted into the page. Raise
-        // it to a clear elevated container — `bg-slate-900/60` + `border-white/12` + `backdrop-blur-md` + a
-        // CONTAINED inset top-light over a drop shadow (no outward bleed) — so the "place you talk" reads as a
-        // distinct foreground surface against the page and the rendered-app white that sits to its right.
-        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/12 bg-slate-900/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
+        // DE-CARDED (P1.1 cohesion): the conversation is ONE surface ON the page — no elevated
+        // card-in-card around it (the earlier `bg-slate-900/60` + `border-white/12` + `backdrop-blur`
+        // container is gone; only the composer, preview pane, and structured artifact blocks are
+        // bordered now). The section keeps its layout role only: it holds the SAME tree slot (sacred —
+        // AkisChat key={threadKey}) and owns the push-split right-padding as the drawer opens/closes.
+        className={`flex min-h-0 flex-1 flex-col overflow-hidden motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
       >
         {header}
-        <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>
+        {/* SEAM GAP (P1.1): a small right gutter on lg+ so the scroll column + its themed gutter never
+            abut the preview-drawer seam (the conversation breathes; the drawer reads as a sibling panel
+            with a real gap, matching the v3 mockup). */}
+        <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 lg:pr-6 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>
           {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
           {editsBaseBadge}
           <div className="min-h-0 flex-1">{chat}</div>

@@ -129,11 +129,13 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
           )
           : (
             <>
-              {/* `group relative` anchors a hover/focus-revealed Copy on the plain reply. It is
-                  NOT rendered while streaming (would copy a half-stream) nor when empty; once
-                  present it stays in the DOM via opacity so it's RTL-findable + keyboard-reachable.
-                  Copies `stripped` (the visible reply, suggestion block already removed). */}
-              <div className="group relative rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 pr-10 text-slate-200">
+              {/* DE-LAYERED (P1.1): a plain AKIS reply is the CONVERSATION itself, not a structured
+                  artifact — so it renders as plain text on the page (no card-in-card bubble), bounded
+                  to a comfortable measure. `group relative` still anchors the hover/focus-revealed Copy
+                  (it is NOT rendered while streaming nor when empty; once present it stays in the DOM
+                  via opacity so it's RTL-findable + keyboard-reachable). `pr-10` keeps the absolute
+                  Copy button off the text. Copies `stripped` (suggestion block already removed). */}
+              <div className="group relative max-w-[70ch] pr-10 leading-relaxed text-slate-200">
                 <Markdown content={displayed} />
                 {!streaming && stripped.trim() && (
                   <CopyButton text={stripped} label={t('copy.reply')}
