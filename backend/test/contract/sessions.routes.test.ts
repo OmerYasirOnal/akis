@@ -89,6 +89,31 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     expect(s.chat).toEqual([{ role: 'user', content: 'a note app', at: expect.any(String) }])
   })
 
+  it('REGRESSION (race fix): a spec-seeded POST /sessions WITH chat runs to the push gate (NOT failed) and the chat is present in the created session immediately', async () => {
+    // BUG: the old route seeded chat via a post-start store.update(id,{chat},version) that ran
+    // CONCURRENTLY with the fire-and-forget build pipeline; landing between the pipeline's version
+    // read and its {code} write, it bumped the version → a `version conflict` → the build went
+    // `failed` with no code (but chat + approval present). The fix threads the validated chat INTO
+    // orch.start, baking it into the creation state (version 0) — one write, no race.
+    const { app } = makeApp({ passing: true })
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const created = (await app.inject({
+      method: 'POST', url: '/sessions',
+      payload: { idea: seed.body, spec: seed, chat: [{ role: 'user', content: 'a todo app' }] },
+    })).json()
+    // The 201 already reflects the seeded chat (set at creation, NOT a post-start re-read).
+    expect(created.status).toBe('building')
+    expect(created.chat).toEqual([{ role: 'user', content: 'a todo app', at: expect.any(String) }])
+    // The auto-kicked build reaches the push gate — it is NOT raced to `failed` by a chat write.
+    await vi.waitFor(async () => {
+      const cur = (await app.inject({ method: 'GET', url: `/sessions/${created.id}` })).json()
+      expect(cur.status).toBe('awaiting_push_confirm')
+    })
+    const cur = (await app.inject({ method: 'GET', url: `/sessions/${created.id}` })).json()
+    expect(cur.status).not.toBe('failed')
+    expect(cur.chat).toEqual([{ role: 'user', content: 'a todo app', at: expect.any(String) }])
+  })
+
   it('startSession drops empty/invalid chat turns and caps to CHAT_TURNS_MAX', async () => {
     const { app } = makeApp()
     // 1 valid + 1 empty (dropped) + 1 malformed role (dropped); CHAT_TURNS_MAX is 200, well above this.

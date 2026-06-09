@@ -115,6 +115,38 @@ describe('Orchestrator — chat-approved spec seed (P0-1: single spec approval)'
     await expect(first).resolves.toMatchObject({ status: 'awaiting_push_confirm' })
   })
 
+  it('REGRESSION (race fix): a spec-seeded start that ALSO seeds chat bakes the chat into the INITIAL state (set before kickRun) so no post-start write races the pipeline → the auto-run reaches awaiting_push_confirm, NOT failed', async () => {
+    const { orch, services } = makeOrch()
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const chat = [{ role: 'user' as const, content: 'a todo app', at: new Date().toISOString() }]
+    // start() returns the PRE-KICK snapshot. The fix bakes `chat` into the creation state (version 0)
+    // BEFORE mintSpecApproval/kickRun, so the returned session ALREADY carries it — proving there is
+    // NO post-start store.update racing the fire-and-forget pipeline. (The OLD code seeded chat AFTER
+    // start via store.update(id,{chat},version); that write, landing between the pipeline's version
+    // read and its {code} write, bumped the version → a `version conflict` → the build went `failed`
+    // with no code. Here the chat is part of the single creation write, so that window cannot exist.)
+    const s = await orch.start({ idea: seed.body, spec: seed, chat })
+    // ATOMIC SEED: present immediately, before any pipeline write could have run.
+    expect(s.chat).toEqual(chat)
+    expect(s.status).toBe('building')
+    const justCreated = (await services.store.get(s.id))!
+    expect(justCreated.chat).toEqual(chat)
+    // The auto-kicked seeded run completes to the push gate — it is NOT driven to `failed` by a
+    // concurrent chat write (the race). isVerified holds, so the pipeline genuinely produced code.
+    await vi.waitFor(async () => expect((await services.store.get(s.id))!.status).toBe('awaiting_push_confirm'))
+    const after = (await services.store.get(s.id))!
+    expect(after.status).not.toBe('failed')
+    expect(after.chat).toEqual(chat) // the seed survived the whole pipeline (never clobbered/lost)
+    expect(isVerified(after)).toBe(true)
+  })
+
+  it('absent chat seed is byte-identical: a seeded start with NO chat carries no chat field', async () => {
+    const { orch } = makeOrch()
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const s = await orch.start({ idea: seed.body, spec: seed })
+    expect(s.chat).toBeUndefined()
+  })
+
   it('an idea-only start is UNCHANGED: Scribe runs and the awaiting_spec_approval gate still emits', async () => {
     const { orch, services } = makeOrch()
     const s = await orch.start({ idea: 'build a todo web app' })

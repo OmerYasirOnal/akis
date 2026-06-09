@@ -159,24 +159,6 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const notFound = (reply: FastifyReply, id: string): FastifyReply =>
     reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
 
-  // Seed the NON-GATE `chat` column for a freshly-created session via the SAME generic store patch
-  // chatAppend uses (touches only `chat`, structurally excludes every gate column). Version-RESILIENT:
-  // on a chat-approved-spec start the orchestrator FIRE-AND-FORGET kicks the run, which can bump the
-  // session version concurrently — so a bare update would lose to that write. Re-read + retry once on a
-  // conflict (best-effort, exactly like chatAppend: a lost pre-build seed is recoverable; cross-device
-  // freshness still degrades gracefully). GATE-SAFE: pure conversation text, never approve/verify/push/mint.
-  const seedChat = async (id: string, turns: ChatTurn[]): Promise<void> => {
-    if (!turns.length) return
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const cur = await services.store.get(id)
-      if (!cur) return
-      try {
-        await services.store.update(id, { chat: [...(cur.chat ?? []), ...turns].slice(-CHAT_TURNS_MAX) }, cur.version)
-        return
-      } catch { /* version conflict — re-read once, then give up silently */ }
-    }
-  }
-
   app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string; spec?: { title?: unknown; body?: unknown }; chat?: unknown } }>('/sessions', async (req, reply) => {
     const idea = typeof req.body?.idea === 'string' ? req.body.idea.trim() : ''
     if (!idea) return reply.code(400).send({ error: 'idea required', code: 'BadRequest' })
@@ -236,13 +218,16 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
         const decision = await checkQuota(deps.usage, quotaPolicy, ownerId)
         if (!decision.allowed) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt })
       }
-      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}) })
+      // Thread the validated pre-build conversation into the CREATION state (version 0) — NOT a
+      // post-start patch. The previous post-start seedChat write raced the fire-and-forget build
+      // pipeline (which reads `version` then writes): a {chat} write landing between bumped the
+      // version and conflicted the pipeline's {code} write → the build failed with no code. Seeding
+      // at creation is a single write with NO concurrent update. GATE-SAFE: `chat` is the non-gate
+      // conversation column; this only sets the INITIAL state (see initialSession). The returned
+      // session already carries the seeded chat, so the 201 reflects it without a re-read.
+      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}), ...(seedTurns.length ? { chat: seedTurns } : {}) })
       if (orch !== orchestrator) bindOrchestrator(s.id, orch)
-      // Seed the pre-build conversation onto the just-created session via the generic patch (non-gate).
-      // Done AFTER start so it never races the create; re-read so the 201 reflects the seeded chat.
-      await seedChat(s.id, seedTurns)
-      const created = seedTurns.length ? (await services.store.get(s.id)) ?? s : s
-      return reply.code(201).send(created)
+      return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }
   })
 

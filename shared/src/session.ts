@@ -250,6 +250,12 @@ export function isVerified(s: SessionState): boolean {
   return s.verifyToken != null && s.verifyToken.sessionId === s.id
 }
 
-export function initialSession(id: string, idea: string, ownerId?: string): SessionState {
-  return { id, status: 'composing', idea, version: 0, ...(ownerId ? { ownerId } : {}) }
+export function initialSession(id: string, idea: string, ownerId?: string, chat?: ChatTurn[]): SessionState {
+  // ADDITIVE/NON-GATE: an optional pre-build conversation seed is baked into the CREATION state so the
+  // freshly-created session already carries it at version 0 — no post-create concurrent write can then
+  // race the fire-and-forget build pipeline (which reads `version` then writes; a chat patch landing
+  // mid-read→write bumped the version and conflicted the pipeline's {code} write → a silent `failed`).
+  // `chat` is conversation text only — it can never approve/verify/push/mint; this only seeds the initial
+  // state. Absent/empty ⇒ no `chat` field set (byte-identical to before).
+  return { id, status: 'composing', idea, version: 0, ...(ownerId ? { ownerId } : {}), ...(chat && chat.length ? { chat } : {}) }
 }

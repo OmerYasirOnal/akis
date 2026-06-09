@@ -33,6 +33,17 @@ export interface StartInput {
   /** EDIT MODE (Phase B.5): seed this build with a prior session's app — Proto edits it
    *  (merge semantics) instead of regenerating from scratch. Owner-checked at the API. */
   base?: { files: { filePath: string; content: string }[]; fromSession: string }
+  /**
+   * OPTIONAL pre-build conversation (the spec-shaping turns typed BEFORE this build existed). Baked
+   * into the INITIAL session state at version 0 — BEFORE mintSpecApproval/kickRun — so there is
+   * exactly ONE creation write and NO post-start update racing the fire-and-forget pipeline (which
+   * reads `version` then writes; a chat patch landing between bumped the version → the pipeline's
+   * {code} write conflicted → a silent `failed`). The route validates/bounds it (role, non-empty
+   * content, ISO `at`, CHAT_TURNS_MAX) before passing it here. GATE-SAFE: `chat` is the existing
+   * non-gate column — conversation text only, never approve/verify/push/mint. Absent/empty ⇒
+   * byte-identical to today (no `chat` field set).
+   */
+  chat?: import('@akis/shared').ChatTurn[]
 }
 
 export class AlreadyPushedError extends Error {
@@ -155,7 +166,11 @@ export class Orchestrator {
 
   async start(input: StartInput): Promise<SessionState> {
     const id = randomUUID()
-    let session = initialSession(id, input.idea, input.ownerId)
+    // Bake the validated pre-build conversation into the CREATION state (version 0) — NOT a
+    // post-create patch. This is the race fix: a concurrent {chat} write after the fire-and-forget
+    // pipeline reads `version` would bump it and conflict the pipeline's {code} write → a silent
+    // `failed`. Seeding at creation means a single write and no concurrent update. NON-GATE (chat).
+    let session = initialSession(id, input.idea, input.ownerId, input.chat)
     // EDIT MODE seed (data only — no gate capability travels with it).
     if (input.base?.files.length) session = { ...session, base: input.base }
     await this.s.store.create(session)
