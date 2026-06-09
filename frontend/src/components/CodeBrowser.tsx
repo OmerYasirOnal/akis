@@ -1,19 +1,41 @@
-import { useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { CodeArtifact } from '@akis/shared'
 import { useI18n } from '../i18n/I18nContext.js'
 import { CopyButton } from './CopyButton.js'
+import { useTreeResizable, clampTreeRatio } from './useTreeResizable.js'
 
 type CodeFile = CodeArtifact['files'][number]
 
+/** Fill {n}/… placeholders in a catalog template (same idiom as PreviewDrawer). */
+const fill = (s: string, vars: Record<string, string>): string => s.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m)
+
+/** Map a file extension → a short uppercase language label for the editor header (subtle, best-effort).
+ *  Unknown extensions yield '' (no badge) — never a guess. */
+function langOf(filePath: string): string {
+  const ext = filePath.slice(filePath.lastIndexOf('.') + 1).toLowerCase()
+  const map: Record<string, string> = {
+    ts: 'TS', tsx: 'TSX', js: 'JS', jsx: 'JSX', mjs: 'JS', cjs: 'JS',
+    json: 'JSON', css: 'CSS', scss: 'SCSS', html: 'HTML', md: 'MD',
+    py: 'PY', go: 'GO', rs: 'RS', sh: 'SH', yml: 'YAML', yaml: 'YAML', sql: 'SQL', toml: 'TOML',
+  }
+  return (filePath.includes('.') && map[ext]) || ''
+}
+
 /**
- * Read-only browser for the code the agents wrote (SessionState.code.files). A file list
- * on the left (sorted by path) and a viewer on the right that shows the SELECTED file's
- * content in a monospace `<pre>` with a line-number gutter.
+ * Read-only browser for the code the agents wrote (SessionState.code.files). A file TREE on the
+ * left (sorted by path) and a viewer on the right that shows the SELECTED file's content in a
+ * monospace `<pre>` with a line-number gutter.
  *
- * NO-XSS: file `content` and `filePath` are rendered as plain TEXT (React auto-escapes
- * children) — never dangerouslySetInnerHTML — so an agent-written file containing
- * `<script>` shows up as literal source, never as an injected/executed node. No syntax
- * highlighting dep: a plain <pre> + a simple gutter keeps the bundle lean (self-hostable).
+ * RESIZABLE TREE (P2.2): the tree↔editor boundary is a `role="separator"` splitter (pointer drag +
+ * keyboard Arrow/Home/End) wired to `useTreeResizable` — the SAME pointer-capture + rAF + persisted-
+ * ratio idiom proven on the chat↔drawer seam, but with the tree's own clamp (12rem floor / 50% cap)
+ * and its own localStorage key. The editor pane is `flex-1 min-w-0` so long lines SCROLL inside it
+ * rather than pushing the tree wider (the empty-margin bug). The drag math (clientX → ratio) lives
+ * here in the consumer, mirroring how ChatStudio owns the drawer's drag math.
+ *
+ * NO-XSS: file `content` and `filePath` are rendered as plain TEXT (React auto-escapes children) —
+ * never dangerouslySetInnerHTML — so an agent-written file containing `<script>` shows up as literal
+ * source, never as an injected/executed node. No syntax highlighting dep keeps the bundle lean.
  */
 export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
   const { t } = useI18n()
@@ -33,6 +55,88 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
     [sorted],
   )
 
+  // Measure the split container read-only via a ResizeObserver — one setState per resize (no per-frame
+  // React storm), feeding the tree splitter's clamp (px floor / 50% cap) like PreviewPanel's paneWidth.
+  const splitRef = useRef<HTMLDivElement | null>(null)
+  const [splitWidth, setSplitWidth] = useState(0)
+  useEffect(() => {
+    const el = splitRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width
+      if (typeof w === 'number') setSplitWidth(w)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  const { ratio, commitRatio, setRatioLive, onKeyDown } = useTreeResizable({ containerWidth: splitWidth })
+  const pct = Math.round(clampTreeRatio(ratio, splitWidth) * 100)
+
+  // --- Pointer-drag plumbing (mirrors PreviewDrawer): capture on the STABLE handle node so the drag
+  // survives the cursor crossing the editor's scroll area; rAF-throttle moves (one DOM read per frame,
+  // SSE-perf parity); map the live clientX → ratio against the measured container. `setRatioLive` writes
+  // the un-persisted live ratio during the drag; `commitRatio` persists (clamped) on release.
+  const handleRef = useRef<HTMLDivElement>(null)
+  const latestX = useRef(0)
+  const raf = useRef<number | null>(null)
+  const dragging = useRef(false)
+
+  const ratioFromClientX = useCallback((clientX: number): number => {
+    const el = splitRef.current
+    if (!el) return ratio
+    const rect = el.getBoundingClientRect()
+    if (!rect.width) return ratio
+    // The tree is on the LEFT, so its width = clientX − left.
+    return clampTreeRatio((clientX - rect.left) / rect.width, rect.width)
+  }, [ratio])
+
+  const flush = useCallback(() => {
+    raf.current = null
+    if (dragging.current) setRatioLive(ratioFromClientX(latestX.current))
+  }, [ratioFromClientX, setRatioLive])
+
+  const onPointerMove = useCallback((e: PointerEvent) => {
+    if (!dragging.current) return
+    latestX.current = e.clientX
+    if (raf.current === null) raf.current = requestAnimationFrame(flush)
+  }, [flush])
+
+  const endDrag = useCallback((e: PointerEvent) => {
+    if (!dragging.current) return
+    dragging.current = false
+    if (raf.current !== null) { cancelAnimationFrame(raf.current); raf.current = null }
+    const node = handleRef.current
+    if (node) {
+      node.classList.remove('is-dragging')
+      try { node.releasePointerCapture(e.pointerId) } catch { /* capture may already be gone */ }
+    }
+    document.removeEventListener('pointermove', onPointerMove)
+    document.removeEventListener('pointerup', endDrag)
+    commitRatio(ratioFromClientX(e.clientX))
+  }, [commitRatio, ratioFromClientX, onPointerMove])
+
+  const onPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    dragging.current = true
+    latestX.current = e.clientX
+    const node = handleRef.current
+    if (node) {
+      try { node.setPointerCapture(e.pointerId) } catch { /* non-fatal: doc listeners track it */ }
+      node.classList.add('is-dragging')
+    }
+    document.addEventListener('pointermove', onPointerMove)
+    document.addEventListener('pointerup', endDrag)
+  }, [onPointerMove, endDrag])
+
+  // Defensive cleanup: if CodeBrowser unmounts mid-drag (tab switch / session reset), drop listeners + frame.
+  useEffect(() => () => {
+    if (raf.current !== null) cancelAnimationFrame(raf.current)
+    document.removeEventListener('pointermove', onPointerMove)
+    document.removeEventListener('pointerup', endDrag)
+  }, [onPointerMove, endDrag])
+
   if (sorted.length === 0) {
     return (
       <div className="flex h-full flex-col gap-3">
@@ -47,6 +151,7 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
   }
 
   const lines = active ? active.content.split('\n') : []
+  const lang = active ? langOf(active.filePath) : ''
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -61,9 +166,20 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
         </div>
       </div>
 
-      <div className="grid min-h-0 flex-1 grid-cols-[minmax(11rem,22%)_1fr] gap-2 overflow-hidden rounded-xl border border-white/10 bg-black/50 lg:grid-cols-[minmax(13rem,26%)_1fr]">
-        {/* File list */}
-        <ul className="min-h-0 overflow-y-auto border-r border-white/10 py-1" aria-label={t('code.title')}>
+      {/* Split shell — flex (not a fixed grid) so the separator can drive a fluid tree width. The tree
+          takes a percentage width (the persisted, clamped ratio); the editor is `flex-1 min-w-0` so it
+          reflows to fill and its long lines SCROLL rather than push the tree. `is-dragging` disables the
+          width ease during a 1:1 pointer drag (mirrors the drawer). */}
+      <div
+        ref={splitRef}
+        className="group/split flex min-h-0 flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/50"
+      >
+        {/* File tree (left) — its width is the clamped ratio of the measured container. */}
+        <ul
+          className="min-h-0 shrink-0 overflow-y-auto overflow-x-hidden py-1"
+          style={{ width: `${pct}%` }}
+          aria-label={t('code.title')}
+        >
           {sorted.map((f, i) => {
             const isActive = f === active
             return (
@@ -84,10 +200,44 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
           })}
         </ul>
 
-        {/* Viewer: line-number gutter + monospace source. content is rendered as TEXT. */}
-        <div className="flex min-h-0 flex-col overflow-hidden">
-          <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-2.5 py-1">
-            <span className="truncate text-[11px] text-slate-400">{active?.filePath}</span>
+        {/* VERTICAL RESIZE SEPARATOR — keyboard splitter + pointer drag (capture on this stable node).
+            12px hit-area with a 1px hairline that tints teal on hover/focus; the global focus-visible
+            outline is suppressed (the hairline IS the focus affordance, like the drawer's). */}
+        <div
+          ref={handleRef}
+          role="separator"
+          tabIndex={0}
+          aria-orientation="vertical"
+          aria-label={t('code.resize')}
+          aria-valuenow={pct}
+          aria-valuemin={Math.round((splitWidth ? clampTreeRatio(0, splitWidth) : 0) * 100)}
+          aria-valuemax={Math.round((splitWidth ? clampTreeRatio(1, splitWidth) : 50) * 100)}
+          aria-valuetext={fill(t('code.resizeValue'), { n: String(pct) })}
+          title={t('code.resizeHint')}
+          onKeyDown={onKeyDown}
+          onPointerDown={onPointerDown}
+          style={{ touchAction: 'none' }}
+          className="group/handle relative flex w-3 shrink-0 cursor-col-resize items-center justify-center self-stretch focus:outline-none"
+        >
+          <span
+            aria-hidden="true"
+            className="h-full w-px bg-white/10 motion-safe:transition-all group-hover/handle:bg-[#07D1AF]/60 group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-[#07D1AF] group-focus-visible/handle:shadow-[0_0_6px_rgba(7,209,175,0.7)]"
+          />
+        </div>
+
+        {/* Viewer (right): line-number gutter + monospace source. `min-w-0` lets long lines scroll
+            inside this pane instead of pushing the tree. content is rendered as TEXT. */}
+        <div data-testid="code-editor-pane" className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-2.5 py-1">
+            <span className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-[11px] text-slate-400">{active?.filePath}</span>
+              {/* Subtle language badge for the active file (best-effort; hidden for unknown types). */}
+              {lang && (
+                <span className="shrink-0 rounded bg-white/[0.06] px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-slate-500">
+                  {lang}
+                </span>
+              )}
+            </span>
             <div className="flex shrink-0 items-center gap-2 pl-2">
               <span className="text-[10px] text-slate-600">{lines.length} {t('code.lines')}</span>
               {/* `active &&` guards noUncheckedIndexedAccess (active is CodeFile | undefined). */}

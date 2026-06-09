@@ -259,6 +259,10 @@ export const STRINGS = {
     'code.empty': 'No code yet — files appear here once the agents finish writing the app.',
     'code.lines': 'lines',
     'code.copyAll': 'Copy all',
+    // Resizable file-tree splitter (Code tab) — twin of the drawer's resize handle.
+    'code.resize': 'Resize file tree',
+    'code.resizeValue': 'File tree {n}% of width',
+    'code.resizeHint': 'Drag to resize the file tree',
     'copy.file': 'Copy file',
     'copy.codeBlock': 'Copy code',
     // ── Build history (studio redesign) ──
@@ -1071,6 +1075,10 @@ export const STRINGS = {
     'code.empty': 'Henüz kod yok — ajanlar uygulamayı yazmayı bitirince dosyalar burada görünür.',
     'code.lines': 'satır',
     'code.copyAll': 'Tümünü kopyala',
+    // Yeniden boyutlandırılabilir dosya ağacı ayırıcısı (Kod sekmesi).
+    'code.resize': 'Dosya ağacını yeniden boyutlandır',
+    'code.resizeValue': "Dosya ağacı genişliğin %{n}'i",
+    'code.resizeHint': 'Dosya ağacını yeniden boyutlandırmak için sürükleyin',
     'copy.file': 'Dosyayı kopyala',
     'copy.codeBlock': 'Kodu kopyala',
     // P1-CORE-1: çalıştırma başına "bu sonuç simüle edildi" rozeti — verify gate kartında ve

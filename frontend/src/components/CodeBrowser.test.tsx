@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, within } from '@testing-library/react'
+import { render, screen, within, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { CodeBrowser } from './CodeBrowser.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
@@ -105,5 +105,53 @@ describe('CodeBrowser', () => {
     const list = within(screen.getByRole('list', { name: /Generated code/i }))
     expect(list.getByText('<script>evil</script>.ts')).toBeInTheDocument()
     expect(container.querySelector('script')).toBeNull()
+  })
+
+  // ── Drag-resizable file-tree splitter (P2.2) ───────────────────────────────────────────────
+  describe('resizable file-tree splitter', () => {
+    beforeEach(() => localStorage.clear())
+
+    it('renders a vertical resize separator with keyboard/aria affordances', () => {
+      renderI18n(<CodeBrowser files={files} />)
+      const sep = screen.getByRole('separator')
+      expect(sep).toHaveAttribute('aria-orientation', 'vertical')
+      expect(sep).toHaveAttribute('tabindex', '0')
+      // It exposes a live width value for AT (aria-valuenow), like the drawer splitter.
+      expect(sep).toHaveAttribute('aria-valuenow')
+    })
+
+    it('keyboard resize changes the tree width AND persists it under the tree key', () => {
+      const { unmount } = renderI18n(<CodeBrowser files={files} />)
+      const sep = screen.getByRole('separator')
+      const before = sep.getAttribute('aria-valuenow')
+      // ArrowRight widens the tree (it sits on the left); the persisted value follows.
+      fireEvent.keyDown(sep, { key: 'ArrowRight' })
+      expect(sep.getAttribute('aria-valuenow')).not.toBe(before)
+      const persisted = localStorage.getItem('akis_code_tree_ratio')
+      expect(persisted).toBeTruthy()
+      unmount()
+      // A remount reads the persisted width back (the splitter is stateful across reopen).
+      renderI18n(<CodeBrowser files={files} />)
+      expect(screen.getByRole('separator').getAttribute('aria-valuenow')).toBe(
+        // same rounded percent as the persisted ratio
+        String(Math.round(Number(persisted) * 100)),
+      )
+    })
+
+    it('the tree never collapses below its min (Home keeps it readable)', () => {
+      renderI18n(<CodeBrowser files={files} />)
+      const sep = screen.getByRole('separator')
+      // Home snaps to the clamped minimum — which is still a positive, readable width.
+      fireEvent.keyDown(sep, { key: 'Home' })
+      const now = Number(sep.getAttribute('aria-valuenow'))
+      expect(now).toBeGreaterThan(0)
+    })
+
+    it('the editor pane keeps min-w-0 so long lines scroll instead of pushing the tree', () => {
+      const { container } = renderI18n(<CodeBrowser files={files} />)
+      const editor = container.querySelector('[data-testid="code-editor-pane"]')
+      expect(editor).not.toBeNull()
+      expect(editor!.className).toMatch(/min-w-0/)
+    })
   })
 })
