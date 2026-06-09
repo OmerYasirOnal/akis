@@ -220,6 +220,7 @@ export const STRINGS = {
     'preview.retry': 'Retry',
     'preview.bootSlow': 'Still booting — taking longer than expected.',
     // ── Preview header actions (only when the URL is embeddable /preview/) ──
+    'preview.actions': 'Preview actions',
     'preview.openTab': 'Open in new tab',
     'preview.copyUrl': 'Copy URL',
     'preview.refresh': 'Refresh preview',
@@ -1036,6 +1037,7 @@ export const STRINGS = {
     'preview.retry': 'Yeniden dene',
     'preview.bootSlow': 'Hâlâ başlatılıyor — beklenenden uzun sürüyor.',
     // ── Önizleme başlık eylemleri (yalnızca URL gömülebilir /preview/ olduğunda) ──
+    'preview.actions': 'Önizleme eylemleri',
     'preview.openTab': 'Yeni sekmede aç',
     'preview.copyUrl': "URL'yi kopyala",
     'preview.refresh': 'Önizlemeyi yenile',

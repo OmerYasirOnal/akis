@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import type { CodeArtifact, TestEvidence } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
 import { TestStats } from './TestStats.js'
@@ -25,6 +25,33 @@ import { useI18n } from '../i18n/I18nContext.js'
  *  note — so a LOST terminal frame can't leave the spinner pulsing forever (the boot watchdog). */
 const BOOT_SLOW_MS = 125_000
 
+/** Map a file extension → a short uppercase language label (best-effort; '' when unknown). Mirrors
+ *  CodeBrowser's langOf so the tab badge and the editor badge speak the same vocabulary. */
+function langOf(filePath: string): string {
+  const ext = filePath.slice(filePath.lastIndexOf('.') + 1).toLowerCase()
+  const map: Record<string, string> = {
+    ts: 'TS', tsx: 'TSX', js: 'JS', jsx: 'JSX', mjs: 'JS', cjs: 'JS',
+    json: 'JSON', css: 'CSS', scss: 'SCSS', html: 'HTML', md: 'MD',
+    py: 'PY', go: 'GO', rs: 'RS', sh: 'SH', yml: 'YAML', yaml: 'YAML', sql: 'SQL', toml: 'TOML',
+  }
+  return (filePath.includes('.') && map[ext]) || ''
+}
+
+/** A single representative language for the Code TAB badge: the most common known language across the
+ *  artifact (ties → the first by path). Returns '' when nothing maps, so the badge stays hidden rather
+ *  than guessing. */
+function dominantLang(files: { filePath: string }[]): string {
+  const counts = new Map<string, number>()
+  for (const f of files) {
+    const l = langOf(f.filePath)
+    if (l) counts.set(l, (counts.get(l) ?? 0) + 1)
+  }
+  let best = ''
+  let bestN = 0
+  for (const [l, n] of counts) { if (n > bestN) { best = l; bestN = n } }
+  return best
+}
+
 export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, actionError, device, onDevice }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined; actionError?: string | undefined; device: Device; onDevice: (d: Device) => void }) {
   const { t } = useI18n()
   const [tab, setTab] = useState<'preview' | 'code' | 'trust'>('preview')
@@ -40,6 +67,9 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
     return () => { if (timerRef.current) clearTimeout(timerRef.current) }
   }, [starting])
   const fileCount = files?.length ?? 0
+  // The Code tab's subtle language badge — a representative language for the whole artifact (memoized
+  // so the tab doesn't recompute on unrelated re-renders). '' → no badge (never a guess).
+  const codeLang = useMemo(() => (files ? dominantLang(files) : ''), [files])
   const hasTrust = testEvidence !== undefined
   // `tab` is local state, but the only control back to Preview is the tablist, which only renders
   // when files OR test evidence exist. If those vanish (New chat / switching to a session with no
@@ -89,7 +119,10 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
         {showTablist ? (
           // Preview ⇄ Code ⇄ Trust toggle — Code surfaces once files exist, Trust once a
           // verification has produced structured evidence.
-          <div role="tablist" aria-label={t('preview.title')} className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+          // Segmented control tightened to the radius scale: an 8px outer shell (rounded-lg) wrapping
+          // 6px inner tabs (rounded-md), one border width, consistent px-2.5/py-1 padding — so all
+          // three tabs read as one set.
+          <div role="tablist" aria-label={t('preview.title')} className="flex gap-0.5 rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
             {/* Tab buttons crossfade their active/hover state (transition-colors) for a settled toggle
                 rather than a hard cut; the tap-down scale is `motion-safe:` (instant under reduced-motion). */}
             <button role="tab" aria-selected={activeTab === 'preview'} onClick={() => setTab('preview')}
@@ -98,8 +131,16 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
             </button>
             {fileCount > 0 && (
               <button role="tab" aria-selected={activeTab === 'code'} onClick={() => setTab('code')}
-                className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
-                {t('preview.tab.code')} <span className="text-slate-500">{fileCount}</span>
+                className={`flex items-center gap-1 rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+                {t('preview.tab.code')}
+                {/* Subtle language badge — decorative (aria-hidden) so the tab's accessible name stays
+                    "Code" for the tab-honesty queries. Hidden when the language is unknown. */}
+                {codeLang && (
+                  <span aria-hidden="true" className="rounded bg-white/[0.06] px-1 text-[9px] font-medium uppercase tracking-wide text-slate-500">
+                    {codeLang}
+                  </span>
+                )}
+                <span aria-hidden="true" className="text-slate-500">{fileCount}</span>
               </button>
             )}
             {hasTrust && (
@@ -119,7 +160,11 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
               relative path the iframe loads, so opening it in a tab is the SAME app at the SAME
               studio origin — no new gate/security surface. */}
           {embeddable && activeTab === 'preview' && url && (
-            <>
+            // ONE labelled header cluster for the ship/inspect actions (pop-out ↗ / refresh ↻ / copy-URL)
+            // — grouped with consistent spacing + ≥44px hit areas instead of floating loose by the
+            // tablist. View-state only; no gate authority. The radius scale matches the tablist (rounded-md
+            // 6px controls inside a rounded-lg 8px shell), one border width.
+            <div role="group" aria-label={t('preview.actions')} className="flex items-center gap-0.5 rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
               {/* Open the running app full-screen in a new tab. `window.open` with the relative
                   `/preview/:id/` resolves against the studio origin (identical to the iframe src);
                   noopener,noreferrer keeps the new tab from reaching back into the studio. */}
@@ -128,7 +173,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
                 aria-label={t('preview.openTab')}
                 title={t('preview.openTab')}
                 onClick={() => window.open(url, '_blank', 'noopener,noreferrer')}
-                className="inline-flex items-center rounded border border-white/15 px-2 py-1 text-[11px] text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
+                className="inline-flex h-11 min-w-[2.75rem] items-center justify-center rounded-md px-2 text-[13px] text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
               >
                 <span aria-hidden="true">↗</span>
               </button>
@@ -141,18 +186,20 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
                 aria-label={t('preview.refresh')}
                 title={t('preview.refresh')}
                 onClick={() => setReloadNonce(n => n + 1)}
-                className="inline-flex items-center rounded border border-white/15 px-2 py-1 text-[11px] text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
+                className="inline-flex h-11 min-w-[2.75rem] items-center justify-center rounded-md px-2 text-[13px] text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
               >
                 <span aria-hidden="true">↻</span>
               </button>
               {/* Copy the ABSOLUTE preview URL so it's shareable/openable outside the studio (a bare
-                  relative path is useless on its own). Reuses the shared CopyButton idiom. */}
+                  relative path is useless on its own). Reuses the shared CopyButton idiom; sized to the
+                  cluster's ≥44px hit area. */}
               <CopyButton
+                chromeless
                 text={new URL(url, location.origin).href}
                 label={t('preview.copyUrl')}
-                className="motion-safe:active:scale-95"
+                className="h-11 min-w-[2.75rem] justify-center rounded-md px-2 motion-safe:active:scale-95"
               />
-            </>
+            </div>
           )}
           {/* P1-CORE-1: when the boot is in demo mode (mock provider/verification), the embedded
               "running app" is a demo, not a real-verified build — flag it on the preview itself. */}

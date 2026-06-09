@@ -34,6 +34,29 @@ const renderPanel = (url: string | undefined) =>
     />,
   )
 
+test('the pop-out / refresh / copy actions live in ONE labelled header cluster', () => {
+  renderPanel('/preview/abc/')
+  // The three ship/inspect actions are grouped in a single top-right cluster (a labelled group),
+  // not floating loose next to the tablist.
+  const cluster = screen.getByRole('group', { name: /preview actions|önizleme eylemleri/i })
+  const within = (p: HTMLElement, name: RegExp) =>
+    Array.from(p.querySelectorAll('button')).find(b => (b.getAttribute('aria-label') || '').match(name))
+  expect(within(cluster, /open in new tab|yeni sekmede aç/i)).toBeTruthy()
+  expect(within(cluster, /refresh preview|önizlemeyi yenile/i)).toBeTruthy()
+  expect(within(cluster, /copy url|url'yi kopyala/i)).toBeTruthy()
+})
+
+test('the Code tab is labelled with its language when known (e.g. TSX)', () => {
+  const files = [{ filePath: 'App.tsx', content: 'export const A = () => null' }]
+  renderI18n(
+    <PreviewPanel view={viewWith('/preview/abc/')} device="responsive" onDevice={() => {}} files={files} />,
+  )
+  // The Code tab carries a subtle language badge; its accessible name still includes "Code"
+  // (the badge is decorative) so the tab-honesty queries keep matching.
+  const codeTab = screen.getByRole('tab', { name: /Code|Kod/ })
+  expect(codeTab).toHaveTextContent(/TSX/)
+})
+
 test('open-in-tab + copy actions appear when the URL is embeddable (/preview/)', () => {
   renderPanel('/preview/abc/')
   expect(screen.getByRole('button', { name: /open in new tab|yeni sekmede aç/i })).toBeInTheDocument()
