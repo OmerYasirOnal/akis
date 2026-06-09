@@ -47,6 +47,20 @@ describe('App a11y: primary-nav aria-current', () => {
   })
 })
 
+describe('App brand: clean wordmark (no tagline)', () => {
+  it('the top-nav brand link reads only "AKIS" — no "· agentic build studio" tagline or dot', async () => {
+    window.history.pushState({}, '', '/')
+    render(<App />)
+    await screen.findByRole('navigation', { name: 'Primary' })
+    // The brand is the home link; its accessible name is the visible wordmark, which must be
+    // exactly "AKIS" — the tagline and the "·" separator were removed (owner feedback).
+    const brand = screen.getByRole('link', { name: 'AKIS' })
+    expect(brand).toHaveAttribute('href', '/')
+    expect(brand.textContent).toBe('AKIS')
+    expect(brand.textContent).not.toMatch(/studio|stüdyo|·/i)
+  })
+})
+
 describe('App a11y: skip link + main landmark', () => {
   it('renders a skip-to-content link targeting #main and a single <main id="main">', async () => {
     window.history.pushState({}, '', '/settings')

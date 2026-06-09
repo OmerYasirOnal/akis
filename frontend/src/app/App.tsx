@@ -28,17 +28,16 @@ import { LanguageToggle } from '../ui/LanguageToggle.js'
 const BASE = (import.meta.env?.VITE_API_BASE as string | undefined) ?? ''
 
 function Brand() {
-  const { t } = useI18n()
   return (
     <Link to="/" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
       <AkisLogo size={34} alt="" className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
       {/* The logo is decorative (alt="") to avoid a double "AKIS … AKIS" announce next to the
-          wordmark. The wordmark itself is shown on EVERY viewport — a compact "AKIS" on mobile
-          (so the brand isn't a bare glyph next to the DEMO badge) and the full title from sm —
-          so the visible text always names the home link with no sr-only fallback needed. */}
+          wordmark. The wordmark is a clean "AKIS" on EVERY viewport (owner feedback: the top-nav
+          tagline "· ajan tabanlı geliştirme stüdyosu" + its "·" dot were dropped — just the logo +
+          name). The visible text always names the home link, so no sr-only fallback is needed.
+          `t('app.title')` is unchanged — it still drives the per-route document.title + fallbacks. */}
       <span className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-base font-extrabold leading-tight text-transparent">
-        <span className="sm:hidden">AKIS</span>
-        <span className="hidden sm:inline">{t('app.title')}</span>
+        AKIS
       </span>
     </Link>
   )
