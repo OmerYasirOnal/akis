@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useRef } from 'react'
 import type { CodeArtifact, TestEvidence } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
-import { TestStats } from './TestStats.js'
 import { CodeBrowser } from './CodeBrowser.js'
 import { TrustReport } from './TrustReport.js'
 import { DeviceFrame } from './DeviceFrame.js'
@@ -12,8 +11,9 @@ import { useI18n } from '../i18n/I18nContext.js'
 /**
  * The live-preview surface. Embeds the locally-RUNNING app (same-origin /preview/:id/)
  * in the iframe once it's up, shows the shipped artifact as a link, and offers a
- * "Run app" control to (re)start the local preview. TestStats fills with the verify
- * numbers. Honors the scheme allowlist so an agent-influenced URL can never be a sink.
+ * "Run app" control to (re)start the local preview. The verify NUMBERS live in the Trust
+ * tab (owner feedback: no duplicate metrics row on the preview). Honors the scheme
+ * allowlist so an agent-influenced URL can never be a sink.
  *
  * A Preview ⇄ Code ⇄ Trust tablist flips the surface between the live app, a read-only
  * browser of the code the agents wrote (SessionState.code.files), and the Trust report —
@@ -114,7 +114,9 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   const isMock = view.provider === 'mock'
 
   return (
-    <div ref={panelRef} className="flex h-full min-h-0 flex-col gap-3">
+    // TIGHTER TOP (owner feedback 2): gap-2 (8px) between the tab/actions row and the content band so
+    // the running app starts higher — the preview is just the tab switch + the active tab, no slack.
+    <div ref={panelRef} className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
         {showTablist ? (
           // Preview ⇄ Code ⇄ Trust toggle — Code surfaces once files exist, Trust once a
@@ -374,9 +376,10 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
         </div>
       )}
 
-      {/* `testEvidence` lets the strip surface the REAL scenario count (the same structured
-          evidence the Trust tab renders) when the live counters don't fire — never invents data. */}
-      <TestStats stats={view.tests} evidence={testEvidence} />
+      {/* (Owner feedback 2: the bottom metrics row — Tests run / Result / Scenarios / p95 — was REMOVED.
+          The preview now shows ONLY the tab switch + the running app; the numbers live in the GÜVEN
+          (Trust) tab, which already carries Tests/Passed/Failed/Run time + the named scenarios. p95 had
+          no real data source [always '—'], so dropping it loses nothing.) */}
       </>
       )}
     </div>

@@ -24,12 +24,15 @@ const evidence: TestEvidence = {
 const renderI18n = (ui: ReactElement) => render(<I18nProvider>{ui}</I18nProvider>)
 
 describe('PreviewPanel', () => {
-  it('shows the shipped artifact url and pass/fail stats', () => {
+  it('shows the shipped artifact url and the verified badge (pass/fail stats moved to the Trust tab)', () => {
     const view: SessionView = { ...emptyView('s1'), preview: { artifactUrl: 'https://github.com/mock/s1', ready: true }, tests: { testsRun: 2, passed: true, ran: true }, verified: true }
     renderI18n(<PreviewPanel device="responsive" onDevice={() => {}} view={view} />)
     expect(screen.getByText('https://github.com/mock/s1')).toBeInTheDocument()
-    expect(screen.getByText('PASS')).toBeInTheDocument()
+    // The verified badge stays on the preview header; the numeric pass/fail STATS row (TestStats) was
+    // removed from the preview (owner feedback) — those numbers live in the Trust tab now.
     expect(screen.getByText('verified')).toBeInTheDocument()
+    expect(screen.queryByText('PASS')).toBeNull()
+    expect(screen.queryByText(/Tests run/i)).toBeNull()
   })
   it('embeds the running app in an iframe when the url is a /preview/ path', () => {
     const view: SessionView = { ...emptyView('s1'), preview: { url: '/preview/s1/', ready: true } }
@@ -87,11 +90,14 @@ describe('PreviewPanel', () => {
     expect(frame.contains(f)).toBe(true)
   })
 
-  // P1-CORE-1: a simulated (mock-runner / demo-boot) result must be flagged AT THE RESULT —
-  // on the verify card (TestStats) and the preview — so it can't be mistaken for a real pass.
-  it('flags a SIMULATED verification on the verify card when tests.demo', () => {
+  // P1-CORE-1: a simulated (mock-runner / demo-boot) result must be flagged AT THE RESULT — on the
+  // preview header (preview.demo) and in the Trust tab (tests.demo) — so it can't be mistaken for a
+  // real pass. The numeric verify card (TestStats) was removed from the preview (owner feedback), so
+  // the tests.demo flag now surfaces in the Trust report (which already takes demo={view.tests.demo}).
+  it('flags a SIMULATED verification in the Trust tab when tests.demo', async () => {
     const view: SessionView = { ...emptyView('s1'), tests: { testsRun: 2, passed: true, ran: true, demo: true } }
-    renderI18n(<PreviewPanel device="responsive" onDevice={() => {}} view={view} />)
+    renderI18n(<PreviewPanel device="responsive" onDevice={() => {}} view={view} files={[{ filePath: 'index.html', content: '<html/>' }]} testEvidence={evidence} />)
+    await userEvent.click(screen.getByRole('tab', { name: /Trust/ }))
     const badge = screen.getByRole('status')
     expect(badge).toHaveTextContent(STRINGS.en['result.demo.badge'])
     expect(badge).toHaveAttribute('title', STRINGS.en['result.demo.title'])

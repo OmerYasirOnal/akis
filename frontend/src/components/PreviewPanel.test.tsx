@@ -11,6 +11,7 @@ import type { ReactElement } from 'react'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { PreviewPanel } from './PreviewPanel.js'
 import type { SessionView } from '../live/types.js'
+import type { TestEvidence } from '@akis/shared'
 
 const renderI18n = (ui: ReactElement) => render(<I18nProvider>{ui}</I18nProvider>)
 
@@ -114,6 +115,46 @@ test('refresh REMOUNTS the iframe (re-fetches the SAME src) and re-arms the load
   // `loaded` re-armed: the dark skeleton is back (iframe hidden) until the new load paints — no white flash.
   expect(iframe2.className).toMatch(/opacity-0/)
   expect(screen.getByText(/rendering|çiziliyor/i)).toBeInTheDocument()
+})
+
+// METRICS MOVE TO TRUST (owner feedback 2): the preview must show ONLY the tab switch + the active
+// tab's content — NO bottom metrics row (Tests run / Result / Scenarios / p95). Those numbers belong
+// in the GÜVEN (Trust) tab, which already carries Tests/Passed/Failed/Run time + the named scenarios.
+const evidenceWith = (): TestEvidence => ({
+  testsRun: 2,
+  passed: true,
+  durationMs: 1200,
+  bdd: { built: 1, run: 1, passed: 1, failed: 0, skipped: 0, durationMs: 600 },
+  e2e: { testsRun: 1, passed: true, expected: 1, unexpected: 0, flaky: 0, skipped: 0, durationMs: 600 },
+  scenarios: [
+    { suite: 'e2e', name: 'loads the home page', passed: true },
+    { suite: 'bdd', name: 'submits the form', passed: true },
+  ],
+})
+
+test('the Preview tab shows NO bottom metrics row (Tests run / p95 removed)', () => {
+  renderI18n(
+    <PreviewPanel view={viewWith('/preview/abc/')} device="responsive" onDevice={() => {}}
+      files={[{ filePath: 'index.html', content: '<html/>' }]} testEvidence={evidenceWith()} />,
+  )
+  // The Preview tab is active by default; the old TestStats strip (Tests run / Result / Scenarios /
+  // p95) must be gone entirely — the preview is just the tab switch + the running app.
+  expect(screen.queryByText(/Tests run|Çalışan test/i)).toBeNull()
+  expect(screen.queryByText(/^p95$/i)).toBeNull()
+})
+
+test('the metrics live in the Trust tab (Tests / Passed / Run time + scenarios)', () => {
+  renderI18n(
+    <PreviewPanel view={viewWith('/preview/abc/')} device="responsive" onDevice={() => {}}
+      files={[{ filePath: 'index.html', content: '<html/>' }]} testEvidence={evidenceWith()} />,
+  )
+  // Flip to the Trust tab — the auditable evidence the preview's bottom row used to duplicate.
+  fireEvent.click(screen.getByRole('tab', { name: /Trust|Güven/i }))
+  expect(screen.getByText(/^Tests$|^Testler$/i)).toBeInTheDocument()
+  expect(screen.getByText(/^Passed$|^Geçen$/i)).toBeInTheDocument()
+  expect(screen.getByText(/Run time|Süre/i)).toBeInTheDocument()
+  // The scenario evidence (the SCENARIOS metric, richer than a bare count) is listed by name.
+  expect(screen.getByText('loads the home page')).toBeInTheDocument()
 })
 
 test('copy lifts the ABSOLUTE preview URL (resolved against the studio origin)', async () => {

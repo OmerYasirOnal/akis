@@ -375,8 +375,11 @@ export function PreviewDrawer({
       {/* BODY — two scroll regions (H1). */}
       <div className="flex h-full min-h-0 flex-col">
         {/* Region A: gate-adjacent card stack — owns its own scrollbar, capped so the preview keeps height.
-            px-4 py-4 = chat-header padding parity (no 12→16 jump crossing the seam, per the standards pass). */}
-        <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:50vh]">{cards}</div>
+            px-4 py-4 = chat-header padding parity (no 12→16 jump crossing the seam, per the standards pass).
+            EMPTY-COLLAPSE (owner feedback 2 — "reduce the empty space at the TOP"): while a build is
+            running there are no cards yet, so the `empty:` variants drop this region's padding/height
+            entirely → the preview tab+app start at the very top, no dead 32px band above them. */}
+        <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:50vh] empty:hidden empty:p-0">{cards}</div>
         {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body. */}
         <div className="min-h-0 flex-1">{preview}</div>
       </div>
@@ -483,7 +486,8 @@ export function PreviewDrawer({
               reveal the regions. min-h-0 lets the inner DeviceFrame scroll. The focus-trap container is the
               SHEET panel (sheetRef), so it spans the grip + ✕ + this body. px-4 = chat parity. */}
           <div className="flex min-h-0 flex-1 flex-col">
-            <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:40vh]">{cards}</div>
+            {/* empty:hidden — same top-tightening as the desktop drawer (no dead band when no cards). */}
+            <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:40vh] empty:hidden empty:p-0">{cards}</div>
             <div className="min-h-0 flex-1">{preview}</div>
           </div>
         </div>
