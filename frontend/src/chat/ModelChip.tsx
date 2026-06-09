@@ -4,25 +4,28 @@ import type { StringKey } from '../i18n/catalog.js'
 export type Effort = 'fast' | 'balanced' | 'deep'
 
 export interface ModelChipProps {
-  /** Provider DISPLAY label (e.g. "Anthropic (Claude)"). */
-  provider: string
   /** Model DISPLAY label (e.g. "Claude Sonnet 4.6"). */
   model: string
   effort: Effort
-  /** Badge state: /health's live|demo, 'nokey' when the SELECTED provider has no key
-   *  (per-selection honesty — the badge reflects what THIS request will do), or null when
-   *  /health failed (neutral: badge omitted, the chip itself never hides — Opus review M2). */
-  mode: 'live' | 'demo' | 'nokey' | null
+  /** Whether the popover it opens is currently open — drives aria-expanded (the chip is the
+   *  popover trigger now, not a standalone modal opener). */
+  open?: boolean
+  /** id of the popover this chip controls (aria-controls), set when the popover is open. */
+  controls?: string
   onClick?: () => void
 }
 
 /**
- * A compact, tappable chip near the chat composer that makes the active model VISIBLE
- * ("neyle çalışıyoruz görünsün"): provider · model · effort, plus a LIVE/DEMO badge.
- * Tapping it opens the <ModelPicker>. Read-only presentation — it holds no state; the
- * parent owns the selection and the mode (read once from /health).
+ * A compact, tappable chip INSIDE the composer toolbar that makes the active model VISIBLE
+ * ("neyle çalışıyoruz görünsün"): provider · model · effort. Tapping it opens the in-composer
+ * <ModelPicker> popover (this chip is its anchored trigger). Read-only presentation — it holds no
+ * state; the parent owns the selection.
+ *
+ * DROPPED (P1.3): the LIVE/DEMO/"no key" status pill. The composer is now the ONE surface and the
+ * "CANLI" badge added noise without action; the no-key signal lives INSIDE the picker per-provider
+ * (where it is actionable), so the chip stays a quiet, single-purpose trigger with a ▾ caret.
  */
-export function ModelChip({ provider, model, effort, mode, onClick }: ModelChipProps) {
+export function ModelChip({ model, effort, open, controls, onClick }: ModelChipProps) {
   const { t } = useI18n()
   // Effort label key is a known fixed set — cast the template key to StringKey (the catalog
   // has all three `chat.picker.effort.{fast,balanced,deep}` entries in both locales).
@@ -31,26 +34,18 @@ export function ModelChip({ provider, model, effort, mode, onClick }: ModelChipP
     <button
       type="button"
       onClick={onClick}
+      aria-haspopup="dialog"
+      aria-expanded={open ?? false}
+      {...(open && controls ? { 'aria-controls': controls } : {})}
       aria-label={t('chat.chip.label')}
       title={t('chat.chip.label')}
-      className="inline-flex max-w-full items-center gap-2 self-start rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.08] px-3 py-1.5 text-xs text-teal-100 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/[0.14]"
+      className="inline-flex max-w-full items-center gap-1.5 rounded-lg border border-white/10 bg-white/[0.03] px-2.5 py-1.5 text-xs text-slate-200 transition hover:border-white/25 hover:bg-white/[0.06]"
     >
       <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-[#07D1AF]" aria-hidden="true" />
-      <span className="truncate font-semibold">{provider}</span>
-      <span className="text-teal-400/60" aria-hidden="true">·</span>
-      <span className="truncate">{model}</span>
-      <span className="text-teal-400/60" aria-hidden="true">·</span>
-      <span className="shrink-0">{effortLabel}</span>
-      {mode !== null && (
-        <span
-          className={
-            'ml-1 shrink-0 rounded-full px-1.5 py-0.5 text-[10px] font-bold tracking-wide ' +
-            (mode === 'live' ? 'bg-emerald-400/20 text-emerald-200' : 'bg-amber-400/20 text-amber-200')
-          }
-        >
-          {mode === 'live' ? t('chat.chip.live') : mode === 'demo' ? t('chat.chip.demo') : t('chat.chip.nokey')}
-        </span>
-      )}
+      <span className="truncate font-semibold text-slate-100">{model}</span>
+      <span className="text-slate-500" aria-hidden="true">·</span>
+      <span className="shrink-0 text-slate-400">{effortLabel}</span>
+      <span className="shrink-0 text-slate-500" aria-hidden="true">▾</span>
     </button>
   )
 }

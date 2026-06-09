@@ -31,21 +31,30 @@ function modelFetch(reply: string, mode: 'live' | 'demo' = 'live') {
 }
 
 describe('AkisChat — model picker (chat-only visibility + selection)', () => {
-  it('renders the model chip once providers + health load (shows the active model + mode)', async () => {
+  it('renders the model chip once providers load (shows the active model + effort, NO status badge)', async () => {
     const api = new ApiClient('', modelFetch('hi', 'live'))
     render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
     // The chip seeds from the first provider's defaultModel.
     const chip = await screen.findByRole('button', { name: /active model/i })
-    expect(chip).toHaveTextContent('Anthropic (Claude)')
     expect(chip).toHaveTextContent('Claude Haiku 4.5')
-    expect(chip).toHaveTextContent('LIVE')
+    expect(chip).toHaveTextContent('Balanced')
+    // P1.3: the LIVE/DEMO/CANLI status pill is GONE from the chip.
+    expect(chip).not.toHaveTextContent(/LIVE|DEMO|CANLI/i)
   })
 
-  it('shows a DEMO badge when /health reports demo mode', async () => {
-    const api = new ApiClient('', modelFetch('hi', 'demo'))
-    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+  it('composer is ONE shell: the model trigger AND the send button live inside the same <form> (P1.3)', async () => {
+    const api = new ApiClient('', modelFetch('hi', 'live'))
+    const { container } = render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
     const chip = await screen.findByRole('button', { name: /active model/i })
-    expect(chip).toHaveTextContent('DEMO')
+    const send = screen.getByRole('button', { name: 'Ask' })
+    const form = container.querySelector('form')!
+    // Both controls are descendants of the single composer form (no separate chip row above it).
+    expect(form.contains(chip)).toBe(true)
+    expect(form.contains(send)).toBe(true)
+    // The model picker is NOT open until the chip is tapped (it is an anchored popover, not a modal).
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await userEvent.click(chip)
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
   })
 
   it('restores the saved preference from localStorage (initial chip reflects it)', async () => {

@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { useState } from 'react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { ModelPicker } from './ModelPicker.js'
+import { ModelPicker, MODEL_POPOVER_ID, type ModelSelection } from './ModelPicker.js'
 import { ModelChip } from './ModelChip.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import type { ProviderInfo } from '../api/client.js'
@@ -105,36 +106,47 @@ describe('ModelPicker', () => {
 })
 
 describe('ModelChip', () => {
-  it('shows provider · model · effort and a LIVE badge in live mode', () => {
+  it('renders the model label + effort WITHOUT any LIVE/DEMO/CANLI status badge (P1.3)', () => {
     render(
       <I18nProvider>
-        <ModelChip provider="Anthropic (Claude)" model="Claude Sonnet 4.6" effort="balanced" mode="live" />
+        <ModelChip model="Claude Sonnet 4.6" effort="balanced" />
       </I18nProvider>,
     )
     const chip = screen.getByRole('button')
-    expect(chip).toHaveTextContent('Anthropic (Claude)')
     expect(chip).toHaveTextContent('Claude Sonnet 4.6')
     expect(chip).toHaveTextContent('Balanced')
-    expect(chip).toHaveTextContent('LIVE')
-    expect(chip).not.toHaveTextContent('DEMO')
+    // The status pill is GONE — no live/demo/no-key badge on the chip itself.
+    expect(screen.queryByText(/CANLI|LIVE|DEMO|NO KEY/i)).toBeNull()
   })
 
-  it('shows a DEMO badge in demo mode and fires onClick', async () => {
+  it('is the popover trigger: aria-haspopup + aria-expanded, and fires onClick', async () => {
     const onClick = vi.fn()
     render(
       <I18nProvider>
-        <ModelChip provider="OpenAI" model="GPT-4.1 mini" effort="deep" mode="demo" onClick={onClick} />
+        <ModelChip model="GPT-4.1 mini" effort="deep" onClick={onClick} />
       </I18nProvider>,
     )
     const chip = screen.getByRole('button')
-    expect(chip).toHaveTextContent('DEMO')
     expect(chip).toHaveTextContent('Deep')
+    expect(chip).toHaveAttribute('aria-haspopup', 'dialog')
+    expect(chip).toHaveAttribute('aria-expanded', 'false')
     await userEvent.click(chip)
     expect(onClick).toHaveBeenCalledTimes(1)
   })
+
+  it('reflects an OPEN popover via aria-expanded', () => {
+    render(
+      <I18nProvider>
+        <ModelChip model="Claude Haiku 4.5" effort="fast" open controls="akis-model-popover" />
+      </I18nProvider>,
+    )
+    const chip = screen.getByRole('button')
+    expect(chip).toHaveAttribute('aria-expanded', 'true')
+    expect(chip).toHaveAttribute('aria-controls', 'akis-model-popover')
+  })
 })
 
-describe('ModelPicker — modal a11y (#10)', () => {
+describe('ModelPicker — popover a11y (#10)', () => {
   it('moves focus INTO the dialog on open', () => {
     renderPicker()
     const dialog = screen.getByRole('dialog')
@@ -145,5 +157,69 @@ describe('ModelPicker — modal a11y (#10)', () => {
     const { onClose } = renderPicker()
     await userEvent.keyboard('{Escape}')
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('carries the popover id so the trigger chip can aria-control it', () => {
+    renderPicker()
+    expect(screen.getByRole('dialog')).toHaveAttribute('id', MODEL_POPOVER_ID)
+  })
+})
+
+// The in-composer flow: the ModelChip is the trigger, and the popover is anchored next to it. This
+// harness mirrors AkisChat's wiring (a `relative` wrapper holding the chip + the conditionally-mounted
+// popover) so we exercise open → select → persist (via onSelect) → close, plus outside-click dismiss.
+function ChipWithPopover({ onPersist }: { onPersist: (s: ModelSelection) => void }) {
+  const [open, setOpen] = useState(false)
+  const [sel, setSel] = useState<ModelSelection>({ provider: 'anthropic', model: 'claude-haiku-4-5-20251001', effort: 'balanced' })
+  // Resolve the model DISPLAY label exactly as AkisChat does (id → label) before passing to the chip.
+  const modelLabel = PROVIDERS.find(p => p.id === sel.provider)?.models.find(m => m.id === sel.model)?.label ?? sel.model
+  return (
+    <I18nProvider>
+      <div className="relative">
+        <ModelChip model={modelLabel} effort={sel.effort} open={open} controls={MODEL_POPOVER_ID} onClick={() => setOpen(o => !o)} />
+        {open && (
+          <ModelPicker
+            providers={PROVIDERS}
+            selected={sel}
+            onSelect={(s) => { setSel(s); onPersist(s) }}
+            onClose={() => setOpen(false)}
+          />
+        )}
+      </div>
+    </I18nProvider>
+  )
+}
+
+describe('ModelPicker — in-composer popover flow (P1.3)', () => {
+  it('opens from the chip trigger, selects + persists via onSelect, then closes', async () => {
+    const onPersist = vi.fn()
+    render(<ChipWithPopover onPersist={onPersist} />)
+    // Closed initially — no dialog.
+    expect(screen.queryByRole('dialog')).toBeNull()
+    await userEvent.click(screen.getByRole('button', { name: /tap to change|değiştirmek/i }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    // Pick Sonnet + Deep, Apply → onSelect persists, popover closes.
+    await userEvent.click(screen.getByRole('radio', { name: 'Claude Sonnet 4.6' }))
+    await userEvent.click(screen.getByRole('radio', { name: /Deep/i }))
+    await userEvent.click(screen.getByRole('button', { name: 'Apply' }))
+    expect(onPersist).toHaveBeenCalledWith({ provider: 'anthropic', model: 'claude-sonnet-4-6', effort: 'deep' })
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    // The chip now reflects the chosen model label.
+    expect(screen.getByRole('button', { name: /tap to change|değiştirmek/i })).toHaveTextContent('Claude Sonnet 4.6')
+  })
+
+  it('an OUTSIDE pointerdown dismisses the popover (no commit)', async () => {
+    const onPersist = vi.fn()
+    render(
+      <div>
+        <ChipWithPopover onPersist={onPersist} />
+        <button type="button">outside</button>
+      </div>,
+    )
+    await userEvent.click(screen.getByRole('button', { name: /tap to change|değiştirmek/i }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    await userEvent.click(screen.getByRole('button', { name: 'outside' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(onPersist).not.toHaveBeenCalled() // dismissed without committing
   })
 })

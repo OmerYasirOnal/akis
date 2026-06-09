@@ -20,11 +20,16 @@ export interface ModelPickerProps {
 
 const EFFORTS: Effort[] = ['fast', 'balanced', 'deep']
 
+/** The dom id the popover carries so the trigger chip can point aria-controls at it. */
+export const MODEL_POPOVER_ID = 'akis-model-popover'
+
 /**
- * A custom (NOT native <select>) model + effort picker, shown as a modal over the chat.
- * Models are grouped by provider with a `recommended` badge on flagged ones; effort is a
- * three-way radio (fast/balanced/deep). The choice is LOCAL until Apply, so the user can
- * cancel without committing. CHAT-ONLY: the parent applies this to chat requests only.
+ * A custom (NOT native <select>) model + effort picker, shown as an ANCHORED POPOVER inside the
+ * composer (P1.3 — was a full-screen modal). Models are grouped by provider with a `recommended`
+ * badge on flagged ones; effort is a three-way radio (fast/balanced/deep). The choice is LOCAL
+ * until Apply, so the user can cancel without committing. CHAT-ONLY: the parent applies this to
+ * chat requests only. The parent renders this inside a `relative` wrapper that also holds the
+ * trigger chip, so the absolute panel anchors to that chip.
  */
 export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPickerProps) {
   const { t } = useI18n()
@@ -42,9 +47,9 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
     onClose?.()
   }
 
-  // MODAL A11Y (#10): Escape closes; focus moves INTO the dialog on open + is RESTORED to the prior
-  // element on close; Tab is TRAPPED inside the dialog (it is aria-modal). Uses the existing
-  // role=dialog markup — no new modal lib.
+  // POPOVER A11Y (#10, kept through the modal→popover move): Escape closes; focus moves INTO the
+  // dialog on open + is RESTORED to the prior element (the trigger chip) on close; Tab is TRAPPED
+  // inside the dialog; an OUTSIDE pointerdown dismisses (no commit). role=dialog markup — no lib.
   const dialogRef = useRef<HTMLDivElement>(null)
   useEffect(() => {
     const prevFocus = document.activeElement instanceof HTMLElement ? document.activeElement : null
@@ -61,24 +66,39 @@ export function ModelPicker({ providers, selected, onSelect, onClose }: ModelPic
       if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus() }
       else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus() }
     }
+    // Outside-click dismiss: a pointerdown OUTSIDE the panel closes it. Guard for the trigger chip —
+    // it lives OUTSIDE the panel but its own onClick toggles open, so closing here AND toggling there
+    // would re-open; the chip carries [aria-haspopup="dialog"], so we skip the dismiss for it and let
+    // its toggle own the transition.
+    const onPointerDown = (e: PointerEvent): void => {
+      const target = e.target as Node | null
+      if (!panel || !target) return
+      if (panel.contains(target)) return
+      if (target instanceof Element && target.closest('[aria-haspopup="dialog"]')) return
+      onClose?.()
+    }
     document.addEventListener('keydown', onKey)
-    return () => { document.removeEventListener('keydown', onKey); prevFocus?.focus() }
+    document.addEventListener('pointerdown', onPointerDown, true)
+    return () => {
+      document.removeEventListener('keydown', onKey)
+      document.removeEventListener('pointerdown', onPointerDown, true)
+      prevFocus?.focus()
+    }
   }, [onClose])
 
   return (
     <div
       ref={dialogRef}
+      id={MODEL_POPOVER_ID}
       role="dialog"
-      aria-modal="true"
+      aria-modal="false"
       aria-label={t('chat.picker.title')}
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
-      // Click the backdrop to dismiss (no commit). Inner clicks stopPropagation below.
-      onClick={() => onClose?.()}
+      // ANCHORED POPOVER: absolutely positioned just ABOVE the composer toolbar (the composer sits at
+      // the bottom of the chat column, so the panel opens UPWARD), left-aligned to the trigger chip.
+      // The parent wraps the chip + this in a `relative` container. Bounded height with its own scroll.
+      className="absolute bottom-full left-0 z-50 mb-2 flex max-h-[60vh] w-[min(36rem,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl akis-fade-in"
     >
-      <div
-        className="flex max-h-[82vh] w-full max-w-xl flex-col overflow-hidden rounded-2xl border border-white/10 bg-slate-950 shadow-2xl"
-        onClick={e => e.stopPropagation()}
-      >
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
         <div className="flex items-start justify-between gap-4 border-b border-white/10 px-6 py-4">
           <div>
             <h2 className="text-base font-bold text-slate-100">{t('chat.picker.title')}</h2>

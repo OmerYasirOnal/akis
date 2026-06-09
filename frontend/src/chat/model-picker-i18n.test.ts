@@ -23,10 +23,14 @@ describe('model-picker i18n lockstep', () => {
     }
   })
 
-  it('resolves the LIVE/DEMO chip badges in EN and TR', () => {
-    expect(STRINGS.en['chat.chip.live']).toBe('LIVE')
-    expect(STRINGS.tr['chat.chip.live']).toBe('CANLI')
+  it('keeps the demo badge (used by the done-bubble) in EN and TR; the live/nokey chip badges are GONE (P1.3)', () => {
+    // P1.3 dropped the LIVE/DEMO/"no key" pill FROM the model chip — `chat.chip.demo` survives only
+    // because ChatThread's shipped/done bubble still labels a demo build, so it stays in both locales.
     expect(STRINGS.en['chat.chip.demo']).toBe('DEMO')
     expect(STRINGS.tr['chat.chip.demo']).toBe('DEMO')
+    expect('chat.chip.live' in STRINGS.en).toBe(false)
+    expect('chat.chip.live' in STRINGS.tr).toBe(false)
+    expect('chat.chip.nokey' in STRINGS.en).toBe(false)
+    expect('chat.chip.nokey' in STRINGS.tr).toBe(false)
   })
 })

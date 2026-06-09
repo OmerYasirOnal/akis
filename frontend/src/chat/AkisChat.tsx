@@ -1,7 +1,7 @@
 import { useState, useEffect, useLayoutEffect, useRef, useMemo, useCallback, memo, type FormEvent, type ReactNode } from 'react'
 import type { ApiClient, ProviderInfo, ChatOverrides, UsageInfo } from '../api/client.js'
 import { ApiError } from '../api/client.js'
-import { getProvidersCached, getModeCached } from '../api/providersCache.js'
+import { getProvidersCached } from '../api/providersCache.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { Markdown } from '../components/Markdown.js'
 import { CopyButton } from '../components/CopyButton.js'
@@ -10,7 +10,7 @@ import { SpecCard } from './SpecCard.js'
 import { UsageMeter } from './UsageMeter.js'
 import { useSmoothText } from './useSmoothText.js'
 import { ModelChip, type Effort } from './ModelChip.js'
-import { ModelPicker, type ModelSelection } from './ModelPicker.js'
+import { ModelPicker, MODEL_POPOVER_ID, type ModelSelection } from './ModelPicker.js'
 import { loadModelPref, saveModelPref, type ModelPref } from './modelPref.js'
 import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, type AkisMsg, type ThreadNode } from './akisThread.js'
 import { RunBlock } from './RunBlock.js'
@@ -205,11 +205,10 @@ export function AkisChat({
   // ── Model picker (CHAT-ONLY visibility + selection) ──
   // The user's saved provider/model/effort preference (safe-parsed from localStorage).
   const [modelPref, setModelPref] = useState<ModelPref>(() => loadModelPref())
-  // The provider catalog + serving mode, fetched ONCE on mount (mode is session-global, so
-  // it is cached here and the chip reads it without refetching per render). Both degrade
-  // gracefully: a failed fetch just hides the chip (the chat itself is unaffected).
+  // The provider catalog, fetched ONCE on mount (cached). Degrades gracefully: a failed fetch just
+  // hides the chip (the chat itself is unaffected). The serving-mode badge was retired with the
+  // "CANLI" pill (P1.3) — the no-key signal now lives inside the picker, per-provider.
   const [providers, setProviders] = useState<ProviderInfo[]>([])
-  const [mode, setMode] = useState<'live' | 'demo' | null>(null)
   // The caller's token usage vs. budget (fetched alongside health). null = hidden (401/unlimited
   // or a failed fetch) — the meter is pure observability, never blocks the chat.
   const [usage, setUsage] = useState<UsageInfo | null>(null)
@@ -241,10 +240,10 @@ export function AkisChat({
   // Autofocus the composer on mount so the user can start typing immediately.
   useEffect(() => { inputRef.current?.focus() }, [])
 
-  // Fetch the provider catalog + serving mode ONCE on mount (mode is session-global, cached).
-  // Both are best-effort: any failure (offline, route absent in a test) just leaves the chip
-  // hidden — the conversation never depends on them. If the saved pref has no provider yet,
-  // SEED it from the first provider's defaultModel so the chip shows a concrete model.
+  // Fetch the provider catalog ONCE on mount (cached). Best-effort: any failure (offline, route
+  // absent in a test) just leaves the chip hidden — the conversation never depends on it. If the
+  // saved pref has no provider yet, SEED it from the first provider's defaultModel so the chip
+  // shows a concrete model.
   useEffect(() => {
     let alive = true
     // #41: providers + mode are session-stable — read them through a process cache so AkisChat's
@@ -265,7 +264,6 @@ export function AkisChat({
         setModelPref(prev => (prev.provider ? prev : { ...prev, provider: first.id, model: first.defaultModel }))
       })
       .catch(() => {/* chip simply stays hidden */})
-    void getModeCached(api).then(m => { if (alive && m) setMode(m) }).catch(() => {/* mode badge omitted */})
     // Per-user token-usage meter: best-effort. A 401 (anonymous) or unlimited deployment just
     // hides it (UsageMeter returns null) — the chat never depends on it.
     void api.usage().then(u => { if (alive) setUsage(u) }).catch(() => {/* meter hidden */})
@@ -650,49 +648,56 @@ export function AkisChat({
           </div>
         )
       })()}
-      {/* Visibility chip: show WHICH model + effort + mode is active near the composer.
-          Opus review M2: NOT hostage to /health — the chip renders once the provider catalog
-          loads; a failed health probe only degrades the badge (neutral), never hides the
-          picker's sole entry point. Badge honesty: a key-less SELECTION shows "anahtar yok"
-          (amber) regardless of the global mode — the badge reflects what THIS request will do. */}
-      {/* The model chip + the per-user token meter sit together near the composer. The meter is
-          pure observability (hidden on 401/unlimited via UsageMeter's own null) and never gates
-          the chat. */}
-      <div className="flex flex-wrap items-center gap-2">
-        {(() => {
-          const active = providers.find(p => p.id === modelPref.provider)
-          if (!active) return null
-          const modelLabel = active.models.find(m => m.id === modelPref.model)?.label ?? modelPref.model
-          return (
-            <ModelChip
-              provider={active.label}
-              model={modelLabel}
-              effort={modelPref.effort}
-              mode={active.available === false ? 'nokey' : mode}
-              onClick={() => setPickerOpen(true)}
-            />
-          )
-        })()}
-        <UsageMeter usage={usage} />
+      {/* THE COMPOSER — ONE rounded shell (P1.3): the textarea input on top and a footer toolbar
+          (left = the in-composer ModelChip trigger + the quiet UsageMeter; right = the send icon-button)
+          live INSIDE a single bordered/blurred container, matched to the conversation measure. The model
+          picker is now an ANCHORED POPOVER rendered as a child of this `relative` wrapper (it opens
+          UPWARD via `bottom-full`), so it never leaves the composer as a full-screen modal. The
+          standalone provider chip + the "CANLI" status row above the form are GONE. */}
+      <div className="relative mx-auto w-full max-w-[46rem]">
+        {pickerOpen && providers.length > 0 && (
+          <ModelPicker
+            providers={providers}
+            selected={modelPref as ModelSelection}
+            onSelect={(sel: ModelSelection) => {
+              const next: ModelPref = { provider: sel.provider, model: sel.model, effort: sel.effort as Effort }
+              setModelPref(next)
+              saveModelPref(next)
+            }}
+            onClose={() => setPickerOpen(false)}
+          />
+        )}
+        <form
+          onSubmit={send}
+          aria-busy={busy}
+          className="flex flex-col rounded-2xl border border-white/12 bg-slate-900/70 px-3 pb-2 pt-1 shadow-[0_10px_40px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur focus-within:border-[#07D1AF]/50"
+        >
+          <input ref={inputRef} aria-label={t('akis.ask')} value={input} onChange={e => setInput(e.target.value)} placeholder={t('akis.ask')}
+            className="min-w-0 flex-1 bg-transparent px-1 py-2.5 text-slate-100 placeholder:text-slate-400 focus:outline-none" />
+          {/* Footer toolbar: model trigger + usage on the left, send on the right — all in-shell. */}
+          <div className="flex items-center gap-2">
+            {(() => {
+              const active = providers.find(p => p.id === modelPref.provider)
+              if (!active) return null
+              const modelLabel = active.models.find(m => m.id === modelPref.model)?.label ?? modelPref.model
+              return (
+                <ModelChip
+                  model={modelLabel}
+                  effort={modelPref.effort}
+                  open={pickerOpen}
+                  controls={MODEL_POPOVER_ID}
+                  onClick={() => setPickerOpen(o => !o)}
+                />
+              )
+            })()}
+            <UsageMeter usage={usage} />
+            <button type="submit" disabled={busy || input.trim() === ''} aria-label={t('akis.send')} title={t('akis.send')}
+              className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 text-base font-black text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+              <span aria-hidden="true">↑</span>
+            </button>
+          </div>
+        </form>
       </div>
-      {pickerOpen && providers.length > 0 && (
-        <ModelPicker
-          providers={providers}
-          selected={modelPref as ModelSelection}
-          onSelect={(sel: ModelSelection) => {
-            const next: ModelPref = { provider: sel.provider, model: sel.model, effort: sel.effort as Effort }
-            setModelPref(next)
-            saveModelPref(next)
-          }}
-          onClose={() => setPickerOpen(false)}
-        />
-      )}
-      <form className="flex gap-2" onSubmit={send} aria-busy={busy}>
-        <input ref={inputRef} aria-label={t('akis.ask')} value={input} onChange={e => setInput(e.target.value)} placeholder={t('akis.ask')}
-          className="min-w-0 flex-1 rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-slate-100 placeholder:text-slate-400 focus:border-[#07D1AF] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50" />
-        <button type="submit" disabled={busy || input.trim() === ''}
-          className="rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-40">{t('akis.send')}</button>
-      </form>
     </div>
   )
 }
