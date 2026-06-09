@@ -560,7 +560,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   //    writing THIS var per rAF (it only runs while open, so the drawer width tracks it via the open
   //    branch below; on release the render restores both committed values, no flash).
   const fullPreviewW = containerWidth ? `${Math.round(clampRatio(ratio, containerWidth) * containerWidth)}px` : '0px'
-  const previewW = previewOpen ? fullPreviewW : '0px'
+  // Reserve the push-split strip ONLY when a drawer is actually rendered (hasRun). A persisted
+  // previewOpen:true with no active run would otherwise pad the chat right by the full ratio for a
+  // drawer that isn't there — jamming the conversation left behind a large empty void. Gate on hasRun
+  // so the idle / no-run studio reflows to full width and the conversation centers.
+  const previewW = hasRun && previewOpen ? fullPreviewW : '0px'
 
   // The MOVED rail content (verbatim props + `!sessionGone && isDone` guards). Now the drawer's region A.
   const cards = (
