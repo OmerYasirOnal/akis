@@ -521,7 +521,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       ref={shellRef}
       data-preview-shell
       style={{ '--preview-w': previewW, '--preview-drawer-w': fullPreviewW } as React.CSSProperties}
-      className="relative flex min-h-[32rem] flex-col lg:h-[calc(100dvh-8.5rem)]"
+      // overflow-x-clip: the drawer is an absolute child anchored right-0 at its REAL width; when closed it
+      // is translateX(100%) PAST the shell's right edge. The shell sits inside the page's right padding, so
+      // without clipping the off-screen drawer peeks a sliver into that gap AND extends scrollWidth (a stray
+      // horizontal scrollbar). Clipping horizontally hides the closed drawer completely; the open drawer
+      // (right edge flush at the shell edge) and the edge-tab/separator (within bounds) are unaffected.
+      className="relative flex min-h-[32rem] flex-col overflow-x-clip lg:h-[calc(100dvh-8.5rem)]"
     >
       {/* The chat <section> KEEPS its exact tree slot (sacred — AkisChat key={threadKey}). Push-split:
           on lg+ it reflows left by `--preview-w` when the drawer is open (so the centered chat shifts
