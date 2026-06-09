@@ -180,6 +180,17 @@ export const STRINGS = {
     'roster.status.working': 'working',
     'roster.status.done': 'done',
     'roster.status.failed': 'failed',
+    // The "▶ Now" prefix + per-agent live captions for the currently-running roster chip. A generic
+    // fallback covers any non-core agent; the per-role lines mirror what each agent is doing.
+    'roster.now': 'Now',
+    'roster.caption.working': 'working…',
+    'roster.caption.orchestrator': 'planning…',
+    'roster.caption.scribe': 'writing the spec…',
+    'roster.caption.proto': 'writing code…',
+    'roster.caption.trace': 'running tests…',
+    'roster.caption.critic': 'reviewing…',
+    // Compact build-progress summary leaf: "Building · <Agent> · k/n · mm:ss".
+    'roster.progress.building': 'Building',
     'role.orchestrator.what': 'Plans the build and enforces the gates',
     'role.scribe.what': 'Writes the spec from your idea',
     'role.proto.what': 'Writes the code',
@@ -971,6 +982,17 @@ export const STRINGS = {
     'roster.status.working': 'çalışıyor',
     'roster.status.done': 'tamam',
     'roster.status.failed': 'hata',
+    // "▶ Şu an" öneki + o an çalışan roster çipinin canlı altyazısı. Genel yedek çekirdek-dışı
+    // ajanları kapsar; role-özel satırlar her ajanın ne yaptığını yansıtır.
+    'roster.now': 'Şu an',
+    'roster.caption.working': 'çalışıyor…',
+    'roster.caption.orchestrator': 'planlıyor…',
+    'roster.caption.scribe': 'spec yazıyor…',
+    'roster.caption.proto': 'kod yazıyor…',
+    'roster.caption.trace': 'test çalıştırıyor…',
+    'roster.caption.critic': 'inceliyor…',
+    // Derli toplu ilerleme özeti: "Derleniyor · <Ajan> · k/n · mm:ss".
+    'roster.progress.building': 'Derleniyor',
     'role.orchestrator.what': 'Geliştirmeyi planlar, kapıları (gate) uygular',
     'role.scribe.what': 'Fikrinden spec yazar',
     'role.proto.what': 'Kodu yazar',
