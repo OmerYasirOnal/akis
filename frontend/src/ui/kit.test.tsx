@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { Select, Button } from './kit.js'
+import { Select, Button, EmptyState } from './kit.js'
 
 describe('Select (design-system)', () => {
   it('renders a real, keyboard-accessible <select> carrying its options', () => {
@@ -73,5 +73,28 @@ describe('Button (design-system)', () => {
       expect(cls).toContain('focus-visible:ring-2')
       unmount()
     }
+  })
+
+  it('EmptyState renders the message in a dashed panel with a default glyph', () => {
+    const { container } = render(<EmptyState>Not available on this deployment</EmptyState>)
+    expect(screen.getByText('Not available on this deployment')).toBeInTheDocument()
+    expect(container.querySelector('.border-dashed')).not.toBeNull()
+    expect(container.querySelector('svg')).not.toBeNull() // default lock glyph, so it never looks empty
+  })
+
+  it('loading button shows a spinner + aria-busy + disabled, and keeps the action verb', () => {
+    const { rerender } = render(<Button loading>Sign in</Button>)
+    const btn = screen.getByRole('button', { name: /Sign in/ })
+    expect(btn).toBeDisabled()
+    expect(btn).toHaveAttribute('aria-busy', 'true')
+    expect(btn.querySelector('.animate-spin')).not.toBeNull() // spinner present
+    expect(btn).toHaveTextContent('Sign in')                   // verb still shown
+    expect(btn.textContent).not.toContain('…')
+    // not loading → no busy, not disabled, no spinner
+    rerender(<Button>Sign in</Button>)
+    const idle = screen.getByRole('button', { name: 'Sign in' })
+    expect(idle).not.toBeDisabled()
+    expect(idle).not.toHaveAttribute('aria-busy')
+    expect(idle.querySelector('.animate-spin')).toBeNull()
   })
 })

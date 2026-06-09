@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ApiClient, GitHubConnectionStatus } from '../api/client.js'
-import { SectionTitle, Button, Input, ErrorNote } from '../ui/kit.js'
+import { SectionTitle, Button, Input, ErrorNote, EmptyState } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /** A one-line banner keyed off `?github=…` on the Settings URL after the OAuth round-trip.
@@ -58,14 +58,14 @@ export function GitHubConnection({ api }: { api: ApiClient }) {
 
       {/* While the first status fetch is in flight (status still undefined, before the catch sets a
           default) show an inline spinner row — mirrors HistoryPage — so a slow link never leaves a
-          blank card body. */}
+          blank card body. (preview-drawer loading state + round-2 EmptyState, both kept.) */}
       {status === undefined ? (
         <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-4 text-sm text-slate-400">
           <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#07D1AF]/40 border-t-[#07D1AF]" />
           {t('settings.loading')}
         </div>
       ) : !status.configured ? (
-        <div className="text-sm text-slate-400">{t('settings.github.notConfigured')}</div>
+        <EmptyState>{t('settings.github.notConfigured')}</EmptyState>
       ) : status.connected ? (
         <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">

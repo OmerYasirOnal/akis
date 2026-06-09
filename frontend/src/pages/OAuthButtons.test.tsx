@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { OAuthButtons } from './OAuthButtons.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import type { ApiClient } from '../api/client.js'
@@ -58,5 +58,16 @@ describe('OAuthButtons', () => {
     const links = await screen.findAllByRole('link')
     expect(links).toHaveLength(2)
     for (const a of links) expect(a.className).toMatch(/focus-visible:ring-2/)
+  })
+
+  it('shows a spinner + aria-busy on the clicked provider while redirecting (and only that one)', async () => {
+    const api = makeApi(['github', 'google'])
+    const { container } = ui(api)
+    const gh = await screen.findByRole('link', { name: /GitHub/i })
+    expect(gh).not.toHaveAttribute('aria-busy')
+    fireEvent.click(gh) // full-page nav is a jsdom no-op; the onClick still flips redirecting
+    expect(screen.getByRole('link', { name: /GitHub/i })).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByRole('link', { name: /Google/i })).not.toHaveAttribute('aria-busy')
+    expect(container.querySelector('a[aria-busy="true"] .animate-spin')).not.toBeNull()
   })
 })

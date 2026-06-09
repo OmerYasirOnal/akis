@@ -39,7 +39,7 @@ export function ForgotPassword({ api }: { api: ApiClient }) {
             <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
           </Field>
           {err && <ErrorNote>{err}</ErrorNote>}
-          <Button type="submit" full disabled={busy || !email}>{busy ? '…' : t('auth.forgot.cta')}</Button>
+          <Button type="submit" full loading={busy} disabled={!email}>{t('auth.forgot.cta')}</Button>
         </form>
       )}
     </AuthShell>

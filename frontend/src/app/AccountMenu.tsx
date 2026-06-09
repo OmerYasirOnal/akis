@@ -38,6 +38,22 @@ function Avatar({ user, size }: { user: AuthUser; size: 'sm' | 'md' }) {
   )
 }
 
+/** Small leading glyphs for the menu items (decorative — the label names the item). */
+function GearIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9c.2.61.76 1.05 1.42 1.05H21a2 2 0 0 1 0 4h-.09c-.66 0-1.22.44-1.51 1.05Z" />
+    </svg>
+  )
+}
+function LogOutIcon() {
+  return (
+    <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5" /><path d="M21 12H9" />
+    </svg>
+  )
+}
+
 /**
  * The account dropdown that REPLACES the old avatar-instant-logout button. The avatar is now a
  * pure menu TRIGGER (clicking it no longer signs out) — the menu carries provider awareness
@@ -91,21 +107,22 @@ export function AccountMenu({ user, logout }: { user: AuthUser; logout: () => vo
             {line.mark === 'google' && <GoogleMark />}
             <span>{t(line.labelKey)}</span>
           </div>
+          {/* One divider separates the identity block from the actions. The destructive Sign-out
+              is distinguished by a leading icon + a muted-rose hover, not a second hairline. */}
           <div className="my-1 h-px bg-white/10" />
           <button
             role="menuitem"
             onClick={() => { setOpen(false); navigate('/settings') }}
-            className="block w-full rounded-lg px-2.5 py-2 text-left text-sm text-slate-300 transition hover:bg-white/5 hover:text-slate-100"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-slate-300 transition hover:bg-white/5 hover:text-slate-100"
           >
-            {t('nav.settings')}
+            <GearIcon /> {t('nav.settings')}
           </button>
-          <div className="my-1 h-px bg-white/10" />
           <button
             role="menuitem"
             onClick={() => { setOpen(false); void logout() }}
-            className="block w-full rounded-lg px-2.5 py-2 text-left text-sm text-slate-300 transition hover:bg-white/5 hover:text-slate-100"
+            className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-slate-300 transition hover:bg-rose-500/10 hover:text-rose-300"
           >
-            {t('nav.logout')}
+            <LogOutIcon /> {t('nav.logout')}
           </button>
         </div>
       )}

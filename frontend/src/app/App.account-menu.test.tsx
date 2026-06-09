@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, fireEvent } from '@testing-library/react'
 import { App } from './App.js'
 
 /**
@@ -24,7 +24,11 @@ function stubFetch(me: { status: number; user?: unknown }) {
       const body = me.user ? JSON.stringify({ user: me.user }) : JSON.stringify({ error: 'unauthorized' })
       return Promise.resolve(new Response(body, { status: me.status, headers: { 'content-type': 'application/json' } }))
     }
-    // Benign default for everything else (providers, health, docs assets, …).
+    // OAuth providers must be a well-formed {providers:[]} (OAuthButtons reads .providers).
+    if (url.endsWith('/oauth/providers')) {
+      return Promise.resolve(new Response(JSON.stringify({ providers: [] }), { status: 200, headers: { 'content-type': 'application/json' } }))
+    }
+    // Benign default for everything else (health, docs assets, …).
     return Promise.resolve(new Response('{}', { status: 200, headers: { 'content-type': 'application/json' } }))
   })
 }
@@ -52,5 +56,34 @@ describe('App: AccountMenu visibility is gated on the authenticated user (FR-acc
     vi.stubGlobal('fetch', stubFetch({ status: 200, user: authedUser }))
     render(<App />)
     await waitFor(() => expect(screen.getByRole('button', { name: 'Account menu' })).toBeInTheDocument())
+  })
+})
+
+describe('App: a language toggle is available BEFORE auth (pre-auth switcher)', () => {
+  it('anonymous /login shows the language toggle and clicking it flips EN→TR in place', async () => {
+    window.history.pushState({}, '', '/login')
+    vi.stubGlobal('fetch', stubFetch({ status: 401 }))
+    render(<App />)
+    const toggle = await screen.findByRole('button', { name: /switch language/i })
+    expect(toggle).toHaveTextContent('EN')
+    fireEvent.click(toggle) // same DOM node persists; React updates its label in place
+    expect(toggle).toHaveTextContent('TR')
+  })
+
+  it('anonymous landing (/) shows EXACTLY ONE language toggle — no PublicFrame duplicate', async () => {
+    // The pre-auth toggle lives in AuthShell (auth pages), NOT PublicFrame, so Landing — which
+    // ships its own header toggle — must not render a second, overlapping one.
+    window.history.pushState({}, '', '/')
+    vi.stubGlobal('fetch', stubFetch({ status: 401 }))
+    render(<App />)
+    await waitFor(() => expect(screen.getAllByRole('button', { name: /switch language/i }).length).toBeGreaterThan(0))
+    expect(screen.getAllByRole('button', { name: /switch language/i })).toHaveLength(1)
+  })
+
+  it('anonymous /docs also exposes a language toggle (public docs readable in TR before sign-in)', async () => {
+    window.history.pushState({}, '', '/docs')
+    vi.stubGlobal('fetch', stubFetch({ status: 401 }))
+    render(<App />)
+    expect(await screen.findByRole('button', { name: /switch language/i })).toBeInTheDocument()
   })
 })

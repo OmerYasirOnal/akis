@@ -22,6 +22,7 @@ import type { StringKey } from '../i18n/catalog.js'
 import { RouterProvider, useRouter, Link, Navigate } from '../router/router.js'
 import { AuthProvider, useAuth } from '../auth/AuthContext.js'
 import { AccountMenu } from './AccountMenu.js'
+import { LanguageToggle } from '../ui/LanguageToggle.js'
 
 /** API base: same-origin in prod (fastify-static serves the FE); override via env in dev. */
 const BASE = (import.meta.env?.VITE_API_BASE as string | undefined) ?? ''
@@ -92,7 +93,7 @@ const OWNS_OWN_H1 = new Set(['/docs'])
 
 /** The authenticated app frame: cosmic backdrop, top nav, and the routed page. */
 function AppFrame({ api }: { api: ApiClient }) {
-  const { t, locale, setLocale } = useI18n()
+  const { t, locale } = useI18n() // `locale` drives the document.title effect; the toggle itself moved to <LanguageToggle/>
   const { path } = useRouter()
   const { user, logout } = useAuth()
 
@@ -151,8 +152,7 @@ function AppFrame({ api }: { api: ApiClient }) {
           </nav>
           <div className="flex items-center gap-2">
             <DemoBadge api={api} />
-            <button onClick={() => setLocale(locale === 'en' ? 'tr' : 'en')} aria-label={t('nav.toggleLanguage')}
-              className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-slate-300 transition hover:border-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">{locale.toUpperCase()}</button>
+            <LanguageToggle />
             <div className="hidden text-right sm:block">
               <div className="text-xs font-medium text-slate-200">{user?.name}</div>
             </div>
@@ -167,7 +167,9 @@ function AppFrame({ api }: { api: ApiClient }) {
   )
 }
 
-/** Cosmic frame for the public auth pages. */
+/** Cosmic frame for the public routes (auth pages + Landing/Docs). The pre-auth language
+ *  toggle lives in AuthShell (the auth pages only) — NOT here — so Landing/Docs, which carry
+ *  their own header toggle, don't get a duplicate/overlapping one. */
 function PublicFrame({ children }: { children: ReactNode }) {
   const { t } = useI18n()
   return (
@@ -205,7 +207,10 @@ function PublicDocs() {
           <AkisLogo size={30} alt="" className="drop-shadow-[0_0_14px_rgba(7,209,175,0.5)]" />
           <span className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-sm font-extrabold text-transparent">{t('app.title')}</span>
         </Link>
-        <Link to="/login" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-slate-200 hover:border-white/20">{t('landing.cta.signin')}</Link>
+        <div className="flex items-center gap-2">
+          <LanguageToggle />
+          <Link to="/login" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-slate-200 hover:border-white/20">{t('landing.cta.signin')}</Link>
+        </div>
       </header>
       <Suspense fallback={<PageFallback />}><DocsPage /></Suspense>
     </div>

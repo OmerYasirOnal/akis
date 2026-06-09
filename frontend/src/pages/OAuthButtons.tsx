@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { ApiClient } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
+import { Spinner } from '../ui/kit.js'
 
 /** The GitHub mark — exported so the account menu's "Signed in via GitHub" line reuses the SAME glyph. */
 export function GitHubMark() {
@@ -25,28 +26,39 @@ export function GoogleMark() {
   )
 }
 
+/** One provider anchor. Clicking does a full-page redirect into the OAuth flow; on click it
+ *  swaps the provider glyph for a spinner + sets aria-busy, so a slow IdP redirect reads as
+ *  "working" instead of an inert button (the full-page nav clears the state). */
+function ProviderLink({ href, mark, label, busy, onClick }: { href: string; mark: ReactNode; label: string; busy: boolean; onClick: () => void }) {
+  return (
+    <a href={href} onClick={onClick} aria-busy={busy || undefined}
+      className="flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:border-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+      {busy ? <Spinner /> : mark} {label}
+    </a>
+  )
+}
+
 /** "Continue with GitHub/Google" — only renders providers the server reports as
  *  configured. Clicking does a full-page redirect into the OAuth flow. */
 export function OAuthButtons({ api }: { api: ApiClient }) {
   const { t } = useI18n()
   const [providers, setProviders] = useState<string[]>([])
-  useEffect(() => { void api.getOAuthProviders().then(r => setProviders(r.providers)).catch(() => setProviders([])) }, [api])
+  const [redirecting, setRedirecting] = useState<string | null>(null)
+  // `?? []` so a malformed/partial response degrades to "no buttons" rather than crashing the
+  // auth page on `undefined.length` (honest absence beats a white screen).
+  useEffect(() => { void api.getOAuthProviders().then(r => setProviders(r.providers ?? [])).catch(() => setProviders([])) }, [api])
   if (providers.length === 0) return null
 
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-2">
         {providers.includes('github') && (
-          <a href={api.oauthAuthorizeUrl('github')}
-            className="flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:border-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
-            <GitHubMark /> {t('auth.oauth.github')}
-          </a>
+          <ProviderLink href={api.oauthAuthorizeUrl('github')} mark={<GitHubMark />} label={t('auth.oauth.github')}
+            busy={redirecting === 'github'} onClick={() => setRedirecting('github')} />
         )}
         {providers.includes('google') && (
-          <a href={api.oauthAuthorizeUrl('google')}
-            className="flex items-center justify-center gap-2 rounded-xl border border-white/15 bg-white/[0.04] px-4 py-2.5 text-sm font-semibold text-slate-100 transition hover:border-white/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
-            <GoogleMark /> {t('auth.oauth.google')}
-          </a>
+          <ProviderLink href={api.oauthAuthorizeUrl('google')} mark={<GoogleMark />} label={t('auth.oauth.google')}
+            busy={redirecting === 'google'} onClick={() => setRedirecting('google')} />
         )}
       </div>
       <div className="flex items-center gap-3 text-xs text-slate-400">
