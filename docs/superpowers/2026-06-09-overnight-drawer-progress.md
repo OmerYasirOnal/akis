@@ -1,46 +1,32 @@
-# Overnight progress — Studio preview drawer + chat-UX polish (2026-06-09)
+# Overnight work — Studio preview drawer + chat-UX + a11y overhaul (2026-06-09)
 
-Branch: **`feat/studio-preview-drawer`** (off `main`). **Not pushed, not merged** (per the no-push rule) — ready for your review. Live at `localhost:5173` (dev server running).
+Branch: **`feat/studio-preview-drawer`** (off `main`). **Not pushed, not merged** (per the no-push rule) — certified merge-ready for your review. Live at `localhost:5173` (dev server running).
 
-## What shipped tonight (all committed, all independently reviewed, full FE suite green at every step → 575 tests)
+**Totals:** 28 commits (24 feat/fix + 4 docs), 42 files (+3020 / −310). **FE suite 599 tests green · tsc 0 · build ✓.** Every batch independently reviewed (akis-reviewer); the whole branch certified by a final **akis-gate-keeper: CLEAN — merge-safe** (diff touches only `frontend/src`; iframe sandbox / 5 gates-in-chat / SSE-fold / card guards / `AkisChat key` all byte-identical; every addition is pure view-state).
 
-A complete **Codex/Claude-artifacts-style preview experience** + a real **chat surface**, frontend-only, gate-safe (whole-branch `akis-gate-keeper` verdict: **CLEAN — merge-safe**; iframe sandbox byte-for-byte intact, gates still render in the chat, SSE/fold untouched).
+## What shipped
 
-### Core — the resizable drawer (T1–T8)
-- Preview is now a **right-side drawer**, closed by default → chat is full-width/centered; **slides in** (push-split: chat reflows left) when there's an artifact; **auto-opens on `preview.ready`** (not on `starting`); reopening a finished build does **not** auto-open (#35).
-- **Resizable**: drag handle (W3C `role="separator"` + keyboard Arrow/Home/End, `aria-valuenow/min/max/valuetext`), persisted width ratio (localStorage), snap-to-collapse — zero-dep `useResizable` hook.
-- **Device toggle**: Responsive · Mobile 390 · Tablet 768 · Desktop (logical iframe width so the app's media queries fire) + **rotate** (portrait↔landscape for mobile/tablet).
-- **Mobile (`<lg`)**: full-screen overlay reusing `ModelPicker`'s a11y (role=dialog, Escape, focus-trap/restore, scroll-lock) + a floating FAB.
-- **Double-scroll fixed**: two scroll regions (gate cards / preview) → the Kod tab has exactly one scrollbar.
-- Header actions: **open running app in a new tab** (`noopener,noreferrer`) + **copy preview URL** (only when embeddable).
+**The Codex/Claude-artifacts preview drawer (T1–T8)** — preview is a resizable right **drawer**, closed by default (chat full-width), slides in (push-split) and **auto-opens on `preview.ready`**; reopening a finished build does NOT auto-open (#35). Drag-resize (W3C `role=separator` + keyboard + persisted ratio + snap-collapse + double-click-reset), **device toggle** (Responsive · Mobile 390 · Tablet 768 · Desktop, logical iframe width) + **rotate**, **mobile** full-screen overlay (ModelPicker a11y), **double-scroll fixed** (one scrollbar on Kod), header actions (**open-in-new-tab** + **copy URL** + **refresh**).
 
-### Polish & perf (B1–B3, C1–C3)
-- **Motion**: smooth drawer/device/tab transitions, full `prefers-reduced-motion` support, no first-frame width flash.
-- **Real chat surface**: bounded reading measure + per-role-tinted/aligned bubbles (no more edge-to-edge text), tamed auto-scroll (active run header anchors to top — fixes the "kayıyor"), spec card collapses once a build starts.
-- **Perf**: `memo(RunBlock)` + stabilized callbacks → SSE frames no longer re-render the whole chat spine (only the active run + rail).
-- **Metrics strip**: surfaces the real scenario count; genuinely-absent metrics (P95) stay honest `—` with a tooltip.
+**Motion & chat surface (B1–B3)** — smooth drawer/device/tab transitions + full `prefers-reduced-motion`; real chat surface (bounded, role-tinted bubbles; tamed auto-scroll; spec card collapses once a build starts); perf (`memo(RunBlock)` → SSE frames no longer re-render the whole spine).
 
-### Round 2 — refinements & a11y/i18n/UX hardening (C4, D1–D3)
-- **C4**: refresh-preview button (reloads the running app's iframe, same URL, no backend call) + double-click the resize separator to reset to default width.
-- **D1** (a11y/i18n/honesty): Analytics per-run now shows the **localized** status (was leaking raw enums like `awaiting_push_confirm`); `prefers-reduced-motion` now also stops Tailwind `animate-spin`/`animate-pulse`; save-success is announced to screen readers (`role="status"`); SSH-key textarea uses the shared focus ring; two raw-English AT strings localized.
-- **D2**: Settings cards show a spinner while their first fetch is in flight (no more blank gap); CodeBrowser "copy all files".
-- **D3**: HistoryMenu keyboard navigation (focus-on-open + roving arrows + Home/End + Escape returns focus to the trigger), mirroring ModelPicker.
-- Plus a regression test for the ProviderKeys loading state.
+**a11y / i18n / honesty / UX (C3, D1–D4, E1)** — metrics strip surfaces the real scenario count (honest `—` for absent P95); localized analytics status (was leaking raw enums); reduced-motion now covers spinners/pulses; SR-announced save-success; Settings loading states; CodeBrowser copy-all; HistoryMenu keyboard nav; unified page heading; cold-start chips under the greeting; **editsBase disclosure in the drawer** (honesty); **global a11y**: nav `aria-label`/`aria-current`, per-route `<h1>` + `document.title`, skip-to-content + `<main>` landmark.
 
-**Branch totals:** 24 commits, 36 files (+2191/−272). Full FE suite **591 tests green**, tsc 0, build ✓ at HEAD. Every batch independently reviewed (gate-keeper + reviewer); a final whole-branch gate-keeper certifies the cumulative diff merge-safe.
+## Two design choices to confirm (I didn't decide unilaterally)
+1. **History heading** is now the smaller shared `SectionTitle` to match every other page (was a bigger gradient `h1`). Alternative: promote a branded page-title everywhere. Your call.
+2. **Device toggle** includes Tablet 768 + rotate (I'd originally YAGNI-deferred these; re-added since you wanted thorough device-switching). Trivial to drop if unwanted.
 
-## Design trail (also on the branch)
-- Spec: `docs/superpowers/specs/2026-06-09-preview-drawer-design.md` (research → design → 3-lens adversarial review → independent fresh-review reconciliation → v1 scope).
+## Verified live (Brave automation)
+Drawer auto-open on ready, drag + keyboard resize, device toggle (Mobil 390 confirmed), Kod single-scroll, mobile overlay (dialog + focus-trap + scroll-lock), closed full-width chat surface, the `3/3` scenario count + header actions. Screenshots in `~/Downloads/akis-studio-redesign/`.
+
+## Process trail (on the branch)
+- Spec: `docs/superpowers/specs/2026-06-09-preview-drawer-design.md` (research → design → 3-lens adversarial review → independent fresh review → v1 scope).
 - Plan: `docs/superpowers/plans/2026-06-09-studio-preview-drawer.md`.
-- Chat-surface UX research: `docs/research/2026-06-08-studio-ux-ui-audit.md`.
+- Chat-UX research: `docs/research/2026-06-08-studio-ux-ui-audit.md`.
 
-## Separately staged (your earlier asks, not on this branch)
-- **Analytics usage report** (token-by-model/agent donuts, daily/weekly/monthly/yearly charts, clean titles) → committed on **`feat/analytics-usage-report`**.
-- The 6 reviewed **UX quick-win PRs + 74 regression tests** were merged to `main` earlier tonight.
+## Separate (your earlier asks, NOT on this branch)
+- **Analytics usage report** (token-by-model/agent donuts, daily/weekly/monthly/yearly, clean titles) → committed on **`feat/analytics-usage-report`**.
+- 6 reviewed UX quick-win PRs + 74 regression tests → merged to `main` earlier tonight.
 
-## Deferred / optional (logged, not built)
-- Optional flex-wrap safety on the device-toggle row (reviewer said current fits even at min width).
-- Optional perf-regression test asserting terminal RunBlocks skip frames (the win is verified by reasoning + suite).
-
-## To review in the morning
-`git log --oneline main..feat/studio-preview-drawer` · open `localhost:5173`, start a build, watch the drawer auto-open on ready, drag-resize it, toggle devices/rotate, shrink to mobile.
+## To review
+`git log --oneline main..feat/studio-preview-drawer` · open `localhost:5173`, start a build, watch the drawer auto-open, resize/toggle/rotate, shrink to mobile. Nothing is pushed/merged — yours to approve.
