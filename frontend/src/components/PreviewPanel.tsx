@@ -90,6 +90,19 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   // below so the dark skeleton shows during reload instead of a white flash.
   const [reloadNonce, setReloadNonce] = useState(0)
   useEffect(() => { setLoaded(false) }, [url, reloadNonce]) // re-arm on (re)run / new session / manual refresh
+  // BACK / FORWARD (Task 3): drive the RUNNING app's own session history. The iframe is sandboxed
+  // WITHOUT allow-same-origin (sacred — never touched here), so it lives in an OPAQUE origin: reading
+  // `contentWindow.history` throws a cross-origin SecurityError. We therefore call back()/forward()
+  // BEST-EFFORT inside a try/catch — same-origin previews navigate; an opaque-origin one is a graceful
+  // no-op (Reload always works as the origin-safe fallback, exactly like the pop-out/copy use the path).
+  // View-state only: this touches NO sandbox/allow/src — it just nudges the existing iframe's history.
+  const iframeRef = useRef<HTMLIFrameElement | null>(null)
+  const navIframe = (dir: 'back' | 'forward'): void => {
+    try {
+      const h = iframeRef.current?.contentWindow?.history
+      if (dir === 'back') h?.back(); else h?.forward()
+    } catch { /* cross-origin opaque iframe (sandbox without allow-same-origin) — graceful no-op */ }
+  }
   // DeviceFrame's Desktop preset caps at the pane's real inner width (min(1280, paneWidth)) so the
   // user sees the full width with horizontal scroll only when narrower. Measure it read-only via a
   // ResizeObserver on the panel root — NO scaling, no per-frame React storm (one setState per resize).
@@ -162,11 +175,31 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
               relative path the iframe loads, so opening it in a tab is the SAME app at the SAME
               studio origin — no new gate/security surface. */}
           {embeddable && activeTab === 'preview' && url && (
-            // ONE labelled header cluster for the ship/inspect actions (pop-out ↗ / refresh ↻ / copy-URL)
-            // — grouped with consistent spacing + ≥44px hit areas instead of floating loose by the
-            // tablist. View-state only; no gate authority. The radius scale matches the tablist (rounded-md
-            // 6px controls inside a rounded-lg 8px shell), one border width.
+            // ONE labelled header cluster — a clean browser-style control row: BACK · FORWARD · RELOAD
+            // (↻) · pop-out (↗) · copy-URL. Grouped with consistent spacing + ≥44px hit areas instead of
+            // floating loose by the tablist. View-state only; no gate authority. The radius scale matches
+            // the tablist (rounded-md 6px controls inside a rounded-lg 8px shell), one border width.
             <div role="group" aria-label={t('preview.actions')} className="flex items-center gap-0.5 rounded-lg border border-white/10 bg-white/[0.03] p-0.5">
+              {/* BACK / FORWARD — navigate the RUNNING app's own history (best-effort; see navIframe).
+                  Standard browser order: back, then forward, then reload. */}
+              <button
+                type="button"
+                aria-label={t('preview.back')}
+                title={t('preview.back')}
+                onClick={() => navIframe('back')}
+                className="inline-flex h-11 min-w-[2.75rem] items-center justify-center rounded-md px-2 text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m15 18-6-6 6-6" /></svg>
+              </button>
+              <button
+                type="button"
+                aria-label={t('preview.forward')}
+                title={t('preview.forward')}
+                onClick={() => navIframe('forward')}
+                className="inline-flex h-11 min-w-[2.75rem] items-center justify-center rounded-md px-2 text-slate-200 transition hover:bg-white/[0.06] motion-safe:active:scale-95"
+              >
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
+              </button>
               {/* Open the running app full-screen in a new tab. `window.open` with the relative
                   `/preview/:id/` resolves against the studio origin (identical to the iframe src);
                   noopener,noreferrer keeps the new tab from reaching back into the studio. */}
@@ -282,7 +315,7 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
               <DeviceFrame device={device} onDevice={onDevice} paneWidth={paneWidth} tab={activeTab}>
                 {/* `key` includes reloadNonce so a Refresh click REMOUNTS the iframe (re-fetches the
                     SAME src) — sandbox/allow/src path are untouched (no security/path change). */}
-                <iframe key={reloadNonce} title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
+                <iframe ref={iframeRef} key={reloadNonce} title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
                   className={`block h-full w-full bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                   sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
               </DeviceFrame>

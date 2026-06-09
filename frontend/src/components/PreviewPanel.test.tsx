@@ -35,16 +35,50 @@ const renderPanel = (url: string | undefined) =>
     />,
   )
 
-test('the pop-out / refresh / copy actions live in ONE labelled header cluster', () => {
+test('the nav + ship/inspect actions live in ONE labelled header cluster (back/forward/reload/pop-out/copy)', () => {
   renderPanel('/preview/abc/')
-  // The three ship/inspect actions are grouped in a single top-right cluster (a labelled group),
-  // not floating loose next to the tablist.
+  // The actions are grouped in a single top-right cluster (a labelled group), not floating loose.
+  // The cluster carries browser-style nav (back · forward · reload) plus pop-out + copy-URL.
   const cluster = screen.getByRole('group', { name: /preview actions|önizleme eylemleri/i })
   const within = (p: HTMLElement, name: RegExp) =>
     Array.from(p.querySelectorAll('button')).find(b => (b.getAttribute('aria-label') || '').match(name))
+  expect(within(cluster, /^back$|geri$/i)).toBeTruthy()
+  expect(within(cluster, /forward|ileri/i)).toBeTruthy()
+  expect(within(cluster, /reload|refresh preview|önizlemeyi yenile|yeniden yükle/i)).toBeTruthy()
   expect(within(cluster, /open in new tab|yeni sekmede aç/i)).toBeTruthy()
-  expect(within(cluster, /refresh preview|önizlemeyi yenile/i)).toBeTruthy()
   expect(within(cluster, /copy url|url'yi kopyala/i)).toBeTruthy()
+})
+
+test('Back navigates the iframe history (contentWindow.history.back, best-effort under sandbox)', () => {
+  const { container } = renderPanel('/preview/abc/')
+  const iframe = container.querySelector('iframe')!
+  // Stub a same-origin-ish history on contentWindow so we can observe the call (a real sandboxed
+  // opaque-origin iframe would throw on access — the handler try/catches that as a graceful no-op).
+  const back = vi.fn()
+  const forward = vi.fn()
+  Object.defineProperty(iframe, 'contentWindow', { value: { history: { back, forward } }, configurable: true })
+  fireEvent.click(screen.getByRole('button', { name: /^back$|geri$/i }))
+  expect(back).toHaveBeenCalledTimes(1)
+  fireEvent.click(screen.getByRole('button', { name: /forward|ileri/i }))
+  expect(forward).toHaveBeenCalledTimes(1)
+})
+
+test('Back/Forward are a graceful no-op (no throw) when the sandboxed iframe blocks history access', () => {
+  const { container } = renderPanel('/preview/abc/')
+  const iframe = container.querySelector('iframe')!
+  // Simulate the real cross-origin (opaque-origin) sandbox: reading .history throws a SecurityError.
+  Object.defineProperty(iframe, 'contentWindow', {
+    get() { return { get history(): never { throw new Error('SecurityError: cross-origin') } } },
+    configurable: true,
+  })
+  // The click must not bubble the throw up (the handler swallows it) — assert no exception.
+  expect(() => fireEvent.click(screen.getByRole('button', { name: /^back$|geri$/i }))).not.toThrow()
+})
+
+test('nav actions are HIDDEN for a non-/preview/ URL (no dead affordances)', () => {
+  renderPanel('https://example.com/app')
+  expect(screen.queryByRole('button', { name: /^back$|geri$/i })).toBeNull()
+  expect(screen.queryByRole('button', { name: /forward|ileri/i })).toBeNull()
 })
 
 test('the Code tab is labelled with its language when known (e.g. TSX)', () => {
