@@ -467,15 +467,27 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const onPointerWidth = useCallback((clientX: number): void => {
     const el = shellRef.current
     if (!el) return
-    el.style.setProperty('--preview-w', `${Math.round(ratioFromClientX(clientX) * (el.getBoundingClientRect().width || containerWidth))}px`)
+    // A drag only ever runs while the drawer is OPEN, so both vars carry the same live width during it:
+    // `--preview-w` eases the chat padding, `--preview-drawer-w` the drawer's own width — written together
+    // so the split tracks the cursor 1:1 (one DOM write per rAF, no React commit). On release the next
+    // render restores both committed values (the open branch keeps them equal), so there's no flash.
+    const px = `${Math.round(ratioFromClientX(clientX) * (el.getBoundingClientRect().width || containerWidth))}px`
+    el.style.setProperty('--preview-w', px)
+    el.style.setProperty('--preview-drawer-w', px)
   }, [ratioFromClientX, containerWidth])
   const commitFromClientX = useCallback((clientX: number): void => { commitRatio(ratioFromClientX(clientX)) }, [commitRatio, ratioFromClientX])
 
-  // The single source of truth for the split width — chat padding (lg only) AND the drawer width both
-  // read `--preview-w`. Set it from ratio*containerWidth while OPEN (0px while closed → chat is full-
-  // width). During a pointer drag the handle overwrites it per rAF (above); on release the next render
-  // restores this committed value, so there's no flash. Inline on the shell so it cascades to both.
-  const previewW = previewOpen && containerWidth ? `${Math.round(clampRatio(ratio, containerWidth) * containerWidth)}px` : '0px'
+  // TWO split vars, DECOUPLED so the drawer can slide its FULL self (✕ included) off-screen when closed:
+  //  • `--preview-drawer-w` — the drawer's OWN width. ALWAYS the real ratio*containerWidth (never 0), so a
+  //    closed drawer keeps full width and `translateX(100%)` genuinely carries the whole box (header/✕/
+  //    body) off-canvas. Without this, a width:0 box translated 100% travels 0px → the ✕ paints at the
+  //    right edge with nothing closed (the Issue-1 bug).
+  //  • `--preview-w` — the CHAT push-padding only. 0 while closed → the chat reflows to full width; the
+  //    real width while open so the centered chat shifts into the remaining space. The drag path keeps
+  //    writing THIS var per rAF (it only runs while open, so the drawer width tracks it via the open
+  //    branch below; on release the render restores both committed values, no flash).
+  const fullPreviewW = containerWidth ? `${Math.round(clampRatio(ratio, containerWidth) * containerWidth)}px` : '0px'
+  const previewW = previewOpen ? fullPreviewW : '0px'
 
   // The MOVED rail content (verbatim props + `!sessionGone && isDone` guards). Now the drawer's region A.
   const cards = (
@@ -508,7 +520,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     <div
       ref={shellRef}
       data-preview-shell
-      style={{ '--preview-w': previewW } as React.CSSProperties}
+      style={{ '--preview-w': previewW, '--preview-drawer-w': fullPreviewW } as React.CSSProperties}
       className="relative flex min-h-[32rem] flex-col lg:h-[calc(100dvh-8.5rem)]"
     >
       {/* The chat <section> KEEPS its exact tree slot (sacred — AkisChat key={threadKey}). Push-split:
@@ -523,7 +535,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         // would LAG the live cursor, so the shell carries `.is-dragging` for the drag and
         // `[.is-dragging_&]:!transition-none` drops the ease → the split tracks the pointer 1:1. The next
         // render after release restores the committed value with the transition back on (no flash).
-        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
+        // FOREGROUND SURFACE (Issue 3 — cohesion): the chat was `bg-white/[0.02]` (2% white = effectively
+        // invisible) with a diffuse outward violet page-glow, so the conversation melted into the page. Raise
+        // it to a clear elevated container — `bg-slate-900/60` + `border-white/12` + `backdrop-blur-md` + a
+        // CONTAINED inset top-light over a drop shadow (no outward bleed) — so the "place you talk" reads as a
+        // distinct foreground surface against the page and the rendered-app white that sits to its right.
+        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/12 bg-slate-900/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
       >
         {header}
         <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>

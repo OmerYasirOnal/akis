@@ -45,7 +45,12 @@ export function TestStats({ stats, evidence }: { stats: Stats; evidence?: TestEv
   const p95Value = ran && stats.p95Ms !== undefined ? `${stats.p95Ms}ms` : undefined
 
   return (
-    <div className="space-y-2">
+    // DRAWER-WIDTH-AWARE (Issue 2c): `@container` makes the grid below respond to THIS pane's real width, not
+    // the viewport. The old `sm:grid-cols-4` keyed off the screen, so a narrow preview drawer on a wide
+    // monitor still forced 4 columns and clipped the longest TR label "Çalışan test" ("ÇA TEST"). Now it
+    // stays 2×2 until the pane itself is wide enough (`@[26rem]`), so the label never clips. TestStats' root
+    // spans the full pane, so it is the correct container ancestor.
+    <div className="@container space-y-2">
       {/* P1-CORE-1: a simulated (mock-runner) verification is flagged AT THE RESULT, so a demo
           "✓ pass" can never be mistaken for a real ≥1-test pass. Absent on a live run. */}
       {stats.demo && (
@@ -54,8 +59,8 @@ export function TestStats({ stats, evidence }: { stats: Stats; evidence?: TestEv
           <span aria-hidden>⚠</span>{t('result.demo.badge')}
         </span>
       )}
-      {/* Responsive (review): falls to 2×2 on a narrow panel instead of clipping the labels. */}
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+      {/* 2×2 by default; 4-up only once the PANE (not the viewport) is ≥26rem — so the TR labels never clip. */}
+      <div className="grid grid-cols-2 gap-2 @[26rem]:grid-cols-4">
         {cell(t('tests.run'), ran ? String(stats.testsRun) : '—', ran ? 'text-[#07D1AF]' : 'text-slate-500')}
         {cell(t('tests.result'), ran ? (stats.passed ? t('tests.pass') : t('tests.fail')) : '—', ran ? (stats.passed ? 'text-emerald-300' : 'text-rose-300') : 'text-slate-500')}
         {cell(t('tests.scenarios'), scenariosValue ?? '—', scenariosValue ? 'text-slate-100' : 'text-slate-500',

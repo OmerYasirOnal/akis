@@ -525,4 +525,24 @@ describe('ChatStudio — LOW-2 first-frame width seed (no collapsed-drawer flash
     // Closed → no split → full-width chat; the seed doesn't force a width open.
     expect(shell.style.getPropertyValue('--preview-w')).toBe('0px')
   })
+
+  // ISSUE 1 (decouple) — when the drawer is CLOSED the chat-padding var (`--preview-w`) is 0px (chat goes
+  // full width) BUT the drawer's OWN width var (`--preview-drawer-w`) stays the REAL ratio*width, so the
+  // aside can translate its full self (✕ included) off-screen. The two vars are decoupled on the shell.
+  it('keeps --preview-drawer-w at the real width while --preview-w is 0px when the drawer is CLOSED', () => {
+    localStorage.setItem('akis_preview_drawer', JSON.stringify({ open: false, ratio: 0.46 }))
+    vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
+      width: 1000, height: 600, top: 0, left: 0, right: 1000, bottom: 600, x: 0, y: 0, toJSON: () => ({}),
+    } as DOMRect)
+    const api = new ApiClient('', vi.fn(async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response)))
+    const fake = new FakeStream()
+    const { container } = render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    const shell = container.querySelector('[data-preview-shell]') as HTMLElement
+    // Chat reflows full-width (padding var 0)…
+    expect(shell.style.getPropertyValue('--preview-w')).toBe('0px')
+    // …while the drawer keeps its real clamped width (clampRatio(0.46, 1000) → 480px), NOT 0 — so it slides
+    // its full box (header/✕/body) off-screen instead of shrinking to nothing.
+    expect(shell.style.getPropertyValue('--preview-drawer-w')).toBe('480px')
+    expect(shell.style.getPropertyValue('--preview-drawer-w')).not.toBe('0px')
+  })
 })
