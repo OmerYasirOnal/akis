@@ -18,20 +18,20 @@ describe('HistoryMenu', () => {
     const onOpen = vi.fn()
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }, { id: 's2', idea: 'a QR generator', ts: 0 }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={onOpen} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
     await userEvent.click(screen.getByRole('menuitem', { name: 'a QR generator' }))
     expect(onOpen).toHaveBeenCalledWith(builds[1])
   })
   it('shows an empty state when there are no builds', async () => {
     render(<I18nProvider><HistoryMenu builds={[]} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
     expect(screen.getByText(/No builds yet/)).toBeInTheDocument()
   })
   // P1-7: the menu carries the SAME minimal signal as the History page (localized status + ✓).
   it('shows a localized status pill + verified mark per build (not the raw enum)', async () => {
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0, status: 'done', verified: true }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
     expect(screen.getByText('Shipped')).toBeInTheDocument()   // localized, not "done"
     expect(screen.queryByText('done')).toBeNull()
     expect(screen.getByText(/verified/)).toBeInTheDocument()
@@ -39,7 +39,7 @@ describe('HistoryMenu', () => {
   it('omits the status pill for a legacy build with no status (no crash)', async () => {
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
     expect(screen.getByRole('menuitem', { name: /a todo app/ })).toBeInTheDocument()
   })
 })

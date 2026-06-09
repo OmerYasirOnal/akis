@@ -344,7 +344,7 @@ describe('ChatStudio — anchored multi-run transcript', () => {
     const api = new ApiClient('', fetchFn)
     render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
 
-    await userEvent.click(await screen.findByRole('button', { name: /History/i }))
+    await userEvent.click(await screen.findByRole('button', { name: /Recent/i })) // in-studio recent-builds dropdown
     await userEvent.click(await screen.findByRole('menuitem', { name: /Reopened App/i }))
 
     // Exactly ONE run-block (one trust ledger), titled by the reopened idea; the live stream connects.
