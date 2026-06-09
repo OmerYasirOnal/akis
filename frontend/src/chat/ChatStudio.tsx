@@ -1,4 +1,4 @@
-import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback, useId } from 'react'
 import type { StringKey } from '../i18n/catalog.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -163,6 +163,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // re-clamped vs the current container). open/ratio drive the push-split; the keyboard splitter +
   // pointer drag are wired below. Pure view-state — no gate authority.
   const { open: previewOpen, ratio, openDrawer, closeDrawer, commitRatio, resetRatio, onKeyDown: onResizeKeyDown } = useResizable({ containerWidth })
+  // ONE shared id for the drawer aside so the top-right header toggle's `aria-controls` resolves to the
+  // exact element it expands/minimizes (the toggle lives here, the aside is rendered by PreviewDrawer).
+  const previewDrawerId = useId()
+  // Button-driven preview (owner feedback 4): the top-right toggle EXPANDS the preview when minimized
+  // and MINIMIZES it again when open — one control owns both directions. Pure view-state (the bare
+  // useResizable open/close), NO gate authority. Stable identity so the memoized header doesn't churn.
+  const togglePreview = useCallback((): void => { if (previewOpen) closeDrawer(); else openDrawer() }, [previewOpen, openDrawer, closeDrawer])
   const [startingSpec, setStartingSpec] = useState<string | undefined>()
   // The active run's folded live view, reported UP by its RunBlock (exactly ONE reporter — the
   // active run — so no shared per-event setState storm). Drives the header roster + the right rail.
@@ -489,44 +496,24 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     </div>
   ) : null
 
-  // Shared frame header: the live agent roster (active run) + the INTEGRATED preview toggle + history
-  // (+ New chat once a run exists). The "Preview" toggle is the single, discoverable open affordance for
-  // the drawer (it REPLACED the retired vertical-text edge-tab): shown only when a drawer exists (a run),
-  // it opens the drawer when closed and carries the verified/unverified trust dot (teal when verified,
-  // slate otherwise) — the same trust signal the edge-tab had. While the drawer is OPEN it reads as
-  // pressed (aria-pressed) and is inert (the in-drawer ✕ owns close); ≥44px touch target (WCAG 2.5.5).
-  // View-state only — `openDrawer` is the bare useResizable opener, no gate authority.
-  // RESPONSIVE HEADER (mobile-first): the roster strip can grow wide, so it gets `min-w-0` to allow
-  // it to scroll within the row rather than shove the controls off-screen; the control cluster is
-  // `shrink-0`. Below `sm` the controls collapse to compact ICON buttons (label `hidden sm:inline`)
-  // so "Önizleme / Son derlemeler / Yeni geliştirme" fit one tidy row at 320px with no overflow; from
-  // `sm` the labels return. Each control is ≥44px tall on mobile (WCAG 2.5.5); the icon-only mobile
-  // form gets a matching min-width so the tap box stays square-ish, not a thin sliver.
+  // Shared frame header: the live agent roster (active run) on the left + the control cluster on the
+  // far right. ORDER (owner feedback 4 — the preview button must be obviously TOP-RIGHT, not mid-header):
+  // History · New build · Preview, so the PREVIEW TOGGLE is the RIGHTMOST control — the studio's top-right
+  // corner. It is the single, button-driven open/minimize affordance for the drawer (it REPLACED the
+  // retired vertical-text edge-tab): shown only when a drawer exists (a run), it carries a panel/sidebar
+  // ICON + the "Önizleme" label + the verified/unverified trust dot. As a REAL toggle it EXPANDS the
+  // preview when minimized and MINIMIZES it again when open (aria-pressed + aria-expanded reflect the
+  // state; aria-controls points at the drawer). ≥44px touch target (WCAG 2.5.5). View-state only —
+  // togglePreview is the bare useResizable open/close, no gate authority.
+  // RESPONSIVE HEADER (mobile-first): the roster strip can grow wide, so it gets `min-w-0` to allow it to
+  // scroll within the row rather than shove the controls off-screen; the control cluster is `shrink-0`.
+  // Below `sm` the controls collapse to compact ICON buttons (label `hidden sm:inline`) so they fit one
+  // tidy row at 320px with no overflow; from `sm` the labels return. Each control is ≥44px tall on mobile;
+  // the icon-only mobile form gets a matching min-width so the tap box stays square-ish, not a thin sliver.
   const header = (
     <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2 sm:gap-3 sm:px-4">
       <div className="min-w-0 flex-1"><AgentRoster view={activeView} /></div>
       <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
-        {activeSessionId && (
-          <button
-            type="button"
-            data-testid="preview-open-toggle"
-            onClick={() => { if (!previewOpen) openDrawer() }}
-            aria-label={t('preview.open')}
-            aria-pressed={previewOpen}
-            // h-11 (44px) tall everywhere; on mobile the label is hidden so min-w-11 keeps a ≥44px tap
-            // box around the lone trust-dot. The dot doubles as the icon, so the control is never an
-            // unlabeled mystery glyph (aria-label carries the name for AT).
-            className="flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs font-medium text-slate-300 transition-colors hover:border-[#07D1AF]/30 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 aria-pressed:border-[#07D1AF]/40 aria-pressed:bg-[#07D1AF]/10 aria-pressed:text-teal-100 sm:min-w-0"
-          >
-            <span
-              data-testid="preview-toggle-dot"
-              data-verified={String(!!activeView.verified)}
-              aria-hidden="true"
-              className={`h-2 w-2 shrink-0 rounded-full ${activeView.verified ? 'bg-[#07D1AF] shadow-[0_0_6px_rgba(7,209,175,0.7)]' : 'bg-slate-500'}`}
-            />
-            <span aria-hidden="true" className="hidden sm:inline">{t('preview.label')}</span>
-          </button>
-        )}
         <HistoryMenu builds={recent} onOpen={openSession} />
         {activeSessionId && (
           <button
@@ -541,6 +528,39 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
               <path d="M12 5v14M5 12h14" />
             </svg>
             <span className="hidden sm:inline">{t('chat.new')}</span>
+          </button>
+        )}
+        {activeSessionId && (
+          <button
+            type="button"
+            data-testid="preview-open-toggle"
+            onClick={togglePreview}
+            aria-label={t(previewOpen ? 'preview.minimize' : 'preview.open')}
+            aria-pressed={previewOpen}
+            aria-expanded={previewOpen}
+            aria-controls={previewDrawerId}
+            title={t(previewOpen ? 'preview.minimize' : 'preview.open')}
+            // The RIGHTMOST control (top-right corner). h-11 (44px) tall everywhere; on mobile the label
+            // is hidden so min-w-11 keeps a ≥44px tap box around the panel icon + trust-dot. When OPEN it
+            // reads as pressed (teal-tinted) so its toggle state is unmistakable. aria-label carries the
+            // name for AT regardless of the visible label.
+            className="flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs font-medium text-slate-300 transition-colors hover:border-[#07D1AF]/30 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 aria-pressed:border-[#07D1AF]/40 aria-pressed:bg-[#07D1AF]/10 aria-pressed:text-teal-100 sm:min-w-0"
+          >
+            {/* Panel/sidebar icon — a framed rectangle with a right-hand column, so the control reads as
+                "open the preview PANEL" at a glance (not a bare dot). The trust dot rides inside the panel
+                column to keep the verified/unverified signal the retired edge-tab carried. */}
+            <span className="relative flex shrink-0 items-center" aria-hidden="true">
+              <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="3" y="4" width="18" height="16" rx="2" />
+                <path d="M15 4v16" />
+              </svg>
+              <span
+                data-testid="preview-toggle-dot"
+                data-verified={String(!!activeView.verified)}
+                className={`absolute right-[3px] top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full ${activeView.verified ? 'bg-[#07D1AF] shadow-[0_0_5px_rgba(7,209,175,0.8)]' : 'bg-slate-500'}`}
+              />
+            </span>
+            <span aria-hidden="true" className="hidden sm:inline">{t('preview.label')}</span>
           </button>
         )}
       </div>
@@ -702,6 +722,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       {hasRun && (
         <PreviewDrawer
           open={previewOpen}
+          drawerId={previewDrawerId}
           ratio={ratio}
           onKeyDown={onResizeKeyDown}
           onReset={resetRatio}

@@ -308,7 +308,7 @@ describe('ChatStudio — mobile preview reachability via the drawer FAB', () => 
     expect(screen.getByTestId('preview-open-toggle')).toBeInTheDocument()
   })
 
-  it('the INTEGRATED header "Preview" toggle appears once a run exists and opens the drawer (replaces the edge-tab)', async () => {
+  it('the TOP-RIGHT "Preview" toggle EXPANDS and MINIMIZES the drawer (button-driven, owner feedback 4)', async () => {
     const api = new ApiClient('', vi.fn(runFetch()))
     const fake = new FakeStream()
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
@@ -318,17 +318,47 @@ describe('ChatStudio — mobile preview reachability via the drawer FAB', () => 
     await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
 
     const drawer = await screen.findByTestId('preview-drawer')
-    // Closed-by-default → aria-hidden + the toggle reads NOT pressed.
+    // Closed-by-default → aria-hidden + the toggle reads NOT pressed / NOT expanded, controlling the drawer.
     expect(drawer).toHaveAttribute('aria-hidden', 'true')
     const toggle = screen.getByTestId('preview-open-toggle')
     expect(toggle).toHaveAttribute('aria-pressed', 'false')
-    // Clicking the header toggle opens the drawer (the bare useResizable opener — view-state only).
+    expect(toggle).toHaveAttribute('aria-expanded', 'false')
+    expect(toggle).toHaveAttribute('aria-controls', drawer.id)
+    // Press → EXPAND the preview (push-split open).
     await userEvent.click(toggle)
     await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'false'))
     expect(screen.getByTestId('preview-open-toggle')).toHaveAttribute('aria-pressed', 'true')
-    // The in-drawer ✕ closes it back.
+    expect(screen.getByTestId('preview-open-toggle')).toHaveAttribute('aria-expanded', 'true')
+    // Press AGAIN → MINIMIZE it (the same button toggles, owner feedback 4) — not just the in-drawer ✕.
+    await userEvent.click(screen.getByTestId('preview-open-toggle'))
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
+    expect(screen.getByTestId('preview-open-toggle')).toHaveAttribute('aria-pressed', 'false')
+    // The in-drawer ✕ still closes it (re-open first, then ✕).
+    await userEvent.click(screen.getByTestId('preview-open-toggle'))
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'false'))
     await userEvent.click(screen.getByRole('button', { name: 'Close preview' }))
     await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
+  })
+
+  it('the Preview toggle is the RIGHTMOST control in the header (top-right, after History + New build)', async () => {
+    const api = new ApiClient('', vi.fn(runFetch()))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    await screen.findByTestId('preview-drawer')
+
+    const toggle = screen.getByTestId('preview-open-toggle')
+    const newBuild = screen.getByRole('button', { name: 'New build' })
+    // The control cluster orders History · New build · Preview — the preview toggle LAST so it sits at
+    // the studio's top-right corner (owner feedback 4: "SAĞ ÜSTTEN bir button ile açılsa").
+    const cluster = toggle.parentElement!
+    const buttons = Array.from(cluster.querySelectorAll('button'))
+    expect(buttons[buttons.length - 1]).toBe(toggle)
+    // DOM order: New build precedes the preview toggle.
+    expect(newBuild.compareDocumentPosition(toggle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
   })
 
   // RESPONSIVE HEADER (mobile-first): once a run exists the header carries 3 controls (Preview toggle,

@@ -48,6 +48,10 @@ export interface PreviewDrawerProps {
   cards: ReactNode
   /** Region B: the PreviewPanel (browser-chrome + DeviceFrame + iframe). */
   preview: ReactNode
+  /** Optional EXTERNAL id for the aside — so the top-right header toggle (which lives in ChatStudio,
+   *  outside this component) can point its `aria-controls` at the very drawer it expands/minimizes.
+   *  Falls back to an internal useId() when omitted (e.g. in isolated component tests). */
+  drawerId?: string
 }
 
 /**
@@ -69,10 +73,13 @@ export interface PreviewDrawerProps {
  * (`onPointerWidth` live, `commitRatio` on release), which maps it to `--preview-w`/ratio and persists.
  */
 export function PreviewDrawer({
-  open, ratio, onKeyDown, onReset, onPointerWidth, commitRatio, onClose, verified, allowAutoOpen = false, cards, preview,
+  open, ratio, onKeyDown, onReset, onPointerWidth, commitRatio, onClose, verified, allowAutoOpen = false, cards, preview, drawerId: drawerIdProp,
 }: PreviewDrawerProps) {
   const { t } = useI18n()
-  const drawerId = useId()
+  const fallbackId = useId()
+  // Prefer the parent-supplied id so the ChatStudio top-right toggle's `aria-controls` resolves to THIS
+  // aside; otherwise the internal useId() keeps the component self-contained for isolated tests.
+  const drawerId = drawerIdProp ?? fallbackId
   const pct = Math.round(ratio * 100)
 
   // (The collapsed desktop edge-tab — and its anti-jumble `settledClosed`/`transitionend` settle machinery —
