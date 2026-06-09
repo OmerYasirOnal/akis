@@ -34,11 +34,17 @@ function save(ratio: number): void {
 
 /** Clamp a tree ratio to [TREE_MIN_PX, TREE_MAX_FRACTION] for the given container width. Before a width
  *  is measured we have no px basis, so we fall back to a FRACTION floor (TREE_MIN_FRACTION) — the tree
- *  still can't collapse to nothing; once measured, the precise px floor takes over. */
+ *  still can't collapse to nothing; once measured, the precise px floor takes over.
+ *
+ *  NARROW-CONTAINER RULE (mobile bottom-sheet at ≤~384px): when the 12rem px floor would exceed the 50%
+ *  cap, the CAP wins — the editor always keeps at least half, so the tree can't dominate the sheet (it
+ *  shrinks below 12rem instead). On a roomy desktop container the px floor is the binding constraint. */
 export function clampTreeRatio(ratio: number, containerWidth: number): number {
-  const minR = containerWidth ? TREE_MIN_PX / containerWidth : TREE_MIN_FRACTION
-  // If the container is so narrow the min would exceed the cap, the min wins (tree stays readable).
-  return Math.min(Math.max(ratio, minR), Math.max(minR, TREE_MAX_FRACTION))
+  const rawMin = containerWidth ? TREE_MIN_PX / containerWidth : TREE_MIN_FRACTION
+  // The effective min never exceeds the cap (the editor's half is sacred); on a wide container rawMin is
+  // small and binds, on a narrow one the cap binds.
+  const minR = Math.min(rawMin, TREE_MAX_FRACTION)
+  return Math.min(Math.max(ratio, minR), TREE_MAX_FRACTION)
 }
 
 export function useTreeResizable({ containerWidth }: { containerWidth: number }) {

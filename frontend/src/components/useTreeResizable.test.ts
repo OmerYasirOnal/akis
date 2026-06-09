@@ -26,6 +26,17 @@ test('clampTreeRatio falls back to a FRACTION floor before a width is measured (
   expect(clampTreeRatio(0.99, 0)).toBeCloseTo(TREE_MAX_FRACTION)
 })
 
+test('on a narrow container (mobile sheet) the editor always keeps half — the cap wins over the px floor', () => {
+  // At ~320px the 12rem (192px) floor would be >50%; the cap must win so the editor keeps its half and
+  // the percentages still sum to 100% (no horizontal overflow in the bottom-sheet).
+  expect(clampTreeRatio(0.26, 320)).toBeCloseTo(TREE_MAX_FRACTION)
+  expect(clampTreeRatio(0.0, 320)).toBeLessThanOrEqual(TREE_MAX_FRACTION)
+  expect(clampTreeRatio(1, 320)).toBeCloseTo(TREE_MAX_FRACTION)
+  // On a roomy desktop container the px floor binds instead (a real resize range exists).
+  expect(clampTreeRatio(0, 1200)).toBeCloseTo(TREE_MIN_PX / 1200)
+  expect(clampTreeRatio(1, 1200)).toBeCloseTo(TREE_MAX_FRACTION)
+})
+
 test('keyboard Arrow/Home/End steps and clamps the ratio', () => {
   const { result } = renderHook(() => useTreeResizable({ containerWidth: 1000 }))
   const start = result.current.ratio
