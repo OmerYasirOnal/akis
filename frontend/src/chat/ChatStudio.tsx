@@ -603,7 +603,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // without clipping the off-screen drawer peeks a sliver into that gap AND extends scrollWidth (a stray
       // horizontal scrollbar). Clipping horizontally hides the closed drawer completely; the open drawer
       // (right edge flush at the shell edge) and the edge-tab/separator (within bounds) are unaffected.
-      className="relative flex min-h-[32rem] flex-col overflow-x-clip lg:h-[calc(100dvh-8.5rem)]"
+      // ULTRAWIDE CAP (standard): max-w-[1536px] + mx-auto centers the whole studio on > 1536px viewports
+      // instead of letting it span edge-to-edge (the "right void"). Safe for the drawer's absolute
+      // positioning — the shell stays `relative`, so right-0 still anchors to the (now-capped) shell box.
+      // HEIGHT: leave ~24px above the viewport bottom so the docked composer never kisses the edge.
+      className="relative mx-auto flex min-h-[32rem] w-full max-w-[1536px] flex-col overflow-x-clip lg:h-[calc(100dvh-7rem)]"
     >
       {/* The chat <section> KEEPS its exact tree slot (sacred — AkisChat key={threadKey}). Push-split:
           on lg+ it reflows left by `--preview-w` when the drawer is open (so the centered chat shifts
@@ -625,10 +629,14 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         className={`flex min-h-0 flex-1 flex-col overflow-hidden motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
       >
         {header}
-        {/* SEAM GAP (P1.1): a small right gutter on lg+ so the scroll column + its themed gutter never
-            abut the preview-drawer seam (the conversation breathes; the drawer reads as a sibling panel
-            with a real gap, matching the v3 mockup). */}
-        <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 lg:pr-6 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>
+        {/* ONE READING COLUMN (standard, 8-pt grid): a SINGLE centered 768px (max-w-3xl) column shared
+            by BOTH idle and run states — the transcript AND the docked composer live inside it, so their
+            left/right edges line up pixel-for-pixel (no more max-w-4xl transcript over a narrower
+            composer). px-4 lg:px-6 = 16/24 horizontal gutter; lg:pr-6 keeps the seam gutter so the column
+            never abuts the preview-drawer seam. py-4 = 16/16 top/bottom (the real bottom breathing room is
+            the shell-height calc above, ~24px clear of the viewport). gap-4 = 16px between the stacked
+            status/error/badge rows and the conversation. */}
+        <div className="mx-auto flex min-h-0 w-full max-w-3xl flex-1 flex-col gap-4 px-4 py-4 lg:px-6 lg:pr-6">
           {/* STICKY BUILD-STATUS BAR (P1.7): a thin, slim, in-flight-only bar so a long build step never
               reads as a frozen UI. It sits at the TOP of the conversation column (above the scrolling
               chat) and disappears the moment the run is terminal/idle. Stop halts THIS run (cancel path)
