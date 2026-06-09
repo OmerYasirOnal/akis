@@ -85,6 +85,11 @@ const ROUTE_TITLE_KEY: Record<string, StringKey> = {
   '/docs': 'nav.docs',
 }
 
+// Routes whose page component already renders a visible <h1> of its own. AppFrame must NOT add
+// a second sr-only <h1> for these — two h1s on one view breaks the "unique top-level heading"
+// a11y requirement even when one is sr-only. DocsPage renders a prominent hero <h1>.
+const OWNS_OWN_H1 = new Set(['/docs'])
+
 /** The authenticated app frame: cosmic backdrop, top nav, and the routed page. */
 function AppFrame({ api }: { api: ApiClient }) {
   const { t, locale, setLocale } = useI18n()
@@ -126,8 +131,10 @@ function AppFrame({ api }: { api: ApiClient }) {
       <div className={`relative z-10 mx-auto px-4 py-6 sm:px-6 ${isStudio ? 'max-w-[120rem] lg:px-8 2xl:px-10' : 'max-w-6xl'}`}>
         {/* One visually-hidden <h1> per authed view: the on-page SectionTitle is an <h2> (and is
             reused as a sub-heading inside Analytics), so this gives each view a single, unique,
-            route-named top-level heading for AT heading navigation without altering the visuals. */}
-        <h1 className="sr-only">{routeTitle}</h1>
+            route-named top-level heading for AT heading navigation without altering the visuals.
+            EXCEPTION: routes in OWNS_OWN_H1 already render a visible <h1> inside their page
+            component — adding a second one (even sr-only) would create a duplicate-h1 violation. */}
+        {!OWNS_OWN_H1.has(path) && <h1 className="sr-only">{routeTitle}</h1>}
         <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <Brand />
           {/* Mobile: a single horizontally-scrollable row (shrink-0 NavLinks + whitespace-nowrap)

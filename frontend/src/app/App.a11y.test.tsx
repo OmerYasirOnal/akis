@@ -58,13 +58,27 @@ describe('App a11y: skip link + main landmark', () => {
     expect(mains.length).toBe(1) // exactly one main landmark per view
   })
 
-  it('renders exactly one <h1> per authed view (the visually-hidden route title)', async () => {
+  it('renders exactly one sr-only <h1> for a non-/docs authed route (/analytics)', async () => {
     window.history.pushState({}, '', '/analytics')
     render(<App />)
     await screen.findByRole('navigation', { name: 'Primary' })
     const h1s = screen.getAllByRole('heading', { level: 1 })
     expect(h1s.length).toBe(1)
     expect(h1s[0]).toHaveTextContent('Analytics')
+  })
+
+  it('renders exactly one <h1> on authed /docs — DocsPage\'s own visible h1, NOT a second sr-only one', async () => {
+    // Regression guard: AppFrame used to inject a sr-only <h1> for every authed route including
+    // /docs; DocsPage already renders a prominent hero <h1>, producing two h1s on the same view.
+    // With the OWNS_OWN_H1 guard the AppFrame sr-only h1 is suppressed for /docs.
+    window.history.pushState({}, '', '/docs')
+    render(<App />)
+    await screen.findByRole('navigation', { name: 'Primary' })
+    // DocsPage is lazy — wait until its content resolves (Suspense fallback clears).
+    await waitFor(() => {
+      const h1s = screen.getAllByRole('heading', { level: 1 })
+      expect(h1s.length).toBe(1)
+    })
   })
 })
 
