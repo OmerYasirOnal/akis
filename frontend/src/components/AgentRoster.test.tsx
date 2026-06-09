@@ -31,6 +31,31 @@ describe('AgentRoster', () => {
   })
 })
 
+describe('AgentRoster — responsive strip (mobile-first)', () => {
+  // Below `lg` the roster must be ONE horizontally-scrolling row (flex-nowrap + overflow-x-auto with a
+  // hidden scrollbar), not 5 stacked rows. At `lg+` it returns to flex-wrap. We assert the utility
+  // classes directly (jsdom doesn't evaluate the `lg:` media query, so this is the testable contract).
+  it('the roster container is a no-wrap overflow-x strip below lg, restoring wrap at lg+', () => {
+    render(<I18nProvider><AgentRoster view={emptyView('s1')} /></I18nProvider>)
+    const strip = screen.getByTestId('agent-roster-strip')
+    // Base (mobile-first) = single scrollable row.
+    expect(strip.className).toContain('flex-nowrap')
+    expect(strip.className).toContain('overflow-x-auto')
+    // Hidden scrollbar so the strip reads as a clean chip row, not a scroll widget.
+    expect(strip.className).toContain('[scrollbar-width:none]')
+    // lg+ restores the desktop wrap (unchanged behavior).
+    expect(strip.className).toContain('lg:flex-wrap')
+    expect(strip.className).toContain('lg:overflow-x-visible')
+  })
+
+  it('every chip is shrink-0 so the no-wrap strip scrolls instead of compressing chips illegibly', () => {
+    render(<I18nProvider><AgentRoster view={emptyView('s1')} /></I18nProvider>)
+    const chips = Array.from(document.querySelectorAll('[data-role]'))
+    expect(chips.length).toBe(5) // the full core roster
+    for (const chip of chips) expect(chip.className).toContain('shrink-0')
+  })
+})
+
 describe('presenceOf — Scribe falls back to done on a chat-seeded build', () => {
   it('returns "done" for scribe when there is NO scribe lane step but the spec gate is satisfied', () => {
     // Chat-seeded builds short-circuit Scribe's lane, so the only signal that the spec stage

@@ -1,4 +1,4 @@
-import { memo, useEffect, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import type { Role } from '@akis/shared'
 import type { SessionView } from '../live/types.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -80,13 +80,35 @@ export const AgentRoster = memo(function AgentRoster({ view }: { view: SessionVi
   const { t } = useI18n()
   // One scan up front so the chips can read "is this the active one?" without each re-scanning.
   const active = activeRole(view)
+  // RESPONSIVE STRIP (mobile-first): below `lg` the roster is ONE horizontally-scrolling row
+  // (flex-nowrap + overflow-x-auto) instead of wrapping into 5 stacked rows that ate the top of the
+  // page on a phone; at `lg+` it returns to the desktop `flex-wrap` (verified-good) behavior. The
+  // scrollbar is hidden (scrollbar-width:none + the webkit pseudo) so the strip reads as a clean chip
+  // row, not a scroll widget. When the active agent changes we scroll its chip into view so the LIVE
+  // worker is never hidden off the right edge on a narrow screen (the strip starts at orchestrator).
+  const stripRef = useRef<HTMLDivElement>(null)
+  const activeChipRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    // Keep the live worker visible on the small-screen strip. Guarded for jsdom (no layout) and for
+    // reduced-motion users (instant, not a smooth glide) — `scrollIntoView` is a no-op in jsdom, so
+    // this never throws in tests. `inline:'nearest'` only scrolls when the chip is actually off-edge.
+    const chip = activeChipRef.current
+    if (!chip || typeof chip.scrollIntoView !== 'function') return
+    try { chip.scrollIntoView({ block: 'nearest', inline: 'nearest' }) } catch { /* jsdom / unsupported */ }
+  }, [active])
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div
+      ref={stripRef}
+      data-testid="agent-roster-strip"
+      // flex-nowrap + overflow-x-auto below lg → single scrollable row; lg:flex-wrap + lg:overflow-visible
+      // restores the desktop wrap. The hidden-scrollbar utilities keep the strip visually clean on mobile.
+      className="flex flex-nowrap items-center gap-2 overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden lg:flex-wrap lg:overflow-x-visible"
+    >
       {/* "▶ Şu an" — a quiet leading tag, shown only while an agent is actively running (mirrors the
           v3 mockup's nowtag). It anchors the highlight so the strip reads as a live activity, not a
-          static legend. */}
+          static legend. shrink-0 so it can't be squeezed flat in the no-wrap mobile strip. */}
       {active && (
-        <span className="inline-flex items-center gap-1 rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.08] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-200">
+        <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.08] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-teal-200">
           <span aria-hidden>▶</span> {t('roster.now')}
         </span>
       )}
@@ -96,8 +118,11 @@ export const AgentRoster = memo(function AgentRoster({ view }: { view: SessionVi
         const isDone = p === 'done'
         return (
           <div key={a.role} data-role={a.role} data-active={isActive ? 'true' : undefined}
+            {...(isActive ? { ref: activeChipRef } : {})}
             title={t(`role.${a.role}.what`)}
-            className={`group flex items-center gap-2 rounded-full border px-3 py-1.5 transition ${
+            // shrink-0 keeps each chip legible (icon + name + dot) in the no-wrap mobile strip — it
+            // scrolls instead of compressing the chips into an unreadable smear.
+            className={`group flex shrink-0 items-center gap-2 rounded-full border px-3 py-1.5 transition ${
               isActive
                 ? 'border-[#07D1AF]/55 bg-[#07D1AF]/[0.10] shadow-[0_0_0_1px_rgba(7,209,175,0.25),0_0_14px_rgba(7,209,175,0.18)]'
                 : isDone
