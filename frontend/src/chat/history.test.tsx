@@ -43,6 +43,22 @@ describe('HistoryMenu', () => {
     expect(screen.getByRole('menuitem', { name: /a todo app/ })).toBeInTheDocument()
   })
 
+  // RESPONSIVE HEADER (mobile-first): below `sm` the trigger collapses to a compact icon button — the
+  // visible "Recent" label is hidden (so the studio header fits one row at 320px) but the accessible
+  // name is preserved via aria-label, and the tap box is a ≥44px square (WCAG 2.5.5).
+  it('collapses to an icon-only ≥44px trigger below sm but keeps its accessible name (aria-label)', () => {
+    render(<I18nProvider><HistoryMenu builds={[]} onOpen={() => {}} /></I18nProvider>)
+    const trigger = screen.getByRole('button', { name: 'Recent' }) // accessible name still resolves
+    expect(trigger).toHaveAttribute('aria-label', 'Recent')
+    // The visible label is hidden below sm (returns at sm:inline), so the small-screen header stays tidy.
+    const label = Array.from(trigger.querySelectorAll('span')).find(s => s.textContent === 'Recent')
+    expect(label?.className).toContain('hidden')
+    expect(label?.className).toContain('sm:inline')
+    // ≥44px square tap target on mobile.
+    expect(trigger.className).toContain('h-11')
+    expect(trigger.className).toContain('min-w-11')
+  })
+
   // MENU A11Y: roving keyboard nav (mirrors ModelPicker's focus-on-open + focus-restore).
   it('opens with the first item focused, ArrowDown moves focus, Escape closes + restores the trigger', async () => {
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }, { id: 's2', idea: 'a QR generator', ts: 0 }]

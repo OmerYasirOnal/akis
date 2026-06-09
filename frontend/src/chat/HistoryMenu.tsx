@@ -66,10 +66,17 @@ export function HistoryMenu({ builds, onOpen }: { builds: RecentBuild[]; onOpen:
         onClick={() => setOpen(o => !o)}
         aria-haspopup="menu"
         aria-expanded={open}
-        className="flex shrink-0 items-center gap-1.5 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 transition hover:border-white/20 hover:text-slate-200"
+        // RESPONSIVE (mobile-first): below `sm` this collapses to a compact icon button (the label is
+        // hidden so the studio header fits one tidy row at 320px) with a ≥44px square tap box (WCAG
+        // 2.5.5); the clock glyph carries the meaning and `aria-label` names it for AT. From `sm` the
+        // visible "Recent/Son derlemeler" label + chevron return. The chevron is hidden when the label
+        // is (it has no meaning beside a lone icon).
+        aria-label={t('history.button')}
+        className="flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs text-slate-400 transition hover:border-white/20 hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 sm:h-auto sm:min-w-0 sm:py-1.5"
       >
-        <ClockIcon /> {t('history.button')}
-        <ChevronDown />
+        <ClockIcon />
+        <span className="hidden sm:inline">{t('history.button')}</span>
+        <span className="hidden sm:inline"><ChevronDown /></span>
       </button>
       {open && (
         <div ref={menuRef} role="menu" className="absolute right-0 z-20 mt-1 max-h-[70vh] w-80 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/95 p-1.5 shadow-[0_12px_40px_rgba(0,0,0,0.55)] backdrop-blur-md sm:max-h-96 sm:w-96">

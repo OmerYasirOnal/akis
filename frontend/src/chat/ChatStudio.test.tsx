@@ -330,6 +330,37 @@ describe('ChatStudio — mobile preview reachability via the drawer FAB', () => 
     await userEvent.click(screen.getByRole('button', { name: 'Close preview' }))
     await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
   })
+
+  // RESPONSIVE HEADER (mobile-first): once a run exists the header carries 3 controls (Preview toggle,
+  // History, New build). Below `sm` each collapses to a compact ICON button — labels hidden, accessible
+  // names preserved via aria-label, ≥44px tap boxes — so the header fits one tidy row at 320px.
+  it('collapses the header controls to icon-only ≥44px buttons below sm (labels hidden, a11y names kept)', async () => {
+    const api = new ApiClient('', vi.fn(runFetch()))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    await screen.findByTestId('preview-drawer')
+
+    // Preview toggle: ≥44px tap box on mobile; the visible "Preview" label is hidden below sm.
+    const toggle = screen.getByTestId('preview-open-toggle')
+    expect(toggle.className).toContain('h-11')
+    expect(toggle.className).toContain('min-w-11')
+    const toggleLabel = Array.from(toggle.querySelectorAll('span')).find(s => s.textContent === 'Preview')
+    expect(toggleLabel?.className).toContain('hidden')
+    expect(toggleLabel?.className).toContain('sm:inline')
+
+    // New build: accessible name resolves via aria-label even with the label hidden; ≥44px tap box.
+    const newBuild = screen.getByRole('button', { name: 'New build' })
+    expect(newBuild).toHaveAttribute('aria-label', 'New build')
+    expect(newBuild.className).toContain('h-11')
+    expect(newBuild.className).toContain('min-w-11')
+    const newLabel = Array.from(newBuild.querySelectorAll('span')).find(s => s.textContent === 'New build')
+    expect(newLabel?.className).toContain('hidden')
+    expect(newLabel?.className).toContain('sm:inline')
+  })
 })
 
 // ── ANCHORED MULTI-RUN: two approvals → two inline run-blocks in ONE scroll ──

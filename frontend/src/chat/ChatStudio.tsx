@@ -496,10 +496,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // slate otherwise) — the same trust signal the edge-tab had. While the drawer is OPEN it reads as
   // pressed (aria-pressed) and is inert (the in-drawer ✕ owns close); ≥44px touch target (WCAG 2.5.5).
   // View-state only — `openDrawer` is the bare useResizable opener, no gate authority.
+  // RESPONSIVE HEADER (mobile-first): the roster strip can grow wide, so it gets `min-w-0` to allow
+  // it to scroll within the row rather than shove the controls off-screen; the control cluster is
+  // `shrink-0`. Below `sm` the controls collapse to compact ICON buttons (label `hidden sm:inline`)
+  // so "Önizleme / Son derlemeler / Yeni geliştirme" fit one tidy row at 320px with no overflow; from
+  // `sm` the labels return. Each control is ≥44px tall on mobile (WCAG 2.5.5); the icon-only mobile
+  // form gets a matching min-width so the tap box stays square-ish, not a thin sliver.
   const header = (
-    <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
-      <AgentRoster view={activeView} />
-      <div className="flex shrink-0 items-center gap-2">
+    <div className="flex items-center justify-between gap-2 border-b border-white/10 px-3 py-2 sm:gap-3 sm:px-4">
+      <div className="min-w-0 flex-1"><AgentRoster view={activeView} /></div>
+      <div className="flex shrink-0 items-center gap-1.5 sm:gap-2">
         {activeSessionId && (
           <button
             type="button"
@@ -507,19 +513,36 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
             onClick={() => { if (!previewOpen) openDrawer() }}
             aria-label={t('preview.open')}
             aria-pressed={previewOpen}
-            className="flex h-11 items-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs font-medium text-slate-300 transition-colors hover:border-[#07D1AF]/30 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 aria-pressed:border-[#07D1AF]/40 aria-pressed:bg-[#07D1AF]/10 aria-pressed:text-teal-100"
+            // h-11 (44px) tall everywhere; on mobile the label is hidden so min-w-11 keeps a ≥44px tap
+            // box around the lone trust-dot. The dot doubles as the icon, so the control is never an
+            // unlabeled mystery glyph (aria-label carries the name for AT).
+            className="flex h-11 min-w-11 items-center justify-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs font-medium text-slate-300 transition-colors hover:border-[#07D1AF]/30 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 aria-pressed:border-[#07D1AF]/40 aria-pressed:bg-[#07D1AF]/10 aria-pressed:text-teal-100 sm:min-w-0"
           >
             <span
               data-testid="preview-toggle-dot"
               data-verified={String(!!activeView.verified)}
               aria-hidden="true"
-              className={`h-2 w-2 rounded-full ${activeView.verified ? 'bg-[#07D1AF] shadow-[0_0_6px_rgba(7,209,175,0.7)]' : 'bg-slate-500'}`}
+              className={`h-2 w-2 shrink-0 rounded-full ${activeView.verified ? 'bg-[#07D1AF] shadow-[0_0_6px_rgba(7,209,175,0.7)]' : 'bg-slate-500'}`}
             />
-            <span aria-hidden="true">{t('preview.label')}</span>
+            <span aria-hidden="true" className="hidden sm:inline">{t('preview.label')}</span>
           </button>
         )}
         <HistoryMenu builds={recent} onOpen={openSession} />
-        {activeSessionId && <button onClick={newChat} className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 hover:text-slate-200">{t('chat.new')}</button>}
+        {activeSessionId && (
+          <button
+            type="button"
+            onClick={newChat}
+            aria-label={t('chat.new')}
+            // Compact icon button below sm (label hidden); ≥44px square tap box on mobile. The "+"
+            // glyph reads as "new"; the label returns from sm. aria-label keeps the name for AT.
+            className="flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs text-slate-400 transition-colors hover:border-white/20 hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 sm:min-w-0"
+          >
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="shrink-0">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+            <span className="hidden sm:inline">{t('chat.new')}</span>
+          </button>
+        )}
       </div>
     </div>
   )
