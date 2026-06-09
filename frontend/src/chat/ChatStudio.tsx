@@ -480,6 +480,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // The MOVED rail content (verbatim props + `!sessionGone && isDone` guards). Now the drawer's region A.
   const cards = (
     <>
+      {/* Edit-mode disclosure (honesty): the user judges the MERGED result in the drawer, so the
+          "edits a prior app" fact must travel here too — the same badge shown above the chat,
+          reused (renders only when editsBase, since editsBaseBadge is null otherwise). */}
+      {editsBaseBadge}
       {activeSessionId && !sessionGone && isDone && <TrustReportCard sessionId={activeSessionId} api={api} />}
       {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING. */}
       {activeSessionId && !sessionGone && isDone && <PublishButton sessionId={activeSessionId} api={api} initialRecord={publishRecord} />}

@@ -585,6 +585,31 @@ export function AkisChat({
             />
           )
         })}
+        {/* Cold-start starter prompts: when the thread is just AKIS's greeting (no build started
+            yet), offer a few tappable example builds so the empty canvas has an answer affordance
+            instead of a blank box — reuses the SAME sendText() path + chip styling as the
+            akis-suggest chips. Rendered INSIDE the scroll area directly under the greeting bubble
+            so the greeting + its answer-affordances read as one onboarding unit (not a far-away
+            footer band). Disappears as soon as the user sends anything. */}
+        {(() => {
+          const first = nodes[0]
+          const coldStart = !busy && !activeSessionId && nodes.length === 1 && !!first && isMsg(first) && first.role === 'assistant'
+          if (!coldStart) return null
+          const starters = [t('akis.starter.1'), t('akis.starter.2'), t('akis.starter.3'), t('akis.starter.4')]
+          return (
+            <div className="ml-11 flex flex-col gap-2">
+              <p className="text-xs text-slate-400">{t('akis.starters.title')}</p>
+              <div className="flex flex-wrap gap-2">
+                {starters.map((s, i) => (
+                  <button key={i} type="button" onClick={() => sendText(s)}
+                    className="rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.06] px-3 py-1.5 text-xs text-teal-200 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                    {s}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        })()}
         {/* The transient "Workflow is starting…" card (after Approve, before the run marker lands).
             The build ITSELF is an inline RunBlock at its run-marker slot — NOT a trailing injection. */}
         {starting && (
@@ -620,29 +645,6 @@ export function AkisChat({
                 {s}
               </button>
             ))}
-          </div>
-        )
-      })()}
-      {/* Cold-start starter prompts: when the thread is just AKIS's greeting (no build started
-          yet), offer a few tappable example builds so the empty canvas has an answer affordance
-          instead of a blank box — reuses the SAME sendText() path + chip styling as the
-          akis-suggest chips above. Disappears as soon as the user sends anything. */}
-      {(() => {
-        const first = nodes[0]
-        const coldStart = !busy && !activeSessionId && nodes.length === 1 && !!first && isMsg(first) && first.role === 'assistant'
-        if (!coldStart) return null
-        const starters = [t('akis.starter.1'), t('akis.starter.2'), t('akis.starter.3'), t('akis.starter.4')]
-        return (
-          <div className="flex flex-col gap-2">
-            <p className="text-xs text-slate-400">{t('akis.starters.title')}</p>
-            <div className="flex flex-wrap gap-2">
-              {starters.map((s, i) => (
-                <button key={i} type="button" onClick={() => sendText(s)}
-                  className="rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.06] px-3 py-1.5 text-xs text-teal-200 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
-                  {s}
-                </button>
-              ))}
-            </div>
           </div>
         )
       })()}

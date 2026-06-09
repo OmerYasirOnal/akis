@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { ChatStudio } from './ChatStudio.js'
@@ -57,6 +57,40 @@ describe('ChatStudio F5/deep-link rehydrate — the persisted conversation survi
     // Both persisted turns are rehydrated into the visible thread — the F5 fix, end to end.
     await waitFor(() => expect(screen.getByText('Neden testler geçmiyor?')).toBeInTheDocument())
     expect(screen.getByText(/Doğrulama 0 test üretti/)).toBeInTheDocument()
+  })
+})
+
+// HONESTY: a build that EDITS a prior app must disclose the merge-over-base where the user JUDGES
+// the result — i.e. in the preview DRAWER too, not only above the chat. The badge reuses the same
+// `pipeline.editsBase` copy; here we assert it travels into the drawer's cards region when base is set.
+describe('ChatStudio — editsBase disclosure surfaces in the preview drawer', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/?s=smerge') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  it('renders the editsBase badge inside the drawer cards when the session merges over a base', async () => {
+    // getSession returns a `base` → editsBase flips true. The deep-link sets activeSessionId, so the
+    // drawer mounts; the badge appears both above the chat AND in the drawer's cards.
+    const body = { id: 'smerge', status: 'done', version: 2, base: { files: [], fromSession: 'sPrev' } }
+    const api = new ApiClient('', vi.fn(deepLinkFetch('smerge', 200, body)))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    await waitFor(() =>
+      expect(within(drawer).getByText('Editing the previous app — changes merge over its files')).toBeInTheDocument(),
+    )
+  })
+
+  it('does NOT render the editsBase badge in the drawer when the session has no base', async () => {
+    const body = { id: 'smerge', status: 'done', version: 1 }
+    const api = new ApiClient('', vi.fn(deepLinkFetch('smerge', 200, body)))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    // settle the getSession effect, then assert the disclosure never appeared anywhere
+    await waitFor(() => expect(fake.connectedUrl).toBe('/sessions/smerge/events'))
+    await Promise.resolve()
+    expect(within(drawer).queryByText('Editing the previous app — changes merge over its files')).toBeNull()
+    expect(screen.queryByText('Editing the previous app — changes merge over its files')).toBeNull()
   })
 })
 

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, waitFor, act } from '@testing-library/react'
+import { render, screen, waitFor, act, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import type { ReactNode } from 'react'
 import { ChatThread, RecoveryBubble, ChatBubble } from './ChatThread.js'
@@ -195,8 +195,12 @@ describe('ChatStudio', () => {
     await userEvent.click(approves[approves.length - 1]!)
     await waitFor(() => expect(sessionBodies.length).toBe(2))
     expect(sessionBodies[1]).toMatchObject({ baseSessionId: 's1' })
-    // UX honesty: the edit-mode disclosure badge renders for the new session.
-    await waitFor(() => expect(screen.getByText(/Editing the previous app/)).toBeInTheDocument())
+    // UX honesty: the edit-mode disclosure badge renders for the new session — surfaced BOTH above
+    // the chat AND inside the preview drawer's cards (the user judges the merged result in the drawer,
+    // so the merge-over-base fact must travel there too).
+    await waitFor(() => expect(screen.getAllByText(/Editing the previous app/).length).toBeGreaterThanOrEqual(1))
+    const drawer = await screen.findByTestId('preview-drawer')
+    await waitFor(() => expect(within(drawer).getByText(/Editing the previous app/)).toBeInTheDocument())
   })
 
   it('a follow-up build does NOT carry baseSessionId when the prior session produced no code', async () => {
