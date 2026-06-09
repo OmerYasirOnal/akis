@@ -77,7 +77,6 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   // Derive the active surface so it can never be 'code' without files nor 'trust' without evidence
   // — auto-recovers to Preview the moment the backing data goes.
   const activeTab = tab === 'code' && fileCount === 0 ? 'preview' : tab === 'trust' && !hasTrust ? 'preview' : tab
-  const showTablist = fileCount > 0 || hasTrust
   const url = view.preview.url
   // IFRAME PAINT GATE (review HIGH: blank white flash): `preview.starting=false` means the SERVER
   // process is up, NOT that the iframe document has painted — so the bare bg-white iframe used to
@@ -131,12 +130,10 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
     // the running app starts higher — the preview is just the tab switch + the active tab, no slack.
     <div ref={panelRef} className="flex h-full min-h-0 flex-col gap-2">
       <div className="flex items-center justify-between gap-2">
-        {showTablist ? (
-          // Preview ⇄ Code ⇄ Trust toggle — Code surfaces once files exist, Trust once a
-          // verification has produced structured evidence.
-          // Segmented control tightened to the radius scale: an 8px outer shell (rounded-lg) wrapping
-          // 6px inner tabs (rounded-md), one border width, consistent px-2.5/py-1 padding — so all
-          // three tabs read as one set.
+        {/* Önizleme ⇄ Kod ⇄ Güven — ALWAYS rendered (Kod once files exist, Güven once verified). The
+            lone Preview tab IS the panel's anchor, so there is NO separate <h3> title (which duplicated
+            the drawer header's "Canlı önizleme"). One radius scale: 8px shell over 6px tabs. */}
+        {(
           <div role="tablist" aria-label={t('preview.title')} className="flex gap-0.5 rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
             {/* Tab buttons crossfade their active/hover state (transition-colors) for a settled toggle
                 rather than a hard cut; the tap-down scale is `motion-safe:` (instant under reduced-motion). */}
@@ -165,8 +162,6 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
               </button>
             )}
           </div>
-        ) : (
-          <h3 className="text-sm font-semibold text-slate-200">{t('preview.title')}</h3>
         )}
         <div className="flex items-center gap-2">
           {/* Preview header actions — ONLY when the live URL is embeddable (`/preview/`) AND the
@@ -284,21 +279,8 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
           bounded parent on lg. The iframe scrolls inside DeviceFrame; this band never imposes a min
           that overflows its bounded parent. */}
       <div className="relative flex min-h-[16rem] flex-1 flex-col overflow-hidden rounded-xl border border-white/10 bg-black/50 shadow-[0_0_40px_rgba(7,209,175,0.08)_inset]">
-        {/* Intentional browser-chrome header so the framed area never reads as dead space —
-            traffic-light dots, an agent attribution, and (when live) the preview path. */}
-        <div className="flex shrink-0 items-center gap-2 border-b border-white/10 bg-white/[0.03] px-3 py-1.5">
-          <span className="flex gap-1" aria-hidden>
-            <span className="h-2 w-2 rounded-full bg-rose-400/70" />
-            <span className="h-2 w-2 rounded-full bg-amber-300/70" />
-            <span className="h-2 w-2 rounded-full bg-emerald-400/70" />
-          </span>
-          {/* Friendly URL label (review): the raw internal /preview/:id/ path read as a debug
-              artifact — show a readable label, keep the real path as a hover title. */}
-          <span className="flex min-w-0 items-center gap-1 truncate text-[10px] text-slate-400" title={embeddable ? url : undefined}>
-            {embeddable ? <><span aria-hidden>🌐</span> <span className="truncate">{t('preview.urlLabel')}</span></> : t('preview.attribution')}
-          </span>
-        </div>
-
+        {/* No browser-chrome row (owner feedback): the framed band is JUST the running app. The fake
+            traffic-light dots read as window close/min buttons and the attribution was clutter — gone. */}
         <div className="relative flex-1 overflow-hidden bg-slate-950">
           {embeddable && !previewError ? (
             // The framed app is UNTRUSTED agent-generated code served same-origin from
