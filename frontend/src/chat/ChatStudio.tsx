@@ -489,11 +489,35 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     </div>
   ) : null
 
-  // Shared frame header: the live agent roster (active run) + history (+ New chat once a run exists).
+  // Shared frame header: the live agent roster (active run) + the INTEGRATED preview toggle + history
+  // (+ New chat once a run exists). The "Preview" toggle is the single, discoverable open affordance for
+  // the drawer (it REPLACED the retired vertical-text edge-tab): shown only when a drawer exists (a run),
+  // it opens the drawer when closed and carries the verified/unverified trust dot (teal when verified,
+  // slate otherwise) — the same trust signal the edge-tab had. While the drawer is OPEN it reads as
+  // pressed (aria-pressed) and is inert (the in-drawer ✕ owns close); ≥44px touch target (WCAG 2.5.5).
+  // View-state only — `openDrawer` is the bare useResizable opener, no gate authority.
   const header = (
     <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
       <AgentRoster view={activeView} />
       <div className="flex shrink-0 items-center gap-2">
+        {activeSessionId && (
+          <button
+            type="button"
+            data-testid="preview-open-toggle"
+            onClick={() => { if (!previewOpen) openDrawer() }}
+            aria-label={t('preview.open')}
+            aria-pressed={previewOpen}
+            className="flex h-11 items-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs font-medium text-slate-300 transition-colors hover:border-[#07D1AF]/30 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 aria-pressed:border-[#07D1AF]/40 aria-pressed:bg-[#07D1AF]/10 aria-pressed:text-teal-100"
+          >
+            <span
+              data-testid="preview-toggle-dot"
+              data-verified={String(!!activeView.verified)}
+              aria-hidden="true"
+              className={`h-2 w-2 rounded-full ${activeView.verified ? 'bg-[#07D1AF] shadow-[0_0_6px_rgba(7,209,175,0.7)]' : 'bg-slate-500'}`}
+            />
+            <span aria-hidden="true">{t('preview.label')}</span>
+          </button>
+        )}
         <HistoryMenu builds={recent} onOpen={openSession} />
         {activeSessionId && <button onClick={newChat} className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 hover:text-slate-200">{t('chat.new')}</button>}
       </div>
@@ -660,7 +684,6 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           onReset={resetRatio}
           onPointerWidth={onPointerWidth}
           commitRatio={commitFromClientX}
-          onOpen={openDrawer}
           onClose={closeDrawer}
           allowAutoOpen={false}
           {...(activeView.verified !== undefined ? { verified: activeView.verified } : {})}

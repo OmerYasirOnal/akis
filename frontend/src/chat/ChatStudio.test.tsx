@@ -284,9 +284,10 @@ describe('ChatStudio — mobile preview reachability via the drawer FAB', () => 
     const fake = new FakeStream()
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
 
-    // Idle: no drawer yet (only mounts once a run exists).
+    // Idle: no drawer yet (only mounts once a run exists) and no header preview toggle.
     expect(screen.queryByTestId('preview-drawer')).toBeNull()
     expect(screen.queryByTestId('preview-fab')).toBeNull()
+    expect(screen.queryByTestId('preview-open-toggle')).toBeNull()
     // The retired mobile pane-switcher is gone.
     expect(screen.queryByRole('tablist', { name: /view/i })).toBeNull()
 
@@ -300,9 +301,34 @@ describe('ChatStudio — mobile preview reachability via the drawer FAB', () => 
     // The retired "View" pane-switcher tablist is gone.
     expect(screen.queryByRole('tablist', { name: 'View' })).toBeNull()
     // The drawer is CLOSED by default (chat-first) → its content is aria-hidden, so PreviewPanel's
-    // inner tablist is correctly NOT in the a11y tree while collapsed; the edge-tab reopens it.
+    // inner tablist is correctly NOT in the a11y tree while collapsed; the INTEGRATED header "Preview"
+    // toggle (which replaced the retired edge-tab) reopens it.
     expect(drawer).toHaveAttribute('aria-hidden', 'true')
-    expect(screen.getByTestId('preview-edge-tab')).toBeInTheDocument()
+    expect(screen.queryByTestId('preview-edge-tab')).toBeNull()
+    expect(screen.getByTestId('preview-open-toggle')).toBeInTheDocument()
+  })
+
+  it('the INTEGRATED header "Preview" toggle appears once a run exists and opens the drawer (replaces the edge-tab)', async () => {
+    const api = new ApiClient('', vi.fn(runFetch()))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+
+    const drawer = await screen.findByTestId('preview-drawer')
+    // Closed-by-default → aria-hidden + the toggle reads NOT pressed.
+    expect(drawer).toHaveAttribute('aria-hidden', 'true')
+    const toggle = screen.getByTestId('preview-open-toggle')
+    expect(toggle).toHaveAttribute('aria-pressed', 'false')
+    // Clicking the header toggle opens the drawer (the bare useResizable opener — view-state only).
+    await userEvent.click(toggle)
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'false'))
+    expect(screen.getByTestId('preview-open-toggle')).toHaveAttribute('aria-pressed', 'true')
+    // The in-drawer ✕ closes it back.
+    await userEvent.click(screen.getByRole('button', { name: 'Close preview' }))
+    await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
   })
 })
 

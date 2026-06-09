@@ -153,10 +153,11 @@ describe('ChatStudio', () => {
     expect(screen.getAllByLabelText(/ask akis/i).length).toBeGreaterThanOrEqual(1)
     act(() => fake.emit(ev({ kind: 'done', verified: true, provider: 'mock' }), 1))
     // The preview now lives in a slide-in DRAWER (the in-flow Collapse/Expand <aside> was retired).
-    // Closed-by-default → the edge-tab "Open preview" reopens it; the ✕ closes it back. Exercise both.
+    // Closed-by-default → the INTEGRATED header "Preview" toggle (which replaced the edge-tab) reopens it;
+    // the ✕ closes it back. Exercise both.
     const drawer = await screen.findByTestId('preview-drawer')
     expect(drawer).toHaveAttribute('aria-hidden', 'true')
-    await userEvent.click(screen.getByTestId('preview-edge-tab')) // "Open preview"
+    await userEvent.click(screen.getByTestId('preview-open-toggle')) // "Open preview" (header toggle)
     await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'false'))
     await userEvent.click(screen.getByRole('button', { name: 'Close preview' }))
     await waitFor(() => expect(drawer).toHaveAttribute('aria-hidden', 'true'))
