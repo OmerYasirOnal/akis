@@ -668,3 +668,60 @@ describe('ChatStudio — sticky build-status bar (in-flight only)', () => {
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('sd'))
   })
 })
+
+// STANDARDS-BASED reading column: ONE centered 768px (max-w-3xl) column is shared by BOTH the
+// transcript and the docked composer — their left/right edges must line up pixel-for-pixel. These
+// tests pin that the column is a SINGLE max-w-3xl wrapper enclosing both, that the composer carries
+// no competing max-width of its own, and that the send button presents a ≥44px WCAG touch target.
+describe('ChatStudio — one shared 768px reading column (transcript + composer aligned)', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  const idleFetch = (): ((path: string) => Promise<Response>) => async (path: string) =>
+    path.endsWith('/sessions/mine')
+      ? ({ ok: true, status: 200, json: async () => ([]), text: async () => '' } as unknown as Response)
+      : ({ ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response)
+
+  /** The single column wrapper: the lone element carrying the max-w-3xl reading-column class. */
+  const readingColumn = (): HTMLElement => {
+    const cols = Array.from(document.querySelectorAll<HTMLElement>('.max-w-3xl'))
+    expect(cols).toHaveLength(1) // exactly ONE reading column (idle == run uses the same class)
+    return cols[0]!
+  }
+
+  it('the transcript and the composer live INSIDE the same single max-w-3xl column', async () => {
+    const api = new ApiClient('', vi.fn(idleFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream() as unknown as EventStreamClient} />))
+    // The composer form (aria-busy) and the transcript scroll area (.akis-scroll) are both present.
+    const scroll = document.querySelector('.akis-scroll')
+    const composer = screen.getByRole('textbox', { name: /ask AKIS|AKIS.e bir şey/i }).closest('form')
+    expect(scroll).not.toBeNull()
+    expect(composer).not.toBeNull()
+    const column = readingColumn()
+    // BOTH descend from the SAME column → their horizontal edges align pixel-for-pixel.
+    expect(column.contains(scroll!)).toBe(true)
+    expect(column.contains(composer!)).toBe(true)
+  })
+
+  it('the composer carries no competing max-width (it fills the shared column, edge-aligned)', async () => {
+    const api = new ApiClient('', vi.fn(idleFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream() as unknown as EventStreamClient} />))
+    const composer = screen.getByRole('textbox', { name: /ask AKIS|AKIS.e bir şey/i }).closest('form')!
+    // Walk composer → column: no ancestor between them re-introduces the old narrower max-w-[46rem].
+    const column = readingColumn()
+    let el: HTMLElement | null = composer
+    while (el && el !== column) {
+      expect(el.className).not.toMatch(/max-w-\[46rem\]/)
+      el = el.parentElement
+    }
+  })
+
+  it('the send button presents a ≥44px WCAG 2.5.5 touch target', async () => {
+    const api = new ApiClient('', vi.fn(idleFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream() as unknown as EventStreamClient} />))
+    const send = screen.getByRole('button', { name: 'Ask' }) // akis.send (EN) — the send icon-button
+    // h-11 w-11 = 2.75rem = 44px (jsdom has no layout, so assert the size utility classes).
+    expect(send.className).toMatch(/\bh-11\b/)
+    expect(send.className).toMatch(/\bw-11\b/)
+  })
+})

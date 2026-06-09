@@ -112,15 +112,15 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
   return (
     <div className="flex items-start gap-3">
       <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
-      {/* Bounded reading measure (~46rem): a long AKIS reply no longer runs edge-to-edge on a wide
-          window (the owner's "yazı çizgilere taşıyor"). Slightly wider than an agent bubble so the
-          spec-card document preview it can contain isn't cramped. */}
-      <div className="min-w-0 max-w-[46rem] flex-1 space-y-3">
+      {/* Bounded reading measure (standard, ≤42rem for assistant cards): a long AKIS reply / spec
+          card no longer runs edge-to-edge on a wide window (the owner's "yazı çizgilere taşıyor").
+          Aligns with the user bubble + agent bubble measure for a calm, consistent column. */}
+      <div className="min-w-0 max-w-[42rem] flex-1 space-y-3">
         {detected
           ? (
             <>
               {detected.intro && (
-                <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+                <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2 text-slate-200">
                   <Markdown content={detected.intro} />
                 </div>
               )}
@@ -135,7 +135,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
                   (it is NOT rendered while streaming nor when empty; once present it stays in the DOM
                   via opacity so it's RTL-findable + keyboard-reachable). `pr-10` keeps the absolute
                   Copy button off the text. Copies `stripped` (suggestion block already removed). */}
-              <div className="group relative max-w-[70ch] pr-10 leading-relaxed text-slate-200">
+              <div className="group relative max-w-[68ch] pr-10 leading-relaxed text-slate-200">
                 <Markdown content={displayed} />
                 {!streaming && stripped.trim() && (
                   <CopyButton text={stripped} label={t('copy.reply')}
@@ -143,7 +143,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
                 )}
               </div>
               {truncated && (
-                <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
+                <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm text-amber-200">
                   {t('akis.spec.truncated')}
                 </div>
               )}
@@ -506,10 +506,15 @@ export function AkisChat({
   const liveStatus = repliedReady ? t('chat.aria.responded') : ''
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-3">
+    // DOCK GEOMETRY (standard): a full-height flex column — the transcript scroll area is
+    // `flex-1 min-h-0 overflow-y-auto`, the composer is `shrink-0` docked at the bottom, with
+    // gap-6 (24px) between them. No trailing void: the column fills its parent and the composer
+    // sits at the floor.
+    <div className="flex h-full min-h-0 flex-col gap-6">
       <div role="status" aria-live="polite" className="sr-only">{liveStatus}</div>
       <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} onScroll={onScroll} className="akis-scroll h-full space-y-3 overflow-y-auto pr-1">
+      {/* 8-pt: turns stack with gap-4 (16px), not gap-3 (12px). */}
+      <div ref={scrollRef} onScroll={onScroll} className="akis-scroll h-full space-y-4 overflow-y-auto pr-1">
         {nodes.map((m, i) => {
           // A RUN MARKER renders its build INLINE at this exact slot (the single composition seam):
           // its own RunBlock mounts a per-run useLiveChat, the compact pipeline-strip header, and
@@ -558,8 +563,8 @@ export function AkisChat({
             return (
               <div key={i} role="alert" className="flex items-start gap-3">
                 <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full border border-rose-400/40 bg-rose-500/15 text-[11px] font-black text-rose-300" aria-hidden="true">!</div>
-                <div className="min-w-0 max-w-[42rem] rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-sm text-rose-200">
-                  <div className="mb-0.5 text-[11px] font-semibold uppercase tracking-wide text-rose-300/80">{t('akis.error.label')}</div>
+                <div className="min-w-0 max-w-[42rem] rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-200">
+                  <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-rose-300/80">{t('akis.error.label')}</div>
                   <div>{m.content}</div>
                   {isLast && lastUser.current !== undefined && (
                     <button type="button" onClick={retry} disabled={busy}
@@ -602,7 +607,7 @@ export function AkisChat({
               <div className="flex flex-wrap gap-2">
                 {starters.map((s, i) => (
                   <button key={i} type="button" onClick={() => sendText(s)}
-                    className="rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.06] px-3 py-1.5 text-xs text-teal-200 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+                    className="rounded-full border border-[#07D1AF]/30 bg-[#07D1AF]/[0.06] px-3 py-1 text-xs text-teal-200 transition hover:border-[#07D1AF]/60 hover:bg-[#07D1AF]/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
                     {s}
                   </button>
                 ))}
@@ -654,7 +659,10 @@ export function AkisChat({
           picker is now an ANCHORED POPOVER rendered as a child of this `relative` wrapper (it opens
           UPWARD via `bottom-full`), so it never leaves the composer as a full-screen modal. The
           standalone provider chip + the "CANLI" status row above the form are GONE. */}
-      <div className="relative mx-auto w-full max-w-[46rem]">
+      {/* COMPOSER edge-aligned to the reading column (standard): no own max-width — it fills the
+          shared column so its left/right edges line up pixel-for-pixel with the transcript. It is
+          the one rounded shell, docked at the bottom (shrink-0, never scrolls away). */}
+      <div className="relative w-full shrink-0">
         {pickerOpen && providers.length > 0 && (
           <ModelPicker
             providers={providers}
@@ -673,7 +681,7 @@ export function AkisChat({
           className="flex flex-col rounded-2xl border border-white/12 bg-slate-900/70 px-3 pb-2 pt-1 shadow-[0_10px_40px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.05)] backdrop-blur focus-within:border-[#07D1AF]/50"
         >
           <input ref={inputRef} aria-label={t('akis.ask')} value={input} onChange={e => setInput(e.target.value)} placeholder={t('akis.ask')}
-            className="min-w-0 flex-1 bg-transparent px-1 py-2.5 text-slate-100 placeholder:text-slate-400 focus:outline-none" />
+            className="min-w-0 flex-1 bg-transparent px-1 py-2 text-slate-100 placeholder:text-slate-400 focus:outline-none" />
           {/* Footer toolbar: model trigger + usage on the left, send on the right — all in-shell. */}
           <div className="flex items-center gap-2">
             {(() => {
@@ -691,8 +699,11 @@ export function AkisChat({
               )
             })()}
             <UsageMeter usage={usage} />
+            {/* SEND — ≥44×44px hit area (WCAG 2.5.5 target size): the clickable box is h-11 w-11 (44px)
+                while the glyph stays a compact ~20px arrow, so the target is comfortably tappable
+                without bloating the composer footer. */}
             <button type="submit" disabled={busy || input.trim() === ''} aria-label={t('akis.send')} title={t('akis.send')}
-              className="ml-auto grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 text-base font-black text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
+              className="ml-auto grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 text-xl font-black leading-none text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] transition hover:brightness-110 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 disabled:cursor-not-allowed disabled:opacity-40">
               <span aria-hidden="true">↑</span>
             </button>
           </div>
