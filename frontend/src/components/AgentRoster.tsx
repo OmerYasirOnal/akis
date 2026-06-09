@@ -55,7 +55,7 @@ const DOT: Record<AgentPresence, string> = {
  *  running — the highlight tracks the live worker (Scribe/Proto/Trace/Critic), matching the mockup.
  *  At most one lane step is open at a time in the linear pipeline; if several ever overlap we pick the
  *  FIRST in ROSTER order so the highlight is deterministic. undefined = nothing is actively running. */
-function activeRole(view: SessionView): Role | undefined {
+export function activeRole(view: SessionView): Role | undefined {
   // A role with a genuinely OPEN lane step (presence 'working' that isn't the orchestrator fallback).
   let openRole: Role | undefined
   for (const lane of view.lanes) for (const s of lane.steps) if (!s.done) openRole = s.agent
@@ -67,7 +67,7 @@ function activeRole(view: SessionView): Role | undefined {
 
 /** Per-role live caption key (a generic 'working…' fallback covers any non-core agent). The keys
  *  exist in BOTH catalogs, so the template literal stays a known StringKey union. */
-function captionKey(role: Role): StringKey {
+export function captionKey(role: Role): StringKey {
   const known: Role[] = ['orchestrator', 'scribe', 'proto', 'trace', 'critic']
   return known.includes(role) ? (`roster.caption.${role}` as StringKey) : 'roster.caption.working'
 }

@@ -581,3 +581,78 @@ describe('ChatStudio — LOW-2 first-frame width seed (no collapsed-drawer flash
     expect(shell.style.getPropertyValue('--preview-drawer-w')).not.toBe('0px')
   })
 })
+
+// ── STICKY BUILD-STATUS BAR: a thin role=status bar at the top of the conversation column, shown
+//    ONLY while the active run is in-flight (non-terminal). It carries the active agent + phase +
+//    elapsed (a ticker leaf) + a Stop button wired to the same cancel path. ──
+describe('ChatStudio — sticky build-status bar (in-flight only)', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  class EmitStream {
+    static created: EmitStream[] = []
+    connectedUrl?: string
+    private onEvent?: (e: AkisEvent, seq: number) => void
+    constructor() { EmitStream.created.push(this) }
+    connect(url: string, h: { onEvent: (e: AkisEvent, seq: number) => void }): void { this.connectedUrl = url; this.onEvent = h.onEvent }
+    close(): void {}
+    emit(e: AkisEvent, seq: number): void { this.onEvent?.(e, seq) }
+  }
+  const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
+    ({ agent: 'orchestrator', laneId: 'main', sessionId: 'sd', ts: 0, ...(e as object) }) as AkisEvent
+
+  const SPEC = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
+
+  /** One chat spec → one created RUNNING session (sd) whose getSession resolves running (so the run
+   *  is live + in-flight and its EmitStream is the active reporter). */
+  function barFetch(): (path: string, init?: RequestInit) => Promise<Response> {
+    return async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: SPEC }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && init?.method === 'POST') return { ok: true, status: 201, json: async () => ({ id: 'sd', status: 'running', idea: '# TODO App\nA list.', version: 1 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sd/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sd')) return { ok: true, status: 200, json: async () => ({ id: 'sd', status: 'running', version: 1 }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  async function startLiveBuild(api: ApiClient) {
+    EmitStream.created = []
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    await waitFor(() => expect(EmitStream.created.some(s => s.connectedUrl === '/sessions/sd/events')).toBe(true))
+    return EmitStream.created.find(s => s.connectedUrl === '/sessions/sd/events')!
+  }
+
+  it('is ABSENT while idle (no run started)', () => {
+    const api = new ApiClient('', vi.fn(barFetch()))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    expect(screen.queryByTestId('build-status-bar')).toBeNull()
+  })
+
+  it('appears (role=status) while the active run is in-flight, then disappears when terminal', async () => {
+    const api = new ApiClient('', vi.fn(barFetch()))
+    const live = await startLiveBuild(api)
+    // A 'started' frame makes the active view in-flight → the sticky bar mounts.
+    live.emit(ev({ kind: 'session', status: 'started', sessionId: 'sd' }), 1)
+    const bar = await screen.findByTestId('build-status-bar')
+    expect(bar).toHaveAttribute('role', 'status')
+    // A terminal 'done' frame ends the run → the bar disappears.
+    live.emit(ev({ kind: 'session', status: 'done', sessionId: 'sd' }), 2)
+    await waitFor(() => expect(screen.queryByTestId('build-status-bar')).toBeNull())
+  })
+
+  it('the bar Stop button calls the cancel path with the active session id', async () => {
+    const api = new ApiClient('', vi.fn(barFetch()))
+    const cancelRun = vi.spyOn(api, 'cancelRun').mockResolvedValue({} as never)
+    const live = await startLiveBuild(api)
+    live.emit(ev({ kind: 'session', status: 'started', sessionId: 'sd' }), 1)
+    const bar = await screen.findByTestId('build-status-bar')
+    await userEvent.click(within(bar).getByRole('button', { name: /stop|durdur/i }))
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('sd'))
+  })
+})

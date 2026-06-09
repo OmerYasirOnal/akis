@@ -17,7 +17,8 @@ import { TrustReportCard } from '../components/TrustReportCard.js'
 import { PublishButton } from '../components/PublishButton.js'
 import { ExternalWriteCard } from '../components/ExternalWriteCard.js'
 import { AgentWriteProposals } from '../components/AgentWriteProposals.js'
-import { AgentRoster } from '../components/AgentRoster.js'
+import { AgentRoster, activeRole, captionKey } from '../components/AgentRoster.js'
+import { agentName } from '../agents/names.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
@@ -60,6 +61,58 @@ function StartingElapsed({ t }: { t: (k: StringKey) => string }) {
       {t('workflow.starting.elapsed')} {m.toString().padStart(2, '0')}:{sec.toString().padStart(2, '0')}
       {elapsed >= 8 && <span className="ml-2 text-amber-200">{t('workflow.starting.slow')}</span>}
     </span>
+  )
+}
+
+/** A bare mm:ss ticker LEAF (own 1s interval + state) for the sticky build-status bar — so a tick
+ *  re-renders ONLY this time span, never the bar's agent/phase text nor the conversation. */
+function BarElapsed() {
+  const [elapsed, setElapsed] = useState(0)
+  useEffect(() => {
+    const startedAt = Date.now()
+    const timer = setInterval(() => setElapsed(Math.floor((Date.now() - startedAt) / 1000)), 1000)
+    return () => clearInterval(timer)
+  }, [])
+  const m = Math.floor(elapsed / 60), sec = elapsed % 60
+  return <span className="tabular-nums text-slate-400">{m.toString().padStart(2, '0')}:{sec.toString().padStart(2, '0')}</span>
+}
+
+/** The thin STICKY "build running" status bar at the top of the conversation column, shown only while
+ *  the active run is in-flight. It tells the user a build is genuinely working (active agent + phase +
+ *  elapsed) so a long step never reads as a frozen UI, and offers ONE Stop wired to the same cancel
+ *  path newChat uses. Pure view-state — no gate authority. The elapsed time is a leaf so its tick does
+ *  not re-render the bar (let alone the conversation). */
+function BuildStatusBar({ view, t, onStop }: { view: SessionView; t: (k: StringKey) => string; onStop: () => void }) {
+  const role = activeRole(view)
+  // Active agent + phase. Before the first agent step lands (role undefined) we show AKIS + a generic
+  // "preparing…" so the bar is never blank during the brief pre-agent window.
+  const name = role ? agentName(role) : agentName('orchestrator')
+  const phase = role ? t(captionKey(role)) : t('studio.statusbar.preparing')
+  return (
+    <div
+      data-testid="build-status-bar"
+      role="status"
+      aria-label={t('studio.statusbar.building')}
+      // STICKY + slim so it never covers the conversation; motion-safe colour/opacity transition so
+      // reduced-motion users get it instantly. min-w-0 + truncate on the text so the agent/phase
+      // shrinks gracefully < 400px (full systematic responsive is a later task — this just doesn't regress).
+      className="sticky top-0 z-10 -mx-4 mb-2 flex items-center gap-2 border-b border-[#07D1AF]/20 bg-slate-950/80 px-4 py-1.5 backdrop-blur motion-safe:transition-colors"
+    >
+      <span className="h-2 w-2 shrink-0 animate-pulse rounded-full bg-[#07D1AF] shadow-[0_0_8px_2px_rgba(7,209,175,0.6)]" aria-hidden />
+      <span className="min-w-0 flex-1 truncate text-xs text-slate-300">
+        <span className="font-semibold text-teal-100">{t('studio.statusbar.building')}</span>
+        <span className="text-slate-500"> · </span>
+        <span className="font-medium text-slate-200">{name}</span>
+        <span className="text-slate-400"> {phase}</span>
+      </span>
+      <BarElapsed />
+      <button
+        onClick={onStop}
+        className="shrink-0 rounded-md border border-rose-400/40 px-2 py-0.5 text-[11px] font-semibold text-rose-200 transition hover:bg-rose-400/10"
+      >
+        {t('run.stop')}
+      </button>
+    </div>
   )
 }
 
@@ -340,6 +393,14 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e))
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [act, activeSessionId, api, t])
+  // Stop the ACTIVE in-flight run from the sticky build-status bar — the SAME cancel path newChat
+  // uses (api.cancelRun → Orchestrator.cancel: only sets 'cancelled', NEVER mints), but WITHOUT
+  // clearing the conversation: the user just wants to halt this build, not wipe the transcript. The
+  // SSE stream folds the terminal 'cancelled' outcome, which flips inFlight false → the bar hides.
+  const stopActiveRun = useCallback((): void => {
+    if (!activeSessionId || isTerminalStatus(backendStatus)) return
+    void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient — nothing to stop */ })
+  }, [activeSessionId, backendStatus, api])
   const newChat = useCallback((): void => {
     // P1-6: 'New build' on a NON-TERMINAL active run must STOP it, not orphan it. Cancel the backend
     // pipeline (api.cancel → Orchestrator.cancel; only sets 'cancelled', NEVER mints) BEFORE clearing.
@@ -393,6 +454,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // result-rail is made resilient.)
   const isDone = status === 'done' || backendStatus === 'done'
   const canRun = !!activeSessionId && (isDone || activeView.verified !== undefined)
+  // IN-FLIGHT (sticky build-status bar): the ACTIVE run is live — it has begun (the SSE view is
+  // running/started) and neither the live view nor the authoritative backend status is terminal. This
+  // mirrors RunPipeline's `inFlight`, plus the terminal-status guard so a reopened-but-finished run
+  // (whose live view may briefly read 'running' on replay) never shows the bar. View-state only — no
+  // gate authority; it just tells the user a build is genuinely working, never frozen.
+  const inFlight = !!activeSessionId && (status === 'running' || status === 'started') && !isTerminalStatus(backendStatus)
   // BUILD-AWARE CHAT context key: ALWAYS the active session id. It used to be gated on
   // codeFiles?.length, which made every turn before the code snapshot landed (a reopen/F5 race) —
   // and every turn about a code-less/failed build — STATELESS, so AKIS confidently answered
@@ -558,6 +625,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
             abut the preview-drawer seam (the conversation breathes; the drawer reads as a sibling panel
             with a real gap, matching the v3 mockup). */}
         <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 lg:pr-6 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>
+          {/* STICKY BUILD-STATUS BAR (P1.7): a thin, slim, in-flight-only bar so a long build step never
+              reads as a frozen UI. It sits at the TOP of the conversation column (above the scrolling
+              chat) and disappears the moment the run is terminal/idle. Stop halts THIS run (cancel path)
+              without wiping the transcript. */}
+          {inFlight && <BuildStatusBar view={activeView} t={t} onStop={stopActiveRun} />}
           {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
           {editsBaseBadge}
           <div className="min-h-0 flex-1">{chat}</div>

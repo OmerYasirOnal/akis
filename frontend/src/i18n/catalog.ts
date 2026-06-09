@@ -191,6 +191,10 @@ export const STRINGS = {
     'roster.caption.critic': 'reviewing…',
     // Compact build-progress summary leaf: "Building · <Agent> · k/n · mm:ss".
     'roster.progress.building': 'Building',
+    // The sticky "build running" status bar at the top of the conversation column. `building` is its
+    // a11y label; `preparing` is the phase text before the first agent step lands.
+    'studio.statusbar.building': 'Building',
+    'studio.statusbar.preparing': 'preparing the run…',
     'role.orchestrator.what': 'Plans the build and enforces the gates',
     'role.scribe.what': 'Writes the spec from your idea',
     'role.proto.what': 'Writes the code',
@@ -993,6 +997,10 @@ export const STRINGS = {
     'roster.caption.critic': 'inceliyor…',
     // Derli toplu ilerleme özeti: "Derleniyor · <Ajan> · k/n · mm:ss".
     'roster.progress.building': 'Derleniyor',
+    // Sohbet sütununun üstündeki yapışkan "geliştirme sürüyor" durum çubuğu. `building` erişilebilirlik
+    // etiketi; `preparing` ilk ajan adımı gelmeden önceki faz metni.
+    'studio.statusbar.building': 'Derleniyor',
+    'studio.statusbar.preparing': 'çalışma hazırlanıyor…',
     'role.orchestrator.what': 'Geliştirmeyi planlar, kapıları (gate) uygular',
     'role.scribe.what': 'Fikrinden spec yazar',
     'role.proto.what': 'Kodu yazar',
