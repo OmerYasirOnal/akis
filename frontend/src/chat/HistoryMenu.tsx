@@ -69,10 +69,14 @@ export function HistoryMenu({ builds, onOpen }: { builds: RecentBuild[]; onOpen:
         // RESPONSIVE (mobile-first): below `sm` this collapses to a compact icon button (the label is
         // hidden so the studio header fits one tidy row at 320px) with a ≥44px square tap box (WCAG
         // 2.5.5); the clock glyph carries the meaning and `aria-label` names it for AT. From `sm` the
-        // visible "Recent/Son derlemeler" label + chevron return. The chevron is hidden when the label
-        // is (it has no meaning beside a lone icon).
+        // visible "Builds/Derlemeler" label + chevron return. The chevron is hidden when the label is
+        // (it has no meaning beside a lone icon).
+        // CONSISTENT CLUSTER (owner feedback 1): the studio header's three controls (this dropdown, New
+        // build, Preview) must read as one set — SAME h-11 (44px) box + rounded-md shape on EVERY
+        // viewport. The old `sm:h-auto sm:py-1.5` made this button shorter than its h-11 neighbours from
+        // sm; dropping it lines all three up. `sm:min-w-0` still relaxes the square min once the label shows.
         aria-label={t('history.button')}
-        className="flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs text-slate-400 transition hover:border-white/20 hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 sm:h-auto sm:min-w-0 sm:py-1.5"
+        className="flex h-11 min-w-11 shrink-0 items-center justify-center gap-1.5 rounded-md border border-white/10 px-2.5 text-xs text-slate-400 transition hover:border-white/20 hover:text-slate-200 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 sm:min-w-0"
       >
         <ClockIcon />
         <span className="hidden sm:inline">{t('history.button')}</span>

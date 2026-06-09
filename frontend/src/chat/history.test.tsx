@@ -18,20 +18,20 @@ describe('HistoryMenu', () => {
     const onOpen = vi.fn()
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }, { id: 's2', idea: 'a QR generator', ts: 0 }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={onOpen} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Builds/ }))
     await userEvent.click(screen.getByRole('menuitem', { name: 'a QR generator' }))
     expect(onOpen).toHaveBeenCalledWith(builds[1])
   })
   it('shows an empty state when there are no builds', async () => {
     render(<I18nProvider><HistoryMenu builds={[]} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Builds/ }))
     expect(screen.getByText(/No builds yet/)).toBeInTheDocument()
   })
   // P1-7: the menu carries the SAME minimal signal as the History page (localized status + ✓).
   it('shows a localized status pill + verified mark per build (not the raw enum)', async () => {
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0, status: 'done', verified: true }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Builds/ }))
     expect(screen.getByText('Shipped')).toBeInTheDocument()   // localized, not "done"
     expect(screen.queryByText('done')).toBeNull()
     expect(screen.getByText(/verified/)).toBeInTheDocument()
@@ -39,19 +39,19 @@ describe('HistoryMenu', () => {
   it('omits the status pill for a legacy build with no status (no crash)', async () => {
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Builds/ }))
     expect(screen.getByRole('menuitem', { name: /a todo app/ })).toBeInTheDocument()
   })
 
   // RESPONSIVE HEADER (mobile-first): below `sm` the trigger collapses to a compact icon button — the
-  // visible "Recent" label is hidden (so the studio header fits one row at 320px) but the accessible
+  // visible "Builds" label is hidden (so the studio header fits one row at 320px) but the accessible
   // name is preserved via aria-label, and the tap box is a ≥44px square (WCAG 2.5.5).
   it('collapses to an icon-only ≥44px trigger below sm but keeps its accessible name (aria-label)', () => {
     render(<I18nProvider><HistoryMenu builds={[]} onOpen={() => {}} /></I18nProvider>)
-    const trigger = screen.getByRole('button', { name: 'Recent' }) // accessible name still resolves
-    expect(trigger).toHaveAttribute('aria-label', 'Recent')
+    const trigger = screen.getByRole('button', { name: 'Builds' }) // accessible name still resolves
+    expect(trigger).toHaveAttribute('aria-label', 'Builds')
     // The visible label is hidden below sm (returns at sm:inline), so the small-screen header stays tidy.
-    const label = Array.from(trigger.querySelectorAll('span')).find(s => s.textContent === 'Recent')
+    const label = Array.from(trigger.querySelectorAll('span')).find(s => s.textContent === 'Builds')
     expect(label?.className).toContain('hidden')
     expect(label?.className).toContain('sm:inline')
     // ≥44px square tap target on mobile.
@@ -63,7 +63,7 @@ describe('HistoryMenu', () => {
   it('opens with the first item focused, ArrowDown moves focus, Escape closes + restores the trigger', async () => {
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }, { id: 's2', idea: 'a QR generator', ts: 0 }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
-    const trigger = screen.getByRole('button', { name: /Recent/ }) // in-card dropdown trigger (renamed from "History")
+    const trigger = screen.getByRole('button', { name: /Builds/ }) // in-studio recent-builds dropdown trigger
     await userEvent.click(trigger)
     // On open, focus lands on the first menuitem (not left on the trigger / <body>).
     expect(screen.getByRole('menuitem', { name: /a todo app/ })).toHaveFocus()

@@ -391,6 +391,33 @@ describe('ChatStudio — mobile preview reachability via the drawer FAB', () => 
     expect(newLabel?.className).toContain('hidden')
     expect(newLabel?.className).toContain('sm:inline')
   })
+
+  // MINIMAL + CONSISTENT CLUSTER (owner feedback 1): the three header controls (recent-builds dropdown,
+  // New build, Preview) must read as one set — the SAME height, shape, and label idiom — instead of one
+  // collapsing to a shorter `h-auto` from sm while the others stay h-11. Pin that all three share the
+  // h-11 (≥44px) box on EVERY viewport so they line up as a tidy, equal row.
+  it('the three header controls share the same h-11 box + rounded-md shape (minimal, consistent)', async () => {
+    const api = new ApiClient('', vi.fn(runFetch()))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    await screen.findByTestId('preview-drawer')
+
+    const recent = screen.getByRole('button', { name: /Builds|Derlemeler/i })
+    const newBuild = screen.getByRole('button', { name: 'New build' })
+    const toggle = screen.getByTestId('preview-open-toggle')
+    for (const btn of [recent, newBuild, toggle]) {
+      // SAME height on EVERY viewport — no `sm:h-auto` divergence that made the recent-builds button
+      // shorter than its neighbours. Same radius scale (rounded-md). ≥44px tap box (min-w-11).
+      expect(btn.className).toContain('h-11')
+      expect(btn.className).not.toContain('h-auto')
+      expect(btn.className).toContain('rounded-md')
+      expect(btn.className).toContain('min-w-11')
+    }
+  })
 })
 
 // ── ANCHORED MULTI-RUN: two approvals → two inline run-blocks in ONE scroll ──
@@ -488,7 +515,7 @@ describe('ChatStudio — anchored multi-run transcript', () => {
     const api = new ApiClient('', fetchFn)
     render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
 
-    await userEvent.click(await screen.findByRole('button', { name: /Recent/i })) // in-studio recent-builds dropdown
+    await userEvent.click(await screen.findByRole('button', { name: /Builds/i })) // in-studio recent-builds dropdown
     await userEvent.click(await screen.findByRole('menuitem', { name: /Reopened App/i }))
 
     // Exactly ONE run-block (one trust ledger), titled by the reopened idea; the live stream connects.
@@ -591,7 +618,7 @@ describe('ChatStudio — preview drawer (push-split shell + auto-open on ready)'
     const api = new ApiClient('', fetchFn)
     render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
 
-    await userEvent.click(await screen.findByRole('button', { name: /Recent/i })) // in-card recent-builds dropdown
+    await userEvent.click(await screen.findByRole('button', { name: /Builds/i })) // in-card recent-builds dropdown
     await userEvent.click(await screen.findByRole('menuitem', { name: /Reopened App/i }))
     await waitFor(() => expect(screen.getByText('Reopened App')).toBeInTheDocument())
     const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/sR/events')!)

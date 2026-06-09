@@ -275,7 +275,9 @@ export const STRINGS = {
     // ── Build history (studio redesign) ──
     'history.title': 'Build history',
     'history.sub': 'Every app you’ve built with AKIS — open one to revisit its run and preview.',
-    'history.button': 'Recent',
+    // The in-studio recent-builds dropdown trigger. Short + non-redundant: the nav already has a
+    // "History" link, so this dropdown is just "Builds" (the recent ones) — a clean, minimal label.
+    'history.button': 'Builds',
     'history.empty': 'No builds yet. Describe an app in the Studio to get started.',
     'history.loading': 'Loading your builds…',
     'history.openStudio': 'Open in Studio',
@@ -846,7 +848,9 @@ export const STRINGS = {
     'agents.saved': 'İş akışı kaydedildi',
     'agents.default': '(varsayılan)',
     'agents.loading': 'Sağlayıcılar yükleniyor…',
-    'chat.new': 'Yeni geliştirme',
+    // Stüdyo üstbilgisindeki "yeni derleme" düğmesi (sohbeti temizler + yeni bir derlemeye hazırlanır).
+    // "Yeni geliştirme" yerine standart, kısa "Yeni derleme" — "Derlemeler" açılır menüsüyle aynı dili konuşur.
+    'chat.new': 'Yeni derleme',
     // ── Çalışma hattı (stüdyo yeniden tasarımı) ──
     'pipeline.title': 'Hat',
     'pipeline.editsBase': 'Önceki uygulama düzenleniyor — değişiklikler dosyaların üzerine işlenir',
@@ -1102,7 +1106,9 @@ export const STRINGS = {
     // ── Geliştirme geçmişi (stüdyo yeniden tasarımı) ──
     'history.title': 'Geliştirme geçmişi',
     'history.sub': 'AKIS ile inşa ettiğin her uygulama — çalışmasını ve önizlemesini görmek için birini aç.',
-    'history.button': 'Son derlemeler',
+    // Stüdyo içi son-derlemeler açılır menüsünün düğmesi. Kısa + tekrarsız: nav'da zaten "Geçmiş"
+    // bağlantısı var, bu yüzden bu açılır menü yalnızca "Derlemeler" (son olanlar) — temiz, minimal.
+    'history.button': 'Derlemeler',
     'history.empty': 'Henüz geliştirme yok. Başlamak için Stüdyo’da bir uygulama tarif et.',
     'history.loading': 'Geliştirmelerin yükleniyor…',
     'history.openStudio': 'Stüdyoda aç',
