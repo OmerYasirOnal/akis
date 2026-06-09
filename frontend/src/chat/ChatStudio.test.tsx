@@ -58,6 +58,30 @@ describe('ChatStudio F5/deep-link rehydrate — the persisted conversation survi
     await waitFor(() => expect(screen.getByText('Neden testler geçmiyor?')).toBeInTheDocument())
     expect(screen.getByText(/Doğrulama 0 test üretti/)).toBeInTheDocument()
   })
+
+  // CONVERSATION-LOST FIX: a reopen MERGES (not overwrites) the local spine. The pre-build,
+  // sessionId-less turns live ONLY in localStorage (the server can never hold them — they were
+  // typed before the build existed). When the local spine already anchors this run, mergeSpine
+  // KEEPS it (same-device local is authoritative), so a thinner server chat can't drop them.
+  it('reopening a build via ?s= does NOT drop pre-build conversation', async () => {
+    // Local spine already has the run marker for s1 PLUS a pre-build user turn the server never saw.
+    localStorage.setItem('akis_chat_thread', JSON.stringify([
+      { role: 'assistant', content: 'GREETING' },
+      { role: 'user', content: 'a note app please' },
+      { role: 'run', sessionId: 's1', idea: 'note app' },
+    ]))
+    window.history.replaceState({}, '', '/?s=s1')
+    // The server's session.chat is THINNER (only the post-build turn) — it must NOT clobber the local.
+    const api = new ApiClient('', vi.fn(deepLinkFetch('s1', 200, {
+      id: 's1', idea: 'note app', status: 'done', version: 1,
+      chat: [{ role: 'assistant', content: 'on it', at: '' }],
+    })))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    // waitFor re-queries fresh each poll, so it is resilient to the AkisChat remount (threadKey++)
+    // the reopen seed triggers — the merged spine still carries the pre-build user turn.
+    await waitFor(() => expect(screen.getByText('a note app please')).toBeInTheDocument())
+  })
 })
 
 // HONESTY: a build that EDITS a prior app must disclose the merge-over-base where the user JUDGES

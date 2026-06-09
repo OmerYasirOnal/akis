@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
-import { type WorkflowConfig, type SessionState, type PublishRecord, type ExternalWriteRecord, isVerified } from '@akis/shared'
+import { type WorkflowConfig, type SessionState, type PublishRecord, type ExternalWriteRecord, type ChatTurn, CHAT_TURNS_MAX, isVerified } from '@akis/shared'
 import { digestExternalWrite, mintApprovedExternalWrite, executeExternalWrite, isAllowedExternalWriteAction, type ExternalWriteProposal } from '../gates/externalWriteGate.js'
 import { recordGithubProposal } from '../gates/recordGithubProposal.js'
 import { appendExternalWrite } from '../gates/appendExternalWrite.js'
@@ -159,9 +159,39 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const notFound = (reply: FastifyReply, id: string): FastifyReply =>
     reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
 
-  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string; spec?: { title?: unknown; body?: unknown } } }>('/sessions', async (req, reply) => {
+  // Seed the NON-GATE `chat` column for a freshly-created session via the SAME generic store patch
+  // chatAppend uses (touches only `chat`, structurally excludes every gate column). Version-RESILIENT:
+  // on a chat-approved-spec start the orchestrator FIRE-AND-FORGET kicks the run, which can bump the
+  // session version concurrently — so a bare update would lose to that write. Re-read + retry once on a
+  // conflict (best-effort, exactly like chatAppend: a lost pre-build seed is recoverable; cross-device
+  // freshness still degrades gracefully). GATE-SAFE: pure conversation text, never approve/verify/push/mint.
+  const seedChat = async (id: string, turns: ChatTurn[]): Promise<void> => {
+    if (!turns.length) return
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const cur = await services.store.get(id)
+      if (!cur) return
+      try {
+        await services.store.update(id, { chat: [...(cur.chat ?? []), ...turns].slice(-CHAT_TURNS_MAX) }, cur.version)
+        return
+      } catch { /* version conflict — re-read once, then give up silently */ }
+    }
+  }
+
+  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string; spec?: { title?: unknown; body?: unknown }; chat?: unknown } }>('/sessions', async (req, reply) => {
     const idea = typeof req.body?.idea === 'string' ? req.body.idea.trim() : ''
     if (!idea) return reply.code(400).send({ error: 'idea required', code: 'BadRequest' })
+    // OPTIONAL pre-build conversation (the spec-shaping turns typed BEFORE this build existed, so they
+    // are sessionId-less and the server has never seen them). Untrusted → validate strictly: keep only
+    // {role:'user'|'assistant', content:string} turns with non-empty trimmed content, stamp an ISO `at`,
+    // and cap to CHAT_TURNS_MAX (oldest dropped). Absent/empty ⇒ no seed (byte-identical to before).
+    const now = new Date().toISOString()
+    const rawChat = Array.isArray(req.body?.chat) ? req.body.chat : []
+    const seedTurns: ChatTurn[] = rawChat
+      .filter((t): t is { role: unknown; content: unknown } => !!t && typeof t === 'object')
+      .map(t => ({ role: t.role, content: typeof t.content === 'string' ? t.content.trim() : '' }))
+      .filter((t): t is { role: 'user' | 'assistant'; content: string } => (t.role === 'user' || t.role === 'assistant') && t.content.length > 0)
+      .slice(-CHAT_TURNS_MAX)
+      .map(t => ({ role: t.role, content: t.content, at: now }))
     // P0-1: an OPTIONAL chat-approved spec seed. When present it must be a well-shaped object
     // ({title, body} both non-empty strings) — the chat SpecCard's text is AUTHORITATIVE, so the
     // orchestrator uses it as-is and auto-satisfies Gate 1 (still minted server-side via the
@@ -208,7 +238,11 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       }
       const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}) })
       if (orch !== orchestrator) bindOrchestrator(s.id, orch)
-      return reply.code(201).send(s)
+      // Seed the pre-build conversation onto the just-created session via the generic patch (non-gate).
+      // Done AFTER start so it never races the create; re-read so the 201 reflects the seeded chat.
+      await seedChat(s.id, seedTurns)
+      const created = seedTurns.length ? (await services.store.get(s.id)) ?? s : s
+      return reply.code(201).send(created)
     } catch (err) { return sendError(reply, err) }
   })
 

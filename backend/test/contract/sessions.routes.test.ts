@@ -77,6 +77,33 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     expect(done.json().status).toBe('done')
   })
 
+  it('startSession seeds session.chat from the client pre-build conversation (bounded)', async () => {
+    // The pre-build, sessionId-less conversation that SHAPED the spec is sent at build start so a
+    // cross-device reopen also rehydrates it. Seeded via the SAME generic store patch (a NON-gate
+    // column), each turn stamped with an ISO `at`; it round-trips through GET /sessions/:id.
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'note app', chat: [{ role: 'user', content: 'a note app' }] } })
+    expect(res.statusCode).toBe(201)
+    const { id } = res.json()
+    const s = (await app.inject({ method: 'GET', url: `/sessions/${id}` })).json()
+    expect(s.chat).toEqual([{ role: 'user', content: 'a note app', at: expect.any(String) }])
+  })
+
+  it('startSession drops empty/invalid chat turns and caps to CHAT_TURNS_MAX', async () => {
+    const { app } = makeApp()
+    // 1 valid + 1 empty (dropped) + 1 malformed role (dropped); CHAT_TURNS_MAX is 200, well above this.
+    const chat = [
+      { role: 'user', content: 'keep me' },
+      { role: 'assistant', content: '   ' },
+      { role: 'bogus', content: 'drop me' },
+    ]
+    const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'note app', chat } })
+    expect(res.statusCode).toBe(201)
+    const { id } = res.json()
+    const s = (await app.inject({ method: 'GET', url: `/sessions/${id}` })).json()
+    expect(s.chat).toEqual([{ role: 'user', content: 'keep me', at: expect.any(String) }])
+  })
+
   it('P0-1: a malformed spec seed (missing body) -> 400 (a build never proceeds on a half spec)', async () => {
     const { app } = makeApp()
     const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo', spec: { title: 'Only a title' } } })
