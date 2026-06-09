@@ -72,3 +72,13 @@ test('commitRatio clamps below the min so the tree never collapses', () => {
 test('the default ratio round-trips through loadTreeRatio when storage is empty', () => {
   expect(loadTreeRatio()).toBeCloseTo(TREE_RATIO_DEFAULT)
 })
+
+test('the file tree opens SLIM by default (owner feedback: it was too wide)', () => {
+  // The default is a slim index width — well under a third — and the px floor is 10rem (not 12), so
+  // a roomy desktop drawer renders a narrow tree that the user widens on demand.
+  expect(TREE_RATIO_DEFAULT).toBeLessThan(0.26)
+  expect(TREE_MIN_PX).toBe(160)
+  expect(TREE_MAX_FRACTION).toBeLessThanOrEqual(0.45)
+  // On a typical ~700px drawer the default tree is ~10rem (160px) — not half the panel.
+  expect(clampTreeRatio(TREE_RATIO_DEFAULT, 700)).toBeLessThan(0.3)
+})

@@ -12,13 +12,17 @@ import { useCallback, useEffect, useState } from 'react'
  */
 
 export const TREE_KEY = 'akis_code_tree_ratio'
-export const TREE_MIN_PX = 192        // 12rem — the tree never collapses below a readable width
-export const TREE_MAX_FRACTION = 0.5  // the tree never eats more than half (the editor keeps its half)
-export const TREE_RATIO_DEFAULT = 0.26 // ~matches the old fixed grid-cols-[…26%…] starting width
+// NARROWER (owner feedback 1 — "the file-list is ÇOK GENİŞ"): the tree is a scannable INDEX, not a
+// second editor, so it gets a slim default and a low floor. 10rem floor (was 12rem) keeps a readable
+// width without eating the editor; the 45% cap (was 50%) gives the editor the clear majority; the 22%
+// default (was 26%) opens slim and the user widens on demand. The drag range remains real on desktop.
+export const TREE_MIN_PX = 160        // 10rem — the tree never collapses below a readable width
+export const TREE_MAX_FRACTION = 0.45 // the tree never eats more than ~45% (the editor keeps the majority)
+export const TREE_RATIO_DEFAULT = 0.22 // a slim default — the file index, not half the panel
 // A fraction floor used BEFORE the container is measured (or in jsdom where ResizeObserver reports a
 // 0-width box): without a px basis we still must keep the tree from collapsing to nothing, so we floor
-// to a sane fraction (~12rem at a typical ~1.6k container). Once measured, the px floor takes over.
-const TREE_MIN_FRACTION = 0.12
+// to a sane fraction (~10rem at a typical ~1.6k container). Once measured, the px floor takes over.
+const TREE_MIN_FRACTION = 0.1
 const STEP = 0.05
 
 export function loadTreeRatio(): number {

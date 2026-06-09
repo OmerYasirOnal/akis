@@ -201,8 +201,14 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
         </ul>
 
         {/* VERTICAL RESIZE SEPARATOR — keyboard splitter + pointer drag (capture on this stable node).
-            12px hit-area with a 1px hairline that tints teal on hover/focus; the global focus-visible
-            outline is suppressed (the hairline IS the focus affordance, like the drawer's). */}
+            GRAB FIX (owner feedback 2): the old 12px handle sat FLUSH between two overflow-auto panes with
+            NO z-index, so each pane's scrollbar gutter straddled the seam and SWALLOWED the pointer — the
+            divider couldn't be grabbed in a real browser (jsdom has no scrollbars, so it passed there).
+            Now the handle (a) widens its hit-strip past 12px with `-mx-1` so it STRADDLES the seam and the
+            grab zone clears both panes' scrollbar gutters, (b) is lifted ABOVE both flex children with
+            `relative z-20` so neither pane can paint over it, and (c) keeps `cursor-col-resize` +
+            `touch-action:none` + setPointerCapture (onPointerDown) so the drag survives the cursor crossing
+            the editor. The visible hairline is 1.5px (was 1px) so the target also READS as grabbable. */}
         <div
           ref={handleRef}
           role="separator"
@@ -217,11 +223,11 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
           onKeyDown={onKeyDown}
           onPointerDown={onPointerDown}
           style={{ touchAction: 'none' }}
-          className="group/handle relative flex w-3 shrink-0 cursor-col-resize items-center justify-center self-stretch focus:outline-none"
+          className="group/handle relative z-20 -mx-1 flex w-4 shrink-0 cursor-col-resize touch-none select-none items-center justify-center self-stretch focus:outline-none"
         >
           <span
             aria-hidden="true"
-            className="h-full w-px bg-white/10 motion-safe:transition-all group-hover/handle:bg-[#07D1AF]/60 group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-[#07D1AF] group-focus-visible/handle:shadow-[0_0_6px_rgba(7,209,175,0.7)]"
+            className="h-full w-0.5 rounded-full bg-white/10 motion-safe:transition-all group-hover/handle:bg-[#07D1AF]/60 group-focus-visible/handle:w-0.5 group-focus-visible/handle:bg-[#07D1AF] group-focus-visible/handle:shadow-[0_0_6px_rgba(7,209,175,0.7)]"
           />
         </div>
 

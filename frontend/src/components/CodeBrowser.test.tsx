@@ -153,5 +153,55 @@ describe('CodeBrowser', () => {
       expect(editor).not.toBeNull()
       expect(editor!.className).toMatch(/min-w-0/)
     })
+
+    // GRAB-ABILITY (owner feedback 2 — "the divider can't be grabbed/dragged in the real browser").
+    // Root cause: the 12px handle sat FLUSH between two overflow-auto panes with NO z-index, so the
+    // panes' scrollbar gutters straddled it and swallowed the pointer; the visible 1px hairline also
+    // made the grab target READ as 1px. The fix gives the handle a real wide hit-strip that sits ABOVE
+    // both panes (z-index) with its own pointer-events. These structural assertions guard the fix
+    // (jsdom can't run a real layout/scrollbar test — we pin the hit-area + stacking contract instead).
+    it('the splitter handle is a wide hit-strip stacked ABOVE both panes (grabbable in a real browser)', () => {
+      renderI18n(<CodeBrowser files={files} />)
+      const sep = screen.getByRole('separator')
+      // It must own pointer events and a real cursor + touch contract so a pointer drag starts on it.
+      expect(sep.className).toMatch(/cursor-col-resize/)
+      expect(sep.style.touchAction).toBe('none')
+      // It is lifted above both flex panes (z-index ≥ 20) so neither pane's scrollbar gutter sits over it.
+      expect(sep.className).toMatch(/z-20/)
+      // The hit-strip straddles the seam (negative inline margin widens it past its 12px box) and is
+      // pointer-interactive (never pointer-events-none).
+      expect(sep.className).toMatch(/-mx-/)
+      expect(sep.className).not.toMatch(/pointer-events-none/)
+    })
+
+    it('a pointer drag on the handle changes the tree width and persists it', () => {
+      // Stub getBoundingClientRect so the consumer's clientX→ratio math has a real container box in jsdom
+      // (jsdom reports a 0-width rect otherwise, which would make every clientX map to the clamped min).
+      const proto = HTMLElement.prototype
+      const orig = proto.getBoundingClientRect
+      proto.getBoundingClientRect = function () {
+        // The split container is the [group/split] flex shell; give everything a 1000px-wide box at x=0.
+        return { x: 0, y: 0, top: 0, left: 0, right: 1000, bottom: 400, width: 1000, height: 400, toJSON() {} } as DOMRect
+      }
+      try {
+        renderI18n(<CodeBrowser files={files} />)
+        const sep = screen.getByRole('separator')
+        const before = Number(sep.getAttribute('aria-valuenow'))
+        // pointerdown on the handle starts the drag; document-level pointermove drives the live ratio;
+        // pointerup commits. Dragging RIGHT to clientX=400 → tree ≈ 40% of the 1000px container.
+        sep.setPointerCapture = () => {} // jsdom lacks setPointerCapture; stub so onPointerDown doesn't throw
+        sep.releasePointerCapture = () => {}
+        fireEvent.pointerDown(sep, { button: 0, clientX: 220, pointerId: 1 })
+        fireEvent.pointerMove(document, { clientX: 400, pointerId: 1 })
+        // rAF flushes the live ratio; flush synchronously for the assertion.
+        fireEvent.pointerUp(document, { clientX: 400, pointerId: 1 })
+        const after = Number(sep.getAttribute('aria-valuenow'))
+        expect(after).not.toBe(before)
+        expect(after).toBeGreaterThan(30) // dragged toward 40%
+        expect(localStorage.getItem('akis_code_tree_ratio')).toBeTruthy()
+      } finally {
+        proto.getBoundingClientRect = orig
+      }
+    })
   })
 })
