@@ -256,6 +256,13 @@ describe('AkisChat', () => {
     expect(container.querySelector('[aria-live="polite"]')).not.toBeNull()
     expect(container.querySelector('form')).toHaveAttribute('aria-busy', 'false')
   })
+
+  it('the transcript scroll container uses the themed .akis-scroll (stable gutter, no raw OS bar fused to the drawer seam)', () => {
+    const api = new ApiClient('', chatFetch('x'))
+    const { container } = render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    // The single scroll surface carries the themed utility AND stays the overflow column.
+    expect(container.querySelector('.akis-scroll.overflow-y-auto')).not.toBeNull()
+  })
 })
 
 // ── Streaming text smoothing (useSmoothText) ──

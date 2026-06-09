@@ -509,7 +509,7 @@ export function AkisChat({
     <div className="flex h-full min-h-0 flex-col gap-3">
       <div role="status" aria-live="polite" className="sr-only">{liveStatus}</div>
       <div className="relative min-h-0 flex-1">
-      <div ref={scrollRef} onScroll={onScroll} className="h-full space-y-3 overflow-y-auto">
+      <div ref={scrollRef} onScroll={onScroll} className="akis-scroll h-full space-y-3 overflow-y-auto pr-1">
         {nodes.map((m, i) => {
           // A RUN MARKER renders its build INLINE at this exact slot (the single composition seam):
           // its own RunBlock mounts a per-run useLiveChat, the compact pipeline-strip header, and
