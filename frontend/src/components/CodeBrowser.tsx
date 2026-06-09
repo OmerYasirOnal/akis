@@ -169,10 +169,13 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
       {/* Split shell — flex (not a fixed grid) so the separator can drive a fluid tree width. The tree
           takes a percentage width (the persisted, clamped ratio); the editor is `flex-1 min-w-0` so it
           reflows to fill and its long lines SCROLL rather than push the tree. `is-dragging` disables the
-          width ease during a 1:1 pointer drag (mirrors the drawer). */}
+          width ease during a 1:1 pointer drag (mirrors the drawer). `relative` makes this the positioning
+          ancestor for the ABSOLUTE resize handle below — which floats OVER the seam, outside the two
+          scrolling panes' flow, so neither pane's scrollbar gutter can swallow the pointer (owner 4 fix). */}
       <div
         ref={splitRef}
-        className="group/split flex min-h-0 flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/50"
+        data-testid="code-split"
+        className="group/split relative flex min-h-0 flex-1 overflow-hidden rounded-xl border border-white/10 bg-black/50"
       >
         {/* File tree (left) — its width is the clamped ratio of the measured container. */}
         <ul
@@ -201,14 +204,15 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
         </ul>
 
         {/* VERTICAL RESIZE SEPARATOR — keyboard splitter + pointer drag (capture on this stable node).
-            GRAB FIX (owner feedback 2): the old 12px handle sat FLUSH between two overflow-auto panes with
-            NO z-index, so each pane's scrollbar gutter straddled the seam and SWALLOWED the pointer — the
-            divider couldn't be grabbed in a real browser (jsdom has no scrollbars, so it passed there).
-            Now the handle (a) widens its hit-strip past 12px with `-mx-1` so it STRADDLES the seam and the
-            grab zone clears both panes' scrollbar gutters, (b) is lifted ABOVE both flex children with
-            `relative z-20` so neither pane can paint over it, and (c) keeps `cursor-col-resize` +
-            `touch-action:none` + setPointerCapture (onPointerDown) so the drag survives the cursor crossing
-            the editor. The visible hairline is 1.5px (was 1px) so the target also READS as grabbable. */}
+            GRAB FIX, RECONSIDERED (owner feedback 4 — "the divider STILL can't be grabbed"): an in-flow
+            flex handle (z-20, -mx-1) failed twice because a flex sibling's hit area is still reduced by
+            the two scrolling panes' scrollbar gutters meeting at the seam. The handle is now ABSOLUTELY
+            positioned over the seam, OUTSIDE the two panes' flow — anchored in the `relative` split
+            container at `left:<tree%>` with `-translate-x-1/2` centring it ON the seam. Because it's not a
+            flex child between the panes anymore, neither pane's gutter can swallow the pointer. A real
+            14px hit-strip (w-3.5), z-30 (above both panes), `cursor-col-resize`, `touch-action:none` +
+            setPointerCapture (onPointerDown) so the drag survives the cursor crossing the editor. The
+            `left` tracks `pct` so the handle rides the tree's right edge as it resizes. */}
         <div
           ref={handleRef}
           role="separator"
@@ -222,8 +226,11 @@ export function CodeBrowser({ files }: { files?: CodeFile[] | undefined }) {
           title={t('code.resizeHint')}
           onKeyDown={onKeyDown}
           onPointerDown={onPointerDown}
-          style={{ touchAction: 'none' }}
-          className="group/handle relative z-20 -mx-1 flex w-4 shrink-0 cursor-col-resize touch-none select-none items-center justify-center self-stretch focus:outline-none"
+          // ABSOLUTE over the seam. `left` = the tree width % (so the strip rides the seam as it resizes);
+          // `translateX(-50%)` (the `-translate-x-1/2` class) centres the 14px hit-strip ON the seam so it
+          // overhangs BOTH panes' gutters equally. touchAction:none lets it own the horizontal drag.
+          style={{ touchAction: 'none', left: `${pct}%` }}
+          className="group/handle absolute inset-y-0 z-30 flex w-3.5 -translate-x-1/2 cursor-col-resize touch-none select-none items-center justify-center focus:outline-none"
         >
           <span
             aria-hidden="true"

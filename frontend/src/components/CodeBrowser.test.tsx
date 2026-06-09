@@ -154,24 +154,33 @@ describe('CodeBrowser', () => {
       expect(editor!.className).toMatch(/min-w-0/)
     })
 
-    // GRAB-ABILITY (owner feedback 2 — "the divider can't be grabbed/dragged in the real browser").
-    // Root cause: the 12px handle sat FLUSH between two overflow-auto panes with NO z-index, so the
-    // panes' scrollbar gutters straddled it and swallowed the pointer; the visible 1px hairline also
-    // made the grab target READ as 1px. The fix gives the handle a real wide hit-strip that sits ABOVE
-    // both panes (z-index) with its own pointer-events. These structural assertions guard the fix
-    // (jsdom can't run a real layout/scrollbar test — we pin the hit-area + stacking contract instead).
-    it('the splitter handle is a wide hit-strip stacked ABOVE both panes (grabbable in a real browser)', () => {
-      renderI18n(<CodeBrowser files={files} />)
+    // GRAB-ABILITY (owner feedback 2/4 — "the divider STILL can't be grabbed in the real browser").
+    // The in-flow flex handle (z-20, -mx-1) FAILED twice: a flex sibling's hit area is still reduced by
+    // the two scrolling panes' scrollbar gutters at the exact seam. RECONSIDERED APPROACH: the handle is
+    // now ABSOLUTELY positioned over the seam, OUTSIDE the two scrolling panes' flow — anchored in the
+    // `relative` split container at `left:<tree%>` with `translateX(-50%)`, a real ≥12px hit strip,
+    // z-30 (above both panes), cursor-col-resize, touch-action:none. Neither pane's gutter can swallow
+    // the pointer because the handle is not a flex child between them anymore. (jsdom can't run a real
+    // layout/scrollbar test — we pin the absolute-over-seam structural contract instead.)
+    it('the splitter handle is an ABSOLUTE hit-strip over the seam, outside the scrolling panes', () => {
+      const { container } = renderI18n(<CodeBrowser files={files} />)
       const sep = screen.getByRole('separator')
-      // It must own pointer events and a real cursor + touch contract so a pointer drag starts on it.
+      // Pointer + touch contract so a drag can start on it.
       expect(sep.className).toMatch(/cursor-col-resize/)
       expect(sep.style.touchAction).toBe('none')
-      // It is lifted above both flex panes (z-index ≥ 20) so neither pane's scrollbar gutter sits over it.
-      expect(sep.className).toMatch(/z-20/)
-      // The hit-strip straddles the seam (negative inline margin widens it past its 12px box) and is
-      // pointer-interactive (never pointer-events-none).
-      expect(sep.className).toMatch(/-mx-/)
+      // ABSOLUTELY positioned (out of the panes' flex flow) and lifted above both panes (z ≥ 30).
+      expect(sep.className).toMatch(/absolute/)
+      expect(sep.className).toMatch(/z-30/)
       expect(sep.className).not.toMatch(/pointer-events-none/)
+      // Anchored at the tree's right edge: left = the tree% with a translateX(-50%) centring the strip
+      // ON the seam, so the grab zone clears both panes' scrollbar gutters.
+      expect(sep.style.left).toMatch(/%$/)
+      expect(sep.className).toMatch(/-translate-x-1\/2/)
+      // It hangs off the `relative` split container (the absolute handle's positioning ancestor).
+      const split = container.querySelector('[data-testid="code-split"]')
+      expect(split).not.toBeNull()
+      expect(split!.className).toMatch(/relative/)
+      expect(split!.contains(sep)).toBe(true)
     })
 
     it('a pointer drag on the handle changes the tree width and persists it', () => {
@@ -199,6 +208,11 @@ describe('CodeBrowser', () => {
         expect(after).not.toBe(before)
         expect(after).toBeGreaterThan(30) // dragged toward 40%
         expect(localStorage.getItem('akis_code_tree_ratio')).toBeTruthy()
+        // The ABSOLUTE handle rides the seam: its `left` tracks the new tree % so it stays ON the seam.
+        expect(sep.style.left).toBe(`${after}%`)
+        // The tree pane widened to match (its width is the same %).
+        const tree = screen.getByRole('list', { name: /Generated code/i })
+        expect(tree.style.width).toBe(`${after}%`)
       } finally {
         proto.getBoundingClientRect = orig
       }
