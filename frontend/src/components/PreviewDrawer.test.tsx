@@ -9,6 +9,21 @@ import type { ReactElement } from 'react'
  *  Same inline idiom as components.test.tsx — there is no shared ../test/renderI18n.js. */
 const renderI18n = (ui: ReactElement) => render(<I18nProvider>{ui}</I18nProvider>)
 
+/** A stand-in for the real PreviewPanel: the drawer MERGED its header into the panel's tab row, so the
+ *  close ✕ now lives in the panel and the drawer INJECTS its handler via cloneElement. This fake renders
+ *  that injected `onClose` as the same `aria-label="Close preview"` ✕ the real panel does, so the
+ *  desktop-minimize / mobile-close wiring stays under test without dragging in the whole PreviewPanel. */
+function PreviewSlot({ onClose }: { onClose?: () => void }) {
+  return (
+    <div data-testid="preview-slot">
+      preview
+      {onClose && (
+        <button type="button" aria-label="Close preview" onClick={onClose}>✕</button>
+      )}
+    </div>
+  )
+}
+
 /** Default props so each test overrides only what it asserts. View-state only — no gates/SSE. */
 function renderDrawer(over: Partial<React.ComponentProps<typeof PreviewDrawer>> = {}) {
   const props: React.ComponentProps<typeof PreviewDrawer> = {
@@ -20,7 +35,7 @@ function renderDrawer(over: Partial<React.ComponentProps<typeof PreviewDrawer>> 
     commitRatio: () => {},
     onClose: () => {},
     cards: <div data-testid="cards-slot">cards</div>,
-    preview: <div data-testid="preview-slot">preview</div>,
+    preview: <PreviewSlot />,
     ...over,
   }
   return renderI18n(<PreviewDrawer {...props} />)
@@ -118,31 +133,37 @@ describe('PreviewDrawer (desktop)', () => {
     expect(drawer.style.boxShadow).toBe('')
   })
 
-  // PADDING PARITY (standards pass): the drawer header + region A use px-4 (16px) so crossing the seam from
-  // the chat header (px-4) shows no 12→16 padding jump.
-  it('drawer header + region A use px-4/py-* (chat-padding parity, no 12→16 jump at the seam)', () => {
+  // COHESION (this task): the drawer's OWN header bar — a standalone "Live preview"/"Canlı önizleme" title
+  // — was REMOVED. It duplicated the PreviewPanel's "Preview"/"Önizleme" tab. So NO standalone title text
+  // renders in the drawer; only the panel's tab (rendered by ChatStudio's real PreviewPanel, not this
+  // slot) carries an Önizleme-family label. The tablist KEEPS `aria-label={t('preview.title')}` as its
+  // accessible name, but that's not a visible text node.
+  it('renders NO standalone "Live preview"/"Canlı önizleme" title element in the drawer (the tab owns it now)', () => {
     renderDrawer({ open: true })
-    const drawer = screen.getByTestId('preview-drawer')
-    const header = drawer.querySelector('button[aria-label="Close preview"]')!.closest('div')!
-    expect(header.className).toContain('px-4')
-    expect(header.className).toContain('py-3')
+    // The visible title text node is gone from BOTH the desktop aside and the (FAB-gated) mobile sheet.
+    expect(screen.queryByText('Live preview')).toBeNull()
+    expect(screen.queryByText('Canlı önizleme')).toBeNull()
+  })
+
+  // PADDING PARITY (standards pass): region A still uses px-4 (16px) so crossing the seam from the chat
+  // header (px-4) shows no 12→16 padding jump. (The drawer's own header bar is gone — see above — so this
+  // now only pins region A; the header's padding is the PreviewPanel's concern.)
+  it('region A uses px-4/py-4 (chat-padding parity, no 12→16 jump at the seam)', () => {
+    renderDrawer({ open: true })
     const regionA = screen.getByTestId('cards-slot').parentElement!
     expect(regionA.className).toContain('px-4')
     expect(regionA.className).toContain('py-4')
   })
 
-  // WCAG 2.5.5 — the close ✕ is padded to a ≥44px touch box.
-  it('the close ✕ is a ≥44px touch target (h-11 w-11)', () => {
-    renderDrawer({ open: true })
-    const close = screen.getByRole('button', { name: /close preview/i })
-    expect(close.className).toContain('h-11')
-    expect(close.className).toContain('w-11')
-  })
-
-  it('close button calls onClose', async () => {
+  // The drawer INJECTS its `onClose` into the panel via cloneElement (the in-panel ✕). On desktop that ✕
+  // minimizes the drawer. (Here the PreviewSlot fake surfaces the injected handler as the same ✕.)
+  it('the injected in-panel close ✕ calls onClose (desktop minimize)', async () => {
     const onClose = vi.fn()
     renderDrawer({ open: true, onClose })
-    await userEvent.click(screen.getByRole('button', { name: /close preview|önizlemeyi kapat/i }))
+    // The desktop aside's preview slot carries the injected ✕ (the mobile sheet is FAB-gated, not shown).
+    const drawer = screen.getByTestId('preview-drawer')
+    const close = drawer.querySelector<HTMLButtonElement>('button[aria-label="Close preview"]')!
+    await userEvent.click(close)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 

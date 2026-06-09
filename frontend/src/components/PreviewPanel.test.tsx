@@ -191,6 +191,41 @@ test('the metrics live in the Trust tab (Tests / Passed / Run time + scenarios)'
   expect(screen.getByText('loads the home page')).toBeInTheDocument()
 })
 
+// COHESION (this task): the drawer's duplicate "Canlı önizleme" header was removed and its close ✕ MERGED
+// into the panel's tab row. The panel now accepts an optional `onClose` (injected by PreviewDrawer via
+// cloneElement); when present it renders a ✕ as the LAST header item, INDEPENDENT of the active tab.
+test('the close ✕ renders when onClose is passed and calls it on click', () => {
+  const onClose = vi.fn()
+  renderI18n(
+    <PreviewPanel view={viewWith('/preview/abc/')} device="responsive" onDevice={() => {}} onClose={onClose} />,
+  )
+  const close = screen.getByRole('button', { name: /close preview|önizlemeyi kapat/i })
+  expect(close).toBeInTheDocument()
+  fireEvent.click(close)
+  expect(onClose).toHaveBeenCalledTimes(1)
+})
+
+test('NO close ✕ when onClose is omitted (standalone panel has no close control)', () => {
+  renderPanel('/preview/abc/')
+  expect(screen.queryByRole('button', { name: /close preview|önizlemeyi kapat/i })).toBeNull()
+})
+
+test('the close ✕ renders on EVERY tab (preview / code / trust), independent of the active tab', () => {
+  const onClose = vi.fn()
+  renderI18n(
+    <PreviewPanel view={viewWith('/preview/abc/')} device="responsive" onDevice={() => {}}
+      files={[{ filePath: 'index.html', content: '<html/>' }]} testEvidence={evidenceWith()} onClose={onClose} />,
+  )
+  // Preview tab (default).
+  expect(screen.getByRole('button', { name: /close preview|önizlemeyi kapat/i })).toBeInTheDocument()
+  // Code tab.
+  fireEvent.click(screen.getByRole('tab', { name: /Code|Kod/ }))
+  expect(screen.getByRole('button', { name: /close preview|önizlemeyi kapat/i })).toBeInTheDocument()
+  // Trust tab.
+  fireEvent.click(screen.getByRole('tab', { name: /Trust|Güven/i }))
+  expect(screen.getByRole('button', { name: /close preview|önizlemeyi kapat/i })).toBeInTheDocument()
+})
+
 test('copy lifts the ABSOLUTE preview URL (resolved against the studio origin)', async () => {
   const writeText = vi.fn<(t: string) => Promise<void>>().mockResolvedValue(undefined)
   // jsdom has no clipboard by default — install a minimal fake.

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { cloneElement, useCallback, useEffect, useId, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import { useI18n } from '../i18n/I18nContext.js'
 import { loadSnap, saveSnap, snapUp, snapDown, nearestSnap, SNAP_HEIGHT, SNAP_ORDER, type SheetSnap } from './bottomSheetSnap.js'
 
@@ -46,8 +46,11 @@ export interface PreviewDrawerProps {
   allowAutoOpen?: boolean
   /** Region A: the gate-adjacent card stack (Trust/Publish/Proposals/ExternalWrite). */
   cards: ReactNode
-  /** Region B: the PreviewPanel (browser-chrome + DeviceFrame + iframe). */
-  preview: ReactNode
+  /** Region B: the PreviewPanel (browser-chrome + DeviceFrame + iframe). The drawer's header was MERGED
+   *  INTO the panel's tab row (killing the duplicate "Canlı önizleme" title), so we cloneElement it to
+   *  INJECT the close handler as its in-panel ✕ — desktop minimizes the drawer (`onClose`), mobile closes
+   *  the sheet (`closeMobile`). Typed as a ReactElement accepting `onClose` so the clone is type-safe. */
+  preview: ReactElement<{ onClose?: () => void }>
   /** Optional EXTERNAL id for the aside — so the top-right header toggle (which lives in ChatStudio,
    *  outside this component) can point its `aria-controls` at the very drawer it expands/minimizes.
    *  Falls back to an internal useId() when omitted (e.g. in isolated component tests). */
@@ -354,23 +357,12 @@ export function PreviewDrawer({
         <span className="h-full w-0.5 rounded-full bg-white/10 motion-safe:transition-all group-hover:bg-[#07D1AF]/60 group-focus-visible:w-0.5 group-focus-visible:bg-[#07D1AF] group-focus-visible:shadow-[0_0_6px_rgba(7,209,175,0.7)]" aria-hidden="true" />
       </div>
 
-      {/* HEADER — one piece of chrome (Issue 2c/§2b): a labeled chrome row (preview title + ✕) so the close
-          control reads as part of the drawer's header bar rather than a lone ✕ floating on its own border
-          line. The ✕ travels OFF-SCREEN with the aside when closed (overflow-hidden + translateX). `onClose`
-          stays the bare prop — no gate authority here. */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
-        <span className="truncate text-sm font-semibold text-slate-200">{t('preview.title')}</span>
-        {/* ≥44px touch target (WCAG 2.5.5): the glyph is padded to a min-h/w-11 (44px) box; the visible
-            hover/focus chrome stays compact via the inner rounded affordance reading on the whole box. */}
-        <button
-          type="button"
-          onClick={onClose}
-          aria-label={t('preview.close')}
-          className="-mr-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
-        >
-          <span aria-hidden="true">✕</span>
-        </button>
-      </div>
+      {/* NO standalone header bar (cohesion): the drawer's old chrome row (a "Canlı önizleme" title + ✕)
+          DUPLICATED the PreviewPanel's "Önizleme" tab and added a redundant band. It was REMOVED — the
+          panel's tab row IS the header now, and the close ✕ is INJECTED into that row via cloneElement
+          below (so there's exactly ONE "Önizleme"-family label, the tab, and ONE close control). The
+          tablist keeps `aria-label={t('preview.title')}` as its accessible name; only the visible title
+          text is gone. `onClose` stays the bare prop — no gate authority here. */}
 
       {/* BODY — two scroll regions (H1). */}
       <div className="flex h-full min-h-0 flex-col">
@@ -380,8 +372,9 @@ export function PreviewDrawer({
             running there are no cards yet, so the `empty:` variants drop this region's padding/height
             entirely → the preview tab+app start at the very top, no dead 32px band above them. */}
         <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:50vh] empty:hidden empty:p-0">{cards}</div>
-        {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body. */}
-        <div className="min-h-0 flex-1">{preview}</div>
+        {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body.
+            cloneElement injects the in-panel ✕'s handler = the drawer's `onClose` (minimize). */}
+        <div className="min-h-0 flex-1">{cloneElement(preview, { onClose })}</div>
       </div>
     </aside>
 
@@ -467,28 +460,20 @@ export function PreviewDrawer({
             <span aria-hidden="true" className="h-1.5 w-10 rounded-full bg-white/25" />
           </div>
 
-          {/* HEADER — one piece of chrome (mirrors the desktop drawer): preview title + close (✕). */}
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-2">
-            <span className="truncate text-sm font-semibold text-slate-200">{t('preview.title')}</span>
-            {/* ≥44px touch target (WCAG 2.5.5): h-11/w-11 box around the glyph. */}
-            <button
-              type="button"
-              onClick={closeMobile}
-              aria-label={t('preview.close')}
-              className="-mr-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
-            >
-              <span aria-hidden="true">✕</span>
-            </button>
-          </div>
+          {/* NO standalone header bar (cohesion, mirrors the desktop drawer): the old "Canlı önizleme"
+              title + ✕ row was REMOVED — it duplicated the panel's tab. The grip ABOVE stays (drag/snap +
+              the focus-trap's first focusable), and the close ✕ is INJECTED into the panel's tab row via
+              cloneElement below, wired to `closeMobile` so it dismisses the sheet. */}
 
           {/* BODY — the same two scroll regions as the desktop drawer (H1). At the peek snap the sheet height
-              clips this whole band (overflow-hidden above), so peek shows only the header + tabs; half/full
+              clips this whole band (overflow-hidden above), so peek shows only the grip + tabs; half/full
               reveal the regions. min-h-0 lets the inner DeviceFrame scroll. The focus-trap container is the
-              SHEET panel (sheetRef), so it spans the grip + ✕ + this body. px-4 = chat parity. */}
+              SHEET panel (sheetRef), so it spans the grip + the panel's in-row ✕ + this body. px-4 = chat parity. */}
           <div className="flex min-h-0 flex-1 flex-col">
             {/* empty:hidden — same top-tightening as the desktop drawer (no dead band when no cards). */}
             <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:40vh] empty:hidden empty:p-0">{cards}</div>
-            <div className="min-h-0 flex-1">{preview}</div>
+            {/* cloneElement injects the in-panel ✕'s handler = `closeMobile` so it dismisses the sheet. */}
+            <div className="min-h-0 flex-1">{cloneElement(preview, { onClose: closeMobile })}</div>
           </div>
         </div>
       </div>

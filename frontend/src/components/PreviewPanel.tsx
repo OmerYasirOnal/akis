@@ -52,7 +52,7 @@ function dominantLang(files: { filePath: string }[]): string {
   return best
 }
 
-export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, actionError, device, onDevice }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined; actionError?: string | undefined; device: Device; onDevice: (d: Device) => void }) {
+export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, actionError, device, onDevice, onClose }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined; actionError?: string | undefined; device: Device; onDevice: (d: Device) => void; onClose?: () => void }) {
   const { t } = useI18n()
   const [tab, setTab] = useState<'preview' | 'code' | 'trust'>('preview')
   // Boot watchdog: while `starting`, arm a single timer; if it elapses before a terminal frame
@@ -250,6 +250,23 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
             <button onClick={onRun} disabled={busy}
               className="rounded-md border border-teal-400/30 bg-teal-400/10 px-2 py-0.5 text-xs text-teal-200 hover:bg-teal-400/20 disabled:opacity-40">
               {view.preview.starting ? t('preview.starting') : `▶ ${t('preview.run')}`}
+            </button>
+          )}
+          {/* CLOSE ✕ — the LAST (rightmost) header item, ALWAYS shown when the host (PreviewDrawer, via
+              cloneElement) injects `onClose`. It is independent of the active tab / the preview-actions
+              cluster: the drawer's header was MERGED into this row (killing the duplicate "Canlı önizleme"
+              title), so the panel's tablist IS the header and this ✕ is the only close control. On desktop
+              it minimizes the drawer; on mobile it closes the sheet — the drawer wires the right handler.
+              View-state only; no gate authority. ≥44px hit target (WCAG 2.5.5): the glyph is padded to an
+              h-9 box ≥44px via px, matching the cluster's compact sizing + hover/focus chrome. */}
+          {onClose && (
+            <button
+              type="button"
+              onClick={onClose}
+              aria-label={t('preview.close')}
+              className="-mr-1 flex h-9 min-h-[2.75rem] w-9 min-w-[2.75rem] shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
+            >
+              <span aria-hidden="true">✕</span>
             </button>
           )}
         </div>
