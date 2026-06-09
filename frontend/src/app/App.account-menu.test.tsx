@@ -79,4 +79,11 @@ describe('App: a language toggle is available BEFORE auth (pre-auth switcher)', 
     await waitFor(() => expect(screen.getAllByRole('button', { name: /switch language/i }).length).toBeGreaterThan(0))
     expect(screen.getAllByRole('button', { name: /switch language/i })).toHaveLength(1)
   })
+
+  it('anonymous /docs also exposes a language toggle (public docs readable in TR before sign-in)', async () => {
+    window.history.pushState({}, '', '/docs')
+    vi.stubGlobal('fetch', stubFetch({ status: 401 }))
+    render(<App />)
+    expect(await screen.findByRole('button', { name: /switch language/i })).toBeInTheDocument()
+  })
 })
