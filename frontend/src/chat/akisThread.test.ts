@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, type AkisMsg, type ThreadNode, type RunNode } from './akisThread.js'
+import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, mergeSpine, type AkisMsg, type ThreadNode, type RunNode } from './akisThread.js'
 
 function memStore(initial: Record<string, string> = {}): Storage & { _data: Record<string, string> } {
   const data: Record<string, string> = { ...initial }
@@ -137,6 +137,27 @@ describe('historyForApi', () => {
     ])
     // never a run node nor anything but the two API roles
     expect(historyForApi(nodes, greeting).every(m => m.role === 'user' || m.role === 'assistant')).toBe(true)
+  })
+})
+
+describe('mergeSpine (reconcile local spine with server chat on reopen)', () => {
+  const greet = (): ThreadNode => ({ role: 'assistant', content: 'GREETING' })
+  const run = (id: string): ThreadNode => ({ role: 'run', sessionId: id, idea: 'note app' })
+
+  it('keeps the richer LOCAL spine when it already has the run marker (pre-build turns survive)', () => {
+    const local: ThreadNode[] = [greet(), { role: 'user', content: 'a note app' }, { role: 'assistant', content: 'sure' }, run('s1')]
+    const out = mergeSpine({ local, serverTurns: [{ role: 'assistant', content: 'sure' }], id: 's1', greeting: 'GREETING', idea: 'note app' })
+    expect(out).toEqual(local)
+  })
+
+  it('falls back to greeting+runMarker+serverTurns when local has no marker for the id (cleared storage)', () => {
+    const out = mergeSpine({ local: [], serverTurns: [{ role: 'user', content: 'hi' }], id: 's1', greeting: 'GREETING', idea: 'note app' })
+    expect(out).toEqual([greet(), run('s1'), { role: 'user', content: 'hi' }])
+  })
+
+  it('dedupes adjacent identical turns', () => {
+    const out = mergeSpine({ local: [], serverTurns: [{ role: 'user', content: 'hi' }, { role: 'user', content: 'hi' }], id: 's1', greeting: 'GREETING', idea: 'x' })
+    expect(out.filter(n => 'content' in n && n.content === 'hi')).toHaveLength(1)
   })
 })
 
