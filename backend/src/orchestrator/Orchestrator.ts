@@ -8,6 +8,7 @@ import { assembleSharedContext } from '../context/assemble.js'
 import type { SharedContext } from '@akis/shared'
 import type { OrchestratorServices } from '../di/services.js'
 import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
+import { buildAgentMetrics } from '../agent/metrics.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 import { signPassport } from '../verify/passport.js'
 import type { BuildPassport, VerifyToken } from '@akis/shared'
@@ -179,6 +180,18 @@ export class Orchestrator {
       session = await this.s.store.update(id, { spec, status: 'awaiting_spec_approval' }, session.version)
       this.narrate(id, 'Using the spec you approved in chat — no second approval needed.')
       const approved = await this.mintSpecApproval(id, spec, session.version)
+      // CHAT-SEEDED PATH: Scribe's run() is short-circuited here (the spec was already authored +
+      // approved in chat, so re-running Scribe would author a DIFFERENT spec). ScribeAgent.run() is
+      // the ONLY emitter of scribe agent_start/agent_end, so without this the roster would derive
+      // Scribe as 'idle' even though the spec stage is genuinely DONE. Record that stage with a
+      // synthetic agent_start immediately followed by agent_end(ok:true), using the SAME payload
+      // shape ScribeAgent.run() emits. GATE-SAFE: these are pure observability bus EVENTS — no LLM
+      // call, no gate authority, no token mint; the spec gate stays minted exactly once above.
+      const scribeStartedAt = Date.now()
+      this.s.bus.emit({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
+      // No LLM call on this path → usage absent (buildAgentMetrics collapses {0,0}/undefined → "—");
+      // only the real activation wall-time + the zero tool-call count are honestly reported.
+      this.s.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, metrics: buildAgentMetrics(undefined, scribeStartedAt, 0), agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
       // The SpecCard's "Approve & Build" is the SINGLE human action for BOTH the gate and the
       // run (#124 collapsed the separate Approve click) — so the RUN must be kicked HERE,
       // server-side. Fire-and-forget: awaiting it would hold the POST /sessions response open

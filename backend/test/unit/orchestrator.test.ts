@@ -80,6 +80,29 @@ describe('Orchestrator — chat-approved spec seed (P0-1: single spec approval)'
     expect(done.status).toBe('done')
   })
 
+  it('a seed-started session RECORDS Scribe\'s stage as done — exactly one scribe agent_start + agent_end — so the roster never shows Scribe idle, and the spec gate is still minted exactly once', async () => {
+    const { orch, services } = makeOrch()
+    const seed = { title: 'Minimal Todo', body: '# Minimal Todo\nAdd, list, complete todos.' }
+    const s = await orch.start({ idea: seed.body, spec: seed })
+    expect(s.status).toBe('building')
+    // Let the auto-kicked run settle so this test's async work never leaks into another.
+    await vi.waitFor(async () => expect((await services.store.get(s.id))!.status).toBe('awaiting_push_confirm'))
+    const events = services.bus.recent(s.id)
+    // BUG GUARD: on the chat-seeded path Scribe is short-circuited (its run() never executes), so
+    // without a synthetic event the roster derives 'idle' ("beklemede") even though the spec WAS
+    // authored. The seeded branch must record Scribe's stage with a real agent_start + agent_end.
+    const scribeStarts = events.filter(e => e.kind === 'agent_start' && (e as { role: string }).role === 'scribe')
+    const scribeEnds = events.filter(e => e.kind === 'agent_end' && (e as { role: string }).role === 'scribe')
+    expect(scribeStarts).toHaveLength(1)
+    expect(scribeEnds).toHaveLength(1)
+    // The synthetic Scribe end is a SUCCESS (the spec is authored/approved).
+    expect(scribeEnds[0]).toMatchObject({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId: 'main' })
+    // GATE-SAFETY: the spec gate is still minted EXACTLY ONCE (one satisfied, never an awaiting).
+    const gates = events.filter(e => e.kind === 'gate' && (e as { gate: string }).gate === 'spec_approval')
+    expect(gates.filter(e => (e as { state: string }).state === 'satisfied')).toHaveLength(1)
+    expect(gates.some(e => (e as { state: string }).state === 'awaiting')).toBe(false)
+  })
+
   it('a second concurrent run is refused FAST (in-flight guard → WrongStatusError/409), never a double Proto run', async () => {
     const { orch } = makeOrch()
     const s = await orch.start({ idea: 'build a todo web app' })
