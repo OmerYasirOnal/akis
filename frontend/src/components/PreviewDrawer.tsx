@@ -23,11 +23,10 @@ export interface PreviewDrawerProps {
   onPointerWidth: (clientX: number) => void
   /** Drag commit on pointerup — the parent maps the final clientX → ratio and persists it. */
   commitRatio: (clientX: number) => void
-  /** Open the drawer (the collapsed edge-tab calls this). */
-  onOpen: () => void
   /** Close the drawer (the ✕ calls this). */
   onClose: () => void
-  /** Whether the active build is VERIFIED — drives the dot on the collapsed edge-tab (L3) AND the mobile FAB. */
+  /** Whether the active build is VERIFIED — drives the trust dot on the mobile FAB. (Desktop carries the
+   *  same dot on the ChatStudio-header "Preview" toggle, which owns the open affordance now.) */
   verified?: boolean
   /** Mobile-overlay (M1) guard: on `<lg` the parent passes false so a persisted `open:true` does NOT
    *  auto-show the full-screen overlay on load — it requires an explicit FAB tap. Defaults to false so the
@@ -58,48 +57,16 @@ export interface PreviewDrawerProps {
  * (`onPointerWidth` live, `commitRatio` on release), which maps it to `--preview-w`/ratio and persists.
  */
 export function PreviewDrawer({
-  open, ratio, onKeyDown, onReset, onPointerWidth, commitRatio, onOpen, onClose, verified, allowAutoOpen = false, cards, preview,
+  open, ratio, onKeyDown, onReset, onPointerWidth, commitRatio, onClose, verified, allowAutoOpen = false, cards, preview,
 }: PreviewDrawerProps) {
   const { t } = useI18n()
   const drawerId = useId()
   const pct = Math.round(ratio * 100)
 
-  // SETTLED-CLOSED gate for the edge-tab (anti-jumble, Issue 2): the aside slides over 300ms, so gating the
-  // edge-tab on the raw `!open` lets the tab and the still-sliding drawer co-exist for the duration of the
-  // transition (the "right-side jumble"). Instead we reveal the edge-tab ONLY once the close transition has
-  // genuinely SETTLED, and hide it the instant we start OPENING (so it never lags onto a sliding-in drawer):
-  //  • opening → `settledClosed=false` immediately (the effect below), so the tab vanishes on frame 0.
-  //  • closing → `settledClosed=true` only on the aside's transform `transitionend` (handler below), plus a
-  //    ~310ms `setTimeout` FALLBACK so an INTERRUPTED transition (rapid open/close) can't leave the flag
-  //    stuck and strand the user with no reopen affordance.
-  //  • prefers-reduced-motion → the aside has NO transition (`motion-safe:transition-transform`), so
-  //    `transitionend` NEVER fires; we MUST fall back to the raw `!open` there or the tab disappears forever.
-  //    `prefersReducedMotion` is read once per render (it's a media query, cheap) and OR-ed into the gate.
-  const prefersReducedMotion = typeof window !== 'undefined' && typeof window.matchMedia === 'function'
-    ? window.matchMedia('(prefers-reduced-motion: reduce)').matches
-    : false
-  const [settledClosed, setSettledClosed] = useState(!open)
-  const settleTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  useEffect(() => {
-    if (open) {
-      // Opening: hide the tab at once and disarm any pending settle.
-      setSettledClosed(false)
-      if (settleTimer.current) { clearTimeout(settleTimer.current); settleTimer.current = null }
-    } else {
-      // Closing: arm a fallback so an interrupted/never-firing transition still settles the tab in.
-      if (settleTimer.current) clearTimeout(settleTimer.current)
-      settleTimer.current = setTimeout(() => { setSettledClosed(true); settleTimer.current = null }, 310)
-    }
-    return () => { if (settleTimer.current) { clearTimeout(settleTimer.current); settleTimer.current = null } }
-  }, [open])
-  const onAsideTransitionEnd = useCallback((e: React.TransitionEvent<HTMLElement>) => {
-    if (e.propertyName === 'transform' && !open) {
-      setSettledClosed(true)
-      if (settleTimer.current) { clearTimeout(settleTimer.current); settleTimer.current = null }
-    }
-  }, [open])
-  // Under reduced motion there is no transition to settle, so honor the raw closed state directly.
-  const showEdgeTab = prefersReducedMotion ? !open : settledClosed
+  // (The collapsed desktop edge-tab — and its anti-jumble `settledClosed`/`transitionend` settle machinery —
+  // was retired: the open affordance now lives as a single "Preview" toggle in the ChatStudio header, so
+  // nothing paints over the sliding aside. The slide transition itself (`motion-safe:transition-transform`)
+  // is unchanged; it just no longer needs a settle gate.)
 
   // Live-drag plumbing. We rAF-throttle so a fast pointer doesn't fire a DOM write per pointermove event
   // (matches the SSE fold-per-frame discipline). `latestX` carries the most recent clientX into the frame;
@@ -227,10 +194,10 @@ export function PreviewDrawer({
       // makes the iframe ignore pointer events DURING a drag so it can't swallow the gesture.
       // MOTION (Task: polish): the slide is `motion-safe:` so it collapses to an INSTANT snap under
       // prefers-reduced-motion (a11y) — duration-300 ease-out reads as a smooth glide on a pro surface.
-      // DEPTH CUE: when open the drawer carries a soft left-edge shadow (a thin teal-tinted edge over a
-      // wider dark falloff) so it reads as FLOATING over the pushed chat rather than a flat seam; closed
-      // it drops to the plain shadow-2xl (no stray glow off-screen).
-      onTransitionEnd={onAsideTransitionEnd}
+      // SEAM (standards calm-down): ONE divider on the seam — the `border-l border-white/10` hairline. When
+      // OPEN the drawer ALSO carries a SINGLE soft teal-tinted left-edge inline boxShadow as its elevation
+      // cue; the heavy `shadow-2xl` was dropped so border + shadow + glow are not all stacked on the seam
+      // (the "prominent vertical bar"). Closed → no shadow (nothing off-screen to elevate).
       style={{
         transform: open ? 'translateX(0)' : 'translateX(100%)',
         // WIDTH DECOUPLED FROM OPEN (Issue 1): always the REAL ratio*containerWidth (`--preview-drawer-w`),
@@ -240,9 +207,9 @@ export function PreviewDrawer({
         ...(open ? { boxShadow: '-12px 0 32px -8px rgba(0,0,0,0.55), -1px 0 0 0 rgba(7,209,175,0.12)' } : {}),
       }}
       // `overflow-hidden` (Issue 1/2) clips any region-B content during the slide + at narrow widths so the
-      // collapsing/sliding box can never spill at the right edge. z-20: BELOW the edge-tab (z-30), the FAB
-      // (z-40) and the mobile overlay (z-50) — the anti-jumble stacking order.
-      className="absolute inset-y-0 right-0 z-20 hidden flex-col overflow-hidden border-l border-white/10 bg-[#0B1220] shadow-2xl motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out lg:flex [&.is-dragging_iframe]:pointer-events-none"
+      // collapsing/sliding box can never spill at the right edge. z-20: BELOW the FAB (z-40) and the mobile
+      // overlay (z-50) — the anti-jumble stacking order.
+      className="absolute inset-y-0 right-0 z-20 hidden flex-col overflow-hidden border-l border-white/10 bg-[#0B1220] motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out lg:flex [&.is-dragging_iframe]:pointer-events-none"
     >
       {/* LEFT-EDGE RESIZE SEPARATOR — keyboard splitter + pointer drag (capture on this stable node). */}
       <div
@@ -284,13 +251,15 @@ export function PreviewDrawer({
           control reads as part of the drawer's header bar rather than a lone ✕ floating on its own border
           line. The ✕ travels OFF-SCREEN with the aside when closed (overflow-hidden + translateX). `onClose`
           stays the bare prop — no gate authority here. */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
         <span className="truncate text-sm font-semibold text-slate-200">{t('preview.title')}</span>
+        {/* ≥44px touch target (WCAG 2.5.5): the glyph is padded to a min-h/w-11 (44px) box; the visible
+            hover/focus chrome stays compact via the inner rounded affordance reading on the whole box. */}
         <button
           type="button"
           onClick={onClose}
           aria-label={t('preview.close')}
-          className="shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
+          className="-mr-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
         >
           <span aria-hidden="true">✕</span>
         </button>
@@ -298,40 +267,17 @@ export function PreviewDrawer({
 
       {/* BODY — two scroll regions (H1). */}
       <div className="flex h-full min-h-0 flex-col">
-        {/* Region A: gate-adjacent card stack — owns its own scrollbar, capped so the preview keeps height. */}
-        <div className="shrink-0 overflow-y-auto px-3 py-3 [max-height:50vh]">{cards}</div>
+        {/* Region A: gate-adjacent card stack — owns its own scrollbar, capped so the preview keeps height.
+            px-4 py-4 = chat-header padding parity (no 12→16 jump crossing the seam, per the standards pass). */}
+        <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:50vh]">{cards}</div>
         {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body. */}
         <div className="min-h-0 flex-1">{preview}</div>
       </div>
     </aside>
 
-    {/* COLLAPSED EDGE-TAB — a SIBLING of the (aria-hidden) aside so it stays in the a11y tree when closed.
-        It pins to the right viewport edge, reopens the drawer, and carries the verified/unverified dot (L3)
-        so the trust state is legible even while the preview is tucked away. Desktop only (Task 6 = mobile).
-        ANTI-JUMBLE (Issue 2): gated on `showEdgeTab` (SETTLED-closed, not raw `!open`) so it can never paint
-        while the aside is still sliding — the tab and the drawer can't co-exist on screen. z-30: ABOVE the
-        drawer (z-20), below the FAB/overlay. */}
-    {showEdgeTab && (
-      <button
-        type="button"
-        data-testid="preview-edge-tab"
-        onClick={onOpen}
-        aria-label={t('preview.open')}
-        // MICRO-INTERACTION (subtle): on hover/focus the tab nudges ~2px LEFT off the edge (a "peek"
-        // hint that it's grabbable) and lifts its border to teal. `motion-safe:` so the nudge collapses
-        // to instant under reduced-motion; the color shift still applies (a non-distracting cue). The
-        // verified dot below is the persistent trust signal, untouched.
-        className="group absolute right-0 top-1/2 z-30 hidden -translate-y-1/2 items-center gap-1.5 rounded-l-lg border border-r-0 border-white/10 bg-[#0B1220] px-2 py-3 text-slate-300 shadow-lg transition-[color,background-color,border-color,transform] hover:border-[#07D1AF]/30 hover:text-slate-100 hover:[transform:translateY(-50%)_translateX(-2px)] focus-visible:border-[#07D1AF]/30 focus-visible:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 motion-reduce:transition-colors motion-reduce:hover:[transform:translateY(-50%)] lg:flex"
-      >
-        <span
-          data-testid="preview-edge-dot"
-          data-verified={String(!!verified)}
-          aria-hidden="true"
-          className={`h-2 w-2 rounded-full ${verified ? 'bg-[#07D1AF] shadow-[0_0_6px_rgba(7,209,175,0.7)]' : 'bg-slate-500'}`}
-        />
-        <span aria-hidden="true" className="text-xs [writing-mode:vertical-rl]">{t('preview.open')}</span>
-      </button>
-    )}
+    {/* (The collapsed desktop EDGE-TAB was retired — the open affordance is now a single integrated
+        "Preview" toggle in the ChatStudio header, which carries the same verified/unverified trust dot.
+        Mobile keeps its own reachability via the pocket FAB below.) */}
 
     {/* MOBILE POCKET FAB (<lg only) — the persistent reachability handle that replaces the old Chat/Preview
         tablist. It toggles the full-screen overlay and carries the verified/unverified dot so the trust state
@@ -379,21 +325,22 @@ export function PreviewDrawer({
           className="flex h-full min-h-0 flex-col border-l border-white/10 bg-[#0B1220] shadow-2xl"
         >
           {/* HEADER — one piece of chrome (mirrors the desktop drawer): preview title + close (✕). */}
-          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+          <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
             <span className="truncate text-sm font-semibold text-slate-200">{t('preview.title')}</span>
+            {/* ≥44px touch target (WCAG 2.5.5): h-11/w-11 box around the glyph. */}
             <button
               type="button"
               onClick={closeMobile}
               aria-label={t('preview.close')}
-              className="shrink-0 rounded-md p-1 text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
+              className="-mr-1 flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50"
             >
               <span aria-hidden="true">✕</span>
             </button>
           </div>
 
-          {/* BODY — the same two scroll regions as the desktop drawer (H1). */}
+          {/* BODY — the same two scroll regions as the desktop drawer (H1). px-4 py-4 = chat padding parity. */}
           <div className="flex h-full min-h-0 flex-col">
-            <div className="shrink-0 overflow-y-auto px-3 py-3 [max-height:50vh]">{cards}</div>
+            <div className="shrink-0 overflow-y-auto px-4 py-4 [max-height:50vh]">{cards}</div>
             <div className="min-h-0 flex-1">{preview}</div>
           </div>
         </div>

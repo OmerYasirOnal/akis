@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, act } from '@testing-library/react'
+import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PreviewDrawer } from './PreviewDrawer.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
@@ -18,7 +18,6 @@ function renderDrawer(over: Partial<React.ComponentProps<typeof PreviewDrawer>> 
     onReset: () => {},
     onPointerWidth: () => {},
     commitRatio: () => {},
-    onOpen: () => {},
     onClose: () => {},
     cards: <div data-testid="cards-slot">cards</div>,
     preview: <div data-testid="preview-slot">preview</div>,
@@ -44,21 +43,21 @@ describe('PreviewDrawer (desktop)', () => {
     expect(sep).toHaveAttribute('tabindex', '0')
   })
 
-  it('open drawer is on-screen and renders BOTH slots; no edge-tab', () => {
+  it('open drawer is on-screen and renders BOTH slots; the desktop edge-tab is gone (retired)', () => {
     renderDrawer({ open: true })
     expect(screen.getByTestId('preview-drawer')).toHaveStyle({ transform: 'translateX(0)' })
     expect(screen.getByTestId('cards-slot')).toBeInTheDocument()
     expect(screen.getByTestId('preview-slot')).toBeInTheDocument()
-    // No DESKTOP edge-tab when open (the mobile FAB is a separate, always-present pocket handle).
+    // The retired vertical-text edge-tab no longer exists — the open affordance lives in the ChatStudio
+    // header now (the mobile FAB is a separate, always-present pocket handle).
     expect(screen.queryByTestId('preview-edge-tab')).toBeNull()
   })
 
-  it('closed drawer is translated off and shows the edge-tab', () => {
+  it('closed drawer is translated off; no edge-tab is rendered (the header toggle owns reopen)', () => {
     renderDrawer({ open: false })
     expect(screen.getByTestId('preview-drawer')).toHaveStyle({ transform: 'translateX(100%)' })
-    // The desktop edge-tab and the mobile FAB share the localized "Open preview" name (CSS gates which is
-    // visible), so scope to the edge-tab's testid to avoid the ambiguous role+name match in jsdom.
-    expect(screen.getByTestId('preview-edge-tab')).toBeInTheDocument()
+    // No drawer-owned reopen control anymore: the ChatStudio header carries the "Preview" toggle.
+    expect(screen.queryByTestId('preview-edge-tab')).toBeNull()
   })
 
   // ISSUE 1 — the closed drawer must carry its REAL width (decoupled from open) so translateX(100%) carries
@@ -96,51 +95,45 @@ describe('PreviewDrawer (desktop)', () => {
     expect(drawer).toHaveStyle({ transform: 'translateX(0)' })
   })
 
-  // ISSUE 2 — anti-jumble: the edge-tab must appear ONLY once the close transition has SETTLED, never while
-  // the aside is still sliding. Going open→closed, the tab is withheld until the aside's transform
-  // transitionend fires; before that the tab and the sliding drawer would otherwise co-exist (the jumble).
-  it('edge-tab is withheld while closing and appears only after the slide settles (transitionend)', () => {
-    const { rerender } = renderDrawer({ open: true })
-    expect(screen.queryByTestId('preview-edge-tab')).toBeNull() // open → no tab
-    // Begin closing: the aside starts sliding; the tab must NOT appear yet (it would overlap the slide).
-    rerender(<I18nProvider><PreviewDrawer
-      open={false} ratio={0.46} onKeyDown={() => {}} onReset={() => {}} onPointerWidth={() => {}}
-      commitRatio={() => {}} onOpen={() => {}} onClose={() => {}}
-      cards={<div data-testid="cards-slot">cards</div>} preview={<div data-testid="preview-slot">preview</div>}
-    /></I18nProvider>)
-    expect(screen.queryByTestId('preview-edge-tab')).toBeNull() // still sliding → no tab
-    // The slide settles: fire the aside's transform transitionend → NOW the tab may appear.
-    act(() => { fireEvent.transitionEnd(screen.getByTestId('preview-drawer'), { propertyName: 'transform' }) })
-    expect(screen.getByTestId('preview-edge-tab')).toBeInTheDocument()
+  // SEAM CALM-DOWN (standards pass): ONE divider on the seam. The aside keeps the single `border-l` hairline
+  // and (when OPEN) a single soft teal-tinted left-edge inline boxShadow for elevation — the heavy
+  // `shadow-2xl` was dropped so border + shadow + glow aren't all stacked into a "prominent vertical bar".
+  it('the open drawer seam is ONE divider: border-l hairline + soft inline shadow, NOT a stacked shadow-2xl', () => {
+    renderDrawer({ open: true })
+    const drawer = screen.getByTestId('preview-drawer')
+    expect(drawer.className).toContain('border-l')
+    // The heavy utility shadow is gone (it would stack with the border + inline glow on the seam).
+    expect(drawer.className).not.toContain('shadow-2xl')
+    // The single elevation cue is the inline left-edge boxShadow (teal-tinted), applied only when open.
+    expect(drawer.style.boxShadow).toContain('rgba(7,209,175,0.12)')
   })
 
-  // ISSUE 2 — z-order contract: drawer z-20 < edge-tab z-30 < FAB z-40 < mobile overlay z-50. So even a
-  // one-frame paint overlap can never put the tab BEHIND the slid-off drawer.
-  it('honors the anti-jumble z-order: drawer z-20 < edge-tab z-30 < FAB z-40', () => {
+  it('the closed drawer carries no elevation shadow (nothing off-screen to elevate)', () => {
     renderDrawer({ open: false })
-    expect(screen.getByTestId('preview-drawer').className).toContain('z-20')
-    expect(screen.getByTestId('preview-edge-tab').className).toContain('z-30')
-    expect(screen.getByTestId('preview-fab').className).toContain('z-40')
+    const drawer = screen.getByTestId('preview-drawer')
+    expect(drawer.className).not.toContain('shadow-2xl')
+    expect(drawer.style.boxShadow).toBe('')
   })
 
-  it('edge-tab calls onOpen', async () => {
-    const onOpen = vi.fn()
-    renderDrawer({ open: false, onOpen })
-    await userEvent.click(screen.getByTestId('preview-edge-tab'))
-    expect(onOpen).toHaveBeenCalledTimes(1)
+  // PADDING PARITY (standards pass): the drawer header + region A use px-4 (16px) so crossing the seam from
+  // the chat header (px-4) shows no 12→16 padding jump.
+  it('drawer header + region A use px-4/py-* (chat-padding parity, no 12→16 jump at the seam)', () => {
+    renderDrawer({ open: true })
+    const drawer = screen.getByTestId('preview-drawer')
+    const header = drawer.querySelector('button[aria-label="Close preview"]')!.closest('div')!
+    expect(header.className).toContain('px-4')
+    expect(header.className).toContain('py-3')
+    const regionA = screen.getByTestId('cards-slot').parentElement!
+    expect(regionA.className).toContain('px-4')
+    expect(regionA.className).toContain('py-4')
   })
 
-  it('edge-tab carries the verified dot when verified', () => {
-    renderDrawer({ open: false, verified: true })
-    expect(screen.getByTestId('preview-edge-dot')).toBeInTheDocument()
-  })
-
-  it('edge-tab shows an unverified dot when not verified', () => {
-    renderDrawer({ open: false, verified: false })
-    // The dot is always present; its variant changes — assert it exists + is not the verified variant.
-    const dot = screen.getByTestId('preview-edge-dot')
-    expect(dot).toBeInTheDocument()
-    expect(dot.getAttribute('data-verified')).toBe('false')
+  // WCAG 2.5.5 — the close ✕ is padded to a ≥44px touch box.
+  it('the close ✕ is a ≥44px touch target (h-11 w-11)', () => {
+    renderDrawer({ open: true })
+    const close = screen.getByRole('button', { name: /close preview/i })
+    expect(close.className).toContain('h-11')
+    expect(close.className).toContain('w-11')
   })
 
   it('close button calls onClose', async () => {
