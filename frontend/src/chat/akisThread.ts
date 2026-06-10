@@ -89,6 +89,36 @@ export function isNearBottom(el: Pick<HTMLElement, 'scrollHeight' | 'scrollTop' 
   return el.scrollHeight - el.scrollTop - el.clientHeight < slack
 }
 
+/** Reconcile the persisted local spine with the server's session.chat on a reopen.
+ *  If the local spine already anchors this run (has its run marker), it is the richest copy
+ *  (it includes the pre-build, sessionId-less turns the server can never hold) → keep it.
+ *  Otherwise (cleared storage / another device) rebuild from the server turns. Adjacent
+ *  identical (role,content) pairs are de-duplicated. Pure + storage-free.
+ *  NOTE: in the keep-local branch, newer SERVER turns (e.g. follow-up turns made on ANOTHER device
+ *  about the same build) are intentionally NOT merged in — staleness is accepted over the re-dedupe
+ *  complexity that merging two diverged spines would need (no per-turn ids/timestamps to align on).
+ *  Do not "also merge server turns here": it reintroduces the duplicate-turn class this branch avoids. */
+export function mergeSpine(args: {
+  local: readonly ThreadNode[]
+  serverTurns: readonly { role: 'user' | 'assistant'; content: string }[]
+  id: string
+  greeting: string
+  idea: string
+}): ThreadNode[] {
+  const { local, serverTurns, id, greeting, idea } = args
+  const hasMarker = local.some(n => isRun(n) && n.sessionId === id)
+  const base: ThreadNode[] = hasMarker
+    ? [...local]
+    : [{ role: 'assistant', content: greeting },
+       { role: 'run', sessionId: id, idea: idea.trim() },
+       ...serverTurns.filter(t => t.content.trim().length > 0).map(t => ({ role: t.role, content: t.content }))]
+  return base.filter((n, i) => {
+    const p = base[i - 1]
+    if (!p || isRun(n) || isRun(p)) return true
+    return !(n.role === p.role && n.content === p.content)
+  })
+}
+
 /**
  * The history to replay to POST /api/chat on the next send. SKIPS run markers (so the build-
  * aware context never bloats with run data), drops the opening greeting (an assistant turn

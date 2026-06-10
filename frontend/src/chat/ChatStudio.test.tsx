@@ -58,6 +58,39 @@ describe('ChatStudio F5/deep-link rehydrate — the persisted conversation survi
     await waitFor(() => expect(screen.getByText('Neden testler geçmiyor?')).toBeInTheDocument())
     expect(screen.getByText(/Doğrulama 0 test üretti/)).toBeInTheDocument()
   })
+
+  // CONVERSATION-LOST FIX: a reopen MERGES (not overwrites) the local spine. The pre-build,
+  // sessionId-less turns live ONLY in localStorage (the server can never hold them — they were
+  // typed before the build existed). When the local spine already anchors this run, mergeSpine
+  // KEEPS it (same-device local is authoritative), so a thinner server chat can't drop them.
+  it('reopening a build via ?s= does NOT drop pre-build conversation (merge, not overwrite)', async () => {
+    window.history.replaceState({}, '', '/?s=s1')
+    // Local spine already has the run marker for s1 PLUS a pre-build user turn the server never saw.
+    localStorage.setItem('akis_chat_thread', JSON.stringify([
+      { role: 'assistant', content: 'GREETING' },
+      { role: 'user', content: 'a note app please' },
+      { role: 'run', sessionId: 's1', idea: 'note app' },
+    ]))
+    // The server's session.chat is THINNER (only the post-build turn) — it must NOT clobber the local.
+    const api = new ApiClient('', vi.fn(deepLinkFetch('s1', 200, {
+      id: 's1', idea: 'note app', status: 'done', version: 1,
+      chat: [{ role: 'assistant', content: 'on it', at: '' }],
+    })))
+    // MASKING GUARD: the pre-build turn is already in localStorage, so AkisChat renders it on its
+    // INITIAL mount — BEFORE the async deep-link chain (listMySessions → openWithChat → getSession →
+    // seedRun) reseeds. A naive getByText therefore passes even against the OLD overwrite seed. Spy
+    // on getSession and wait for the deep-link's call with 's1' so we observe AFTER the reseed has run.
+    const getSessionSpy = vi.spyOn(api, 'getSession')
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    await waitFor(() => expect(getSessionSpy).toHaveBeenCalledWith('s1'))
+    // The pre-build turn survived the reseed — in BOTH the visible thread AND the persisted spine
+    // (the old overwrite seed dropped it from both; the merge keeps it).
+    await waitFor(() => expect(screen.getByText('a note app please')).toBeInTheDocument())
+    expect(JSON.parse(localStorage.getItem('akis_chat_thread')!)).toEqual(
+      expect.arrayContaining([expect.objectContaining({ content: 'a note app please' })]),
+    )
+  })
 })
 
 // HONESTY: a build that EDITS a prior app must disclose the merge-over-base where the user JUDGES
@@ -203,6 +236,28 @@ describe('ChatStudio — P0-1 single spec approval (chat-approved spec seed)', (
     expect(body.spec).toBeDefined()
     expect(body.spec!.title).toBe('TODO App')
     expect(body.spec!.body).toContain('# TODO App')
+  })
+
+  it('sends the PRE-BUILD conversation (the spec-shaping user/assistant turns) to POST /sessions so a cross-device reopen rehydrates them', async () => {
+    // CONVERSATION-LOST FIX (cross-device): the pre-build turns are seeded onto session.chat at
+    // build start. historyForApi skips the greeting + run markers + error rows, so the server only
+    // ever receives the genuine user/assistant exchange that shaped the spec.
+    const captured: { body?: unknown } = {}
+    const api = new ApiClient('', vi.fn(studioFetch(captured)))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+
+    await waitFor(() => expect(captured.body).toBeDefined())
+    const body = captured.body as { idea: string; chat?: { role: string; content: string }[] }
+    expect(body.chat).toBeDefined()
+    // The user's spec-shaping turn rides along; the greeting (an assistant turn) is dropped.
+    expect(body.chat!).toContainEqual({ role: 'user', content: 'todo app' })
+    expect(body.chat!.some(t => t.role === 'assistant' && t.content.includes('akis-spec'))).toBe(true)
+    expect(body.chat!.some(t => t.content.includes('I’m AKIS'))).toBe(false) // greeting excluded
   })
 
   it("P1-6: 'New build' on a NON-TERMINAL run cancels it (api.cancel) before clearing", async () => {
