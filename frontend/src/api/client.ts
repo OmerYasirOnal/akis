@@ -271,9 +271,9 @@ export class ApiClient {
   oauthAuthorizeUrl(provider: string): string { return `${this.baseUrl}/oauth/${provider}/authorize` }
 
   // ── Per-user GitHub connection (deliver gated builds to a repo the USER owns) ──
-  /** Full-page redirect target to begin the GitHub connect flow for a target repo. The
-   *  token is never in any URL — only the (validated) "owner/name" target. */
-  githubConnectUrl(repo: string): string { return `${this.baseUrl}/auth/github/connect?repo=${encodeURIComponent(repo)}` }
+  /** Full-page redirect target to begin the GitHub connect flow. A2.1: connect ONLY authenticates
+   *  (no repo) — every project gets its OWN repo auto-created in the user's personal namespace. */
+  githubConnectUrl(): string { return `${this.baseUrl}/auth/github/connect` }
   /** The caller's GitHub connection status — never includes the token. */
   githubStatus(): Promise<GitHubConnectionStatus> { return this.json<GitHubConnectionStatus>('/auth/github/status') }
   /** Remove the caller's stored GitHub connection. */

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ApiClient, GitHubConnectionStatus } from '../api/client.js'
-import { SectionTitle, Button, Input, ErrorNote, EmptyState } from '../ui/kit.js'
+import { SectionTitle, Button, ErrorNote, EmptyState } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /** A one-line banner keyed off `?github=…` on the Settings URL after the OAuth round-trip.
@@ -8,33 +8,16 @@ import { useI18n } from '../i18n/I18nContext.js'
 type Banner = 'connected' | 'error' | 'denied' | 'unavailable'
 const BANNER_OK: Banner[] = ['connected']
 
-// Client-side "owner/name" shape check — mirrors the server's parseOwnerRepo (selectGitHubAdapter.ts)
-// so a malformed target is caught BEFORE the OAuth round-trip (which would otherwise bounce off
-// github.com and return ?github=error with no inline explanation). Exactly one slash; owner is a
-// GitHub login (1–39 alnum/hyphen, no leading/trailing hyphen); name is alnum/._- (no '..'/trailing dot).
-const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?$/
-const NAME_RE = /^[A-Za-z0-9._-]{1,100}$/
-function isValidRepo(s: string): boolean {
-  const t = s.trim()
-  if (t.indexOf('/') === -1 || t.indexOf('/') !== t.lastIndexOf('/')) return false
-  const owner = t.slice(0, t.indexOf('/'))
-  const name = t.slice(t.indexOf('/') + 1)
-  if (!OWNER_RE.test(owner) || !NAME_RE.test(name)) return false
-  if (name === '.' || name === '..' || name.includes('..') || name.endsWith('.')) return false
-  return true
-}
-
-/** Per-user GitHub connection card. Connect YOUR GitHub so AKIS ships verified builds to a
- *  repo YOU own (the gated push then targets that repo instead of the server-wide env token).
- *  The token never reaches the browser — only the connection status (username/repo/scopes). */
+/** Per-user GitHub connection card. A2.1 — TOKEN-ONLY connect: connecting ONLY authenticates YOUR
+ *  GitHub account; every PROJECT gets its OWN repo auto-created (private) in your personal namespace
+ *  at push time. There is NO repo input anymore. The token never reaches the browser — only the
+ *  connection status (username/scopes). "Import an existing repo" is a deferred, separate step. */
 export function GitHubConnection({ api }: { api: ApiClient }) {
   const { t } = useI18n()
   const [status, setStatus] = useState<GitHubConnectionStatus | undefined>()
-  const [repo, setRepo] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | undefined>()
   const [banner, setBanner] = useState<Banner | undefined>()
-  const validRepo = isValidRepo(repo)
 
   const load = (): void => { void api.githubStatus().then(setStatus).catch(() => setStatus({ connected: false, configured: false })) }
   useEffect(load, [api])
@@ -85,11 +68,10 @@ export function GitHubConnection({ api }: { api: ApiClient }) {
         <EmptyState>{t('settings.github.notConfigured')}</EmptyState>
       ) : status.connected ? (
         <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+          {/* A2.1: the connected account (login) — NO repo row anymore (per-project repos). */}
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
             <span className="text-slate-400">{t('settings.github.username')}</span>
             <span className="text-slate-100">{status.username || '—'}</span>
-            <span className="text-slate-400">{t('settings.github.repoLabel')}</span>
-            <span className="font-mono text-slate-100">{status.repo || '—'}</span>
             {status.scopes && status.scopes.length > 0 && (<>
               <span className="text-slate-400">{t('settings.github.scopes')}</span>
               <span className="flex flex-wrap gap-1">
@@ -101,32 +83,26 @@ export function GitHubConnection({ api }: { api: ApiClient }) {
               <span className="text-slate-300">{new Date(status.connectedAt).toLocaleString()}</span>
             </>)}
           </div>
+          {/* The standing disclosure: per-project private repos in the connected account. */}
+          <span className="text-xs text-slate-500">{t('settings.github.autoRepoNote')}</span>
           <div>
             <Button variant="subtle" onClick={() => void disconnect()} disabled={busy}>{t('settings.github.disconnect')}</Button>
           </div>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <Input aria-label={t('settings.github.repoLabel')} value={repo} placeholder={t('settings.github.repoPlaceholder')}
-              onChange={e => setRepo(e.target.value)} className="min-w-0 flex-1" />
-            {/* Full-page redirect into the connect flow (never an XHR — it leaves the SPA for
-                github.com and returns to /settings?github=…). Enabled ONLY for a valid "owner/name"
-                so a malformed target never burns an OAuth round-trip that returns ?github=error. */}
+          {/* A2.1 — TOKEN-ONLY connect: no repo input. A full-page redirect into the connect flow
+              (never an XHR — it leaves the SPA for github.com and returns to /settings?github=…). */}
+          <div>
             <a
-              href={validRepo ? api.githubConnectUrl(repo.trim()) : undefined}
-              aria-disabled={!validRepo}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${validRepo
-                ? 'bg-gradient-to-r from-[#07D1AF] to-violet-500 text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] hover:brightness-110'
-                : 'pointer-events-none cursor-not-allowed border border-white/10 bg-white/[0.03] text-slate-500'}`}
+              href={api.githubConnectUrl()}
+              className="inline-block rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] transition hover:brightness-110"
             >
               {t('settings.github.connect')}
             </a>
           </div>
-          {/* Inline shape error ONLY once the user has typed something malformed (an empty box is just
-              the disabled default, not an error). The hint below always explains the create-if-missing behavior. */}
-          {repo.trim() && !validRepo && <span className="text-xs text-rose-300">{t('settings.github.repoInvalid')}</span>}
-          <span className="text-xs text-slate-500">{t('settings.github.repoHint')}</span>
+          {/* The disclosure: connecting only authenticates; each project gets its own PRIVATE repo. */}
+          <span className="text-xs text-slate-500">{t('settings.github.autoRepoNote')}</span>
         </div>
       )}
     </div>

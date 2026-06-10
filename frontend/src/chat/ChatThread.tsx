@@ -118,6 +118,13 @@ export function GateBubble({ m, onApprove, onConfirm, busy }: { m: GateMsg; onAp
         <div className="min-w-0">
           <div className="text-[10px] uppercase tracking-widest text-slate-500">{t('chat.gate.label')} · {t(`chat.gate.${m.gate}`)}</div>
           <div className="text-sm text-amber-300">{t(`gate.state.${m.state}`)}</div>
+          {/* A2.1 — the per-project destination, shown BEFORE the user confirms the push (push gate
+              only; data comes from the session snapshot via the gate event's `delivery`). */}
+          {!isSpec && m.delivery && (
+            <div className="mt-0.5 truncate text-[11px] text-slate-400" title={`github.com/${m.delivery.owner}/${m.delivery.repo}`}>
+              {t('chat.gate.target')} · <span className="font-mono text-teal-300">→ github.com/{m.delivery.owner}/{m.delivery.repo}</span>
+            </div>
+          )}
         </div>
         <button onClick={isSpec ? onApprove : onConfirm} disabled={busy}
           className="shrink-0 rounded-md bg-teal-500/90 px-3 py-1 text-sm font-medium text-slate-900 hover:bg-teal-400 disabled:opacity-40">

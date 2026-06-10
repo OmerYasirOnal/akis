@@ -85,6 +85,8 @@ export const STRINGS = {
     'chat.gate.spec_approval': 'Spec approval',
     'chat.gate.push_confirm': 'Push confirm',
     'chat.gate.label': 'Gate',
+    // A2.1 — the per-project destination shown on the push-confirm card BEFORE the user confirms.
+    'chat.gate.target': 'Destination',
     'gate.state.awaiting': 'awaiting',
     'gate.state.satisfied': 'satisfied',
     'gate.state.rejected': 'rejected',
@@ -404,11 +406,8 @@ export const STRINGS = {
     'settings.github.sub': 'Connect your GitHub so AKIS ships verified builds to a repo you own.',
     'settings.github.connect': 'Connect GitHub',
     'settings.github.disconnect': 'Disconnect',
-    'settings.github.repoLabel': 'Target repository',
-    'settings.github.repoPlaceholder': 'owner/name',
-    'settings.github.repoHint': 'A repo you own as “owner/name”. AKIS opens a pull request there — and CREATES the repo (private) if it doesn’t exist yet. This grants the broad “repo” scope (read/write to your repositories).',
-    // Inline validation when the typed value isn’t a valid GitHub "owner/name" (mirrors the server’s parseOwnerRepo).
-    'settings.github.repoInvalid': 'Enter a valid “owner/name” (e.g. your-username/my-app).',
+    // A2.1 — the standing disclosure: connecting only authenticates; each project gets its own repo.
+    'settings.github.autoRepoNote': 'Connecting only authenticates your account. Every project gets its own PRIVATE repo, created for you in your personal account (named from the project). This grants the broad “repo” scope (read/write to your repositories).',
     'settings.github.username': 'Account',
     'settings.github.scopes': 'Scopes',
     'settings.github.connectedAt': 'Connected',
@@ -882,6 +881,8 @@ export const STRINGS = {
     'chat.gate.spec_approval': 'Spec onayı',
     'chat.gate.push_confirm': 'Push onayı',
     'chat.gate.label': 'Kapı',
+    // A2.1 — kullanıcı onaylamadan ÖNCE push-onay kartında gösterilen proje deposu.
+    'chat.gate.target': 'Hedef',
     'gate.state.awaiting': 'bekliyor',
     'gate.state.satisfied': 'onaylandı',
     'gate.state.rejected': 'reddedildi',
@@ -1203,10 +1204,8 @@ export const STRINGS = {
     'settings.github.sub': 'GitHub hesabını bağla, AKIS doğrulanmış yapıları senin sahip olduğun bir depoya göndersin.',
     'settings.github.connect': 'GitHub’a bağlan',
     'settings.github.disconnect': 'Bağlantıyı kes',
-    'settings.github.repoLabel': 'Hedef depo',
-    'settings.github.repoPlaceholder': 'sahip/ad',
-    'settings.github.repoHint': 'Sahip olduğun bir depo (“sahip/ad”). AKIS oraya bir pull request açar — ve depo henüz yoksa (özel olarak) OLUŞTURUR. Bu, geniş “repo” kapsamını verir (depolarına okuma/yazma).',
-    'settings.github.repoInvalid': 'Geçerli bir “sahip/ad” girin (örn. kullanıcı-adınız/uygulamam).',
+    // A2.1 — duran bilgilendirme: bağlanmak yalnız kimlik doğrular; her proje kendi deposunu alır.
+    'settings.github.autoRepoNote': 'Bağlanmak yalnızca hesabını doğrular. Her proje, kişisel hesabında senin için oluşturulan kendi ÖZEL deposunu alır (ad projeden türetilir). Bu, geniş “repo” kapsamını verir (depolarına okuma/yazma).',
     'settings.github.username': 'Hesap',
     'settings.github.scopes': 'Kapsamlar',
     'settings.github.connectedAt': 'Bağlanma',

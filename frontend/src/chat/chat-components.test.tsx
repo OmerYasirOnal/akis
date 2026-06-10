@@ -35,6 +35,23 @@ describe('ChatThread', () => {
     expect(screen.queryByRole('button', { name: 'Approve spec' })).toBeNull()
     expect(screen.getByText(/Shipped/)).toBeInTheDocument()
   })
+  it('A2.1 — an awaiting push_confirm gate shows the per-project destination line before confirm', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'g', kind: 'gate', gate: 'push_confirm', state: 'awaiting', delivery: { owner: 'ada', repo: 'todo-app' } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    // The Confirm button is present, and the destination "→ github.com/ada/todo-app" is shown.
+    expect(screen.getByRole('button', { name: 'Confirm push' })).toBeInTheDocument()
+    expect(screen.getByText(/→ github\.com\/ada\/todo-app/)).toBeInTheDocument()
+  })
+  it('A2.1 — a push_confirm gate WITHOUT a pinned delivery shows no destination line (back-compat)', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'g', kind: 'gate', gate: 'push_confirm', state: 'awaiting' },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByRole('button', { name: 'Confirm push' })).toBeInTheDocument()
+    expect(screen.queryByText(/github\.com\//)).toBeNull()
+  })
 })
 
 describe('RecoveryBubble', () => {

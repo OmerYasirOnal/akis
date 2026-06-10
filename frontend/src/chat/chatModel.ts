@@ -6,7 +6,10 @@ export interface UserMsg { id: string; kind: 'user'; text: string }
 export interface NarrationMsg { id: string; kind: 'narration'; agent: Role; text: string }
 export interface ToolLine { tool: string; ok?: boolean }
 export interface AgentMsg { id: string; kind: 'agent'; agent: Role; tools: ToolLine[]; notes: string[]; done: boolean; ok?: boolean; attempts: number; metrics?: AgentMetrics }
-export interface GateMsg { id: string; kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: GateState }
+// A2.1 — `delivery` ({owner,repo}) is carried ONLY on the push_confirm gate so the card shows the
+// per-project destination ("→ github.com/<owner>/<repo>") before the user confirms. Optional —
+// an old gate event / the spec gate has none.
+export interface GateMsg { id: string; kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: GateState; delivery?: { owner: string; repo: string } }
 export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passed: boolean; demo?: boolean }
 /** Read-only critic code-review verdict card (automatic, NOT a human gate). Structured only. */
 export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: boolean; findings: number; critical: boolean; iteration: number }
@@ -82,8 +85,10 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
       }
       case 'gate': {
         const g = gates.get(e.gate)
-        if (g) g.state = e.state
-        else { const m: GateMsg = { id, kind: 'gate', gate: e.gate, state: e.state }; gates.set(e.gate, m); items.push(m) }
+        // A2.1: carry the per-project `delivery` (push_confirm AWAITING only). On a later satisfied
+        // event (no delivery) RETAIN the previously-shown destination rather than clearing it.
+        if (g) { g.state = e.state; if (e.delivery) g.delivery = e.delivery }
+        else { const m: GateMsg = { id, kind: 'gate', gate: e.gate, state: e.state, ...(e.delivery ? { delivery: e.delivery } : {}) }; gates.set(e.gate, m); items.push(m) }
         break
       }
       case 'verify': {
