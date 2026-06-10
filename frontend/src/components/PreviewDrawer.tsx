@@ -268,8 +268,9 @@ export function PreviewDrawer({
         // The grab strip sits FLUSH inside the aside's left edge (no `-translate-x-1/2`): the aside now carries
         // `overflow-hidden` (Issue 1), which would clip the outer half of a half-outside strip and shrink the
         // 12px hit-area to 6px. Keeping the full w-3 strip inside preserves the grab target; the visible
-        // hairline stays centered within it via `justify-center`.
-        className="group absolute inset-y-0 left-0 z-10 flex w-3 cursor-col-resize items-center justify-center focus:outline-none"
+        // hairline hugs the left edge (`justify-start`) so it merges with the aside's border-l seam instead
+        // of floating ~6px inside, over the drawer content (owner-reported overlap).
+        className="group absolute inset-y-0 left-0 z-10 flex w-3 cursor-col-resize items-center justify-start focus:outline-none"
       >
         {/* The visible hairline grows on hover/focus — the hit-area (w-3) stays wide for easy grabbing.
             KEYBOARD FOCUS (a11y): the global :focus-visible teal outline is suppressed here (the handle
