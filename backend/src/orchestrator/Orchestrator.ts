@@ -7,6 +7,7 @@ import { nextTs } from '../events/clock.js'
 import { assembleSharedContext } from '../context/assemble.js'
 import type { SharedContext } from '@akis/shared'
 import type { OrchestratorServices } from '../di/services.js'
+import type { SessionPatch } from '../store/SessionStore.js'
 import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 import { signPassport } from '../verify/passport.js'
@@ -43,10 +44,21 @@ export class CriticFailedError extends Error {
 export class WrongStatusError extends Error {
   constructor(action: string, status: string) { super(`Cannot ${action} from status '${status}'`); this.name = 'WrongStatusError' }
 }
+/** A pipeline write found the session already CANCELLED on the fresh re-read. The
+ *  resilient writer REFUSES to resurrect a user-cancelled run (preserving cancel
+ *  semantics), so it throws this; the fire-and-forget kickRun catch leaves the
+ *  terminal 'cancelled' status untouched (its catch only fails a still-'building' row). */
+export class RunCancelledError extends Error {
+  constructor() { super('Run was cancelled mid-pipeline — not resurrecting'); this.name = 'RunCancelledError' }
+}
 
 /** Default max auto-iterate attempts before a non-converging build needs human
  *  resolution. A workflow may TIGHTEN this (lower it) via services.iterateBudget. */
 const DEFAULT_MAX_ITERATE = 3
+
+/** Max read-modify-write retries on an optimistic-lock conflict for a pipeline session write
+ *  before giving up (matches appendExternalWrite's MAX_RETRY + patchExternalWrite's budget). */
+const MAX_RESILIENT_WRITE_RETRY = 5
 
 /** The TERMINAL run states — a run here is over and cannot be cancelled/driven further. */
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled'])
@@ -284,6 +296,50 @@ export class Orchestrator {
    *  and only colliding later on the store's optimistic lock (after double token spend). */
   private readonly inFlightRuns = new Set<string>()
 
+  /**
+   * RESILIENT, version-safe session write for the build pipeline (demo-blocker A1). The pipeline
+   * captures `session` (and its .version) ONCE at the top of runPipeline and committed every later
+   * write with that STALE version. Meanwhile chatAppend (server.ts) writes the SAME session on every
+   * completed chat turn and bumps the version — and chatAppend already retries on conflict. The
+   * asymmetry killed an otherwise-successful build with RunFailed "version conflict" whenever the
+   * user typed during a build. This re-reads the FRESH row each attempt, re-applies the caller's
+   * patch onto it, and commits at the fresh version — the SAME `/version conflict/`-ONLY, bounded
+   * (MAX_RESILIENT_WRITE_RETRY) read-modify-write loop as appendExternalWrite + chatAppend +
+   * patchExternalWrite (NFR-reliability-7/8). NON-GATE ONLY: it routes through the store's GENERIC
+   * `update`, whose SessionPatch type structurally excludes every gate column (approval / verifyToken
+   * / base) — so this can never mint or flip a gate; it carries no gate value forward.
+   *
+   * CANCEL HONESTY: `cancel()` flips the row to terminal 'cancelled' via a version-checked update.
+   * If the fresh re-read shows 'cancelled', this REFUSES to overwrite (throws RunCancelledError)
+   * rather than resurrect the abandoned run — preserving today's behavior, where the cancel bumped
+   * the version and the pipeline's stale-version write simply conflicted and died.
+   *
+   * `patch` may be a plain SessionPatch or a function of the fresh row (used when the new value
+   * must be re-derived from the latest persisted state). Returns the committed (post-write) row so
+   * callers can keep `session = await ...` reassignment semantics for later steps.
+   */
+  private async updateResilient(
+    id: string,
+    patch: SessionPatch | ((fresh: SessionState) => SessionPatch),
+  ): Promise<SessionState> {
+    for (let attempt = 0; ; attempt++) {
+      const fresh = await this.s.store.get(id)
+      if (!fresh) throw new Error(`session ${id} not found`)
+      // Concurrent-cancel honesty: never resurrect a user-cancelled run by overwriting status.
+      if (fresh.status === 'cancelled') throw new RunCancelledError()
+      const next = typeof patch === 'function' ? patch(fresh) : patch
+      try {
+        return await this.s.store.update(id, next, fresh.version)
+      } catch (e) {
+        // ONLY an optimistic-lock conflict is retryable (a live chat turn / another writer bumped
+        // the version between our read and write). Anything else (or exhaustion) rethrows, so a
+        // genuine failure still surfaces as RunFailed instead of looping forever.
+        if (attempt >= MAX_RESILIENT_WRITE_RETRY || !/version conflict/.test(e instanceof Error ? e.message : '')) throw e
+        // else: re-read the FRESH row + retry the optimistic update.
+      }
+    }
+  }
+
   async runToVerification(id: string): Promise<SessionState> {
     // Check-and-set BEFORE the first await — race-tight under Node's single-threaded turns.
     if (this.inFlightRuns.has(id)) throw new WrongStatusError('build', 'building (a run is already in flight)')
@@ -365,14 +421,17 @@ export class Orchestrator {
       })
 
       if (approvedCode) {
-        session = await this.s.store.update(id, { code: { files: candidate } }, session.version)
+        // A1: NON-GATE write (only `code`, structurally excluded from any gate column) routed
+        // through the version-resilient writer — a chat turn mid-build no longer kills it.
+        session = await this.updateResilient(id, { code: { files: candidate } })
         break
       }
       // gatePolicy.requireCriticResolution TIGHTENS the critic gate: any non-approved
       // code goes straight to human resolution instead of auto-iterating.
       const requireResolution = this.s.gatePolicy?.requireCriticResolution === true
       if (critical || requireResolution || attempt >= maxIterate) {
-        session = await this.s.store.update(id, { status: 'awaiting_critic_resolution', code: { files: candidate } }, session.version)
+        // A1: NON-GATE write (status + code; both in SessionPatch, no gate column) — resilient.
+        session = await this.updateResilient(id, { status: 'awaiting_critic_resolution', code: { files: candidate } })
         this.narrate(id, critical ? 'Critic raised a critical finding — needs human resolution.' : requireResolution ? 'Workflow requires human resolution of the critic review.' : 'Iterate budget exhausted — needs human resolution.')
         // Recoverable, not a dead-end: the FE shows a proceed/abandon action card. PROCEED
         // continues to the REAL verify + push gates (which still apply); it never bypasses them.
@@ -414,7 +473,10 @@ export class Orchestrator {
       const docs = await this.s.scribe.writeDocs({ spec: session.spec, files })
       if (docs) {
         files = mergeFiles(files, [docs])
-        session = await this.s.store.update(id, { code: { files } }, session.version)
+        // A1: NON-GATE write (only `code`) — resilient. The README must ride INTO the verified
+        // file set BEFORE Trace runs (it is digest-bound into the VerifyToken), so persisting it
+        // at the fresh version here cannot affect the gate; it only keeps `code` current.
+        session = await this.updateResilient(id, { code: { files } })
         this.narrate(id, 'Scribe wrote a README and bundled it with the app.')
       }
     }
@@ -427,14 +489,39 @@ export class Orchestrator {
     // is unchanged), never via a gate method, and it never affects the token/gate.
     const evidencePatch = evidence ? { testEvidence: evidence } : {}
     if (token) {
-      const verified = await this.s.store.recordVerification(id, token, session.version)
+      // A1 + GATE-3: this write is GATE-BEARING (recordVerification is the ONLY path that persists a
+      // VerifyToken). The retry is mint-SAFE because the token was ALREADY minted by Trace BEFORE this
+      // loop — it is a fully-formed, nominal-branded VerifyToken bound to THIS `id`. Re-recording that
+      // SAME token at a FRESH version only re-PERSISTS the existing proof; it does not (and cannot)
+      // re-mint or fabricate verification — the branded token is the proof, the row version is not. We
+      // therefore re-read the fresh version each attempt and re-record the identical token, never a
+      // stale/forged one. (recordVerification is a gate method, not the generic `update`, so it can't
+      // go through updateResilient — but it uses the IDENTICAL /version conflict/-only bounded loop.)
+      // The returned verified row is intentionally not threaded forward: the non-gate update below
+      // re-reads the FRESH version itself, so it self-heals past whatever version recordVerification
+      // landed at (or a writer that slipped in after it).
+      for (let attempt = 0; ; attempt++) {
+        const fresh = await this.s.store.get(id)
+        if (!fresh) throw new Error(`session ${id} not found`)
+        if (fresh.status === 'cancelled') throw new RunCancelledError() // never resurrect a cancel
+        try {
+          await this.s.store.recordVerification(id, token, fresh.version)
+          break
+        } catch (e) {
+          if (attempt >= MAX_RESILIENT_WRITE_RETRY || !/version conflict/.test(e instanceof Error ? e.message : '')) throw e
+        }
+      }
       // ADDITIVE, OFF the gate path: produce the durable, third-party-verifiable Build
       // Passport. It is signed AFTER the token was already minted+persisted, over the
       // token's ALREADY-MINTED facts — so it can only ATTEST verification, never mint or
       // forge it. Folded into the SAME non-gate update patch (the gate-write allowlist is
       // unchanged); no-op when no signer is configured (default boot unchanged).
       const passportPatch = this.signPassportFor(token)
-      const out = await this.s.store.update(id, { status: 'awaiting_push_confirm', ...evidencePatch, ...passportPatch }, verified.version)
+      // A1: NON-GATE write (status + evidence + passport; all in SessionPatch, no gate column) —
+      // resilient. It chains off the just-persisted verified row; a concurrent chat turn between the
+      // recordVerification above and this status flip no longer kills the build. (updateResilient
+      // re-reads the fresh version, so it self-heals past `verified.version` if it moved.)
+      const out = await this.updateResilient(id, { status: 'awaiting_push_confirm', ...evidencePatch, ...passportPatch })
       this.emitGate(id, 'push_confirm', 'awaiting')
       return out
     }
@@ -442,7 +529,8 @@ export class Orchestrator {
     // alongside a RETRYABLE `verify_failed` status (NOT a silent reset to 'building'),
     // so a failed run's named failing scenarios survive on GET /sessions/:id and the
     // human can retry (re-runs REAL verification). The recovery signal drives the FE card.
-    const out = await this.s.store.update(id, { status: 'verify_failed', ...evidencePatch }, session.version)
+    // A1: NON-GATE write (status + evidence) — resilient.
+    const out = await this.updateResilient(id, { status: 'verify_failed', ...evidencePatch })
     this.narrate(id, '⚠️ Not verified — no real passing test was produced. Retry to re-run the tests.')
     this.emitRecovery(id, 'verify_failed', 'awaiting')
     return out
