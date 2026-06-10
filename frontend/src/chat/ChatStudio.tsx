@@ -6,7 +6,7 @@ import { specSeedFromMarkdown } from './buildSpec.js'
 import { actionErrorText } from './actionError.js'
 import { AkisChat } from './AkisChat.js'
 import { clearThread, saveThread, type ThreadNode } from './akisThread.js'
-import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
+import { loadRecentBuilds, recordRecentBuild, clearRecentBuilds, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
 import { NEW_CHAT_EVENT, consumeNewChatRequest } from './newChatSignal.js'
@@ -343,6 +343,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     }
     setSessionGone(false)
     setActiveSessionId(undefined); setActiveIdea(''); setActiveView(emptyView('')); setActionError(undefined); setStartingSpec(undefined); setBackendStatus(undefined)
+    // A fresh chat starts with an EMPTY Recent dropdown — the previous conversation's builds must not
+    // linger (owner 2026-06-10). Wipe BOTH the persisted recents and the in-memory list; builds started
+    // in the new conversation repopulate it via recordRecentBuild. The server-backed History page
+    // (/sessions/mine) is untouched — it stays the durable cross-conversation door.
+    clearRecentBuilds(); setRecent([])
     // Drop the persisted spine + remount AkisChat so it re-seeds a clean greeting (no run markers).
     clearThread(); setThreadKey(k => k + 1)
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
@@ -503,7 +508,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   //    writing THIS var per rAF (it only runs while open, so the drawer width tracks it via the open
   //    branch below; on release the render restores both committed values, no flash).
   const fullPreviewW = containerWidth ? `${Math.round(clampRatio(ratio, containerWidth) * containerWidth)}px` : '0px'
-  const previewW = previewOpen ? fullPreviewW : '0px'
+  // Reserve the push-split strip ONLY when the drawer is actually RENDERED — i.e. a real run exists
+  // (hasRun). The drawer's open/ratio persist in localStorage, so after a session with the drawer open
+  // a FRESH chat (activeSessionId undefined → no drawer mounted) would otherwise still pad the chat
+  // right by the full ratio for a drawer that isn't there — shifting the conversation left behind a
+  // large empty void (owner 2026-06-10). Gating on hasRun makes the no-run studio reflow full-width and
+  // center; the persisted ratio/open keep driving the split untouched for sessions WITH a run.
+  const previewW = hasRun && previewOpen ? fullPreviewW : '0px'
 
   // The MOVED rail content (verbatim props + `!sessionGone && isDone` guards). Now the drawer's region A.
   const cards = (
@@ -561,7 +572,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         // it to a clear elevated container — `bg-slate-900/60` + `border-white/12` + `backdrop-blur-md` + a
         // CONTAINED inset top-light over a drop shadow (no outward bleed) — so the "place you talk" reads as a
         // distinct foreground surface against the page and the rendered-app white that sits to its right.
-        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/12 bg-slate-900/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
+        // PADDING GATE: apply the push-split right-padding ONLY when a drawer is actually rendered for a
+        // run (hasRun) AND open — matching the `--preview-w` var's own hasRun gate above. A persisted
+        // open:true with no run leaves the chat at full width (no padding class, no zero-width ease firing).
+        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/12 bg-slate-900/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${hasRun && previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
       >
         {header}
         <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>

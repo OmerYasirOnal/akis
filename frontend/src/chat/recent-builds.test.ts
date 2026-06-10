@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { loadRecentBuilds, recordRecentBuild } from './recentBuilds.js'
+import { loadRecentBuilds, recordRecentBuild, clearRecentBuilds } from './recentBuilds.js'
 
 function memStore(): Storage {
   const m = new Map<string, string>()
@@ -38,5 +38,19 @@ describe('recentBuilds', () => {
     expect(loadRecentBuilds(s)).toEqual([])
     s.setItem('akis_recent_builds', 'not json')
     expect(loadRecentBuilds(s)).toEqual([])
+  })
+
+  it('clearRecentBuilds wipes the persisted list (a fresh chat starts empty)', () => {
+    const s = memStore()
+    recordRecentBuild({ id: 'a', idea: 'A', ts: 1 }, s)
+    recordRecentBuild({ id: 'b', idea: 'B', ts: 2 }, s)
+    expect(loadRecentBuilds(s)).toHaveLength(2)
+    clearRecentBuilds(s)
+    expect(loadRecentBuilds(s)).toEqual([])
+  })
+
+  it('clearRecentBuilds is a no-op when storage throws (privacy mode)', () => {
+    const blocked = { removeItem: () => { throw new Error('blocked') } } as unknown as Pick<Storage, 'removeItem'>
+    expect(() => clearRecentBuilds(blocked)).not.toThrow()
   })
 })

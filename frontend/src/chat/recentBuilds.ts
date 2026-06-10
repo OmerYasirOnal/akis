@@ -42,3 +42,11 @@ export function recordRecentBuild(entry: RecentBuild, store: Pick<Storage, 'getI
   try { store.setItem(KEY, JSON.stringify(next)) } catch { /* storage full/blocked — non-fatal */ }
   return next
 }
+
+/** Wipe the persisted recents so a FRESH chat (Stüdyo-nav reset / New build) starts with an empty
+ *  Recent dropdown — the previous conversation's builds must not linger. Builds started in the new
+ *  conversation repopulate it via recordRecentBuild. The server-backed History page (/sessions/mine)
+ *  is untouched — that stays the durable cross-conversation door. Blocked storage is non-fatal. */
+export function clearRecentBuilds(store: Pick<Storage, 'removeItem'> = localStorage): void {
+  try { store.removeItem(KEY) } catch { /* storage blocked — non-fatal */ }
+}
