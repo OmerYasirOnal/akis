@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS sessions (
   publish       jsonb,
   base          jsonb,
   external_writes jsonb,
+  delivery      jsonb,
   version       integer NOT NULL DEFAULT 0,
   created_at    timestamptz NOT NULL DEFAULT now()
 )`
@@ -152,6 +153,11 @@ export const ADD_CHAT = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS chat json
  *  proposed Jira/Confluence MCP writes for a session. Without it the field is silently dropped on
  *  Postgres. */
 export const ADD_EXTERNAL_WRITES = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS external_writes jsonb`
+
+/** A2.1 — idempotent migration: add the additive, NON-GATE `delivery` jsonb column (nullable) — the
+ *  per-project GitHub delivery destination ({owner,repo}) PINNED at awaiting_push_confirm. Without it
+ *  the pinned target is silently dropped on Postgres and a retry would re-derive (possibly a new repo). */
+export const ADD_DELIVERY = `ALTER TABLE sessions ADD COLUMN IF NOT EXISTS delivery jsonb`
 
 /** Newest-first per-owner history listing (listByOwner) is the hot read path. */
 export const CREATE_SESSIONS_OWNER_INDEX = `CREATE INDEX IF NOT EXISTS sessions_owner_id_idx ON sessions (owner_id, created_at DESC)`
@@ -261,6 +267,7 @@ const MIGRATIONS: readonly string[] = [
   ADD_CHAT,
   ADD_BASE,
   ADD_EXTERNAL_WRITES,
+  ADD_DELIVERY,
   CREATE_SESSIONS_OWNER_INDEX,
   CREATE_WORKFLOWS_TABLE,
   CREATE_VECTOR_CHUNKS_TABLE,

@@ -70,6 +70,17 @@ describe('runMigrations', () => {
     expect(texts.join('\n')).toMatch(/CREATE TABLE IF NOT EXISTS sessions[\s\S]*external_writes\s+jsonb/)
   })
 
+  it('runs the idempotent delivery ALTER for pre-existing sessions tables (A2.1 additive, NON-GATE field)', async () => {
+    // `delivery` ({owner,repo}) is the per-project GitHub destination PINNED at awaiting_push_confirm.
+    // An upgraded sessions table must get it via ADD COLUMN IF NOT EXISTS, else the pinned target is
+    // silently dropped on Postgres and a retry/change-request would re-derive (possibly a NEW repo).
+    const { db, texts } = recordingDb()
+    await runMigrations(db)
+    expect(texts.some(t => /ALTER TABLE sessions ADD COLUMN IF NOT EXISTS delivery jsonb/.test(t))).toBe(true)
+    // the fresh-table DDL must also carry the column so new DBs match upgraded ones.
+    expect(texts.join('\n')).toMatch(/CREATE TABLE IF NOT EXISTS sessions[\s\S]*delivery\s+jsonb/)
+  })
+
   it('adds avatar_url / email_verified / status to users (fresh DDL + idempotent ALTER, so upgraded DBs match fresh ones)', async () => {
     // The OAuth login projection needs avatar_url; OAuth sign-ins are created verified+active.
     // A pre-existing users table must get these via ADD COLUMN IF NOT EXISTS or the

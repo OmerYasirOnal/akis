@@ -24,8 +24,8 @@ export class PgSessionStore implements SessionStore {
     // `base` (Phase B.5 edit-mode seed) is written ONLY here — it is set at session creation
     // by the controlled API path and is NOT in PATCH_COLUMNS, so it is immutable thereafter.
     await this.db.query(
-      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, external_writes, version)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)`,
+      `INSERT INTO sessions (id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, external_writes, delivery, version)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)`,
       [
         s.id, s.status, s.idea, s.ownerId ?? null,
         toJson(s.spec), toJson(s.approval), toJson(s.code), toJson(s.verifyToken), toJson(s.testEvidence), toJson(s.passport),
@@ -33,6 +33,9 @@ export class PgSessionStore implements SessionStore {
         toJson(s.chat),
         toJson(s.base),
         toJson(s.externalWrites),
+        // A2.1 — usually null at create (delivery is PINNED later, at awaiting_push_confirm), but
+        // written here too so a directly-created session with a pinned destination round-trips.
+        toJson(s.delivery),
         s.version,
       ],
     )
@@ -72,10 +75,14 @@ export class PgSessionStore implements SessionStore {
     // ADDITIVE, NON-GATE: proposed Jira/Confluence MCP writes (`external_writes` jsonb). On the
     // normal patch path — proposal content + lifecycle only, no token/gate column.
     ['externalWrites', 'external_writes'],
+    // A2.1 — ADDITIVE, NON-GATE per-project delivery destination (`delivery` jsonb: {owner,repo}).
+    // On the normal patch path so the orchestrator can PIN it at awaiting_push_confirm — it names
+    // WHERE the already-gated push delivers, never whether/how, and carries NO token/gate column.
+    ['delivery', 'delivery'],
   ]
 
   /** Columns whose value is a nested object stored as jsonb (must be passed through toJson). */
-  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport', 'publish', 'chat', 'external_writes'])
+  private static readonly JSON_COLUMNS = new Set(['spec', 'code', 'test_evidence', 'passport', 'publish', 'chat', 'external_writes', 'delivery'])
 
   async update(id: string, patch: SessionPatch, expectedVersion: number): Promise<SessionState> {
     const sets: string[] = []
@@ -174,7 +181,7 @@ export function toJson(v: unknown): unknown {
  *  already parsed by `pg` into JS objects). */
 interface SessionRow {
   id: unknown; status: unknown; idea: unknown; owner_id: unknown
-  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; publish: unknown; chat: unknown; base: unknown; external_writes: unknown; version: unknown
+  spec: unknown; approval: unknown; code: unknown; verify_token: unknown; test_evidence: unknown; passport: unknown; publish: unknown; chat: unknown; base: unknown; external_writes: unknown; delivery: unknown; version: unknown
 }
 
 /**
@@ -216,6 +223,10 @@ function toSession(raw: Record<string, unknown>): SessionState {
     // ADDITIVE, NON-GATE: proposed external writes round-trip as plain jsonb (content + lifecycle
     // only, no token), so the human-confirm flow survives a Pg restart.
     ...(r.external_writes != null ? { externalWrites: r.external_writes as NonNullable<SessionState['externalWrites']> } : {}),
+    // A2.1 — ADDITIVE, NON-GATE per-project delivery destination round-trips as plain jsonb
+    // ({owner,repo} — no token, no capability), so the pinned target survives a Pg restart and
+    // a retry still reuses the SAME repo.
+    ...(r.delivery != null ? { delivery: r.delivery as NonNullable<SessionState['delivery']> } : {}),
     ...(r.approval != null ? { approval: r.approval as unknown as ApprovalToken } : {}),
     ...(r.verify_token != null ? { verifyToken: r.verify_token as unknown as VerifyToken } : {}),
   }
