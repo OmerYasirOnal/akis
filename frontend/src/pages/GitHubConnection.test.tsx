@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { ApiClient, type GitHubConnectionStatus } from '../api/client.js'
 import { GitHubConnection } from './GitHubConnection.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
+import { STRINGS } from '../i18n/catalog.js'
 
 /** A fake api whose githubStatus/disconnect are stubbable; the connect link uses the real
  *  ApiClient.githubConnectUrl (a pure string builder), so we read it off the live instance. */
@@ -65,6 +66,38 @@ describe('GitHubConnection', () => {
     expect(link.getAttribute('href')).toBeNull()
   })
 
+  it('a malformed "owner/name" disables connect AND shows the inline validation hint (no doomed OAuth round-trip)', async () => {
+    const { api } = fakeApi({ connected: false, configured: true })
+    wrap(api)
+    const input = await screen.findByLabelText(/Target repository/i)
+    await userEvent.type(input, 'no-slash') // missing the slash → invalid shape
+    const link = screen.getByText(/Connect GitHub/i).closest('a') as HTMLAnchorElement
+    expect(link.getAttribute('aria-disabled')).toBe('true')
+    expect(link.getAttribute('href')).toBeNull()
+    expect(screen.getByText(/valid .owner\/name./i)).toBeInTheDocument()
+  })
+
+  it('a leading-hyphen owner (option-injection shape) is rejected client-side too', async () => {
+    const { api } = fakeApi({ connected: false, configured: true })
+    wrap(api)
+    const input = await screen.findByLabelText(/Target repository/i)
+    await userEvent.type(input, '-evil/app')
+    const link = screen.getByText(/Connect GitHub/i).closest('a') as HTMLAnchorElement
+    expect(link.getAttribute('aria-disabled')).toBe('true')
+  })
+
+  it('a valid "owner/name" clears the hint and enables connect (repo may be created if missing)', async () => {
+    const { api } = fakeApi({ connected: false, configured: true })
+    wrap(api)
+    const input = await screen.findByLabelText(/Target repository/i)
+    await userEvent.type(input, 'ada/new-app')
+    const link = screen.getByText(/Connect GitHub/i).closest('a') as HTMLAnchorElement
+    expect(link.getAttribute('href')).toBe('/auth/github/connect?repo=ada%2Fnew-app')
+    expect(screen.queryByText(/valid .owner\/name./i)).toBeNull()
+    // The hint discloses the create-if-missing behavior so the user knows a not-yet-existing repo works.
+    expect(screen.getByText(/CREATES the repo/i)).toBeInTheDocument()
+  })
+
   it('connected renders username + repo + a Disconnect button', async () => {
     const { api } = fakeApi({ connected: true, configured: true, username: 'ada', repo: 'ada/app', scopes: ['repo'], connectedAt: new Date().toISOString() })
     wrap(api)
@@ -104,5 +137,12 @@ describe('GitHubConnection', () => {
     const { api } = fakeApi({ connected: false, configured: true })
     wrap(api)
     expect(await screen.findByText(/connection failed/i)).toBeInTheDocument()
+  })
+
+  it('settings.github.* keys have full EN↔TR parity (guards the new repoInvalid key)', () => {
+    const keys = (loc: 'en' | 'tr'): string[] => Object.keys(STRINGS[loc]).filter(k => k.startsWith('settings.github.')).sort()
+    expect(keys('en')).toEqual(keys('tr'))
+    expect(STRINGS.en['settings.github.repoInvalid']).toBeTruthy()
+    expect(STRINGS.tr['settings.github.repoInvalid']).toBeTruthy()
   })
 })
