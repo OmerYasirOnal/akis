@@ -422,7 +422,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       <AgentRoster view={activeView} />
       <div className="flex shrink-0 items-center gap-2">
         <HistoryMenu builds={recent} onOpen={openSession} />
-        {activeSessionId && <button onClick={newChat} className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 hover:text-slate-200">{t('chat.new')}</button>}
+        {/* PROMINENT "new build" (owner 2026-06-10): this is the ONLY door out of an active chat into a
+            fresh one (the Stüdyo-nav reset was reverted — it destroyed active chats), so it must read as
+            a primary action, not a ghost link: teal accent + semibold, same accessible name. */}
+        {activeSessionId && <button onClick={newChat} className="shrink-0 rounded-lg border border-teal-400/40 bg-teal-400/10 px-3 py-1 text-xs font-semibold text-teal-200 transition-colors hover:bg-teal-400/20 hover:text-teal-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60">{t('chat.new')}</button>}
       </div>
     </div>
   )
@@ -487,7 +490,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   //    writing THIS var per rAF (it only runs while open, so the drawer width tracks it via the open
   //    branch below; on release the render restores both committed values, no flash).
   const fullPreviewW = containerWidth ? `${Math.round(clampRatio(ratio, containerWidth) * containerWidth)}px` : '0px'
-  const previewW = previewOpen ? fullPreviewW : '0px'
+  // Reserve the push-split strip ONLY when the drawer is actually RENDERED — i.e. a real run exists
+  // (hasRun). The drawer's open/ratio persist in localStorage, so after a session with the drawer open
+  // a FRESH chat (activeSessionId undefined → no drawer mounted) would otherwise still pad the chat
+  // right by the full ratio for a drawer that isn't there — shifting the conversation left behind a
+  // large empty void (owner 2026-06-10). Gating on hasRun makes the no-run studio reflow full-width and
+  // center; the persisted ratio/open keep driving the split untouched for sessions WITH a run.
+  const previewW = hasRun && previewOpen ? fullPreviewW : '0px'
 
   // The MOVED rail content (verbatim props + `!sessionGone && isDone` guards). Now the drawer's region A.
   const cards = (
@@ -545,7 +554,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
         // it to a clear elevated container — `bg-slate-900/60` + `border-white/12` + `backdrop-blur-md` + a
         // CONTAINED inset top-light over a drop shadow (no outward bleed) — so the "place you talk" reads as a
         // distinct foreground surface against the page and the rendered-app white that sits to its right.
-        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/12 bg-slate-900/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
+        // PADDING GATE: apply the push-split right-padding ONLY when a drawer is actually rendered for a
+        // run (hasRun) AND open — matching the `--preview-w` var's own hasRun gate above. A persisted
+        // open:true with no run leaves the chat at full width (no padding class, no zero-width ease firing).
+        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/12 bg-slate-900/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${hasRun && previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
       >
         {header}
         <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>

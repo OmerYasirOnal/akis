@@ -245,7 +245,7 @@ export const STRINGS = {
     // ── Build history (studio redesign) ──
     'history.title': 'Build history',
     'history.sub': 'Every app you’ve built with AKIS — open one to revisit its run and preview.',
-    'history.button': 'Recent',
+    'history.button': 'Recent projects',
     'history.empty': 'No builds yet. Describe an app in the Studio to get started.',
     'history.loading': 'Loading your builds…',
     'history.openStudio': 'Open in Studio',
@@ -1042,7 +1042,7 @@ export const STRINGS = {
     // ── Geliştirme geçmişi (stüdyo yeniden tasarımı) ──
     'history.title': 'Geliştirme geçmişi',
     'history.sub': 'AKIS ile inşa ettiğin her uygulama — çalışmasını ve önizlemesini görmek için birini aç.',
-    'history.button': 'Son derlemeler',
+    'history.button': 'Son projeler',
     'history.empty': 'Henüz geliştirme yok. Başlamak için Stüdyo’da bir uygulama tarif et.',
     'history.loading': 'Geliştirmelerin yükleniyor…',
     'history.openStudio': 'Stüdyoda aç',
