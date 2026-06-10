@@ -124,6 +124,16 @@ describe('RealGitHubAdapter (offline, injected fetch — GitHub REST API)', () =
     expect(calls.some(c => c.method === 'POST' && /\/user\/repos$/.test(c.url))).toBe(false)
   })
 
+  it('createRepo sends Bearer auth on the create POST and the /user probe, and never leaks the token in the request body', async () => {
+    const { fetch, calls } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    await a.createRepo('sess-1')
+    for (const c of calls) expect(c.headers['Authorization']).toBe(`Bearer ${TOKEN}`)
+    // The token rides ONLY in the Authorization header, never the JSON body of the create POST.
+    const create = calls.find(c => c.method === 'POST' && /\/repos$/.test(c.url))!
+    expect(JSON.stringify(create.body)).not.toContain(TOKEN)
+  })
+
   it('createRepo then pushFiles works end-to-end against a freshly-created repo', async () => {
     const { fetch } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
     const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
