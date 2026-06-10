@@ -193,11 +193,18 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     // not regenerated. Owner-scoped exactly like every other session read (404 for non-owner,
     // so a foreign session's existence — let alone its code — is never confirmed).
     let base: { files: { filePath: string; content: string }[]; fromSession: string } | undefined
+    // SAME PROJECT → SAME REPO (A2.1 MED-1): the edit inherits the base app's pinned per-project
+    // delivery, so its PR lands in the SAME repo. Server-read from the owner-scoped prior session —
+    // never from the request body (a client cannot name a destination).
+    let baseDelivery: { owner: string; repo: string } | undefined
     const baseSessionId = req.body?.baseSessionId
     if (typeof baseSessionId === 'string' && baseSessionId) {
       const prior = await accessibleSession(req, baseSessionId)
       if (!prior) return notFound(reply, baseSessionId)
-      if (prior.code?.files.length) base = { files: prior.code.files, fromSession: prior.id }
+      if (prior.code?.files.length) {
+        base = { files: prior.code.files, fromSession: prior.id }
+        baseDelivery = prior.delivery
+      }
     }
     try {
       const ownerId = await deps.userIdOf?.(req)
@@ -213,7 +220,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
         const decision = await checkQuota(deps.usage, quotaPolicy, ownerId)
         if (!decision.allowed) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt })
       }
-      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}) })
+      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}), ...(baseDelivery ? { delivery: baseDelivery } : {}) })
       if (orch !== orchestrator) bindOrchestrator(s.id, orch)
       return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }

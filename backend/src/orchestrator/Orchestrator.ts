@@ -34,6 +34,12 @@ export interface StartInput {
   /** EDIT MODE (Phase B.5): seed this build with a prior session's app — Proto edits it
    *  (merge semantics) instead of regenerating from scratch. Owner-checked at the API. */
   base?: { files: { filePath: string; content: string }[]; fromSession: string }
+  /** EDIT MODE companion (A2.1 review MED-1): the BASE app's pinned per-project repo. A
+   *  change-request is the SAME project, so its PR must land in the SAME repo (owner model:
+   *  project = repo) — without this, the edit would derive a fresh collision-suffixed repo.
+   *  Data only (owner/name strings); no gate capability travels with it. resolveDelivery
+   *  treats it as already-pinned, so no re-derivation/probe happens for the edit. */
+  delivery?: { owner: string; repo: string }
 }
 
 export class AlreadyPushedError extends Error {
@@ -195,6 +201,9 @@ export class Orchestrator {
     let session = initialSession(id, input.idea, input.ownerId)
     // EDIT MODE seed (data only — no gate capability travels with it).
     if (input.base?.files.length) session = { ...session, base: input.base }
+    // SAME PROJECT → SAME REPO (A2.1 MED-1): an edit inherits the base app's pinned delivery
+    // destination, so its PR lands in the base project's repo instead of a fresh `-2` derivation.
+    if (input.delivery) session = { ...session, delivery: input.delivery }
     await this.s.store.create(session)
     // F1-AC17: subscribe the ingestion sink AS the session starts, before any event
     // is emitted, so zero-touch ingestion misses nothing (RAG flag on → sink present).

@@ -135,3 +135,31 @@ describe('A2.1 — confirmPush pushes to the PINNED per-project repo via the use
     expect(done.delivery).toEqual({ owner: 'ada', repo: 'todo-app' })
   })
 })
+
+describe('A2.1 MED-1 — an EDIT (change request via base) inherits the base project\'s repo', () => {
+  it('start({base, delivery}) pins the base app\'s destination — verify-transition does NOT re-derive', async () => {
+    const store = new MockSessionStore()
+    const services = buildServices({ store, skillsDir, mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    let calls = 0
+    services.deliveryFor = async () => { calls++; return { owner: 'ada', repo: 'todo-app-2' } } // would-be FRESH derivation
+    const orch = new Orchestrator(services)
+
+    // The edit session arrives with the BASE app's pinned delivery (the route reads it server-side
+    // from the owner-scoped prior session — never from the client body).
+    const s = await orch.start({
+      idea: 'add dark mode to my todo app',
+      ownerId: 'owner-1',
+      base: { files: [{ filePath: 'index.html', content: '<html></html>' }], fromSession: 'prior-1' },
+      delivery: { owner: 'ada', repo: 'todo-app' },
+    })
+    expect((await store.get(s.id))?.delivery).toEqual({ owner: 'ada', repo: 'todo-app' }) // pinned from birth
+
+    await orch.approve(s.id)
+    const after = await orch.runToVerification(s.id)
+    expect(after.status).toBe('awaiting_push_confirm')
+    // SAME PROJECT → SAME REPO: the pin survived verbatim and deliveryFor was never consulted,
+    // so the edit's PR lands in the base project's repo — not a fresh collision-suffixed one.
+    expect(after.delivery).toEqual({ owner: 'ada', repo: 'todo-app' })
+    expect(calls).toBe(0)
+  })
+})

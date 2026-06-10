@@ -510,9 +510,16 @@ async function resolveUserDelivery(
   if (!owner) return undefined
   const base = deriveRepoName(title, idea)
   const apiBase = env.AKIS_GITHUB_PUSH_API_BASE?.trim() || undefined
-  // Collision walk (bounded, fail-open) is the pure resolveAvailableRepoName; the probe is the real
-  // GET against the user's account using THEIR token (token-free errors → undefined → take the name).
-  const repo = await resolveAvailableRepoName(base, candidate => githubRepoExists(owner, candidate, token, undefined, apiBase))
+  // Collision walk (bounded, biased-away-from-unknown, fail-open as last resort) is the pure
+  // resolveAvailableRepoName; the probe is the real GET against the user's account with THEIR token.
+  const repo = await resolveAvailableRepoName(
+    base,
+    candidate => githubRepoExists(owner, candidate, token, undefined, apiBase),
+    // FAIL-OPEN DISCLOSURE (review F1): no definitely-free name was found and an UNKNOWN-verdict
+    // candidate was taken. Token-free, server-log only — worst case the push lands as a reviewable
+    // session branch + PR in the user's OWN same-named repo (non-destructive).
+    taken => console.warn(`github delivery: repo-existence probe inconclusive — using '${owner}/${taken}' without confirming availability`),
+  )
   return { owner, repo }
 }
 

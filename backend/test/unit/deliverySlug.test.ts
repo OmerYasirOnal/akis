@@ -101,15 +101,42 @@ describe('resolveAvailableRepoName (collision walk, fail-open)', () => {
     expect(repo).toBe('app-4')
   })
 
-  it('FAILS OPEN on an UNKNOWN probe (undefined) — takes the candidate, never blocks delivery', async () => {
+  it('an UNKNOWN probe (undefined) does NOT take the candidate outright — a later definite-free wins (review F1)', async () => {
+    // The bare base is unknown (flaky probe) but -2 is definitely free: bias AWAY from the
+    // possible collision — taking the bare base could land a PR in a pre-existing same-named repo.
     const probed: string[] = []
-    const repo = await resolveAvailableRepoName('todo-app', async name => { probed.push(name); return undefined })
-    expect(repo).toBe('todo-app')
-    expect(probed).toEqual(['todo-app']) // one probe, then take it (don't loop on flaky network)
+    let failedOpen: string | undefined
+    const repo = await resolveAvailableRepoName(
+      'todo-app',
+      async name => { probed.push(name); return name === 'todo-app' ? undefined : false },
+      taken => { failedOpen = taken },
+    )
+    expect(repo).toBe('todo-app-2')
+    expect(probed).toEqual(['todo-app', 'todo-app-2'])
+    expect(failedOpen).toBeUndefined() // a definite-free name was found — no fail-open happened
   })
 
-  it('is bounded — every candidate existing returns the last suffixed name (no infinite loop)', async () => {
-    const repo = await resolveAvailableRepoName('app', async () => true) // everything "exists"
+  it('FAILS OPEN (disclosed) only when NO candidate is definitely free — takes the LAST unknown', async () => {
+    // Total probe blackout: every verdict is unknown. Delivery must not block; the walk takes the
+    // most-suffixed unknown (least likely to collide) and tells onFailOpen so the caller logs it.
+    let failedOpen: string | undefined
+    const repo = await resolveAvailableRepoName('todo-app', async () => undefined, taken => { failedOpen = taken })
+    expect(repo).toBe(suffixedRepoName('todo-app', MAX_COLLISION_PROBES - 1)) // "todo-app-5"
+    expect(failedOpen).toBe(repo) // disclosed
+  })
+
+  it('mixed verdicts: exists → unknown → free takes the free name, no fail-open', async () => {
+    const verdicts: Record<string, boolean | undefined> = { app: true, 'app-2': undefined, 'app-3': false }
+    let failedOpen: string | undefined
+    const repo = await resolveAvailableRepoName('app', async name => verdicts[name], taken => { failedOpen = taken })
+    expect(repo).toBe('app-3')
+    expect(failedOpen).toBeUndefined()
+  })
+
+  it('is bounded — every candidate existing returns the last suffixed name (no infinite loop, no fail-open)', async () => {
+    let failedOpen: string | undefined
+    const repo = await resolveAvailableRepoName('app', async () => true, taken => { failedOpen = taken }) // everything "exists"
     expect(repo).toBe(suffixedRepoName('app', MAX_COLLISION_PROBES - 1)) // "app-5"
+    expect(failedOpen).toBeUndefined() // definite-exists is not a fail-open
   })
 })

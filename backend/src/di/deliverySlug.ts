@@ -75,22 +75,29 @@ export function suffixedRepoName(base: string, attempt: number): string {
 export const MAX_COLLISION_PROBES = 5
 
 /** The collision probe verdict: true (repo EXISTS), false (free), or undefined (UNKNOWN — a flaky
- *  probe / network error / 401-403-5xx). The resolver treats `undefined` as "fail open: take it". */
+ *  probe / network error / 401-403-5xx). */
 export type RepoExistsProbe = (repo: string) => Promise<boolean | undefined>
 
 /**
  * A2.1 — pick a collision-free repo name from `base` by probing candidates: `base`, `base-2`, … up
- * to MAX_COLLISION_PROBES. A candidate that does NOT exist (false) — or whose existence is UNKNOWN
- * (undefined, a flaky/forbidden probe → fail open so a brand-new project still gets a destination) —
- * is taken immediately. Only a definite `true` (the repo already exists) advances to the next suffix,
- * so a brand-new project never pushes into an UNRELATED existing repo. If EVERY probed candidate
- * exists, the last suffixed name is returned (createRepo still GET-probes it idempotently). PURE w.r.t.
- * the injected probe, so the collision walk is unit-testable without any network.
+ * to MAX_COLLISION_PROBES. A candidate that definitely does NOT exist (false) is taken immediately.
+ * An UNKNOWN verdict (undefined — flaky/forbidden probe) does NOT take the candidate outright
+ * (review F1: taking the bare base on a flaky probe could land a PR in the user's pre-existing
+ * same-named repo); the walk keeps looking for a definite-free name and only FAILS OPEN — taking
+ * the LAST unknown candidate (most-suffixed = least likely to collide) and telling `onFailOpen` so
+ * the caller can disclose it (token-free log) — when no candidate is definitely free. Delivery is
+ * never blocked on a flaky probe. If EVERY candidate definitely exists, the last suffixed name is
+ * returned (createRepo still GET-probes it idempotently). PURE w.r.t. the injected probe.
  */
-export async function resolveAvailableRepoName(base: string, probe: RepoExistsProbe): Promise<string> {
+export async function resolveAvailableRepoName(base: string, probe: RepoExistsProbe, onFailOpen?: (taken: string) => void): Promise<string> {
+  const unknowns: string[] = []
   for (let attempt = 0; attempt < MAX_COLLISION_PROBES; attempt++) {
     const candidate = suffixedRepoName(base, attempt)
-    if ((await probe(candidate)) !== true) return candidate // false (free) or undefined (unknown) → take it
+    const exists = await probe(candidate)
+    if (exists === false) return candidate // definitely free — take it
+    if (exists === undefined) unknowns.push(candidate) // unknown — bias AWAY; keep walking for a definite-free
   }
+  const lastUnknown = unknowns[unknowns.length - 1]
+  if (lastUnknown !== undefined) { onFailOpen?.(lastUnknown); return lastUnknown } // fail open, disclosed
   return suffixedRepoName(base, MAX_COLLISION_PROBES - 1) // every candidate existed → last suffixed name
 }

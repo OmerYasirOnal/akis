@@ -139,6 +139,36 @@ describe('GET /auth/github/callback', () => {
     expect(res.headers.location).toBe(`${BASE}/settings?github=connected`)
     expect(connections.getToken('u1')).toBe(ACCESS_TOKEN)
   })
+
+  it("REJECTS a well-signed NON-delivery state (MCP-flow 'r' slot) — no token exchange (gate-keeper F2)", async () => {
+    // An MCP-connect state carries its provider id in the second slot. Even though it is
+    // well-signed for the SAME user, this callback must not redeem it: assert the 'connect'
+    // sentinel BEFORE any exchange, symmetric with the MCP callback's own st.repo check.
+    let exchanged = 0
+    const http: HttpFetch = async (url) => { exchanged++; return fakeHttp(url) }
+    const { f, connections } = app({ userId: 'u1', http })
+    const mcpState = signConnectState('u1', 'atlassian', SECRET) // wrong flow, valid signature
+    const res = await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${mcpState}` })
+    expect(res.headers.location).toBe(`${BASE}/settings?github=error`)
+    expect(exchanged).toBe(0) // rejected BEFORE the token exchange
+    expect(connections.getToken('u1')).toBeUndefined()
+  })
+
+  it('FAILS the connect honestly when GET /user yields no login — nothing stored (login is the namespace)', async () => {
+    // A2.1 made the login LOAD-BEARING (it is the personal namespace per-project repos are created
+    // under): persisting a login-less row would present as "Connected" yet refuse every push.
+    const http: HttpFetch = async (url) => {
+      const j = (b: unknown, status = 200) => ({ ok: status < 300, status, json: async () => b, text: async () => JSON.stringify(b) })
+      if (url.includes('login/oauth/access_token')) return j({ access_token: ACCESS_TOKEN, scope: 'repo' })
+      if (url.endsWith('/user')) return j({ message: 'rate limited' }, 403) // soft-failed /user → '' login
+      throw new Error('unexpected ' + url)
+    }
+    const { f, connections } = app({ userId: 'u1', http })
+    const state = signConnectState('u1', 'connect', SECRET)
+    const res = await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${state}` })
+    expect(res.headers.location).toBe(`${BASE}/settings?github=error`)
+    expect(connections.getToken('u1')).toBeUndefined() // no half-connected dangling row
+  })
 })
 
 describe('GET /auth/github/status and DELETE /auth/github', () => {

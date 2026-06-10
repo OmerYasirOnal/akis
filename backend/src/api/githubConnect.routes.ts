@@ -71,6 +71,12 @@ export function registerGitHubConnectRoutes(app: FastifyInstance, deps: GitHubCo
     const { code, state } = req.query
     const verified = state ? verifyConnectState(state, deps.secret) : undefined
     if (!code || !verified) return toSettings(reply, base, 'error')
+    // DEFENSE-IN-DEPTH (gate-keeper F2): this callback redeems ONLY states minted by the DELIVERY
+    // flow — the second signed slot must be the 'connect' sentinel. An MCP-connect state (which
+    // carries its provider id in that slot) is rejected BEFORE any token exchange, symmetric with
+    // the MCP callback's own `st.repo !== provider` check. (GitHub's code↔redirect_uri binding
+    // already prevents real cross-flow redemption; this closes the class structurally.)
+    if (verified.repo !== 'connect') return toSettings(reply, base, 'error')
 
     // DEFENSE-IN-DEPTH (Lax only): if a session cookie rode along, it MUST match the signed
     // state's userId. Under SameSite=Strict the cookie is dropped (cookieUser === undefined),
@@ -84,6 +90,11 @@ export function registerGitHubConnectRoutes(app: FastifyInstance, deps: GitHubCo
     try {
       const { token, scopes } = await exchangeCode('github', { code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri: `${base}/auth/github/callback` }, http)
       const username = await fetchGitHubLogin(token, http)
+      // The login is LOAD-BEARING in A2.1 — it is the personal namespace per-project repos are
+      // created under. A soft-failed GET /user ('' login) would persist a "Connected" row that can
+      // never derive a destination (every push refuses, confusingly). Fail the connect honestly:
+      // no row is stored, the user retries, nothing dangles half-connected.
+      if (!username) return toSettings(reply, base, 'error')
       // A2.1 — TOKEN-ONLY connect: persist the token + the authed GitHub LOGIN (`username`) only; NO
       // repo. The login is the user's PERSONAL namespace that per-project repos are created under, so
       // destination derivation never has to re-hit /user. `verified.repo` (the `'connect'` sentinel)
