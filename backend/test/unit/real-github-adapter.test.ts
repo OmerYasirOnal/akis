@@ -173,6 +173,35 @@ describe('RealGitHubAdapter (offline, injected fetch — GitHub REST API)', () =
     expect(calls.some(c => c.method === 'PUT' && /\/contents\//.test(c.url))).toBe(true)
   })
 
+  it('pushFiles tolerates the auto_init seed race (seed PUT 422 "already exists" = repo not empty after all)', async () => {
+    // createRepo's auto_init landed but the ref read briefly lagged (GitHub eventual consistency):
+    // refShaOrNull saw 404, the redundant seed PUT hits 422 because README.md already exists. The
+    // base commit DOES exist, so pushFiles must proceed — not park the run as push_failed.
+    let refReads = 0
+    const fetch: PushFetch = async (url, init) => {
+      const method = init?.method ?? 'GET'
+      const body = init?.body ? JSON.parse(init.body) : undefined
+      if (method === 'GET' && /\/repos\/[^/]+\/[^/]+$/.test(url)) return ok({ default_branch: 'main' })
+      if (method === 'GET' && /\/git\/ref\/heads\/main$/.test(url)) {
+        // First read lags (404) even though auto_init already committed; later reads see the ref.
+        refReads++
+        return refReads === 1 ? ok({ message: 'Not Found' }, 404) : ok({ object: { sha: 'baseCommitSha' } })
+      }
+      if (method === 'PUT' && /\/contents\//.test(url)) return ok({ message: 'sha wasn’t supplied' }, 422)
+      if (method === 'GET' && /\/git\/ref\/heads\/akis-/.test(url)) return ok({ message: 'Not Found' }, 404)
+      if (method === 'GET' && /\/git\/commits\/baseCommitSha$/.test(url)) return ok({ tree: { sha: 'baseTreeSha' } })
+      if (method === 'POST' && /\/git\/blobs$/.test(url)) return ok({ sha: 'blob' }, 201)
+      if (method === 'POST' && /\/git\/trees$/.test(url)) return ok({ sha: 'newTreeSha' }, 201)
+      if (method === 'POST' && /\/git\/commits$/.test(url)) return ok({ sha: 'newCommitSha' }, 201)
+      if (method === 'POST' && /\/git\/refs$/.test(url)) return ok({ object: { sha: body?.sha } }, 201)
+      if (method === 'GET' && /\/pulls\?/.test(url)) return ok([])
+      if (method === 'POST' && /\/pulls$/.test(url)) return ok({ number: 1 }, 201)
+      return ok({ message: `unmatched ${method} ${url}` }, 500)
+    }
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'lagging', token: TOKEN, fetch })
+    await expect(a.pushFiles('sess-1', FILES)).resolves.toBeUndefined()
+  })
+
   it('pushFiles creates a branch, commits the files, and opens a PR (correct REST calls)', async () => {
     const { fetch, calls } = fakeGitHub()
     const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })

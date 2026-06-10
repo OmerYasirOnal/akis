@@ -107,11 +107,15 @@ describe('confirmPush — per-owner adapter precedence', () => {
     const orch = new Orchestrator(services)
 
     const id = await verifiedSession(orch, 'owner-1')
+    const errorsBefore = services.bus.recent(id).filter(e => e.kind === 'error').length
     await expect(orch.confirmPush(id)).rejects.toBeInstanceOf(NoGitHubDestinationError)
     // The mock was NOT silently pushed to (no fake github.com/mock/<id> success).
     expect(mock.read(id)).toEqual([])
     // Retryable, not a dead end: the session parks push_failed so a later (post-connect) confirm works.
     expect((await store.get(id))?.status).toBe('push_failed')
+    // And NO raw-English error bubble in the transcript: the AWAITED 409 already carries the
+    // localized banner+CTA; an `error` bus event here would render verbatim, untranslated.
+    expect(services.bus.recent(id).filter(e => e.kind === 'error').length).toBe(errorsBefore)
   })
 
   it('STILL allows the mock for an ANONYMOUS session (no ownerId) — demo/keyless path unchanged', async () => {

@@ -661,7 +661,11 @@ export class Orchestrator {
     const realMode = !!cur.ownerId && !!this.s.githubFor
     if (realMode && gh instanceof MockGitHubAdapter) {
       await this.s.store.update(id, { status: 'push_failed' }, cur.version)
-      this.s.bus.emit({ kind: 'error', message: 'push failed: no GitHub delivery destination — connect a GitHub account and target repo in Settings', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      // NO raw-English `error` bus emit here (reviewer MED): confirmPush is an AWAITED route, so
+      // the thrown 409 already reaches the clicking user as the LOCALIZED banner + Settings CTA
+      // (actionErrorText maps NoGitHubDestinationError). An error event would render its message
+      // verbatim as an untranslated transcript bubble — the exact raw-English-row class A2 kills.
+      // Other viewers still learn the state from the recovery emit + the push_failed status.
       this.emitRecovery(id, 'push_failed', 'awaiting')
       throw new NoGitHubDestinationError()
     }

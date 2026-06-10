@@ -199,7 +199,11 @@ export class RealGitHubAdapter implements GitHubAdapter {
     const res = await this.send('PUT', '/contents/README.md', {
       message: 'AKIS: initialize repository', content, branch,
     })
-    if (!res.ok) throw this.httpError('/contents/README.md', res.status)
+    // 422 "sha wasn't supplied" = README already exists → the repo ISN'T empty after all. The one
+    // real window: createRepo's auto_init landed but the ref read briefly lagged (GitHub eventual
+    // consistency), so refShaOrNull saw 404 and we seeded redundantly. The goal of seeding — a base
+    // commit exists — is already met; treat it as success and let the caller's refSha() proceed.
+    if (!res.ok && res.status !== 422) throw this.httpError('/contents/README.md', res.status)
   }
 
   /** The commit sha a branch ref points at (throws if the ref is missing). */
