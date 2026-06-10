@@ -205,11 +205,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       .catch(() => seedRun(id, fallbackIdea))
   }
 
+  // A Stüdyo-nav fresh chat (the consumed newChatSignal flag/event) must NOT have its just-cleared
+  // Recent list repopulated by the mount-time /sessions/mine seeding below — the fetch resolves AFTER
+  // newChat() ran, so without this guard the previous conversation's builds resurface (owner
+  // 2026-06-10). Sticky for this studio instance; a plain load/F5 (no flag) keeps the server door.
+  const freshChatNav = useRef(false)
   // Prefer server-backed per-user history (persists across devices); fall back to the
   // localStorage list (loaded above) if the request fails.
   useEffect(() => {
     void api.listMySessions().then(list => {
-      if (list.length) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0, status: s.status, verified: s.verified })))
+      if (list.length && !freshChatNav.current) setRecent(list.map(s => ({ id: s.id, idea: s.idea, ts: 0, status: s.status, verified: s.verified })))
       // Resolve the /?s= deep-link: seed a one-run thread for that build (status-driven mode,
       // not door-driven). The run-block replays /log to rebuild the transcript.
       const id = deepLinkId.current
@@ -362,8 +367,8 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const newChatRef = useRef(newChat)
   useEffect(() => { newChatRef.current = newChat }, [newChat])
   useEffect(() => {
-    if (consumeNewChatRequest()) newChatRef.current()
-    const onNewChatNav = (): void => { consumeNewChatRequest(); newChatRef.current() }
+    if (consumeNewChatRequest()) { freshChatNav.current = true; newChatRef.current() }
+    const onNewChatNav = (): void => { consumeNewChatRequest(); freshChatNav.current = true; newChatRef.current() }
     window.addEventListener(NEW_CHAT_EVENT, onNewChatNav)
     return () => window.removeEventListener(NEW_CHAT_EVENT, onNewChatNav)
   }, [])

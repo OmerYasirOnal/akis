@@ -612,6 +612,23 @@ describe('Stüdyo nav → new chat (newChatSignal)', () => {
     expect(await screen.findByText(/No builds yet/i)).toBeInTheDocument()
   })
 
+  it('a pending flag from ANOTHER PAGE keeps Recent empty even though /sessions/mine resolves after the reset', async () => {
+    // Cross-page Stüdyo click: the flag is consumed on mount (newChat runs), but the mount-time
+    // /sessions/mine fetch resolves LATER — without the freshChatNav guard it would repopulate the
+    // just-cleared dropdown with the previous conversation's builds.
+    window.history.replaceState({}, '', '/')
+    requestNewChat() // armed on the Stüdyo click, before this mount
+    const api = new ApiClient('', vi.fn(deepLinkFetch('sother', 200, { id: 'sother', status: 'done', version: 1 })))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    await waitFor(() => expect(consumeNewChatRequest()).toBe(false)) // flag consumed by the mount
+
+    // Let the mine-list resolve, then assert it did NOT resurface the old build in the dropdown.
+    await userEvent.click(await screen.findByRole('button', { name: /Recent/i }))
+    expect(screen.queryByRole('menuitem', { name: /an old build/i })).toBeNull()
+    expect(await screen.findByText(/No builds yet/i)).toBeInTheDocument()
+  })
+
   it('a pending flag from another page is consumed on mount → fresh chat, not the persisted spine', async () => {
     window.history.replaceState({}, '', '/')
     // A previous visit left a conversation in the spine (what used to resurface).
