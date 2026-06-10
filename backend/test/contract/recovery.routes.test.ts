@@ -14,6 +14,9 @@ import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { GitHubDeliveryError } from '../../src/di/RealGitHubAdapter.js'
+import { MockGitHubAdapter } from '../../src/di/MockGitHubAdapter.js'
+import { registerSessionRoutes } from '../../src/api/sessions.routes.js'
+import Fastify from 'fastify'
 import type { KeyStore } from '../../src/keys/KeyStore.js'
 
 const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/skills/library')
@@ -107,6 +110,29 @@ describe('CONTRACT: recovery routes', () => {
     expect(res.json().code).toBe('GitHubDeliveryError')
     const after = (await app.inject({ method: 'GET', url: `/sessions/${s.id}` })).json()
     expect(after.status).toBe('push_failed') // still parked retryable — gate untouched
+  })
+
+  it('POST /sessions/:id/confirm in REAL mode with NO connection (mock fallback) → 409 + NoGitHubDestinationError, NOT a fake mock success', async () => {
+    // A real-mode (owned + githubFor wired) session whose owner has no usable connection. Instead
+    // of silently pushing to the mock and reporting a fake github.com/mock/<id> URL, confirm must
+    // refuse with a stable code the FE localizes to "connect GitHub in Settings".
+    const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    const mock = new MockGitHubAdapter()
+    services.github = mock
+    services.githubFor = () => undefined // wired (real mode) but the owner is not connected
+    const f = Fastify({ logger: false })
+    registerSessionRoutes(f, { orchestrator: new Orchestrator(services), services, userIdOf: async () => 'owner1' })
+
+    const s = (await f.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
+    expect(s.ownerId).toBe('owner1') // owned → real mode
+    await f.inject({ method: 'POST', url: `/sessions/${s.id}/approve` })
+    await f.inject({ method: 'POST', url: `/sessions/${s.id}/run` }) // → awaiting_push_confirm
+    const res = await f.inject({ method: 'POST', url: `/sessions/${s.id}/confirm` })
+    expect(res.statusCode).toBe(409)
+    expect(res.json().code).toBe('NoGitHubDestinationError')
+    expect(mock.read(s.id)).toEqual([]) // the mock was NEVER pushed to — no fake success
+    const after = (await f.inject({ method: 'GET', url: `/sessions/${s.id}` })).json()
+    expect(after.status).toBe('push_failed') // retryable: after connecting, a re-confirm can succeed
   })
 
   it('POST /sessions/:id/retry from the wrong status → 409', async () => {

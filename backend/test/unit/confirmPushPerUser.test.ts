@@ -5,11 +5,11 @@
  * only proves WHICH already-gated adapter is consumed by the unchanged pushToGitHub path.
  */
 import { describe, it, expect } from 'vitest'
-import { Orchestrator } from '../../src/orchestrator/Orchestrator.js'
+import { Orchestrator, NoGitHubDestinationError } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
-import type { GitHubAdapter, RepoFile } from '../../src/di/MockGitHubAdapter.js'
+import { MockGitHubAdapter, type GitHubAdapter, type RepoFile } from '../../src/di/MockGitHubAdapter.js'
 import { fileURLToPath } from 'node:url'
 import { dirname, resolve } from 'node:path'
 
@@ -95,5 +95,49 @@ describe('confirmPush — per-owner adapter precedence', () => {
     const id = await verifiedSession(orch, 'owner-1')
     await orch.confirmPush(id)
     expect(shared.pushed).toBe(true)
+  })
+
+  // ── HONESTY: a real-mode owner with NO usable GitHub connection must NOT get a fake mock push ──
+  it('REFUSES (NoGitHubDestinationError) instead of a silent mock-success when a real-mode owner has no connection', async () => {
+    const store = new MockSessionStore()
+    const mock = new MockGitHubAdapter() // the default-boot shared adapter (no env token configured)
+    const services = buildServices({ store, skillsDir, mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    services.github = mock
+    services.githubFor = (_ownerId: string) => undefined // REAL mode wired, but owner has no connection
+    const orch = new Orchestrator(services)
+
+    const id = await verifiedSession(orch, 'owner-1')
+    await expect(orch.confirmPush(id)).rejects.toBeInstanceOf(NoGitHubDestinationError)
+    // The mock was NOT silently pushed to (no fake github.com/mock/<id> success).
+    expect(mock.read(id)).toEqual([])
+    // Retryable, not a dead end: the session parks push_failed so a later (post-connect) confirm works.
+    expect((await store.get(id))?.status).toBe('push_failed')
+  })
+
+  it('STILL allows the mock for an ANONYMOUS session (no ownerId) — demo/keyless path unchanged', async () => {
+    const store = new MockSessionStore()
+    const mock = new MockGitHubAdapter()
+    const services = buildServices({ store, skillsDir, mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    services.github = mock
+    services.githubFor = (_ownerId: string) => undefined // wired, but no ownerId on the session to key on
+    const orch = new Orchestrator(services)
+
+    const id = await verifiedSession(orch /* anonymous */)
+    const done = await orch.confirmPush(id)
+    expect(done.status).toBe('done')
+    expect(mock.read(id).length).toBeGreaterThan(0) // the mock DID receive the push (no refusal)
+  })
+
+  it('STILL allows the mock when githubFor is ABSENT entirely (NODE_ENV=test / no connections store)', async () => {
+    const store = new MockSessionStore()
+    const mock = new MockGitHubAdapter()
+    const services = buildServices({ store, skillsDir, mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
+    services.github = mock
+    // services.githubFor stays undefined — NOT real-mode, so the mock is the legitimate destination.
+    const orch = new Orchestrator(services)
+
+    const id = await verifiedSession(orch, 'owner-1')
+    const done = await orch.confirmPush(id)
+    expect(done.status).toBe('done')
   })
 })

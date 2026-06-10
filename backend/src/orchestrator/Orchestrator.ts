@@ -7,6 +7,7 @@ import { nextTs } from '../events/clock.js'
 import { assembleSharedContext } from '../context/assemble.js'
 import type { SharedContext } from '@akis/shared'
 import type { OrchestratorServices } from '../di/services.js'
+import { MockGitHubAdapter } from '../di/MockGitHubAdapter.js'
 import type { SessionPatch } from '../store/SessionStore.js'
 import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
@@ -43,6 +44,23 @@ export class CriticFailedError extends Error {
 }
 export class WrongStatusError extends Error {
   constructor(action: string, status: string) { super(`Cannot ${action} from status '${status}'`); this.name = 'WrongStatusError' }
+}
+/**
+ * A real-mode (authenticated-owner) session reached confirmPush but the owner has NO usable
+ * GitHub delivery destination — no connected account + target repo. HONESTY: rather than
+ * silently push to the in-memory MockGitHubAdapter and report a FAKE `github.com/mock/<id>`
+ * "success", confirmPush refuses with this so the FE can localize a "Connect GitHub in
+ * Settings" message + CTA. The mock stays the legitimate destination ONLY for tests/demo
+ * (anonymous sessions, NODE_ENV=test / no connections store). Gate-NEUTRAL: this changes
+ * WHETHER a usable destination exists, never whether/how a push is authorized — Gate-4 still
+ * mints the ApprovedPush from the digest-bound VerifyToken before this is ever reached.
+ */
+export class NoGitHubDestinationError extends Error {
+  readonly code = 'NoGitHubDestinationError'
+  constructor() {
+    super('No GitHub delivery destination — connect a GitHub account and target repo in Settings')
+    this.name = 'NoGitHubDestinationError'
+  }
 }
 /** A pipeline write found the session already CANCELLED on the fresh re-read. The
  *  resilient writer REFUSES to resurrect a user-cancelled run (preserving cancel
@@ -629,7 +647,24 @@ export class Orchestrator {
     // EXACTLY as today. This only changes WHICH already-gated adapter the unchanged
     // pushToGitHub(ApprovedPush, …) path consumes — never whether/how the push is authorized.
     // Anonymous sessions (no ownerId) and owners without a connection fall through to env→mock.
-    const gh = (cur.ownerId ? this.s.githubFor?.(cur.ownerId) : undefined) ?? this.s.github
+    const userAdapter = cur.ownerId ? this.s.githubFor?.(cur.ownerId) : undefined
+    const gh = userAdapter ?? this.s.github
+
+    // HONESTY (mock-fallback): in REAL mode — the session is owned AND per-user delivery is wired
+    // (`githubFor` present, i.e. not NODE_ENV=test / no connections store) — an owner WITHOUT a
+    // usable connection would otherwise fall through to the in-memory MockGitHubAdapter and get a
+    // FAKE `github.com/mock/<id>` "success". Refuse instead so the FE shows "connect GitHub". The
+    // mock stays legitimate for anonymous/demo/test sessions (no ownerId, or githubFor absent) and
+    // a configured real env adapter is never a MockGitHubAdapter, so this only catches the no-real-
+    // destination case. Gate-NEUTRAL: Gate-4 already minted the ApprovedPush above; this is about
+    // a missing DESTINATION, not authorization. Parked retryable so a later (post-connect) confirm works.
+    const realMode = !!cur.ownerId && !!this.s.githubFor
+    if (realMode && gh instanceof MockGitHubAdapter) {
+      await this.s.store.update(id, { status: 'push_failed' }, cur.version)
+      this.s.bus.emit({ kind: 'error', message: 'push failed: no GitHub delivery destination — connect a GitHub account and target repo in Settings', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      this.emitRecovery(id, 'push_failed', 'awaiting')
+      throw new NoGitHubDestinationError()
+    }
 
     // Push FIRST. Only persist 'done' after a successful push, so a push failure
     // leaves a retryable state (push_failed) and never loses the code.

@@ -90,6 +90,10 @@ const CONFLICT_ERRORS = new Set([
   'WrongStatusError',
   'AlreadyPushedError',
   'CriticFailedError',
+  // Real-mode push with NO usable GitHub delivery destination (owner not connected). A precondition
+  // refusal, NOT an AKIS fault: reporting it is observability, nothing was pushed (the run parks
+  // push_failed, retryable). 409 like the gate refusals; the FE localizes the code → "connect GitHub".
+  'NoGitHubDestinationError',
   // Publish (non-gating): no usable publish destination → 409, exactly like a gate refusal maps
   // (reporting the precondition is observability; nothing was published). Publish itself NEVER
   // gates/blocks/mints — see the POST /sessions/:id/publish handler.
