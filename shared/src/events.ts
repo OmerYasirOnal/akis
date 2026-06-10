@@ -49,7 +49,11 @@ export type AkisEvent =
   | (BaseEvent & { kind: 'agent_end'; role: Role; ok: boolean; metrics?: AgentMetrics })
   | (BaseEvent & { kind: 'tool_call'; tool: ToolName; args: unknown })
   | (BaseEvent & { kind: 'tool_result'; tool: ToolName; ok: boolean; result?: unknown })
-  | (BaseEvent & { kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: 'awaiting' | 'satisfied' | 'rejected' })
+  // A2.1: an OPTIONAL `delivery` ({owner,repo}) rides ONLY on the `push_confirm` AWAITING gate so the
+  // FE can SHOW the per-project destination ("→ github.com/<owner>/<repo>") BEFORE the human confirms.
+  // ADDITIVE + OPTIONAL: an old gate event (no delivery) folds exactly as before. Pure observability —
+  // it NAMES where the already-gated push delivers, carries NO token, and never affects gate state.
+  | (BaseEvent & { kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: 'awaiting' | 'satisfied' | 'rejected'; delivery?: { owner: string; repo: string } })
   // A RECOVERABLE run state the human can act on so the run is never a silent dead-end.
   // This is DELIBERATELY NOT a `gate` event: the 4 STRUCTURAL gates are spec_approval +
   // push_confirm (+ producer≠verifier, verified=real-test-pass) and stay untouched. A
