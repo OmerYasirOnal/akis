@@ -18,6 +18,7 @@ import { PublishButton } from '../components/PublishButton.js'
 import { ExternalWriteCard } from '../components/ExternalWriteCard.js'
 import { AgentWriteProposals } from '../components/AgentWriteProposals.js'
 import { AgentRoster } from '../components/AgentRoster.js'
+import { Link } from '../router/router.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
@@ -561,7 +562,19 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       >
         {header}
         <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>
-          {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
+          {actionError && (
+            <div role="alert" className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+              <span>{actionError}</span>
+              {/* CTA: a push refused for NO connected GitHub destination (recovery.push.notConnected)
+                  gets a direct Settings → GitHub link so the user can connect + retry, instead of a
+                  dead-end error. Detected by exact match on the localized string (its sole producer). */}
+              {actionError === t('recovery.push.notConnected') && (
+                <Link to="/settings" className="shrink-0 rounded border border-rose-300/40 px-2 py-0.5 font-semibold text-rose-100 hover:bg-rose-400/15">
+                  {t('recovery.push.connectCta')}
+                </Link>
+              )}
+            </div>
+          )}
           {editsBaseBadge}
           <div className="min-h-0 flex-1">{chat}</div>
         </div>

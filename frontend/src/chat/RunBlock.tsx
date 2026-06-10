@@ -76,8 +76,13 @@ function RunBlockInner({
     setRecovering(true)
     void Promise.resolve(fn(sessionId))
       // Surface a real failure (the SSE stream reflects a SUCCESS, but a rejected POST had no
-      // feedback). A 409 is an expected gate/precondition refusal → stay quiet, like the studio.
-      .catch((e: unknown) => { if (!(ApiError.is(e) && e.status === 409)) onActionError?.(actionErrorText(e, t)) })
+      // feedback). A 409 is an expected gate/precondition refusal → stay quiet, like the studio —
+      // EXCEPT NoGitHubDestinationError: that 409 carries actionable "connect GitHub" guidance the
+      // user must SEE (a silent swallow is the very confusion the demo flagged), so it surfaces.
+      .catch((e: unknown) => {
+        const isQuiet409 = ApiError.is(e) && e.status === 409 && e.code !== 'NoGitHubDestinationError'
+        if (!isQuiet409) onActionError?.(actionErrorText(e, t))
+      })
       .finally(() => setRecovering(false))
   }
   const onProceed = drive(id => api.resolveCritic(id, 'proceed'))

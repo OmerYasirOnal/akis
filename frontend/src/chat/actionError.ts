@@ -22,6 +22,11 @@ export function actionErrorText(e: unknown, t: (k: StringKey) => string): string
     if (e.code === 'GitHubDeliveryError') {
       return t(e.status === 429 ? 'recovery.push.rateLimited' : 'recovery.push.deliveryFailed')
     }
+    // No connected GitHub delivery target (a real-mode push refused, NOT a fake mock success):
+    // guide the user to Settings → GitHub instead of leaking the backend's raw English message.
+    if (e.code === 'NoGitHubDestinationError') {
+      return t('recovery.push.notConnected')
+    }
     return `${e.code ?? 'error'}: ${e.message}`
   }
   return String(e)
