@@ -14,6 +14,8 @@ import { ModelPicker, type ModelSelection } from './ModelPicker.js'
 import { loadModelPref, saveModelPref, type ModelPref } from './modelPref.js'
 import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, type AkisMsg, type ThreadNode } from './akisThread.js'
 import { RunBlock } from './RunBlock.js'
+import { Avatar } from './ChatThread.js'
+import { AGENT_NAMES } from '../agents/names.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
 
@@ -109,9 +111,17 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
   const { text: stripped } = extractSuggestions(content)
   const smoothed = useSmoothText(stripped, streaming)
   const displayed = streaming ? smoothed : stripped
+  // IDENTITY: a build-ready spec belongs to SCRIBE's identity in the UI, even though the chat-seeded
+  // build SKIPS the Scribe pipeline agent (the chat assistant drafts the spec — P0-1 short-circuit).
+  // The owner's call: present the spec card AS Scribe (Sc avatar + "Scribe" name) so the spec reads
+  // as Scribe's work, not AKIS's. Presentation-only — no second model call, no gate change; an
+  // ordinary (non-spec) assistant reply stays AKIS (AK). When `detected`, render the role-tinted
+  // Scribe monogram (the same one the run-block uses) instead of the AK monogram.
   return (
     <div className="flex items-start gap-3">
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
+      {detected
+        ? <Avatar role="scribe" />
+        : <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>}
       {/* Bounded reading measure (~46rem): a long AKIS reply no longer runs edge-to-edge on a wide
           window (the owner's "yazı çizgilere taşıyor"). Slightly wider than an agent bubble so the
           spec-card document preview it can contain isn't cramped. */}
@@ -119,6 +129,8 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
         {detected
           ? (
             <>
+              {/* Name the author so the build-ready spec reads as Scribe's work (matches the avatar). */}
+              <div className="text-xs font-semibold text-sky-200">{AGENT_NAMES.scribe}</div>
               {detected.intro && (
                 <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
                   <Markdown content={detected.intro} />
