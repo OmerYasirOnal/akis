@@ -21,16 +21,27 @@ const ok = (body: unknown, status = 200): Awaited<ReturnType<PushFetch>> => ({
  * commit-files / open-PR flow. `existingBranch` toggles whether the head ref already
  * exists (→ update path) and `existingPr` whether an open PR for the branch exists.
  */
-function fakeGitHub(opts: { existingBranch?: boolean; existingPr?: boolean } = {}) {
+function fakeGitHub(opts: { existingBranch?: boolean; existingPr?: boolean; repoMissing?: boolean; authedLogin?: string } = {}) {
   const calls: Array<{ method: string; url: string; headers: Record<string, string>; body?: unknown }> = []
+  // The repo starts absent when `repoMissing`; a successful POST /user/repos|/orgs/.../repos flips it on.
+  let repoExists = !opts.repoMissing
   const fetch: PushFetch = async (url, init) => {
     const method = init?.method ?? 'GET'
     const body = init?.body ? JSON.parse(init.body) : undefined
     calls.push({ method, url, headers: init?.headers ?? {}, body })
 
-    // Default-branch lookup
+    // Authed-user lookup (createRepo decides /user/repos vs /orgs/.../repos from this).
+    if (method === 'GET' && /\/user$/.test(url)) {
+      return ok({ login: opts.authedLogin ?? 'me' })
+    }
+    // Create a repo under the authed user or an org.
+    if (method === 'POST' && /\/(user|orgs\/[^/]+)\/repos$/.test(url)) {
+      repoExists = true
+      return ok({ html_url: 'https://github.com/me/proj' }, 201)
+    }
+    // Default-branch lookup (also the createRepo existence probe). 404 while the repo is absent.
     if (method === 'GET' && /\/repos\/[^/]+\/[^/]+$/.test(url)) {
-      return ok({ default_branch: 'main' })
+      return repoExists ? ok({ default_branch: 'main' }) : ok({ message: 'Not Found' }, 404)
     }
     // Base ref → base commit sha
     if (method === 'GET' && /\/git\/ref\/heads\/main$/.test(url)) {
@@ -86,10 +97,70 @@ function fakeGitHub(opts: { existingBranch?: boolean; existingPr?: boolean } = {
 }
 
 describe('RealGitHubAdapter (offline, injected fetch — GitHub REST API)', () => {
-  it('createRepo returns the configured repo HTML URL (no network needed for the URL)', async () => {
-    const { fetch } = fakeGitHub()
+  it('createRepo returns the configured repo HTML URL when the repo already exists (no create POST)', async () => {
+    const { fetch, calls } = fakeGitHub()
     const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
     expect(await a.createRepo('sess-1')).toBe('https://github.com/me/proj')
+    // An EXISTING repo must NOT be re-created — only the GET existence probe.
+    expect(calls.some(c => c.method === 'POST' && /\/repos$/.test(c.url))).toBe(false)
+  })
+
+  it('createRepo CREATES the repo when it is missing (404) — POST /user/repos with auto_init', async () => {
+    const { fetch, calls } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    expect(await a.createRepo('sess-1')).toBe('https://github.com/me/proj')
+    const create = calls.find(c => c.method === 'POST' && /\/user\/repos$/.test(c.url))
+    expect(create).toBeDefined()
+    // auto_init seeds an initial commit so the empty repo is immediately pushable (no 409 on the first push).
+    expect((create!.body as { name?: unknown; auto_init?: unknown }).name).toBe('proj')
+    expect((create!.body as { auto_init?: unknown }).auto_init).toBe(true)
+  })
+
+  it('createRepo creates under an ORG when the configured owner is not the authed user — POST /orgs/{owner}/repos', async () => {
+    const { fetch, calls } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
+    const a = new RealGitHubAdapter({ owner: 'acme-org', repo: 'proj', token: TOKEN, fetch })
+    expect(await a.createRepo('sess-1')).toBe('https://github.com/acme-org/proj')
+    expect(calls.some(c => c.method === 'POST' && /\/orgs\/acme-org\/repos$/.test(c.url))).toBe(true)
+    expect(calls.some(c => c.method === 'POST' && /\/user\/repos$/.test(c.url))).toBe(false)
+  })
+
+  it('createRepo then pushFiles works end-to-end against a freshly-created repo', async () => {
+    const { fetch } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    await a.createRepo('sess-1') // creates + auto_init seeds the base commit
+    await expect(a.pushFiles('sess-1', FILES)).resolves.toBeUndefined()
+  })
+
+  it('pushFiles SEEDS an existing-but-empty repo (no base commit yet) via the contents API, then commits', async () => {
+    // A repo that exists but has ZERO commits: the default-branch ref 404s. pushFiles must
+    // seed an initial commit (PUT /contents/<path>) so the Git Data API has a base to layer on,
+    // instead of surfacing a misleading "repo not reachable".
+    const calls: Array<{ method: string; url: string; body?: unknown }> = []
+    let seeded = false
+    const fetch: PushFetch = async (url, init) => {
+      const method = init?.method ?? 'GET'
+      const body = init?.body ? JSON.parse(init.body) : undefined
+      calls.push({ method, url, body })
+      if (method === 'GET' && /\/repos\/[^/]+\/[^/]+$/.test(url)) return ok({ default_branch: 'main' })
+      // Base branch ref: 404 until the contents seed creates the first commit.
+      if (method === 'GET' && /\/git\/ref\/heads\/main$/.test(url)) {
+        return seeded ? ok({ object: { sha: 'baseCommitSha' } }) : ok({ message: 'Not Found' }, 404)
+      }
+      // Seed the empty repo (creates the initial commit on the default branch).
+      if (method === 'PUT' && /\/contents\//.test(url)) { seeded = true; return ok({ commit: { sha: 'seedCommit' } }, 201) }
+      if (method === 'GET' && /\/git\/ref\/heads\/akis-/.test(url)) return ok({ message: 'Not Found' }, 404)
+      if (method === 'GET' && /\/git\/commits\/baseCommitSha$/.test(url)) return ok({ tree: { sha: 'baseTreeSha' } })
+      if (method === 'POST' && /\/git\/blobs$/.test(url)) return ok({ sha: 'blob' }, 201)
+      if (method === 'POST' && /\/git\/trees$/.test(url)) return ok({ sha: 'newTreeSha' }, 201)
+      if (method === 'POST' && /\/git\/commits$/.test(url)) return ok({ sha: 'newCommitSha' }, 201)
+      if (method === 'POST' && /\/git\/refs$/.test(url)) return ok({ object: { sha: body?.sha } }, 201)
+      if (method === 'GET' && /\/pulls\?/.test(url)) return ok([])
+      if (method === 'POST' && /\/pulls$/.test(url)) return ok({ number: 1 }, 201)
+      return ok({ message: `unmatched ${method} ${url}` }, 500)
+    }
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'empty', token: TOKEN, fetch })
+    await expect(a.pushFiles('sess-1', FILES)).resolves.toBeUndefined()
+    expect(calls.some(c => c.method === 'PUT' && /\/contents\//.test(c.url))).toBe(true)
   })
 
   it('pushFiles creates a branch, commits the files, and opens a PR (correct REST calls)', async () => {
