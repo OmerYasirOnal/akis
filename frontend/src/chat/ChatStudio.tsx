@@ -5,7 +5,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import { specSeedFromMarkdown } from './buildSpec.js'
 import { actionErrorText } from './actionError.js'
 import { AkisChat } from './AkisChat.js'
-import { clearThread, saveThread, type ThreadNode } from './akisThread.js'
+import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, type ThreadNode } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
@@ -170,14 +170,15 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (activeSessionId && activeSessionId !== id && !isTerminalStatus(backendStatus)) {
       void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient */ })
     }
-    const restored: ThreadNode[] = (chat ?? [])
+    // MERGE — never overwrite. The local spine, when it already anchors THIS run (has its run
+    // marker), is the richest copy: it holds the pre-build, sessionId-less turns the server can
+    // never store (typed before the build existed) AND is re-saved on every same-device turn, so
+    // it is authoritative. mergeSpine keeps it in that case; otherwise (cleared storage / another
+    // device) it rebuilds from the server turns. Either way the conversation is not lost on return.
+    const restoredTurns = (chat ?? [])
       .filter(turn => turn.content.trim().length > 0)
       .map(turn => ({ role: turn.role, content: turn.content }))
-    const nodes: ThreadNode[] = [
-      { role: 'assistant', content: t('akis.greeting') },
-      { role: 'run', sessionId: id, idea: idea.trim() },
-      ...restored,
-    ]
+    const nodes: ThreadNode[] = mergeSpine({ local: loadThread(), serverTurns: restoredTurns, id, greeting: t('akis.greeting'), idea })
     saveThread(nodes)
     setThreadKey(k => k + 1)
     // #35: a REOPEN must NOT auto-(re)boot the local preview — the user may only want to read the
@@ -273,7 +274,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // minted server-side via the approvalAuthority) and FIRE-AND-FORGET kicks the run (the seeded-
       // start auto-kick) — NO second approve, NO client api.run. Multi-run = separate startSession
       // calls, each one session + one kick.
-      const s = await api.startSession(idea, undefined, baseId, specSeedFromMarkdown(idea))
+      // Send the PRE-BUILD conversation (the spec-shaping user/assistant turns typed before this
+      // build existed — historyForApi skips the greeting, run markers AND error rows). The server
+      // seeds them ATOMICALLY onto session.chat (a NON-gate column) so a CROSS-DEVICE reopen
+      // rehydrates them too; same-device reopen is already covered by the local-spine merge in seedRun.
+      const preBuildChat = historyForApi(loadThread(), t('akis.greeting'))
+      const s = await api.startSession(idea, undefined, baseId, specSeedFromMarkdown(idea), preBuildChat)
       // The NEW build becomes the active run. codeFiles reset to the new session's snapshot effect;
       // editsBase reflects the new session (the snapshot effect re-reads it).
       setActiveSessionId(s.id); setActiveIdea(idea); setActiveView(emptyView(s.id)); setStartingSpec(undefined)

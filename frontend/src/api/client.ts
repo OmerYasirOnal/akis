@@ -193,9 +193,14 @@ export class ApiClient {
    *  `spec` (P0-1): the AUTHORITATIVE chat-approved spec ({title, body}). When present the
    *  server uses it as-is and auto-satisfies Gate 1 (still minted server-side via the
    *  approvalAuthority) — so the human approves the spec ONCE at the chat SpecCard and the
-   *  pipeline does NOT show a second 'Approve spec' gate. Omitted ⇒ today's idea-only start. */
-  startSession(idea: string, workflowId?: string, baseSessionId?: string, spec?: { title: string; body: string }): Promise<SessionState> {
-    return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea, ...(workflowId ? { workflowId } : {}), ...(baseSessionId ? { baseSessionId } : {}), ...(spec ? { spec } : {}) }) })
+   *  pipeline does NOT show a second 'Approve spec' gate. Omitted ⇒ today's idea-only start.
+   *  `chat` (trailing, optional): the pre-build conversation that SHAPED the spec — the
+   *  sessionId-less user/assistant turns typed before this build existed. The server seeds them
+   *  ATOMICALLY onto the new `session.chat` (a NON-gate column, baked into the creation state) so a
+   *  reopen (same OR cross device) rehydrates the spec-shaping turns too. Empty/omitted ⇒ the body
+   *  is byte-identical to before. */
+  startSession(idea: string, workflowId?: string, baseSessionId?: string, spec?: { title: string; body: string }, chat?: { role: 'user' | 'assistant'; content: string }[]): Promise<SessionState> {
+    return this.json<SessionState>('/sessions', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ idea, ...(workflowId ? { workflowId } : {}), ...(baseSessionId ? { baseSessionId } : {}), ...(spec ? { spec } : {}), ...(chat && chat.length ? { chat } : {}) }) })
   }
   getSession(id: string): Promise<SessionState> {
     return this.json<SessionState>(`/sessions/${id}`)

@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'node:crypto'
-import { type WorkflowConfig, type SessionState, type PublishRecord, type ExternalWriteRecord, isVerified } from '@akis/shared'
+import { type WorkflowConfig, type SessionState, type PublishRecord, type ExternalWriteRecord, type ChatTurn, CHAT_TURNS_MAX, isVerified } from '@akis/shared'
 import { digestExternalWrite, mintApprovedExternalWrite, executeExternalWrite, isAllowedExternalWriteAction, type ExternalWriteProposal } from '../gates/externalWriteGate.js'
 import { recordGithubProposal } from '../gates/recordGithubProposal.js'
 import { appendExternalWrite } from '../gates/appendExternalWrite.js'
@@ -166,9 +166,27 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const notFound = (reply: FastifyReply, id: string): FastifyReply =>
     reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
 
-  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string; spec?: { title?: unknown; body?: unknown } } }>('/sessions', async (req, reply) => {
+  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string; spec?: { title?: unknown; body?: unknown }; chat?: unknown } }>('/sessions', async (req, reply) => {
     const idea = typeof req.body?.idea === 'string' ? req.body.idea.trim() : ''
     if (!idea) return reply.code(400).send({ error: 'idea required', code: 'BadRequest' })
+    // OPTIONAL pre-build conversation (the spec-shaping turns typed BEFORE this build existed, so they
+    // are sessionId-less and the server has never seen them). UNTRUSTED → validate strictly: keep only
+    // {role:'user'|'assistant', content:string} turns with non-empty trimmed content, stamp an ISO `at`
+    // SERVER-SIDE (never trust a client timestamp), and cap to CHAT_TURNS_MAX (oldest dropped). It is
+    // threaded INTO orch.start and baked into the creation state at version 0 (NOT a post-start patch
+    // that would race the fire-and-forget pipeline). Absent/empty ⇒ no seed (byte-identical to before).
+    const now = new Date().toISOString()
+    const rawChat = Array.isArray(req.body?.chat) ? req.body.chat : []
+    // Per-turn length cap (gate-keeper LOW): the count cap bounds the array, Fastify's body limit
+    // bounds the request — this bounds a single turn, so session.chat can never carry an unbounded
+    // blob into storage (and stays safe if a future change ever feeds chat into a prompt).
+    const TURN_MAX_CHARS = 4000
+    const seedTurns: ChatTurn[] = rawChat
+      .filter((t): t is { role: unknown; content: unknown } => !!t && typeof t === 'object')
+      .map(t => ({ role: t.role, content: typeof t.content === 'string' ? t.content.trim().slice(0, TURN_MAX_CHARS) : '' }))
+      .filter((t): t is { role: 'user' | 'assistant'; content: string } => (t.role === 'user' || t.role === 'assistant') && t.content.length > 0)
+      .slice(-CHAT_TURNS_MAX)
+      .map(t => ({ role: t.role, content: t.content, at: now }))
     // P0-1: an OPTIONAL chat-approved spec seed. When present it must be a well-shaped object
     // ({title, body} both non-empty strings) — the chat SpecCard's text is AUTHORITATIVE, so the
     // orchestrator uses it as-is and auto-satisfies Gate 1 (still minted server-side via the
@@ -220,7 +238,14 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
         const decision = await checkQuota(deps.usage, quotaPolicy, ownerId)
         if (!decision.allowed) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt })
       }
-      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}), ...(baseDelivery ? { delivery: baseDelivery } : {}) })
+      // Thread the validated pre-build conversation into the CREATION state (version 0) — NOT a
+      // post-start patch. A post-start store.update(id,{chat},version) would run CONCURRENTLY with the
+      // fire-and-forget build pipeline (which reads `version` then writes): a {chat} write landing
+      // between bumped the version and conflicted the pipeline's {code} write → the build failed with
+      // no code. Seeding at creation is a single write with NO concurrent update. GATE-SAFE: `chat` is
+      // the non-gate conversation column; this only sets the INITIAL state (see initialSession). The
+      // returned session already carries the seeded chat, so the 201 reflects it without a re-read.
+      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}), ...(baseDelivery ? { delivery: baseDelivery } : {}), ...(seedTurns.length ? { chat: seedTurns } : {}) })
       if (orch !== orchestrator) bindOrchestrator(s.id, orch)
       return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }

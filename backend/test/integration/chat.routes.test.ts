@@ -195,6 +195,12 @@ describe('AKIS_PERSONA — Chat-to-Build contract', () => {
     expect(AKIS_PERSONA).toMatch(/keep chatting/i)
     expect(AKIS_PERSONA).toMatch(/Never claim to have built/i)
   })
+  it('tells AKIS to HAND OFF the spec card to Scribe (not claim AKIS wrote it) — matches the Sc identity in the UI', () => {
+    // P2: the spec card is presented under SCRIBE's identity in the UI, so the surrounding prose
+    // must hand off to Scribe ("Scribe drafted the spec below") rather than AKIS claiming it.
+    expect(AKIS_PERSONA).toMatch(/HAND OFF to Scribe/i)
+    expect(AKIS_PERSONA).toMatch(/Scribe drafted the spec/i)
+  })
   it('tells AKIS to emit a fresh akis-spec block when asked to change the current app (not edit it directly)', () => {
     expect(AKIS_PERSONA).toMatch(/CHANGE the current app/i)
     expect(AKIS_PERSONA).toMatch(/FRESH FULL `akis-spec` block/i)

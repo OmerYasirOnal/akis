@@ -77,6 +77,64 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     expect(done.json().status).toBe('done')
   })
 
+  it('startSession seeds session.chat from the client pre-build conversation (bounded, round-trips through GET)', async () => {
+    // The pre-build, sessionId-less conversation that SHAPED the spec is sent at build start so a
+    // reopen (same OR cross device) also rehydrates it. Seeded ATOMICALLY into the creation state
+    // (a NON-gate column, NOT a post-start patch), each turn stamped with a SERVER-set ISO `at`; it
+    // round-trips through GET /sessions/:id. The 201 already reflects it (no re-read).
+    const { app } = makeApp()
+    const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'note app', chat: [{ role: 'user', content: 'a note app' }] } })
+    expect(res.statusCode).toBe(201)
+    const created = res.json()
+    expect(created.chat).toEqual([{ role: 'user', content: 'a note app', at: expect.any(String) }])
+    const { id } = created
+    const s = (await app.inject({ method: 'GET', url: `/sessions/${id}` })).json()
+    expect(s.chat).toEqual([{ role: 'user', content: 'a note app', at: expect.any(String) }])
+  })
+
+  it('startSession drops empty/invalid chat turns, server-sets the timestamp, and caps to CHAT_TURNS_MAX', async () => {
+    const { app } = makeApp()
+    // 1 valid + 1 empty (dropped) + 1 malformed role (dropped); a client-supplied `at` is IGNORED
+    // (server-set). CHAT_TURNS_MAX is 200, well above this list.
+    const chat = [
+      { role: 'user', content: 'keep me', at: 'CLIENT-FORGED' },
+      { role: 'assistant', content: '   ' },
+      { role: 'bogus', content: 'drop me' },
+    ]
+    const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'note app', chat } })
+    expect(res.statusCode).toBe(201)
+    const { id } = res.json()
+    const s = (await app.inject({ method: 'GET', url: `/sessions/${id}` })).json()
+    expect(s.chat).toHaveLength(1)
+    expect(s.chat[0]).toMatchObject({ role: 'user', content: 'keep me' })
+    expect(s.chat[0].at).not.toBe('CLIENT-FORGED') // the timestamp is server-set, never trusted from the client
+  })
+
+  it('REGRESSION (race fix): a spec-seeded POST /sessions WITH chat runs to the push gate (NOT failed) and the chat is present in the created session immediately', async () => {
+    // BUG: a post-start store.update(id,{chat},version) would run CONCURRENTLY with the fire-and-
+    // forget build pipeline; landing between the pipeline's version read and its {code} write, it
+    // bumped the version → a `version conflict` → the build went `failed` with no code (but chat +
+    // approval present). The fix threads the validated chat INTO orch.start, baking it into the
+    // creation state (version 0) — one write, no race.
+    const { app } = makeApp({ passing: true })
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const created = (await app.inject({
+      method: 'POST', url: '/sessions',
+      payload: { idea: seed.body, spec: seed, chat: [{ role: 'user', content: 'a todo app' }] },
+    })).json()
+    // The 201 already reflects the seeded chat (set at creation, NOT a post-start re-read).
+    expect(created.status).toBe('building')
+    expect(created.chat).toEqual([{ role: 'user', content: 'a todo app', at: expect.any(String) }])
+    // The auto-kicked build reaches the push gate — it is NOT raced to `failed` by a chat write.
+    await vi.waitFor(async () => {
+      const cur = (await app.inject({ method: 'GET', url: `/sessions/${created.id}` })).json()
+      expect(cur.status).toBe('awaiting_push_confirm')
+    })
+    const cur = (await app.inject({ method: 'GET', url: `/sessions/${created.id}` })).json()
+    expect(cur.status).not.toBe('failed')
+    expect(cur.chat).toEqual([{ role: 'user', content: 'a todo app', at: expect.any(String) }])
+  })
+
   it('P0-1: a malformed spec seed (missing body) -> 400 (a build never proceeds on a half spec)', async () => {
     const { app } = makeApp()
     const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo', spec: { title: 'Only a title' } } })

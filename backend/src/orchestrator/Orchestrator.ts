@@ -10,6 +10,7 @@ import type { OrchestratorServices } from '../di/services.js'
 import { MockGitHubAdapter } from '../di/MockGitHubAdapter.js'
 import type { SessionPatch } from '../store/SessionStore.js'
 import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
+import { buildAgentMetrics } from '../agent/metrics.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 import { signPassport } from '../verify/passport.js'
 import type { BuildPassport, VerifyToken } from '@akis/shared'
@@ -40,6 +41,17 @@ export interface StartInput {
    *  Data only (owner/name strings); no gate capability travels with it. resolveDelivery
    *  treats it as already-pinned, so no re-derivation/probe happens for the edit. */
   delivery?: { owner: string; repo: string }
+  /**
+   * OPTIONAL pre-build conversation (the spec-shaping turns typed BEFORE this build existed). Baked
+   * into the INITIAL session state at version 0 — BEFORE mintSpecApproval/kickRun — so there is
+   * exactly ONE creation write and NO post-start update racing the fire-and-forget pipeline (which
+   * reads `version` then writes; a chat patch landing between bumped the version → the pipeline's
+   * {code} write conflicted → a silent `failed`). The route validates/bounds it (role, non-empty
+   * content, ISO `at`, CHAT_TURNS_MAX) before passing it here. GATE-SAFE: `chat` is the existing
+   * non-gate column — conversation text only, never approve/verify/push/mint. Absent/empty ⇒
+   * byte-identical to today (no `chat` field set).
+   */
+  chat?: import('@akis/shared').ChatTurn[]
 }
 
 export class AlreadyPushedError extends Error {
@@ -198,7 +210,11 @@ export class Orchestrator {
 
   async start(input: StartInput): Promise<SessionState> {
     const id = randomUUID()
-    let session = initialSession(id, input.idea, input.ownerId)
+    // Bake the validated pre-build conversation into the CREATION state (version 0) — NOT a
+    // post-create patch. This is the race fix: a concurrent {chat} write after the fire-and-forget
+    // pipeline reads `version` would bump it and conflict the pipeline's {code} write → a silent
+    // `failed`. Seeding at creation means a single write and no concurrent update. NON-GATE (chat).
+    let session = initialSession(id, input.idea, input.ownerId, input.chat)
     // EDIT MODE seed (data only — no gate capability travels with it).
     if (input.base?.files.length) session = { ...session, base: input.base }
     // SAME PROJECT → SAME REPO (A2.1 MED-1): an edit inherits the base app's pinned delivery
@@ -226,6 +242,18 @@ export class Orchestrator {
       session = await this.s.store.update(id, { spec, status: 'awaiting_spec_approval' }, session.version)
       this.narrate(id, 'Using the spec you approved in chat — no second approval needed.')
       const approved = await this.mintSpecApproval(id, spec, session.version)
+      // CHAT-SEEDED PATH: Scribe's run() is short-circuited here (the spec was already authored +
+      // approved in chat, so re-running Scribe would author a DIFFERENT spec). ScribeAgent.run() is
+      // the ONLY emitter of scribe agent_start/agent_end, so without this the roster would derive
+      // Scribe as 'idle' ("beklemede") even though the spec stage is genuinely DONE. Record that stage
+      // with a synthetic agent_start immediately followed by agent_end(ok:true), using the SAME payload
+      // shape ScribeAgent.run() emits. GATE-SAFE: these are pure observability bus EVENTS — no LLM
+      // call, no store write, no gate authority, no token mint; the spec gate stays minted exactly once.
+      const scribeStartedAt = Date.now()
+      this.s.bus.emit({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
+      // No LLM call on this path → usage absent (buildAgentMetrics collapses {0,0}/undefined → "—");
+      // only the real activation wall-time + the zero tool-call count are honestly reported.
+      this.s.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, metrics: buildAgentMetrics(undefined, scribeStartedAt, 0), agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
       // The SpecCard's "Approve & Build" is the SINGLE human action for BOTH the gate and the
       // run (#124 collapsed the separate Approve click) — so the RUN must be kicked HERE,
       // server-side. Fire-and-forget: awaiting it would hold the POST /sessions response open

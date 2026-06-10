@@ -31,6 +31,13 @@ export function presenceOf(view: SessionView, role: Role): AgentPresence {
     if (view.status === 'done') return 'done'
     if (view.status === 'failed') return 'failed'
   }
+  // Chat-seeded builds short-circuit Scribe's run() (the spec was authored + approved in chat),
+  // so there is NO scribe lane step — yet the spec stage genuinely happened. A satisfied
+  // spec-approval gate is that proof, so Scribe reads 'done' (not 'idle'/"beklemede") here. The
+  // backend now also emits a synthetic scribe agent_start/agent_end on that path, so a live build
+  // takes the lane-step branch above; this fallback covers any view folded without those events
+  // (e.g. an older replayed log). Mirrors the orchestrator status fallback.
+  if (role === 'scribe' && view.gates?.specApproval?.state === 'satisfied') return 'done'
   return 'idle'
 }
 
