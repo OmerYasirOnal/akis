@@ -313,6 +313,42 @@ export class RealGitHubAdapter implements GitHubAdapter {
 const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 const asNumber = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
 
+/**
+ * A2.1 — standalone collision probe for per-project repo-name derivation: does `owner/repo`
+ * already exist on GitHub? Returns `true` (GET 200), `false` (404), or `undefined` when the
+ * answer is UNKNOWN (any other status / network error / no fetch). Same Bearer-auth + TOKEN-FREE
+ * discipline as the adapter (the token is only a header, never logged/returned). Standalone (not a
+ * method) so the destination resolver can probe ARBITRARY candidate names under the user's account
+ * without constructing a full per-candidate adapter. The caller treats `undefined` as "do not
+ * suffix" (fail-open: don't block delivery on a flaky probe; A2's createRepo still GET-probes the
+ * FINAL name idempotently before any create).
+ */
+export async function githubRepoExists(
+  owner: string,
+  repo: string,
+  token: string,
+  fetchImpl: PushFetch = defaultFetch,
+  apiBase = 'https://api.github.com',
+): Promise<boolean | undefined> {
+  const url = `${apiBase.replace(/\/+$/, '')}/repos/${enc(owner)}/${enc(repo)}`
+  try {
+    const res = await fetchImpl(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`, // NEVER logged
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'akis-platform',
+      },
+    })
+    if (res.status === 404) return false
+    if (res.ok) return true
+    return undefined // 401/403/5xx → unknown; caller fails open (no suffix)
+  } catch {
+    return undefined // network error → unknown (token-free; nothing to leak)
+  }
+}
+
 /** Percent-encode a path segment so a stray char can't break the URL; keep slashes in
  *  a ref like `feature/x` (GitHub accepts them in the ref path). */
 const enc = (s: string): string => encodeURIComponent(s).replace(/%2F/gi, '/')

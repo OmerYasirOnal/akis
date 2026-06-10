@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RealGitHubAdapter, GitHubDeliveryError, type PushFetch } from '../../src/di/RealGitHubAdapter.js'
+import { RealGitHubAdapter, GitHubDeliveryError, githubRepoExists, type PushFetch } from '../../src/di/RealGitHubAdapter.js'
 import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
 
 const TOKEN = 'ghp_push_supersecrettoken_DO_NOT_LEAK'
@@ -304,5 +304,30 @@ describe('RealGitHubAdapter (offline, injected fetch — GitHub REST API)', () =
     try { await a.pushFiles('sess-1', FILES) } catch (e) { thrown = e }
     expect(thrown).toBeInstanceOf(Error)
     expect((thrown as Error).message).not.toContain(TOKEN)
+  })
+})
+
+describe('githubRepoExists (A2.1 collision probe)', () => {
+  it('true on GET 200, false on 404, undefined on any other status', async () => {
+    const at = (status: number): PushFetch => async () => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => ({}), text: async () => '' })
+    expect(await githubRepoExists('ada', 'app', TOKEN, at(200))).toBe(true)
+    expect(await githubRepoExists('ada', 'app', TOKEN, at(404))).toBe(false)
+    expect(await githubRepoExists('ada', 'app', TOKEN, at(403))).toBeUndefined()
+    expect(await githubRepoExists('ada', 'app', TOKEN, at(500))).toBeUndefined()
+  })
+
+  it('sends Bearer auth on the GET to /repos/{owner}/{repo} and NEVER leaks the token', async () => {
+    const seen: { url: string; auth: string | undefined }[] = []
+    const probe: PushFetch = async (url, init) => { seen.push({ url, auth: init?.headers?.Authorization }); return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}), text: async () => '' } }
+    await githubRepoExists('ada', 'todo-app', TOKEN, probe)
+    expect(seen[0]?.url).toBe('https://api.github.com/repos/ada/todo-app')
+    expect(seen[0]?.auth).toBe(`Bearer ${TOKEN}`)
+    // the token rides ONLY the header, never the url (a probe could otherwise leak it into logs).
+    expect(seen[0]?.url).not.toContain(TOKEN)
+  })
+
+  it('returns undefined (fail open) when the probe itself rejects — token-free', async () => {
+    const boom: PushFetch = async () => { throw new Error(`net err ${TOKEN}`) }
+    await expect(githubRepoExists('ada', 'app', TOKEN, boom)).resolves.toBeUndefined()
   })
 })
