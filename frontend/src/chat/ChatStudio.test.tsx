@@ -1,8 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, waitFor, within, act } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { requestNewChat, consumeNewChatRequest } from './newChatSignal.js'
-import { saveThread } from './akisThread.js'
 import type { ReactNode } from 'react'
 import { ChatStudio } from './ChatStudio.js'
 import { RunPipeline } from './RunPipeline.js'
@@ -546,54 +544,5 @@ describe('ChatStudio — LOW-2 first-frame width seed (no collapsed-drawer flash
     // its full box (header/✕/body) off-screen instead of shrinking to nothing.
     expect(shell.style.getPropertyValue('--preview-drawer-w')).toBe('480px')
     expect(shell.style.getPropertyValue('--preview-drawer-w')).not.toBe('0px')
-  })
-})
-
-// OWNER 2026-06-10: the top-nav "Stüdyo" item must ALWAYS land on a fresh chat. Once a session
-// was opened from History, clicking Stüdyo used to keep showing that open chat (same-path click =
-// no remount; cross-page return = the persisted spine resurfaces it). The newChatSignal handshake
-// fixes both doors: a live window event for the mounted studio, a sessionStorage flag for mounts.
-describe('Stüdyo nav → new chat (newChatSignal)', () => {
-  beforeEach(() => { localStorage.clear(); sessionStorage.clear() })
-  afterEach(() => { window.history.replaceState({}, '', '/') })
-
-  it('the live event resets a deep-linked open chat to the fresh composer (same-path Stüdyo click)', async () => {
-    window.history.replaceState({}, '', '/?s=snav')
-    const api = new ApiClient('', vi.fn(deepLinkFetch('snav', 200, { id: 'snav', status: 'done', version: 1 })))
-    const fake = new FakeStream()
-    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
-    // Deep-link resolved: the active-session chrome ("New build") is up.
-    await screen.findByRole('button', { name: 'New build' })
-
-    act(() => { requestNewChat() })
-
-    // Reset: active-session chrome gone + the ?s= deep-link dropped + the flag consumed.
-    await waitFor(() => expect(screen.queryByRole('button', { name: 'New build' })).toBeNull())
-    expect(window.location.search).toBe('')
-    expect(consumeNewChatRequest()).toBe(false)
-  })
-
-  it('a pending flag from another page is consumed on mount → fresh chat, not the persisted spine', async () => {
-    window.history.replaceState({}, '', '/')
-    // A previous visit left a conversation in the spine (what used to resurface).
-    saveThread([{ role: 'user', content: 'eski konuşmadan bir satır' }])
-    requestNewChat() // fired on the Stüdyo click, BEFORE the studio mounts (event lost, flag armed)
-    const api = new ApiClient('', vi.fn(async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response)))
-    const fake = new FakeStream()
-    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
-
-    // The stale turn must NOT resurface, and the flag is consumed (a later mount stays normal).
-    await waitFor(() => expect(consumeNewChatRequest()).toBe(false))
-    expect(screen.queryByText('eski konuşmadan bir satır')).toBeNull()
-  })
-
-  it('WITHOUT a pending flag the persisted spine still resurfaces (continuable chat preserved)', async () => {
-    window.history.replaceState({}, '', '/')
-    saveThread([{ role: 'user', content: 'devam eden sohbet satırı' }])
-    const api = new ApiClient('', vi.fn(async () => ({ ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response)))
-    const fake = new FakeStream()
-    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
-    // The continuable-chat behavior (chat-flawless #78-81) is untouched by the signal.
-    expect(await screen.findByText('devam eden sohbet satırı')).toBeInTheDocument()
   })
 })

@@ -20,7 +20,6 @@ import { ResetPassword } from '../pages/ResetPassword.js'
 import { I18nProvider, useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
 import { RouterProvider, useRouter, Link, Navigate } from '../router/router.js'
-import { requestNewChat } from '../chat/newChatSignal.js'
 import { AuthProvider, useAuth } from '../auth/AuthContext.js'
 import { AccountMenu } from './AccountMenu.js'
 import { LanguageToggle } from '../ui/LanguageToggle.js'
@@ -45,13 +44,13 @@ function Brand() {
   )
 }
 
-function NavLink({ to, label, onClick }: { to: string; label: string; onClick?: () => void }) {
+function NavLink({ to, label }: { to: string; label: string }) {
   const { path } = useRouter()
   const active = path === to
   return (
     // aria-current="page" marks the active route for AT — only when active (conditional spread:
     // exactOptionalPropertyTypes forbids passing the attribute as undefined).
-    <Link to={to} {...(active ? { ariaCurrent: 'page' as const } : {})} {...(onClick ? { onClick } : {})} className={`shrink-0 rounded-lg px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${active ? 'bg-white/10 text-slate-100' : 'text-slate-300 hover:text-slate-100'}`}>{label}</Link>
+    <Link to={to} {...(active ? { ariaCurrent: 'page' as const } : {})} className={`shrink-0 rounded-lg px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${active ? 'bg-white/10 text-slate-100' : 'text-slate-300 hover:text-slate-100'}`}>{label}</Link>
   )
 }
 
@@ -144,10 +143,7 @@ function AppFrame({ api }: { api: ApiClient }) {
               keeps the header to two tidy rows. The thin scrollbar is hidden. From sm it's the
               normal inline bar. */}
           <nav aria-label={t('nav.primary')} className="order-3 -mx-1 flex w-full items-center gap-1 overflow-x-auto whitespace-nowrap px-1 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:order-none sm:mx-0 sm:w-auto sm:overflow-visible sm:py-0 sm:px-0">
-            {/* STÜDYO = NEW CHAT (owner 2026-06-10): the studio nav item always opens a fresh
-                conversation — requestNewChat arms the signal ChatStudio consumes (event when
-                already mounted, sessionStorage flag across the route change). */}
-            <NavLink to="/" label={t('nav.dashboard')} onClick={requestNewChat} />
+            <NavLink to="/" label={t('nav.dashboard')} />
             <NavLink to="/history" label={t('nav.history')} />
             <NavLink to="/analytics" label={t('nav.analytics')} />
             <NavLink to="/workflows" label={t('nav.workflows')} />

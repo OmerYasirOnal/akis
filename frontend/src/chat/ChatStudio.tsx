@@ -9,7 +9,6 @@ import { clearThread, saveThread, type ThreadNode } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
-import { NEW_CHAT_EVENT, consumeNewChatRequest } from './newChatSignal.js'
 import { useResizable, clampRatio } from './useResizable.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { PreviewDrawer } from '../components/PreviewDrawer.js'
@@ -347,21 +346,6 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     clearThread(); setThreadKey(k => k + 1)
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
   }, [activeSessionId, backendStatus, api])
-
-  // STÜDYO NAV = NEW CHAT (owner 2026-06-10): the top-nav Studio item always lands on a fresh
-  // conversation. Already-mounted (same-path click): the window event → newChat() — the full
-  // cancel-in-flight + clearThread reset, no behavior fork. Arriving from another page: the
-  // sessionStorage flag, consumed once on mount (the event fired pre-mount and was lost). The
-  // handler reads newChat through a ref so the listener subscribes exactly once while always
-  // calling the CURRENT reset (newChat's identity shifts with its deps).
-  const newChatRef = useRef(newChat)
-  useEffect(() => { newChatRef.current = newChat }, [newChat])
-  useEffect(() => {
-    if (consumeNewChatRequest()) newChatRef.current()
-    const onNewChatNav = (): void => { consumeNewChatRequest(); newChatRef.current() }
-    window.addEventListener(NEW_CHAT_EVENT, onNewChatNav)
-    return () => window.removeEventListener(NEW_CHAT_EVENT, onNewChatNav)
-  }, [])
 
   // Auto-run the local preview once a build ships, so the app appears live with no extra click.
   const autoRan = useRef<string | undefined>(undefined)
