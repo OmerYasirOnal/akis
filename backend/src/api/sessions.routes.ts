@@ -177,9 +177,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     // that would race the fire-and-forget pipeline). Absent/empty ⇒ no seed (byte-identical to before).
     const now = new Date().toISOString()
     const rawChat = Array.isArray(req.body?.chat) ? req.body.chat : []
+    // Per-turn length cap (gate-keeper LOW): the count cap bounds the array, Fastify's body limit
+    // bounds the request — this bounds a single turn, so session.chat can never carry an unbounded
+    // blob into storage (and stays safe if a future change ever feeds chat into a prompt).
+    const TURN_MAX_CHARS = 4000
     const seedTurns: ChatTurn[] = rawChat
       .filter((t): t is { role: unknown; content: unknown } => !!t && typeof t === 'object')
-      .map(t => ({ role: t.role, content: typeof t.content === 'string' ? t.content.trim() : '' }))
+      .map(t => ({ role: t.role, content: typeof t.content === 'string' ? t.content.trim().slice(0, TURN_MAX_CHARS) : '' }))
       .filter((t): t is { role: 'user' | 'assistant'; content: string } => (t.role === 'user' || t.role === 'assistant') && t.content.length > 0)
       .slice(-CHAT_TURNS_MAX)
       .map(t => ({ role: t.role, content: t.content, at: now }))
