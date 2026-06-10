@@ -2,7 +2,8 @@ import type { SessionStore } from '../store/SessionStore.js'
 import { EventBus } from '../events/bus.js'
 import { MockGitHubAdapter, type GitHubAdapter } from './MockGitHubAdapter.js'
 import { selectGitHubAdapter, parseOwnerRepo } from './selectGitHubAdapter.js'
-import { RealGitHubAdapter } from './RealGitHubAdapter.js'
+import { RealGitHubAdapter, githubRepoExists } from './RealGitHubAdapter.js'
+import { deriveRepoName, resolveAvailableRepoName } from './deliverySlug.js'
 import type { GitHubConnectionStore } from '../keys/GitHubConnectionStore.js'
 import { McpSessionPool } from '../agent/mcp/McpSessionPool.js'
 import { StdioDockerTransport } from '../agent/mcp/StdioDockerTransport.js'
@@ -41,13 +42,24 @@ export interface OrchestratorServices {
    *  NODE_ENV=test); the opt-in RealGitHubAdapter when AKIS_GITHUB_PUSH_TOKEN +
    *  AKIS_GITHUB_PUSH_REPO are both set. Reached only through the ApprovedPush gate. */
   github: GitHubAdapter
-  /** TIGHTEN-ONLY per-user push override. When the session owner has a live, decryptable
-   *  GitHub connection (token + target repo), this resolves a RealGitHubAdapter bound to
-   *  THAT user's repo; otherwise undefined ⇒ confirmPush falls back to the shared `github`
-   *  (env token → mock) UNCHANGED. Absent entirely (no connections store / NODE_ENV=test)
-   *  ⇒ today's behavior byte-for-byte. It only changes WHICH already-gated adapter is used,
-   *  never whether/how a push is authorized. */
-  githubFor?: (ownerId: string) => GitHubAdapter | undefined
+  /** TIGHTEN-ONLY per-user push override. When the session owner has a live, decryptable GitHub
+   *  connection (token), this resolves a RealGitHubAdapter bound to the per-PROJECT destination
+   *  (A2.1: `delivery` = the session's pinned {owner,repo}); otherwise undefined ⇒ confirmPush
+   *  falls back to the shared `github` (env token → mock) UNCHANGED. Absent entirely (no
+   *  connections store / NODE_ENV=test) ⇒ today's behavior byte-for-byte. It only changes WHICH
+   *  already-gated adapter is used, never whether/how a push is authorized.
+   *
+   *  `delivery` (A2.1): the pinned per-project destination. Without it (legacy/unpinned), the
+   *  adapter falls back to the connection's stored repo for back-compat — but A2.1 always pins
+   *  first (deliveryFor), so confirmPush passes the pinned destination here. */
+  githubFor?: (ownerId: string, delivery?: { owner: string; repo: string }) => GitHubAdapter | undefined
+  /** A2.1 — per-PROJECT destination resolver (TIGHTEN/ADDITIVE). Derives a repo name from the
+   *  project title/idea, collision-suffixes it against the user's GitHub account (bounded probe),
+   *  and returns {owner=login, repo} for the session owner — or undefined when the owner has no
+   *  usable connection (then confirmPush keeps the env→mock / honest-refusal path). NEVER throws
+   *  (a flaky probe fails open). Wired behind the SAME guard as githubFor (connections + env +
+   *  NODE_ENV!=='test'); absent ⇒ the orchestrator skips pinning (today's behavior). */
+  deliveryFor?: (ownerId: string, title: string | undefined, idea: string) => Promise<{ owner: string; repo: string } | undefined>
   /** SP1 READ-ONLY GitHub-via-MCP: the per-session transport pool (process-reuse). Surfaced
    *  ONLY when a connections store + env are wired AND NODE_ENV!=='test'. The graceful-shutdown
    *  path closeAll()s it so per-session Docker children are torn down. Absent ⇒ no MCP wiring. */
@@ -225,14 +237,22 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   const github: GitHubAdapter = selectGitHubAdapter(opts.env, mockGithub)
   // ── Per-user push override (TIGHTEN-ONLY) ───────────────────────────────────────
   // When a connections store is wired AND env is threaded AND NODE_ENV!=='test', resolve a
-  // per-owner adapter from the owner's encrypted connection (token + target repo). Returns
-  // undefined for any owner without a usable connection — confirmPush then falls back to the
-  // shared `github` (env→mock) UNCHANGED. NEVER throws (a bad/undecryptable connection ⇒
-  // undefined). Under NODE_ENV=test (like selectGitHubAdapter) `githubFor` stays undefined,
-  // so no real adapter is ever constructed in tests.
-  const githubFor: ((ownerId: string) => GitHubAdapter | undefined) | undefined =
-    opts.connections && opts.env && opts.env.NODE_ENV !== 'test'
-      ? (ownerId: string) => buildUserAdapter(opts.connections!, ownerId, opts.env!)
+  // per-owner adapter from the owner's encrypted token bound to the per-PROJECT destination
+  // (A2.1 `delivery`). Returns undefined for any owner without a usable connection — confirmPush
+  // then falls back to the shared `github` (env→mock) UNCHANGED. NEVER throws (a bad/undecryptable
+  // connection ⇒ undefined). Under NODE_ENV=test (like selectGitHubAdapter) `githubFor` stays
+  // undefined, so no real adapter is ever constructed in tests.
+  const perUserEnabled = !!(opts.connections && opts.env && opts.env.NODE_ENV !== 'test')
+  const githubFor: ((ownerId: string, delivery?: { owner: string; repo: string }) => GitHubAdapter | undefined) | undefined =
+    perUserEnabled
+      ? (ownerId: string, delivery?: { owner: string; repo: string }) => buildUserAdapter(opts.connections!, ownerId, opts.env!, delivery)
+      : undefined
+  // A2.1 — per-PROJECT destination resolver (TIGHTEN/ADDITIVE), behind the SAME guard. Derives the
+  // repo name from the title/idea + collision-suffixes against the user's account, returning
+  // {owner=login, repo} or undefined (no usable connection). Never throws (a flaky probe fails open).
+  const deliveryFor: ((ownerId: string, title: string | undefined, idea: string) => Promise<{ owner: string; repo: string } | undefined>) | undefined =
+    perUserEnabled
+      ? (ownerId: string, title: string | undefined, idea: string) => resolveUserDelivery(opts.connections!, ownerId, title, idea, opts.env!)
       : undefined
   // ── SP1: per-session READ-ONLY GitHub-via-MCP wiring (TIGHTEN/ADDITIVE) ─────────
   // Behind the SAME guard as githubFor (connections + env + NODE_ENV!=='test'), so NO MCP pool
@@ -396,6 +416,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     bus,
     github,
     ...(githubFor ? { githubFor } : {}),
+    ...(deliveryFor ? { deliveryFor } : {}),
     ...(mcpPool ? { mcpPool } : {}),
     ...(githubMcpFor ? { githubMcpFor } : {}),
     validator: new DeterministicValidator(),
@@ -427,19 +448,30 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
   }
 }
 
-/** Resolve a per-OWNER RealGitHubAdapter from the owner's encrypted connection, or undefined
- *  when the owner has no usable connection (no token / undecryptable / unparseable repo). Never
- *  throws — the caller falls back to the shared env/mock adapter. The token is read here and
- *  handed to the adapter as a Bearer credential; it is NEVER logged or surfaced. */
+/** Resolve a per-OWNER RealGitHubAdapter bound to the per-PROJECT destination, or undefined when
+ *  the owner has no usable connection (no token / undecryptable). Never throws — the caller falls
+ *  back to the shared env/mock adapter. The token is read here and handed to the adapter as a Bearer
+ *  credential; it is NEVER logged or surfaced.
+ *
+ *  A2.1 — the destination is the SESSION's pinned `delivery` ({owner=login, repo}). For back-compat
+ *  ONLY (an old connection with a stored repo, no delivery pinned), it falls back to the connection's
+ *  stored repo. With no delivery AND no legacy repo ⇒ undefined (confirmPush refuses honestly / pins
+ *  first). The owner ALWAYS comes from a validated source: a pinned delivery.owner or the parsed
+ *  legacy repo — both shape-checked, so a leading-`-`/garbled owner can never reach the adapter. */
 function buildUserAdapter(
   connections: GitHubConnectionStore,
   ownerId: string,
   env: Record<string, string | undefined>,
+  delivery?: { owner: string; repo: string },
 ): GitHubAdapter | undefined {
   const token = connections.getToken(ownerId)
   if (!token) return undefined
-  const repo = connections.status(ownerId)?.repo
-  const target = parseOwnerRepo(repo)
+  // Pinned per-project destination (A2.1) takes precedence; re-validate its shape defensively even
+  // though it was derived/probed at pin time (it round-trips through jsonb — never trust blindly).
+  const pinned = delivery ? parseOwnerRepo(`${delivery.owner}/${delivery.repo}`) : undefined
+  // BACK-COMPAT: an OLD connection (pre-A2.1) carrying a stored repo, with nothing pinned.
+  const legacy = pinned ? undefined : parseOwnerRepo(connections.status(ownerId)?.repo)
+  const target = pinned ?? legacy
   if (!target) return undefined
   return new RealGitHubAdapter({
     owner: target.owner,
@@ -449,6 +481,39 @@ function buildUserAdapter(
     // per-user override only changes the destination repo + credential.
     ...(env.AKIS_GITHUB_PUSH_API_BASE?.trim() ? { apiBase: env.AKIS_GITHUB_PUSH_API_BASE.trim() } : {}),
   })
+}
+
+/**
+ * A2.1 — resolve the per-PROJECT delivery destination for the session owner: derive a repo name
+ * from the project title (falling back to the idea), then collision-suffix it against the owner's
+ * GitHub account so a brand-new project never pushes into an UNRELATED existing repo. Returns
+ * {owner=login, repo} or undefined when the owner has no usable connection. NEVER throws — a flaky
+ * probe fails open (use the bare base; A2's createRepo still GET-probes the FINAL name idempotently).
+ *
+ * Bounded: at most MAX_COLLISION_PROBES candidate probes. `undefined` from the probe (unknown =
+ * 401/403/5xx/network) is treated as "stop probing, use this candidate" so a flaky network can't
+ * loop or block delivery. The owner is the connection's stored LOGIN (the user's personal namespace).
+ */
+async function resolveUserDelivery(
+  connections: GitHubConnectionStore,
+  ownerId: string,
+  title: string | undefined,
+  idea: string,
+  env: Record<string, string | undefined>,
+): Promise<{ owner: string; repo: string } | undefined> {
+  const token = connections.getToken(ownerId)
+  if (!token) return undefined
+  const login = connections.status(ownerId)?.username?.trim()
+  // Validate the login as a GitHub owner before it ever forms a URL (defense-in-depth: it came
+  // from GitHub's /user, but a malformed/empty login must not silently produce an `owner//repo`).
+  const owner = parseOwnerRepo(`${login ?? ''}/x`)?.owner
+  if (!owner) return undefined
+  const base = deriveRepoName(title, idea)
+  const apiBase = env.AKIS_GITHUB_PUSH_API_BASE?.trim() || undefined
+  // Collision walk (bounded, fail-open) is the pure resolveAvailableRepoName; the probe is the real
+  // GET against the user's account using THEIR token (token-free errors → undefined → take the name).
+  const repo = await resolveAvailableRepoName(base, candidate => githubRepoExists(owner, candidate, token, undefined, apiBase))
+  return { owner, repo }
 }
 
 /** What buildServices surfaces for the knowledge subsystem. The source/queue handles

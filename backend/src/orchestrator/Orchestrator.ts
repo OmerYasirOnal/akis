@@ -101,8 +101,10 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'text', text, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs(), ...(opts?.ephemeral ? { ephemeral: true } : {}) })
   }
 
-  private emitGate(sessionId: string, gate: 'spec_approval' | 'push_confirm', state: 'awaiting' | 'satisfied' | 'rejected'): void {
-    this.s.bus.emit({ kind: 'gate', gate, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
+  private emitGate(sessionId: string, gate: 'spec_approval' | 'push_confirm', state: 'awaiting' | 'satisfied' | 'rejected', delivery?: { owner: string; repo: string }): void {
+    // A2.1: a pinned per-project `delivery` rides ONLY the push_confirm AWAITING gate so the FE shows
+    // the target before confirm. ADDITIVE/optional — never present on other gates, carries no token.
+    this.s.bus.emit({ kind: 'gate', gate, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs(), ...(delivery ? { delivery } : {}) })
   }
 
   /** Surface a RECOVERABLE run state so the FE can show an ACTION card (not a silent
@@ -541,12 +543,22 @@ export class Orchestrator {
       // forge it. Folded into the SAME non-gate update patch (the gate-write allowlist is
       // unchanged); no-op when no signer is configured (default boot unchanged).
       const passportPatch = this.signPassportFor(token)
-      // A1: NON-GATE write (status + evidence + passport; all in SessionPatch, no gate column) —
-      // resilient. It chains off the just-persisted verified row; a concurrent chat turn between the
-      // recordVerification above and this status flip no longer kills the build. (updateResilient
-      // re-reads the fresh version, so it self-heals past `verified.version` if it moved.)
-      const out = await this.updateResilient(id, { status: 'awaiting_push_confirm', ...evidencePatch, ...passportPatch })
-      this.emitGate(id, 'push_confirm', 'awaiting')
+      // A2.1 — PIN the per-PROJECT delivery destination NOW, in the SAME non-gate patch, so the
+      // push-confirm card can SHOW the target BEFORE confirm and a retry reuses the SAME repo. A
+      // session whose delivery is ALREADY pinned (a retry/change-request re-running verify) REUSES
+      // it (skips re-derivation/collision). Best-effort + NON-GATE: the resolver never throws, and
+      // if it returns undefined (no usable connection / anonymous) we just don't pin — the env→mock
+      // path / honest refusal at confirmPush is byte-for-byte unchanged. `delivery` is a non-gate
+      // SessionPatch column, never a gate write.
+      const delivery = await this.resolveDelivery(session)
+      const deliveryPatch = delivery ? { delivery } : {}
+      // A1: NON-GATE write (status + evidence + passport + delivery; all in SessionPatch, no gate
+      // column) — resilient. It chains off the just-persisted verified row; a concurrent chat turn
+      // between the recordVerification above and this status flip no longer kills the build.
+      // (updateResilient re-reads the fresh version, so it self-heals past `verified.version`.)
+      const out = await this.updateResilient(id, { status: 'awaiting_push_confirm', ...evidencePatch, ...passportPatch, ...deliveryPatch })
+      // Carry the pinned destination on the AWAITING gate event so the FE shows "→ github.com/…".
+      this.emitGate(id, 'push_confirm', 'awaiting', delivery)
       return out
     }
     // No token (real verify did not pass). Persist the structured failure evidence
@@ -632,6 +644,28 @@ export class Orchestrator {
     return { passport }
   }
 
+  /**
+   * A2.1 — resolve the per-PROJECT delivery destination ({owner,repo}) for a session. RESOLUTION
+   * ORDER:
+   *   1. `session.delivery` already PINNED (a retry / change-request) → REUSE it verbatim — never
+   *      re-derive (that would risk a different repo and break the retry's "same repo" contract).
+   *   2. else, if a per-user resolver is wired (`deliveryFor`, i.e. an owned session + real-mode
+   *      connections), DERIVE the repo name from the title/idea + collision-probe → {owner,repo}.
+   *   3. else undefined (anonymous / no connection / env→mock / NODE_ENV=test) — the caller does NOT
+   *      pin and the env→mock path / honest refusal stays byte-for-byte unchanged.
+   *
+   * NEVER throws (the resolver fails open). Carries NO token — it only NAMES the destination.
+   */
+  private async resolveDelivery(session: SessionState): Promise<{ owner: string; repo: string } | undefined> {
+    if (session.delivery) return session.delivery // pinned — retry/change-request reuse, skip collision
+    if (!session.ownerId || !this.s.deliveryFor) return undefined
+    try {
+      return await this.s.deliveryFor(session.ownerId, session.spec?.title, session.idea)
+    } catch {
+      return undefined // defensive — the resolver already fails open, but never let it break the run
+    }
+  }
+
   async confirmPush(id: string): Promise<SessionState> {
     const cur = await this.s.store.get(id)
     if (!cur) throw new Error(`session ${id} not found`)
@@ -642,12 +676,22 @@ export class Orchestrator {
     // Gate 4: mint requires the persisted VerifyToken AND a digest match; throws otherwise.
     const token = mintApprovedPush(cur, files)
 
-    // TIGHTEN-ONLY per-user destination: when the session owner has a live GitHub connection
-    // (token + their own target repo), push to THAT adapter; else the shared env/mock adapter
-    // EXACTLY as today. This only changes WHICH already-gated adapter the unchanged
-    // pushToGitHub(ApprovedPush, …) path consumes — never whether/how the push is authorized.
-    // Anonymous sessions (no ownerId) and owners without a connection fall through to env→mock.
-    const userAdapter = cur.ownerId ? this.s.githubFor?.(cur.ownerId) : undefined
+    // A2.1 — resolve the per-PROJECT destination. RESOLUTION ORDER: `cur.delivery` (PINNED at
+    // awaiting_push_confirm) wins; else derive+collision-probe now (the verify-time pin may have
+    // been skipped — pre-existing session, or the resolver failed open then). NEVER throws. This is
+    // NOT a store write — the pin persists by folding `delivery` into the done/push_failed patch
+    // below (no extra version bump, so the subsequent `cur.version`-locked update stays valid).
+    const delivery = await this.resolveDelivery(cur)
+    // If we resolved a destination NOW that wasn't already pinned, fold it into every terminal write
+    // so it persists + rides the replay (carried on the push_to_github result + done events too).
+    const deliveryPatch: { delivery?: { owner: string; repo: string } } = (delivery && !cur.delivery) ? { delivery } : {}
+
+    // TIGHTEN-ONLY per-user destination: when the session owner has a live GitHub connection, push to
+    // THAT adapter bound to the per-PROJECT `delivery` (A2.1); else the shared env/mock adapter EXACTLY
+    // as today. This only changes WHICH already-gated adapter the unchanged pushToGitHub(ApprovedPush,…)
+    // path consumes — never whether/how the push is authorized. Anonymous sessions (no ownerId) and
+    // owners without a connection fall through to env→mock.
+    const userAdapter = cur.ownerId ? this.s.githubFor?.(cur.ownerId, delivery) : undefined
     const gh = userAdapter ?? this.s.github
 
     // HONESTY (mock-fallback): in REAL mode — the session is owned AND per-user delivery is wired
@@ -660,7 +704,9 @@ export class Orchestrator {
     // a missing DESTINATION, not authorization. Parked retryable so a later (post-connect) confirm works.
     const realMode = !!cur.ownerId && !!this.s.githubFor
     if (realMode && gh instanceof MockGitHubAdapter) {
-      await this.s.store.update(id, { status: 'push_failed' }, cur.version)
+      // No usable destination — but still PIN any derived `delivery` so a later (post-connect) retry
+      // shows + reuses the same intended repo. Non-gate column; folded into the park write.
+      await this.s.store.update(id, { status: 'push_failed', ...deliveryPatch }, cur.version)
       // NO raw-English `error` bus emit here (reviewer MED): confirmPush is an AWAITED route, so
       // the thrown 409 already reaches the clicking user as the LOCALIZED banner + Settings CTA
       // (actionErrorText maps NoGitHubDestinationError). An error event would render its message
@@ -678,7 +724,7 @@ export class Orchestrator {
       repoUrl = await gh.createRepo(id)
       await pushToGitHub(token, gh, files)
     } catch (err) {
-      await this.s.store.update(id, { status: 'push_failed' }, cur.version)
+      await this.s.store.update(id, { status: 'push_failed', ...deliveryPatch }, cur.version)
       this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       // RECOVERABLE, not a dead-end: park retryable. The FE surfaces a "Push failed — retry"
@@ -690,7 +736,9 @@ export class Orchestrator {
     // The pushed repo is the produced artifact's home — a real URL the UI can open
     // (mock adapter today; a real preview env lands in the preview sub-project).
     this.s.bus.emit({ kind: 'preview', url: repoUrl, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
-    const session = await this.s.store.update(id, { status: 'done' }, cur.version)
+    // Fold any just-derived `delivery` into the terminal write so the persisted record carries the
+    // real repo the push landed in (non-gate column; on replay the gate event already carried it too).
+    const session = await this.s.store.update(id, { status: 'done', ...deliveryPatch }, cur.version)
     // If this was a retry of a failed push, clear the recovery card (idempotent on replay).
     if (cur.status === 'push_failed') this.emitRecovery(id, 'push_failed', 'resolved')
     this.emitGate(id, 'push_confirm', 'satisfied')
