@@ -5,7 +5,6 @@ import {
   oauthCreds, signConnectState, verifyConnectState, authorizeUrl, exchangeCode,
   fetchGitHubLogin, githubConnectScope, type HttpFetch,
 } from '../auth/oauth.js'
-import { parseOwnerRepo } from '../di/selectGitHubAdapter.js'
 import { baseUrl } from './oauth.routes.js'
 
 export interface GitHubConnectDeps {
@@ -25,8 +24,12 @@ export interface GitHubConnectDeps {
  * account so the ALREADY-GATED push delivers to a repo THEY own — replacing the server-wide
  * env token as the PREFERRED credential ONLY when the session owner has a live connection.
  *
- * This route NEVER touches the push gate's semantics: it stores a per-user token (encrypted)
- * + the target repo; confirmPush still pushes only through the unchanged ApprovedPush path.
+ * A2.1 — TOKEN-ONLY connect: connecting NO LONGER picks a repo. It stores a per-user token
+ * (encrypted) + the authed GitHub LOGIN; the push target is PER-PROJECT (session.delivery,
+ * a title-derived repo auto-created in the user's PERSONAL namespace at push time).
+ *
+ * This route NEVER touches the push gate's semantics; confirmPush still pushes only through
+ * the unchanged ApprovedPush path.
  *
  * Token discipline: the access token NEVER appears in any URL, log line, or response body.
  * The callback redirects with only `?github=connected|error|denied|unavailable`. This route
@@ -36,15 +39,13 @@ export function registerGitHubConnectRoutes(app: FastifyInstance, deps: GitHubCo
   const http: HttpFetch = deps.http ?? ((url, init) => fetch(url, init as RequestInit) as unknown as ReturnType<HttpFetch>)
   const toSettings = (reply: FastifyReply, base: string, status: string): FastifyReply => reply.redirect(`${base}/settings?github=${status}`)
 
-  // Begin the connect flow: authenticated, with a valid target repo + encryption configured.
-  app.get<{ Querystring: { repo?: string } }>('/auth/github/connect', async (req, reply) => {
+  // A2.1 — TOKEN-ONLY connect: "Connect GitHub" ONLY authenticates (token + login). It NO LONGER
+  // takes a repo — every PROJECT gets its OWN repo, auto-created per-build in the user's PERSONAL
+  // namespace (session.delivery, derived from the project title). A stray `?repo=` is IGNORED.
+  app.get('/auth/github/connect', async (req, reply) => {
     const base = baseUrl(req, deps.env)
     const userId = await deps.userIdOf(req)
     if (!userId) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
-
-    // The repo is now UNTRUSTED user input — shape-validate before going anywhere.
-    const target = parseOwnerRepo(req.query.repo)
-    if (!target) return reply.code(400).send({ error: 'repo must be "owner/name"', code: 'BadRepo' })
 
     // FAIL-CLOSED PREFLIGHT — refuse BEFORE minting a GitHub authorization we can't complete:
     //  (a) the GitHub OAuth app must be configured, and
@@ -53,10 +54,11 @@ export function registerGitHubConnectRoutes(app: FastifyInstance, deps: GitHubCo
     if (!oauthCreds('github', deps.env)) return toSettings(reply, base, 'unavailable')
     if (!deps.connections.canStore()) return toSettings(reply, base, 'unavailable')
 
-    const repo = `${target.owner}/${target.repo}`
-    // userId + repo are bound INSIDE the signed state — the unforgeable identity/CSRF/target
-    // binding (the callback derives both from it, never from a token-in-URL).
-    const state = signConnectState(userId, repo, deps.secret)
+    // The userId is bound INSIDE the signed state — the unforgeable identity/CSRF binding (the
+    // callback derives it from the state, never from a token-in-URL). The second slot carries a
+    // fixed `'connect'` sentinel (signConnectState requires a non-empty second binding; there is
+    // no per-connect repo anymore) — it is NOT consulted on the callback.
+    const state = signConnectState(userId, 'connect', deps.secret)
     const creds = oauthCreds('github', deps.env)! // present per the preflight above
     const redirectUri = `${base}/auth/github/callback`
     return reply.redirect(authorizeUrl('github', creds.clientId, redirectUri, state, githubConnectScope))
@@ -82,9 +84,12 @@ export function registerGitHubConnectRoutes(app: FastifyInstance, deps: GitHubCo
     try {
       const { token, scopes } = await exchangeCode('github', { code, clientId: creds.clientId, clientSecret: creds.clientSecret, redirectUri: `${base}/auth/github/callback` }, http)
       const username = await fetchGitHubLogin(token, http)
-      // set() may (defensively) throw if encryption became unavailable between preflight and
-      // here — surface a token-free ?github=error rather than a 500 that could echo internals.
-      deps.connections.set(verified.userId, { accessToken: token, username, scopes, repo: verified.repo })
+      // A2.1 — TOKEN-ONLY connect: persist the token + the authed GitHub LOGIN (`username`) only; NO
+      // repo. The login is the user's PERSONAL namespace that per-project repos are created under, so
+      // destination derivation never has to re-hit /user. `verified.repo` (the `'connect'` sentinel)
+      // is intentionally NOT stored. set() may (defensively) throw if encryption became unavailable
+      // between preflight and here — surface a token-free ?github=error rather than a 500.
+      deps.connections.set(verified.userId, { accessToken: token, username, scopes })
       return toSettings(reply, base, 'connected')
     } catch {
       return toSettings(reply, base, 'error') // never leak the token or any internal detail
