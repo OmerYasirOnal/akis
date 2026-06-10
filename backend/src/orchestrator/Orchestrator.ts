@@ -115,6 +115,12 @@ export class Orchestrator {
    *  still-'building' session to 'failed' so the UI can offer retry instead of waiting forever. */
   private kickRun(id: string): void {
     void this.runToVerification(id).catch(async (err: unknown) => {
+      // A user-initiated Stop is NOT a failure: the resilient writer refuses the cancelled row
+      // (RunCancelledError) and the session already sits terminal-'cancelled' with its own status
+      // event — emitting a red RunFailed bubble for a deliberate cancel would be a false alarm
+      // (and raw English in a TR session). Stay silent; the status-flip guard below is already a
+      // no-op for non-'building' rows.
+      if (err instanceof RunCancelledError) return
       const msg = err instanceof Error ? err.message : String(err)
       this.s.bus.emit({ kind: 'error', message: msg, code: 'RunFailed', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       try {

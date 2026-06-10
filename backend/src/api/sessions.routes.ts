@@ -94,6 +94,9 @@ const CONFLICT_ERRORS = new Set([
   // (reporting the precondition is observability; nothing was published). Publish itself NEVER
   // gates/blocks/mints — see the POST /sessions/:id/publish handler.
   'NoPublishProfileError',
+  // A pipeline write refused a row the user CANCELLED mid-run (resilient-writer honesty). On the
+  // awaited POST /run path that's a terminal-status refusal like the others above — 409, not 500.
+  'RunCancelledError',
 ])
 
 function sendError(reply: FastifyReply, err: unknown): FastifyReply {

@@ -16,8 +16,8 @@
  *      (RunFailed surfaced, bounded ≤ MAX attempts, no infinite loop).
  *  (3) A concurrent CANCEL mid-pipeline is NOT resurrected by the resilient retry.
  */
-import { describe, it, expect } from 'vitest'
-import { Orchestrator } from '../../src/orchestrator/Orchestrator.js'
+import { describe, it, expect, vi } from 'vitest'
+import { Orchestrator, RunCancelledError } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { buildServices } from '../../src/di/services.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
@@ -136,12 +136,45 @@ describe('Orchestrator A1 — pipeline writes survive a concurrent version bump'
     const s = await orch.start({ idea: 'build a todo web app' })
     await orch.approve(s.id)
     // The resilient writer detects the cancelled row on its fresh re-read and refuses → the run
-    // stops with an error rather than overwriting the cancel.
-    await expect(orch.runToVerification(s.id)).rejects.toBeTruthy()
+    // stops with the TYPED refusal (not a generic conflict that happens to reject) — kickRun
+    // suppresses exactly this type, so the type IS the contract.
+    await expect(orch.runToVerification(s.id)).rejects.toThrow(RunCancelledError)
 
     const final = (await services.store.get(s.id))!
     expect(final.status).toBe('cancelled') // cancel WON — not resurrected to building/push_confirm
     expect(isVerified(final)).toBe(false)
     expect(services.github.read(s.id)).toHaveLength(0)
+  })
+
+  it('a mid-pipeline cancel on the seeded fire-and-forget path emits NO RunFailed error event (Stop is not a failure)', async () => {
+    const store = new MockSessionStore()
+    const { orch, services } = makeOrch(store)
+
+    // Same concurrent-cancel injection as above, but driven through the SEEDED start (the demo
+    // path): start({spec}) auto-kicks the run fire-and-forget via kickRun.
+    const realUpdate = store.update.bind(store)
+    let cancelled = false
+    store.update = async (uid: string, patch: SessionPatch, expectedVersion: number): Promise<SessionState> => {
+      if (!cancelled && uid && 'code' in patch && patch.code) {
+        cancelled = true
+        const cur = await store.get(uid)
+        await realUpdate(uid, { status: 'cancelled' }, cur!.version)
+      }
+      return realUpdate(uid, patch, expectedVersion)
+    }
+
+    const s = await orch.start({ idea: 'build a todo web app', spec: { title: 'Todo', body: '# Todo' } })
+    // Wait for the fire-and-forget pipeline to settle on the terminal 'cancelled' row.
+    await vi.waitFor(async () => {
+      const cur = await store.get(s.id)
+      expect(cur?.status).toBe('cancelled')
+    })
+
+    // The user's deliberate Stop must NOT surface as a red RunFailed bubble: kickRun suppresses
+    // RunCancelledError (the status event is the only — and honest — signal). The row also stays
+    // terminal-'cancelled' (the catch's status-flip guard only fires on a still-'building' row).
+    const events = services.bus.recent(s.id)
+    expect(events.some(e => e.kind === 'error')).toBe(false)
+    expect((await store.get(s.id))!.status).toBe('cancelled')
   })
 })
