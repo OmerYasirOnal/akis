@@ -223,7 +223,10 @@ export function PreviewBubble({ m }: { m: PreviewMsg }) {
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
       <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-200">
-        {m.ready ? t('chat.preview.ready') : t('chat.preview.starting')}{m.url ? <> · <span className="break-all text-teal-300">{m.url}</span></> : null}
+        {/* The preview path is a real door, not a label (owner 2026-06-11): a plain <a> resolves the
+            relative /preview/<id>/ against the page origin (vite proxies it to the backend in dev,
+            same-origin in prod) and opens the RUNNING app in a new tab — the studio stays put. */}
+        {m.ready ? t('chat.preview.ready') : t('chat.preview.starting')}{m.url ? <> · <a href={m.url} target="_blank" rel="noopener noreferrer" className="break-all text-teal-300 underline decoration-teal-400/40 underline-offset-2 transition-colors hover:text-teal-200 hover:decoration-teal-200/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/50">{m.url}</a></> : null}
       </div>
     </div>
   )

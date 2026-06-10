@@ -52,6 +52,18 @@ describe('ChatThread', () => {
     expect(screen.getByRole('button', { name: 'Confirm push' })).toBeInTheDocument()
     expect(screen.queryByText(/github\.com\//)).toBeNull()
   })
+  it("the preview-ready path is a real LINK to the running app (new tab), not a label (owner 2026-06-11)", () => {
+    const msgs: ChatMessage[] = [
+      { id: 'p', kind: 'preview', ready: true, url: '/preview/abc-123/' },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    const link = screen.getByRole('link', { name: '/preview/abc-123/' })
+    // Relative href resolves against the page origin (localhost:5173 in dev) — exactly the door
+    // the user expects; new tab so the studio isn't navigated away.
+    expect(link).toHaveAttribute('href', '/preview/abc-123/')
+    expect(link).toHaveAttribute('target', '_blank')
+    expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'))
+  })
 })
 
 describe('RecoveryBubble', () => {
