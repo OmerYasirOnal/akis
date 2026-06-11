@@ -338,6 +338,64 @@ describe('ChatStudio — reopened replay projected to stopped offers Run, no dea
   })
 })
 
+// ── Live-verify LOW (2026-06-11): a change-request rebuild that parks at push_failed left the
+//    drawer at "Run the app to see it live here" with NO ▶ Run until a page reload. The park is
+//    signaled only by a `recovery` event (v.status untouched), so the snapshot effect never
+//    re-fetched and backendStatus stayed at the mid-build value ('building' — not previewable).
+//    The park fold (pushFailed/verifyFailed) must re-trigger the snapshot read so canRun flips live. ──
+describe('ChatStudio — a recovery park refreshes the durable snapshot (Run appears without reload)', () => {
+  beforeEach(() => { localStorage.clear() })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  class EmitStream {
+    static created: EmitStream[] = []
+    connectedUrl?: string
+    private onEvent?: (e: AkisEvent, seq: number) => void
+    constructor() { EmitStream.created.push(this) }
+    connect(url: string, h: { onEvent: (e: AkisEvent, seq: number) => void }): void { this.connectedUrl = url; this.onEvent = h.onEvent }
+    close(): void {}
+    emit(e: AkisEvent, seq: number): void { this.onEvent?.(e, seq) }
+  }
+  const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
+    ({ agent: 'orchestrator', laneId: 'main', sessionId: 'spark', ts: 0, ...(e as object) }) as AkisEvent
+
+  it('push_failed recovery re-fetches the snapshot → ▶ Run surfaces live', async () => {
+    EmitStream.created = []
+    window.history.replaceState({}, '', '/?s=spark')
+    const CODE = { files: [{ filePath: 'index.html', content: '<html/>' }] }
+    let getCalls = 0
+    let parked = false // the durable truth flips when the BE parks — right before the recovery emit
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'spark', idea: 'an app', status: 'building', verified: false }]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark')) {
+        getCalls++
+        // Mid-rebuild snapshot (building → NOT previewable) until the park lands.
+        return { ok: true, status: 200, json: async () => ({ id: 'spark', status: parked ? 'push_failed' : 'building', version: 3, code: CODE }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')!)
+    await waitFor(() => expect(getCalls).toBeGreaterThan(0)) // the mid-build snapshot landed
+
+    // No Run yet: building is not previewable (and that's correct — code is mid-write).
+    expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBe(0)
+    const readsBeforePark = getCalls
+
+    // The push parks — only a recovery event arrives (v.status untouched, the bug's exact shape).
+    parked = true
+    live.emit(ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }), 1)
+
+    // The park must re-trigger the snapshot read; the fresh push_failed (+ code) flips canRun.
+    await waitFor(() => expect(getCalls).toBeGreaterThan(readsBeforePark))
+    await waitFor(() =>
+      expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
+  })
+})
+
 describe('RunPipeline sessionGone precedence', () => {
   it('suppresses the connectionGone banner when sessionGone is true', () => {
     const gone = viewWith({ status: 'running', connectionGone: true })
