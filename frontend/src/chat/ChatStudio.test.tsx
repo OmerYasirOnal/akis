@@ -6,11 +6,11 @@ import { ChatStudio } from './ChatStudio.js'
 import { RunPipeline } from './RunPipeline.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { RouterProvider } from '../router/router.js'
-import { ApiClient } from '../api/client.js'
+import { ApiClient, ApiError } from '../api/client.js'
 import { EventStreamClient } from '../live/EventStreamClient.js'
 import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
-import type { AkisEvent } from '@akis/shared'
+import type { AkisEvent, SessionState } from '@akis/shared'
 
 // ChatStudio renders ExternalWriteCard (which links to /settings via the SPA Link) on a done build,
 // so the studio tree needs the router context the app always provides in production.
@@ -482,16 +482,19 @@ describe('ChatStudio — P0-1 single spec approval (chat-approved spec seed)', (
     expect(body.chat!.some(t => t.content.includes('I’m AKIS'))).toBe(false) // greeting excluded
   })
 
-  // ── A4 — 'New build' must NEVER destroy a parked RETRYABLE run off a STALE status snapshot.
-  //    Parked states (push_failed/verify_failed) are signaled only via `recovery` events — the
-  //    snapshot effect never re-fetches for them, so backendStatus can still read the pre-park
-  //    status (e.g. awaiting_push_confirm). The guard now does a FRESH getSession read (fire-and-
-  //    forget — the UI reset stays synchronous) and only cancels a genuinely non-terminal run. ──
-  /** Like studioFetch, but getSession resolves `first` on the FIRST read (the stale snapshot) and
-   *  `later` afterwards (the fresh read at click time). */
-  function staleParkFetch(first: string, later: string): (path: string, init?: RequestInit) => Promise<Response> {
+  // ── A4 / F9 — 'New build' must NEVER destroy a parked RETRYABLE run, and must STOP a live one.
+  //    Parked states (push_failed/verify_failed) are signaled only via `recovery` events — the FE
+  //    snapshot can lag the pre-park status — so the FE no longer re-reads-then-decides client-side
+  //    (the triplicated pattern that re-opened the orphaned-run hole on a fetch error). It fires the
+  //    cancel UNCONDITIONALLY and the BACKEND'S CANCEL_IMMUNE guard is the single authority: it 409s a
+  //    retryable park / terminal run (the FE swallows it → the park survives, proven server-side in
+  //    orchestrator-cancel.test.ts) and cancels a genuinely live run. These FE tests pin: the cancel
+  //    IS fired (no fragile pre-read gate), a 409 from a parked run is harmless (newChat still resets),
+  //    and a live run's cancel targets the right session. ──
+  /** A studio fetch whose POST creates `snew`; getSession always resolves a non-terminal building
+   *  snapshot (the FE no longer branches on it). cancelRun is spied on by the caller. */
+  function newBuildFetch(): (path: string, init?: RequestInit) => Promise<Response> {
     const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
-    let getCalls = 0
     return async (path: string, init?: RequestInit) => {
       if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response
       if (path.endsWith('/api/chat/stream')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as unknown as Response
@@ -500,67 +503,41 @@ describe('ChatStudio — P0-1 single spec approval (chat-approved spec seed)', (
         return { ok: true, status: 201, json: async () => ({ id: 'snew', status: 'building', idea: '# TODO App\nA list.', version: 1 }), text: async () => '' } as unknown as Response
       }
       if (path.endsWith('/sessions/snew/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
-      if (path.endsWith('/sessions/snew')) {
-        getCalls++
-        const status = getCalls === 1 ? first : later
-        return { ok: true, status: 200, json: async () => ({ id: 'snew', status, code: { files: [{ filePath: 'index.html', content: '<html/>' }] }, version: 1 }), text: async () => '' } as unknown as Response
-      }
+      if (path.endsWith('/sessions/snew')) return { ok: true, status: 200, json: async () => ({ id: 'snew', status: 'building', code: { files: [{ filePath: 'index.html', content: '<html/>' }] }, version: 1 }), text: async () => '' } as unknown as Response
       return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
     }
   }
 
-  async function clickNewBuildAfterPark(first: string, later: string) {
-    const api = new ApiClient('', vi.fn(staleParkFetch(first, later)))
-    const getSession = vi.spyOn(api, 'getSession')
-    const cancelRun = vi.spyOn(api, 'cancelRun').mockResolvedValue({} as never)
+  /** Render, start a build (→ active run snew), then click 'New build'. `cancelImpl` simulates the
+   *  BACKEND's response to the cancel: a parked run rejects 409 (the guard refused) while a live run
+   *  resolves. The test asserts behavior survives BOTH. */
+  async function startThenNewBuild(cancelImpl: () => Promise<never> | Promise<unknown>) {
+    const api = new ApiClient('', vi.fn(newBuildFetch()))
+    const cancelRun = vi.spyOn(api, 'cancelRun').mockImplementation(() => cancelImpl() as Promise<SessionState>)
     const fake = new FakeStream()
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
     await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
-    // The snapshot effect has taken its (about-to-be-stale) read.
-    await waitFor(() => expect(getSession).toHaveBeenCalledWith('snew'))
-    const snapshotReads = getSession.mock.calls.length
-    await userEvent.click(await screen.findByRole('button', { name: 'New build' }))
-    // The guard re-reads FRESH at click time (fire-and-forget) before deciding.
-    await waitFor(() => expect(getSession.mock.calls.length).toBeGreaterThan(snapshotReads))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New build' })).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'New build' }))
     return { cancelRun }
   }
 
-  it("A4: 'New build' does NOT cancel a run parked push_failed behind a stale awaiting_push_confirm snapshot", async () => {
-    const { cancelRun } = await clickNewBuildAfterPark('awaiting_push_confirm', 'push_failed')
-    // Settle the fresh-read promise chain, then prove no cancel was fired at the retryable park.
-    await new Promise(r => setTimeout(r, 0))
-    expect(cancelRun).not.toHaveBeenCalled()
-  })
-
-  it("A4: 'New build' does NOT cancel a run parked verify_failed behind a stale building snapshot", async () => {
-    const { cancelRun } = await clickNewBuildAfterPark('building', 'verify_failed')
-    await new Promise(r => setTimeout(r, 0))
-    expect(cancelRun).not.toHaveBeenCalled()
-  })
-
-  it("A4 control: a genuinely LIVE run (fresh status building) IS cancelled by 'New build'", async () => {
-    const { cancelRun } = await clickNewBuildAfterPark('building', 'building')
+  it("F9: 'New build' fires the cancel UNCONDITIONALLY (the BE 409 protects a park, not a FE pre-read)", async () => {
+    // A parked run: the BE CANCEL_IMMUNE guard 409s. The FE still FIRES the cancel (no client-side
+    // skip that could orphan the run) and the 409 is swallowed — newChat resets regardless.
+    const reject409 = () => Promise.reject(new ApiError(409, 'wrong status', 'WrongStatus'))
+    const { cancelRun } = await startThenNewBuild(reject409)
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('snew'))
+    // The 409 was harmless — newChat completed its reset (the ?s= deep-link was dropped).
+    await waitFor(() => expect(window.location.search).toBe(''))
   })
 
-  it("P1-6: 'New build' on a NON-TERMINAL run cancels it (api.cancel) before clearing", async () => {
-    const captured: { body?: unknown } = {}
-    const api = new ApiClient('', vi.fn(studioFetch(captured)))
-    const cancelRun = vi.spyOn(api, 'cancelRun').mockResolvedValue({} as never)
-    const fake = new FakeStream()
-    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
-
-    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
-    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
-    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
-    // The build started → a non-terminal (building) session. getSession resolves backendStatus.
-    await waitFor(() => expect(captured.body).toBeDefined())
-
-    // 'New build' must STOP the running pipeline (not orphan it) before resetting.
-    await userEvent.click(await screen.findByRole('button', { name: 'New build' }))
+  it("P1-6 / F9 control: a genuinely LIVE run IS cancelled by 'New build' (cancel resolves)", async () => {
+    const { cancelRun } = await startThenNewBuild(() => Promise.resolve({} as never))
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('snew'))
+    await waitFor(() => expect(window.location.search).toBe(''))
   })
 })
 
@@ -679,6 +656,11 @@ describe('ChatStudio — anchored multi-run transcript', () => {
     // TWO run-blocks now live in the SAME scroll (run A is terminal, run B is active) — two ledgers.
     await waitFor(() => expect(screen.getAllByLabelText('Trust ledger').length).toBe(2))
 
+    // F9: starting build B already fired an UNCONDITIONAL cancel at the prior run (sA) — the BE 409s
+    // it because sA is terminal/done, so the older run is never disturbed (proven server-side). Clear
+    // the spy here so the Stop assertion below isolates exactly what the STOP CLICK targets.
+    cancelRun.mockClear()
+
     // Stop targets the LATEST (active) run: the active EmitStream is the last connected one (sB).
     const live = EmitStream.created[EmitStream.created.length - 1]!
     expect(live.connectedUrl).toBe('/sessions/sB/events')
@@ -686,7 +668,7 @@ describe('ChatStudio — anchored multi-run transcript', () => {
     const stop = await screen.findByRole('button', { name: 'Stop run' })
     await userEvent.click(stop)
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('sB'))
-    // Exactly the latest — never the older terminal run.
+    // Exactly the latest — the Stop click never cancels the older terminal run.
     expect(cancelRun).not.toHaveBeenCalledWith('sA')
   })
 
