@@ -195,6 +195,17 @@ describe('PreviewDrawer (desktop)', () => {
     expect(screen.getByRole('separator').className).toContain('w-3')
   })
 
+  // OUTER CORNER (owner finding round-3 2026-06-11): the drawer docks over the studio's `rounded-2xl`
+  // chat card as a SIBLING — a square aside corner cut straight across the card's 16px curve at the
+  // shell's top/bottom-right (dark pixels spilling onto the page background, read as a "broken border").
+  // Pin the matching right-side radius + the overflow clip that makes the children follow the curve.
+  it('the desktop aside carries rounded-r-2xl (matches the chat card silhouette) + overflow-hidden', () => {
+    renderDrawer({ open: true })
+    const aside = screen.getByTestId('preview-drawer')
+    expect(aside.className).toContain('rounded-r-2xl')
+    expect(aside.className).toContain('overflow-hidden')
+  })
+
   // DUPLICATE HEADER (owner finding B3, 2026-06-11): with a REAL PreviewPanel mounted in the preview slot,
   // the "Live preview" title must appear EXACTLY ONCE — in the drawer's own header chrome — never a second
   // time as an inner panel <h3> (which read as the same title stacked twice). This is the end-to-end pin.

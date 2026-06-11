@@ -242,7 +242,12 @@ export function PreviewDrawer({
       // `overflow-hidden` (Issue 1/2) clips any region-B content during the slide + at narrow widths so the
       // collapsing/sliding box can never spill at the right edge. z-20: BELOW the edge-tab (z-30), the FAB
       // (z-40) and the mobile overlay (z-50) — the anti-jumble stacking order.
-      className="absolute inset-y-0 right-0 z-20 hidden flex-col overflow-hidden border-l border-white/10 bg-[#0B1220] shadow-2xl motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out lg:flex [&.is-dragging_iframe]:pointer-events-none"
+      // `rounded-r-2xl` (owner finding round-3 2026-06-11): the drawer is a SIBLING of the studio's
+      // `rounded-2xl` chat card (ChatStudio shell) docked over its right edge — a square corner here cut
+      // straight across the card's 16px corner curve, spilling dark pixels onto the page background at the
+      // drawer's top/bottom-right. Matching the card's radius keeps the shell's silhouette intact;
+      // `overflow-hidden` above already clips the header/body to the curve.
+      className="absolute inset-y-0 right-0 z-20 hidden flex-col overflow-hidden rounded-r-2xl border-l border-white/10 bg-[#0B1220] shadow-2xl motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out lg:flex [&.is-dragging_iframe]:pointer-events-none"
     >
       {/* LEFT-EDGE RESIZE SEPARATOR — keyboard splitter + pointer drag (capture on this stable node). */}
       <div
