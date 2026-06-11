@@ -219,7 +219,7 @@ export function PreviewBubble({ m }: { m: PreviewMsg }) {
   const { t } = useI18n()
   // A recoverable boot FAILURE shows as a rose card with its reason — never collapsed to
   // a misleading "starting…" (text-only, XSS-safe). Otherwise the usual ready/starting card.
-  return m.error ? (
+  if (m.error) return (
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
       <div className="rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-300">
@@ -227,7 +227,19 @@ export function PreviewBubble({ m }: { m: PreviewMsg }) {
         {m.error.reason ? <> · <span className="break-all text-rose-200/90">{m.error.reason}</span></> : null}
       </div>
     </div>
-  ) : (
+  )
+  // F3 — a STOPPED preview (a torn-down local run / a replay projected to 'stopped' the registry
+  // couldn't back) reads as an honest PAUSE, NOT a forever "starting…" with a dead link. The url is
+  // already cleared upstream, so no link renders here regardless.
+  if (m.stopped) return (
+    <div className="flex items-start gap-3">
+      <Avatar role="orchestrator" />
+      <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-400">
+        {t('chat.preview.stopped')}
+      </div>
+    </div>
+  )
+  return (
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
       <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-200">

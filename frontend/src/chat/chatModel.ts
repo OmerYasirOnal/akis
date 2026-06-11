@@ -17,7 +17,11 @@ export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: bool
  *  stuck critic, retry a failed verify/push). NOT a structural gate: the server never bypasses
  *  verify/push. A singleton per recovery-kind, flipped awaiting→resolved as the user acts. */
 export interface RecoveryMsg { id: string; kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed' | 'push_failed'; state: 'awaiting' | 'resolved' }
-export interface PreviewMsg { id: string; kind: 'preview'; url?: string; ready: boolean; error?: { status: 'failed' | 'unsupported'; reason?: string } }
+// F3 — `stopped` marks a TERMINAL non-live preview (the local run was torn down / a replay's last
+// frame projected to 'stopped'): the bubble reads as a recoverable PAUSE, NOT a forever "starting…".
+// `url` is CLEARED on any terminal non-live frame (stopped/failed/unsupported) so a dead /preview/
+// link is never rendered (the projection's own contract: only a live ready may carry an embeddable url).
+export interface PreviewMsg { id: string; kind: 'preview'; url?: string; ready: boolean; stopped?: boolean; error?: { status: 'failed' | 'unsupported'; reason?: string } }
 export interface ErrorMsg { id: string; kind: 'error'; text: string }
 export interface DoneMsg { id: string; kind: 'done'; verified: boolean; provider?: string }
 export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMsg | CodeReviewMsg | RecoveryMsg | PreviewMsg | ErrorMsg | DoneMsg
@@ -119,11 +123,28 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
         // A 'failed'/'unsupported' preview_status is a recoverable failure → carry its reason so
         // the thread never silently drops it; a later 'starting'/'ready' frame supersedes it.
         const failed = e.kind === 'preview_status' && (e.status === 'failed' || e.status === 'unsupported')
+        // F3 — a TERMINAL non-live frame (stopped/failed/unsupported) carries no live app: CLEAR any
+        // retained url so a projected replay ending 'stopped' (the registry couldn't back the prior
+        // 'ready' after a restart) never renders a dead link + "starting…" forever. `stopped` gives
+        // the bubble an honest PAUSE presentation distinct from "starting…".
+        const stopped = e.kind === 'preview_status' && e.status === 'stopped'
+        const terminalNonLive = failed || stopped
         const error = failed
           ? { status: e.status as 'failed' | 'unsupported', ...(e.reason ? { reason: e.reason } : {}) }
           : undefined
-        if (!previewMsg) { previewMsg = { id, kind: 'preview', ready, ...(url !== undefined ? { url } : {}), ...(error ? { error } : {}) }; items.push(previewMsg) }
-        else { previewMsg.ready = ready; if (url !== undefined) previewMsg.url = url; if (error) previewMsg.error = error; else delete previewMsg.error }
+        if (!previewMsg) {
+          previewMsg = { id, kind: 'preview', ready, ...(url !== undefined && !terminalNonLive ? { url } : {}), ...(stopped ? { stopped: true } : {}), ...(error ? { error } : {}) }
+          items.push(previewMsg)
+        } else {
+          previewMsg.ready = ready
+          // On a terminal non-live frame DROP the url (a dead link must never render); a live
+          // 'ready'/'starting' re-adds it (only 'ready' carries one). 'stopped' set, cleared by a
+          // later 'ready'/'starting'.
+          if (terminalNonLive) delete previewMsg.url
+          else if (url !== undefined) previewMsg.url = url
+          if (stopped) previewMsg.stopped = true; else delete previewMsg.stopped
+          if (error) previewMsg.error = error; else delete previewMsg.error
+        }
         break
       }
       case 'error': items.push({ id, kind: 'error', text: e.message }); break

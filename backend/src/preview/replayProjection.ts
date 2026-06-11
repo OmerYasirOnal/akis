@@ -49,7 +49,18 @@ export function projectPreviewLiveness(
   const frame = events[idx]!
   const e = frame.event
   if (e.kind !== 'preview_status') return events // type narrowing (unreachable by construction)
-  if (e.status !== 'ready' && e.status !== 'starting') return events // no liveness claimed
+  if (e.status !== 'ready' && e.status !== 'starting') {
+    // F4 — the frame already claims no liveness (stopped/failed/unsupported), so no registry
+    // correction is needed. BUT PreviewRegistry.stop() emits its 'stopped' frame as {...entry,
+    // status:'stopped'} which RETAINS the prior 'ready' url, and server.ts forwards it — so a
+    // naturally-terminal last frame can still carry a DEAD embeddable url. Honor the projection's
+    // own contract ("only a live ready may carry an embeddable url"): strip it, copy-on-write,
+    // touching nothing else (reason/demo/seq preserved). A terminal frame with no url is untouched.
+    if (e.url === undefined) return events
+    const { url: _stale, ...rest } = e
+    void _stale
+    return events.map((s, i) => (i === idx ? { seq: s.seq, event: rest as AkisEvent } : s))
+  }
   const entry = lookup(e.sessionId)
   if (entry && (entry.status === 'ready' || entry.status === 'starting')) return events // genuinely live
 

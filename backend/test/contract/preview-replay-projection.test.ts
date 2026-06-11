@@ -90,6 +90,33 @@ describe('projectPreviewLiveness (pure replay projection)', () => {
     expect(out).toEqual(events)
   })
 
+  // F4 — PreviewRegistry.stop() emits its 'stopped' frame as {...entry, status:'stopped'}, RETAINING
+  // the prior 'ready' url; server.ts forwards it. A naturally-terminal last frame must NOT carry that
+  // dead embeddable url (the contract: only a live ready may). The projection strips it within itself.
+  it("strips the url off a naturally-terminal last 'stopped' frame that retained it (F4)", () => {
+    const events = seqd([pv('s1', 'ready', { url: '/preview/s1/' }), pv('s1', 'stopped', { url: '/preview/s1/' })])
+    const out = projectPreviewLiveness(events, () => undefined)
+    const last = out[out.length - 1]!.event
+    expect(last).toMatchObject({ kind: 'preview_status', status: 'stopped' })
+    expect((last as { url?: string }).url).toBeUndefined()
+    expect(out[out.length - 1]!.seq).toBe(2)            // seq preserved
+    expect(out[0]!.event).toMatchObject({ status: 'ready', url: '/preview/s1/' }) // earlier frame intact
+  })
+
+  it("strips the url off a terminal 'failed' last frame too, keeping its reason (F4)", () => {
+    const events = seqd([pv('s1', 'failed', { url: '/preview/s1/', reason: 'crashed' })])
+    const out = projectPreviewLiveness(events, () => undefined)
+    expect(out[0]!.event).toMatchObject({ status: 'failed', reason: 'crashed' })
+    expect((out[0]!.event as { url?: string }).url).toBeUndefined()
+  })
+
+  it('a terminal last frame with NO url is left byte-identical (F4 no-op)', () => {
+    const events = seqd([pv('s1', 'ready', { url: '/preview/s1/' }), pv('s1', 'stopped')])
+    const out = projectPreviewLiveness(events, () => undefined)
+    expect(out).toEqual(events)
+    expect(out[out.length - 1]).toBe(events[events.length - 1]) // same object (no needless copy)
+  })
+
   it('NEVER mutates the input frames (the bus buffer is shared) — only the outgoing copy changes', () => {
     const ready = pv('s1', 'ready', { url: '/preview/s1/' })
     const events = seqd([ready])

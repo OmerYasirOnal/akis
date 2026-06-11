@@ -171,6 +171,48 @@ describe('foldRunBubbles', () => {
     expect(preview).toMatchObject({ kind: 'preview', ready: false, error: { status: 'failed', reason: 'port in use' } })
   })
 
+  // F3 — a projected replay ending in 'stopped' (the registry couldn't back the prior 'ready' after a
+  // restart, so the url was stripped) must CLEAR the singleton's earlier dead url and mark it stopped,
+  // never retain a clickable dead link rendered as "starting…".
+  it('a [ready(url) → stopped] fold CLEARS the url and marks the preview stopped (no dead link)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'stopped' }), // url already stripped by the backend projection
+    ])
+    const preview = msgs.find(m => m.kind === 'preview')
+    expect(preview).toMatchObject({ kind: 'preview', ready: false, stopped: true })
+    expect((preview as { url?: string }).url).toBeUndefined() // the earlier dead url did NOT linger
+  })
+
+  it('a stopped frame that STILL carries a url (belt-and-suspenders) drops it', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'stopped', url: '/preview/s1/' }),
+    ])
+    expect((msgs.find(m => m.kind === 'preview') as { url?: string }).url).toBeUndefined()
+  })
+
+  it("a 'failed' frame after a 'ready' clears the url too (the dead link must not render)", () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'failed', reason: 'crashed' }),
+    ])
+    const preview = msgs.find(m => m.kind === 'preview')
+    expect(preview).toMatchObject({ kind: 'preview', ready: false, error: { status: 'failed', reason: 'crashed' } })
+    expect((preview as { url?: string }).url).toBeUndefined()
+  })
+
+  it("a 'ready' AFTER a 'stopped' re-adds the url and clears the stopped flag (a re-run supersedes)", () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'stopped' }),
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+    ])
+    const preview = msgs.find(m => m.kind === 'preview')
+    expect(preview).toMatchObject({ kind: 'preview', ready: true, url: '/preview/s1/' })
+    expect((preview as { stopped?: boolean }).stopped).toBeUndefined()
+  })
+
   it('appends an error row', () => {
     const msgs = foldRunBubbles([ev({ kind: 'error', message: 'boom' })])
     expect(msgs.some(m => m.kind === 'error' && m.text === 'boom')).toBe(true)
