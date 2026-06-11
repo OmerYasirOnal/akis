@@ -122,7 +122,7 @@ test('offers ▶ Run in the empty-state when onRun && canRun (no live URL yet) �
   )
   // Two surfaces carry the same control (header pill + empty-state CTA); both say "Run app".
   const runs = screen.getAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i })
-  expect(runs.length).toBeGreaterThan(0)
+  expect(runs.length).toBe(2) // header pill + empty-state CTA — the contract the comment claims
 })
 
 test('keeps the honest "unverified" chip on an unverified preview (independent of Run/done)', () => {

@@ -25,8 +25,12 @@ import { useI18n } from '../i18n/I18nContext.js'
  *  note — so a LOST terminal frame can't leave the spinner pulsing forever (the boot watchdog). */
 const BOOT_SLOW_MS = 125_000
 
-export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, actionError, device, onDevice }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined; actionError?: string | undefined; device: Device; onDevice: (d: Device) => void }) {
+export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, actionError, device, onDevice, fallbackVerified }: { view: SessionView; onRun?: () => void; busy?: boolean; canRun?: boolean; files?: CodeArtifact['files'] | undefined; testEvidence?: TestEvidence | undefined; actionError?: string | undefined; device: Device; onDevice: (d: Device) => void; fallbackVerified?: boolean }) {
   const { t } = useI18n()
+  // VERIFICATION WORDING (review MED): the live view learns `verified` only from the SSE done fold;
+  // for an ungated reopen of a parked session the durable snapshot truth arrives as fallbackVerified
+  // (never overrides a stream-learned value — `??` keeps the live fold authoritative).
+  const shownVerified = view.verified ?? fallbackVerified
   const [tab, setTab] = useState<'preview' | 'code' | 'trust'>('preview')
   // Boot watchdog: while `starting`, arm a single timer; if it elapses before a terminal frame
   // arrives, flip `bootSlow` so a stuck spinner becomes a recoverable "taking longer" note.
@@ -164,9 +168,9 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
               {t('result.demo.badge')}
             </span>
           )}
-          {view.verified !== undefined && (
-            <span className={`rounded-md border px-2 py-0.5 text-xs ${view.verified ? 'border-emerald-400/30 bg-emerald-500/20 text-emerald-300' : 'border-slate-400/20 bg-slate-500/20 text-slate-300'}`}>
-              {view.verified ? t('preview.verified') : t('preview.unverified')}
+          {shownVerified !== undefined && (
+            <span className={`rounded-md border px-2 py-0.5 text-xs ${shownVerified ? 'border-emerald-400/30 bg-emerald-500/20 text-emerald-300' : 'border-slate-400/20 bg-slate-500/20 text-slate-300'}`}>
+              {shownVerified ? t('preview.verified') : t('preview.unverified')}
             </span>
           )}
           {onRun && canRun && (

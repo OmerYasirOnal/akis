@@ -218,17 +218,17 @@ describe('ChatStudio — preview ungated from verification (Run keys on code pre
   it('offers ▶ Run for a verify_failed session WITH code (the dead-end this fixes)', async () => {
     const drawer = await renderDeepLink('svf', { id: 'svf', status: 'verify_failed', verified: false, version: 3, code: CODE })
     // The Run button(s) live in the (aria-hidden, closed) drawer — query the a11y tree with hidden:true.
-    await waitFor(() => expect(runButtons(drawer).length).toBeGreaterThan(0))
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
   })
 
   it('offers ▶ Run for an awaiting_critic_resolution session WITH code', async () => {
     const drawer = await renderDeepLink('sacr', { id: 'sacr', status: 'awaiting_critic_resolution', verified: false, version: 1, code: CODE })
-    await waitFor(() => expect(runButtons(drawer).length).toBeGreaterThan(0))
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
   })
 
   it('offers ▶ Run for a cancelled session WITH code', async () => {
     const drawer = await renderDeepLink('scan', { id: 'scan', status: 'cancelled', verified: false, version: 1, code: CODE })
-    await waitFor(() => expect(runButtons(drawer).length).toBeGreaterThan(0))
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
   })
 
   it('does NOT offer Run for a mid-building session WITHOUT code (nothing to preview yet)', async () => {
@@ -247,11 +247,35 @@ describe('ChatStudio — preview ungated from verification (Run keys on code pre
   it('does NOT widen trust/publish: they stay HIDDEN for a non-done session WITH code (gated on done)', async () => {
     const drawer = await renderDeepLink('svf3', { id: 'svf3', status: 'verify_failed', verified: false, version: 1, code: CODE })
     // Run is offered (preview ungated)…
-    await waitFor(() => expect(runButtons(drawer).length).toBeGreaterThan(0))
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
     // …but TrustReportCard / PublishButton are still done-gated, so neither surfaces for verify_failed —
     // proving canRun was widened WITHOUT widening isDone (the sacred trust/publish semantics hold).
     expect(within(drawer).queryByText(/Trust report|Güven raporu/i)).toBeNull()
     expect(within(drawer).queryByText(/Publish to your server|Sunucuna yayınla/i)).toBeNull()
+  })
+
+  // VERIFICATION HONESTY in the ungated states (review MED): the live view only learns `verified`
+  // from the SSE done fold — an evicted-replay reopen would boot a runnable app with no verification
+  // wording. The snapshot effect now seeds it from the DURABLE truth (isVerified = VerifyToken).
+  it('a reopened verify_failed session shows the worded UNVERIFIED chip (snapshot-seeded honesty)', async () => {
+    const drawer = await renderDeepLink('svhon', { id: 'svhon', status: 'verify_failed', version: 2, code: CODE })
+    // No verifyToken on the snapshot → isVerified=false → the worded chip renders "unverified".
+    await waitFor(() => expect(within(drawer).getByText('unverified')).toBeInTheDocument())
+  })
+
+  it('a reopened DONE session with a VerifyToken shows the worded VERIFIED chip even with an empty replay', async () => {
+    const drawer = await renderDeepLink('svok', {
+      id: 'svok', status: 'done', version: 4, code: CODE,
+      verifyToken: { sessionId: 'svok', codeDigest: 'd', testsRun: 3, passed: true, at: 't' },
+    })
+    await waitFor(() => expect(within(drawer).getByText('verified')).toBeInTheDocument())
+  })
+
+  it('does NOT seed the chip mid-build: a building snapshot leaves view.verified untouched', async () => {
+    const drawer = await renderDeepLink('sbmid', { id: 'sbmid', status: 'building', version: 1, code: CODE })
+    await new Promise(r => setTimeout(r, 0))
+    expect(within(drawer).queryByText('unverified')).toBeNull()
+    expect(within(drawer).queryByText('verified')).toBeNull()
   })
 })
 

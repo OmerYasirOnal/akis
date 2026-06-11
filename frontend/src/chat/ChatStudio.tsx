@@ -22,6 +22,7 @@ import { Link } from '../router/router.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
+import { isVerified } from '@akis/shared'
 import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord, SessionState } from '@akis/shared'
 
 /** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
@@ -171,6 +172,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // The LAST persisted publish outcome (session.publish) — fed to PublishButton so a just-deployed
   // live URL / honest failure survives a tab-switch or refresh.
   const [publishRecord, setPublishRecord] = useState<PublishRecord | undefined>(undefined)
+  // The DURABLE verification truth from the snapshot (isVerified = VerifyToken presence), kept
+  // SEPARATE from activeView so the RunBlock reporter's empty-replay resets can't clobber it; the
+  // render falls back to it only when the live view hasn't learned `verified` (review MED — the
+  // ungated preview must never boot an app with zero verification wording). Settled states only.
+  const [snapshotVerified, setSnapshotVerified] = useState<boolean | undefined>(undefined)
 
   /** Keep the address bar's ?s= deep-link pointing at the ACTIVE session (refresh-safe). */
   const syncUrl = (id: string): void => {
@@ -251,10 +257,21 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Snapshot effect — targets the ACTIVE run for codeFiles/editsBase/backendStatus/publish + the
   // honest 404 → sessionGone (which drives the right rail; the visible card is inside the run-block).
   useEffect(() => {
-    if (!activeSessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); return }
+    if (!activeSessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); setSnapshotVerified(undefined); return }
     let cancelled = false
     void api.getSession(activeSessionId)
-      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false) } })
+      .then(s => {
+        if (cancelled) return
+        setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false)
+        // VERIFICATION HONESTY for the ungated preview (review MED): the live view only learns
+        // `verified` from the SSE done fold — an evicted-replay reopen of a parked session
+        // (verify_failed/cancelled/…) would boot a runnable app with NO verification wording.
+        // Keep the DURABLE truth (isVerified = VerifyToken) in its OWN state and let the render
+        // fall back to it — writing into activeView would race the active RunBlock's reporter
+        // (its empty-replay view reset clobbers a seeded value). Settled/parked states only, so a
+        // mid-build live run keeps today's chip timing.
+        setSnapshotVerified(isPreviewableStatus(s.status) ? isVerified(s) : undefined)
+      })
       .catch(e => {
         if (cancelled) return
         // A 404 means the session is genuinely GONE → honest recovery. Any OTHER error (network,
@@ -427,8 +444,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // is itself ungated (code-presence 409 only, no verify check), and an unsupported stack (Python,
   // etc.) is answered honestly by the boot path — this just makes the button EXIST so the user SEES
   // that instead of nothing.
-  const canPreview = !!activeSessionId && !!codeFiles?.length && (isDone || isPreviewableStatus(backendStatus))
-  const canRun = canPreview
+  const canRun = !!activeSessionId && !!codeFiles?.length && (isDone || isPreviewableStatus(backendStatus))
+  // The drawer's trust dot/chip: live fold first, durable snapshot fallback (review MED honesty).
+  const drawerVerified = activeView.verified ?? snapshotVerified
   // BUILD-AWARE CHAT context key: ALWAYS the active session id. It used to be gated on
   // codeFiles?.length, which made every turn before the code snapshot landed (a reopen/F5 race) —
   // and every turn about a code-less/failed build — STATELESS, so AKIS confidently answered
@@ -637,10 +655,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           onOpen={openDrawer}
           onClose={closeDrawer}
           allowAutoOpen={false}
-          {...(activeView.verified !== undefined ? { verified: activeView.verified } : {})}
+          {...(drawerVerified !== undefined ? { verified: drawerVerified } : {})}
           cards={cards}
           preview={
-            <PreviewPanel view={activeView} device={device} onDevice={setDevice} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+            <PreviewPanel view={activeView} device={device} onDevice={setDevice} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} {...(snapshotVerified !== undefined ? { fallbackVerified: snapshotVerified } : {})} />
           }
         />
       )}
