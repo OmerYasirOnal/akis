@@ -12,6 +12,7 @@ import type { WorkflowStorePort } from '../workflow/WorkflowStore.js'
 import type { PublishProfileStore, PublishProfile } from '../keys/PublishProfileStore.js'
 import { WrongStatusError } from '../orchestrator/Orchestrator.js'
 import { sseEvent, sseControl, sseComment } from './sse.js'
+import { projectPreviewLiveness, type PreviewLivenessEntry } from '../preview/replayProjection.js'
 import { verifyPassport } from '../verify/passport.js'
 import { buildAttestation, attestationMarkdown } from '../verify/attestation.js'
 import { buildTrustReport, renderTrustReportMarkdown } from '../report/trustReport.js'
@@ -74,6 +75,12 @@ export interface SessionsDeps {
    *  deployment so a build is always owned (no public-by-UUID anonymous session). Owner-scoping of
    *  EXISTING sessions is unchanged either way. */
   requireAuthForBuilds?: boolean
+  /** A3.2/A3.4 — the preview registry's liveness view (PreviewRegistry satisfies it). Present ⇒
+   *  the REPLAY paths (GET /log + the SSE replay slice) project a last `preview_status` frame that
+   *  claims liveness the registry can't back (post-restart / ring-buffer eviction) down to ground
+   *  truth (see projectPreviewLiveness). Absent (tests/host-injection) ⇒ replay is byte-unchanged.
+   *  READ-ONLY observability — never a gate input, never a store write. */
+  previewRegistry?: { get(sessionId: string): PreviewLivenessEntry | undefined }
 }
 
 /** Per-connection write-buffer ceiling. A stalled client whose unflushed bytes
@@ -566,9 +573,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
     if (stored?.ownerId && (await deps.userIdOf?.(req)) !== stored.ownerId) return notFound(reply, id) // owner-scope: no cross-user log read
     if (services.bus.head(id) === 0 && !stored) return notFound(reply, id)
     const { events, dropped } = services.bus.replaySince(id, 0)
+    // A3.2/A3.4 — project a replayed liveness claim the registry can't back (post-restart /
+    // evicted terminal frame) down to ground truth. Copy-on-write: the bus buffer is untouched.
+    const reg = deps.previewRegistry
+    const projected = reg ? projectPreviewLiveness(events, sid => reg.get(sid)) : events
     // `truncated` = the buffer already evicted head events (a >cap-event session), so
     // this log is a tail, not the full history — the client can surface that honestly.
-    return reply.send({ events, head: services.bus.head(id), truncated: dropped })
+    return reply.send({ events: projected, head: services.bus.head(id), truncated: dropped })
   })
 
   // CLIENT-FACING TRUST REPORT (GTM §8's first commercial build item): a pure PROJECTION of
@@ -665,7 +676,12 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
         safeWrite(sseControl('reset', { head }, head))
         maxSent = head
       } else {
-        for (const s of events) write(s)
+        // A3.2/A3.4 — ONLY the REPLAYED (buffered) slice is projected against the preview
+        // registry's ground truth; live-tapped frames (the queue below) are never touched —
+        // they come from the registry's own onStatus and ARE the truth.
+        const reg = deps.previewRegistry
+        const replayed = reg ? projectPreviewLiveness(events, sid => reg.get(sid)) : events
+        for (const s of replayed) write(s)
       }
       replaying = false
       for (const s of queue) write(s)

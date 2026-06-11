@@ -283,6 +283,54 @@ describe('ChatStudio — preview ungated from verification (Run keys on code pre
   })
 })
 
+// ── A3.2/A3.4 — REOPEN AFTER THE BACKEND'S REPLAY PROJECTION: a replay whose last preview_status
+//    frame was rewritten to 'stopped' (the registry couldn't back the persisted liveness claim after
+//    a restart/eviction) must land the user on the recoverable PAUSE state — a working ▶ Run —
+//    never a dead /preview/ iframe (proxy 502) and never a ghost spinner. ──
+describe('ChatStudio — reopened replay projected to stopped offers Run, no dead iframe (A3.2/A3.4)', () => {
+  beforeEach(() => { localStorage.clear() })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  class EmitStream {
+    static created: EmitStream[] = []
+    connectedUrl?: string
+    private onEvent?: (e: AkisEvent, seq: number) => void
+    constructor() { EmitStream.created.push(this) }
+    connect(url: string, h: { onEvent: (e: AkisEvent, seq: number) => void }): void { this.connectedUrl = url; this.onEvent = h.onEvent }
+    close(): void {}
+    emit(e: AkisEvent, seq: number): void { this.onEvent?.(e, seq) }
+  }
+  const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
+    ({ agent: 'orchestrator', laneId: 'main', sessionId: 'sstop', ts: 0, ...(e as object) }) as AkisEvent
+
+  it("renders the Run affordance and NO /preview/ iframe when the replay ends in 'stopped'", async () => {
+    EmitStream.created = []
+    window.history.replaceState({}, '', '/?s=sstop')
+    const CODE = { files: [{ filePath: 'index.html', content: '<html/>' }] }
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'sstop', idea: 'an app', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sstop/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sstop')) return { ok: true, status: 200, json: async () => ({ id: 'sstop', status: 'done', version: 2, code: CODE }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/sstop/events')!)
+
+    // What the server now replays: an earlier genuine 'ready' frame + the LAST frame projected
+    // to 'stopped' (url stripped) because the registry could not back the liveness claim.
+    live.emit(ev({ kind: 'preview_status', status: 'ready', url: '/preview/sstop/' }), 1)
+    live.emit(ev({ kind: 'preview_status', status: 'stopped' }), 2)
+
+    // The recoverable PAUSE state: ▶ Run is offered (the closed drawer is aria-hidden → hidden:true)…
+    await waitFor(() =>
+      expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
+    // …and NO iframe embeds the dead /preview/ url (it would 502 with no affordance).
+    expect(drawer.querySelector('iframe[src*="/preview/"]')).toBeNull()
+  })
+})
+
 describe('RunPipeline sessionGone precedence', () => {
   it('suppresses the connectionGone banner when sessionGone is true', () => {
     const gone = viewWith({ status: 'running', connectionGone: true })

@@ -154,6 +154,20 @@ describe('foldSessionView (pure live view-model)', () => {
     expect(v.preview.starting).toBe(true)
   })
 
+  // A3.2/A3.4 — the backend's replay-time projection rewrites a dead liveness claim to a
+  // terminal 'stopped' frame (url stripped). Folding that projected replay must land on the
+  // recoverable PAUSE state (Run affordance), never a dead iframe or ghost spinner.
+  it("folds a projected replay ending in 'stopped' to ready=false, url=undefined, stopped=true", () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }), // an earlier genuine frame
+      ev({ kind: 'preview_status', status: 'stopped' }),                    // the projected last frame
+    ])
+    expect(v.preview.ready).toBe(false)
+    expect(v.preview.url).toBeUndefined()
+    expect(v.preview.stopped).toBe(true)
+    expect(v.preview.starting).toBe(false)
+  })
+
   it('folds the structured code_review verdict (last wins) as a read-only card', () => {
     const v = foldSessionView('s1', [
       ev({ kind: 'code_review', approved: false, findings: 4, critical: true, iteration: 1, agent: 'critic' }),
