@@ -186,7 +186,10 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       .map(t => ({ role: t.role, content: typeof t.content === 'string' ? t.content.trim().slice(0, TURN_MAX_CHARS) : '' }))
       .filter((t): t is { role: 'user' | 'assistant'; content: string } => (t.role === 'user' || t.role === 'assistant') && t.content.length > 0)
       .slice(-CHAT_TURNS_MAX)
-      .map(t => ({ role: t.role, content: t.content, at: now }))
+      // phase:'pre' tags these as the BEFORE-the-build conversation, so a cross-device / cleared-
+      // storage rebuild can place the run marker AFTER them deterministically (post-build follow-up
+      // turns appended later carry no phase → they land after the marker). Additive/non-gate.
+      .map(t => ({ role: t.role, content: t.content, at: now, phase: 'pre' as const }))
     // P0-1: an OPTIONAL chat-approved spec seed. When present it must be a well-shaped object
     // ({title, body} both non-empty strings) — the chat SpecCard's text is AUTHORITATIVE, so the
     // orchestrator uses it as-is and auto-satisfies Gate 1 (still minted server-side via the
