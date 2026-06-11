@@ -201,6 +201,45 @@ export class ScribeAgent {
   }
 
   /**
+   * CHAT-TIME spec draft (Option A, owner decision 2026-06-11). The build-ready spec is authored
+   * by the REAL Scribe — its skill-injected system prompt (`this.base`, the SAME the pipeline uses)
+   * + the SAME single-shot dispatch + the SAME JSON parser run()/compose() use. BUS-FREE: at chat
+   * time there is NO live session/lane, so this emits NOTHING (run() owns the agent_start/_end frames
+   * for an actual pipeline run). It returns DATA ONLY — the parsed spec, whether it parsed, and the
+   * REAL usage — so the chat route can render the standard `akis-spec` block AND thread Scribe's true
+   * token spend into the seeded start's synthetic Scribe metrics (honesty upgrade).
+   *
+   * SACRED: zero gate authority. This is a provider.chat + parse — it never approves/verifies/pushes/
+   * mints; the human SpecCard click remains the only approve path. RAG/github tool loops are NOT wired
+   * here on purpose (chat time has no session-scoped grounding) — it is the byte-identical single-shot
+   * shape of the RAG-off Scribe. A provider error PROPAGATES so the route surfaces an honest chat
+   * error row and never silently falls back to a persona-authored spec.
+   */
+  async draftSpec(input: {
+    /** The one-line brief / requirements summary the chat persona handed off (akis-spec-request). */
+    brief: string
+    /** OPTIONAL bounded conversation turns (the route caps + sanitizes them) so Scribe drafts from
+     *  the SAME context the user shaped — folded after the brief as one user message. */
+    conversation?: { role: 'user' | 'assistant'; content: string }[]
+  }): Promise<{ spec: SpecArtifact; parsed: boolean; usage?: { inTokens: number; outTokens: number } }> {
+    // Fold the brief + the bounded conversation into ONE user message (Scribe is single-shot here;
+    // the conversation is reference, the brief is the directive). The route bounds the size.
+    const convo = (input.conversation ?? [])
+      .map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`)
+      .join('\n')
+    const userMsg = convo ? `${input.brief}\n\nConversation so far:\n${convo}` : input.brief
+    // `this.base` is SCRIBE_SYSTEM unless the DI layer injected the skill-composed prompt — the SAME
+    // resolution the pipeline's Scribe uses. Explicit 8192 budget so a full spec never truncates.
+    const res = await this.deps.provider.chat({ system: this.base, messages: [{ role: 'user', content: userMsg }], maxTokens: 8192 })
+    const { outcome, parsed } = this.parse(res.text ?? '', input.brief)
+    // A clarify outcome at chat time is degraded to its fallback spec text (no live session to ask in);
+    // surface parsed=false so the route treats it as a non-spec (honest error), never a fake spec.
+    const spec = outcome.type === 'spec' ? outcome.spec : { title: `Spec for: ${input.brief}`, body: input.brief }
+    const parsedSpec = outcome.type === 'spec' && parsed
+    return { spec, parsed: parsedSpec, ...(res.usage ? { usage: { inTokens: res.usage.inTokens, outTokens: res.usage.outTokens } } : {}) }
+  }
+
+  /**
    * ADDITIVE + fail-soft: author a concise README for the just-built app from the approved spec +
    * the actual file list. Returns undefined on any error/empty/mock output, so documentation can
    * NEVER block a build. Pure (provider call + return) — the orchestrator narrates around it and
