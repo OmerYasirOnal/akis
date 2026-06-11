@@ -284,8 +284,11 @@ export function PreviewDrawer({
       {/* HEADER — one piece of chrome (Issue 2c/§2b): a labeled chrome row (preview title + ✕) so the close
           control reads as part of the drawer's header bar rather than a lone ✕ floating on its own border
           line. The ✕ travels OFF-SCREEN with the aside when closed (overflow-hidden + translateX). `onClose`
-          stays the bare prop — no gate authority here. */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+          stays the bare prop — no gate authority here.
+          `pl-6`: the resize separator is an absolute 12px strip pinned to the aside's left edge, so the
+          header/body content needs a left inset that CLEARS it (owner finding 2026-06-11: content read as
+          glued to the splitter). 24px = the 12px handle + a ~12px breathing gap before the title. */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 pl-6 pr-3 py-2">
         <span className="truncate text-sm font-semibold text-slate-200">{t('preview.title')}</span>
         <button
           type="button"
@@ -297,12 +300,15 @@ export function PreviewDrawer({
         </button>
       </div>
 
-      {/* BODY — two scroll regions (H1). */}
+      {/* BODY — two scroll regions (H1). `pl-6` (vs `pr-3`) on both regions CLEARS the absolute 12px resize
+          separator pinned to the aside's left edge and leaves a ~12px breathing gap, so the cards + preview
+          surface never read as glued to the splitter (owner finding 2026-06-11). */}
       <div className="flex h-full min-h-0 flex-col">
         {/* Region A: gate-adjacent card stack — owns its own scrollbar, capped so the preview keeps height. */}
-        <div className="shrink-0 overflow-y-auto px-3 py-3 [max-height:50vh]">{cards}</div>
-        {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body. */}
-        <div className="min-h-0 flex-1">{preview}</div>
+        <div className="shrink-0 overflow-y-auto pl-6 pr-3 py-3 [max-height:50vh]">{cards}</div>
+        {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body.
+            `pb-3` keeps the stats strip off the drawer's bottom edge. */}
+        <div className="min-h-0 flex-1 pl-6 pr-3 pb-3">{preview}</div>
       </div>
     </aside>
 
@@ -392,10 +398,12 @@ export function PreviewDrawer({
             </button>
           </div>
 
-          {/* BODY — the same two scroll regions as the desktop drawer (H1). */}
+          {/* BODY — the same two scroll regions as the desktop drawer (H1). The mobile overlay has NO resize
+              separator, so its padding stays SYMMETRIC `px-3` (no `pl-6` inset); `pb-3` on region B keeps the
+              stats strip off the overlay's bottom edge (parity with desktop). */}
           <div className="flex h-full min-h-0 flex-col">
             <div className="shrink-0 overflow-y-auto px-3 py-3 [max-height:50vh]">{cards}</div>
-            <div className="min-h-0 flex-1">{preview}</div>
+            <div className="min-h-0 flex-1 px-3 pb-3">{preview}</div>
           </div>
         </div>
       </div>

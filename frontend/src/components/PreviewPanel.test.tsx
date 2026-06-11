@@ -201,3 +201,24 @@ test('A3.3: ready → non-ready → ready at the SAME url yields a NEW iframe no
   expect(iframe3.className).toMatch(/opacity-0/)
   expect(screen.getByText(/rendering|çiziliyor/i)).toBeInTheDocument()
 })
+
+// ── DUPLICATE HEADER (owner finding B3, 2026-06-11): the drawer's OUTER header already renders the
+//    "Live preview" / "Canlı önizleme" title; the panel must NOT render its own <h3> copy (that read as
+//    the same title twice, stacked). The panel's title role is carried by the always-present tablist's
+//    aria-label, so the visible heading lives ONLY in the drawer chrome. ──
+test('does NOT render an inner "Live preview" heading (the drawer header owns the single title)', () => {
+  // No files / no evidence → previously this branch showed an <h3>{preview.title}</h3>. It is gone.
+  const { container } = renderPanel(undefined)
+  // No heading element carries the title text (the duplicate <h3> is removed).
+  expect(screen.queryByRole('heading', { name: /Live preview|Canlı önizleme/i })).toBeNull()
+  expect(container.querySelector('h3')).toBeNull()
+})
+
+test('the Preview tab is ALWAYS the panel anchor — even with no files/evidence (replaces the <h3>)', () => {
+  renderPanel(undefined)
+  // The tablist is always present; the Preview tab is its anchor. Code/Trust tabs are absent here.
+  expect(screen.getByRole('tablist')).toBeInTheDocument()
+  expect(screen.getByRole('tab', { name: /preview|önizleme/i })).toBeInTheDocument()
+  expect(screen.queryByRole('tab', { name: /code|kod/i })).toBeNull()
+  expect(screen.queryByRole('tab', { name: /trust|güven/i })).toBeNull()
+})

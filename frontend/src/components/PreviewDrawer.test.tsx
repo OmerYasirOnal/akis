@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PreviewDrawer } from './PreviewDrawer.js'
+import { PreviewPanel } from './PreviewPanel.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
+import type { SessionView } from '../live/types.js'
 import type { ReactElement } from 'react'
 
 /** PreviewDrawer reads i18n strings, so render it inside the provider (default: EN).
@@ -171,6 +173,26 @@ describe('PreviewDrawer (desktop)', () => {
     // EN default; the hint mentions "double-click to reset". (TR mirror exists in the catalog.)
     expect(sep.getAttribute('title')).toMatch(/double-click to reset/i)
     expect(sep.getAttribute('aria-description')).toBe(sep.getAttribute('title'))
+  })
+
+  // DUPLICATE HEADER (owner finding B3, 2026-06-11): with a REAL PreviewPanel mounted in the preview slot,
+  // the "Live preview" title must appear EXACTLY ONCE — in the drawer's own header chrome — never a second
+  // time as an inner panel <h3> (which read as the same title stacked twice). This is the end-to-end pin.
+  it('renders the "Live preview" title exactly once (drawer header only — no duplicate inner heading)', () => {
+    const view: SessionView = {
+      sessionId: 's1', status: 'done', lanes: [], gates: {},
+      tests: { testsRun: 0, passed: false, ran: false },
+      preview: { ready: false }, errors: [],
+    }
+    renderDrawer({
+      open: true,
+      preview: <PreviewPanel view={view} device="responsive" onDevice={() => {}} />,
+    })
+    // The visible title text appears once. (The tablist's aria-label reuses the same string but is an
+    // attribute, not text content, so it does not show as a second on-screen "Live preview".)
+    expect(screen.getAllByText('Live preview')).toHaveLength(1)
+    // And it lives in the drawer's header chrome, not a panel heading.
+    expect(screen.queryByRole('heading', { name: /Live preview/i })).toBeNull()
   })
 })
 
