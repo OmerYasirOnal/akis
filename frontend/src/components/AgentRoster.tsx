@@ -49,13 +49,19 @@ const DOT: Record<AgentPresence, string> = {
 }
 
 /** A compact, always-visible identity strip for the AKIS agents — so it's clear which
- *  AI agents are doing the work, and what each one is responsible for, live. */
-export const AgentRoster = memo(function AgentRoster({ view }: { view: SessionView }) {
+ *  AI agents are doing the work, and what each one is responsible for, live.
+ *
+ *  F1(b) — `scribeOverride` is a PRE-BUILD, chat-level Scribe presence lifted up from AkisChat (the
+ *  REAL Scribe handoff happens at chat time, before any run/SessionView exists, so the view-derived
+ *  presence would sit 'idle'). It only ever raises Scribe ABOVE what the view says — 'working' while
+ *  drafting, 'done' once the spec card is present — and is ignored once a build is live (AkisChat
+ *  reports 'idle' then, so the event-driven `presenceOf` takes over unchanged). Pure observability. */
+export const AgentRoster = memo(function AgentRoster({ view, scribeOverride }: { view: SessionView; scribeOverride?: AgentPresence }) {
   const { t } = useI18n()
   return (
     <div className="flex flex-wrap gap-2">
       {ROSTER.map(a => {
-        const p = presenceOf(view, a.role)
+        const p = a.role === 'scribe' && scribeOverride && scribeOverride !== 'idle' ? scribeOverride : presenceOf(view, a.role)
         return (
           <div key={a.role} title={t(`role.${a.role}.what`)}
             className="group flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 transition hover:border-white/20">

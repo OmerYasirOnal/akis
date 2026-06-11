@@ -73,6 +73,11 @@ export const STRINGS = {
     'result.demo.title': 'This result was produced by the mock test runner — it is NOT a real ≥1-test pass. Add a provider key in Settings for a live, real-verified build.',
     'chat.working': 'working…',
     'chat.revised': 'number of times this agent re-ran (critic-driven revisions)',
+    // F1(b) — the live drafting signal shown in place of the generic typing cue while the REAL Scribe
+    // call runs at chat time. F3 — the honest caption on the run-block's metrics-less synthetic Scribe
+    // stage (the spec was authored earlier, in chat — so there is no meaningful per-run timing to show).
+    'chat.scribe.drafting': 'Scribe is drafting the spec…',
+    'chat.agent.scribeFromChat': 'spec was drafted in chat',
     'trust.headline': 'Builder & verifier are separate · deploy needs your approval · every step is auditable',
     'trust.headline.demo': 'Demo run: verification is simulated — the structural gates are still real.',
     'trust.ledger.title': 'Trust ledger',
@@ -870,6 +875,10 @@ export const STRINGS = {
     'live.reload': 'Yenile',
     'chat.working': 'çalışıyor…',
     'chat.revised': 'bu ajanın kaç kez yeniden çalıştığı (critic kaynaklı revizyonlar)',
+    // F1(b) / F3 — bkz. EN karşılıkları: sohbette gerçek Scribe çağrısı sürerken gösterilen canlı taslak
+    // sinyali + run-block'taki metriksiz sentetik Scribe aşamasının dürüst başlığı (spec daha önce, sohbette yazıldı).
+    'chat.scribe.drafting': 'Scribe spec’i hazırlıyor…',
+    'chat.agent.scribeFromChat': 'spec sohbette hazırlandı',
     'trust.headline': 'Üretici ve doğrulayıcı ayrı · deploy senin onayını ister · her adım denetlenebilir',
     'trust.headline.demo': 'Demo çalıştırması: doğrulama simüle edilir — yapısal gate’ler yine de gerçek.',
     'trust.ledger.title': 'Güven defteri',

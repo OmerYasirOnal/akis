@@ -351,6 +351,10 @@ export class ApiClient {
     onDelta: (delta: string) => void,
     overrides?: ChatOverrides,
     sessionId?: string,
+    // F1(b): the additive `scribe` control frame (e.g. {"scribe":"drafting"}) — a LIVE drafting signal,
+    // NEVER a delta and never part of the reply. Optional + trailing so existing callers are unchanged;
+    // an unknown frame (or this one when onScribe is omitted) is ignored, so the stream stays tolerant.
+    onScribe?: (status: string) => void,
   ): Promise<{ reply: string }> {
     const res = await this.fetchFn(this.baseUrl + '/api/chat/stream', {
       method: 'POST', credentials: 'include',
@@ -379,11 +383,14 @@ export class ApiClient {
         else if (l.startsWith('data:')) dataLine = l.slice(5).trim()
       }
       if (!dataLine) return
-      let data: { text?: string; reply?: string; message?: string; code?: string }
+      let data: { text?: string; reply?: string; message?: string; code?: string; scribe?: string }
       try { data = JSON.parse(dataLine) } catch { return } // ignore malformed frame
       if (event === 'delta' && typeof data.text === 'string') onDelta(data.text)
       else if (event === 'done') reply = typeof data.reply === 'string' ? data.reply : ''
       else if (event === 'error') streamErr = new ApiError(502, data.message ?? 'chat failed', data.code ?? 'ProviderError')
+      // F1(b): the additive `scribe` control frame — surface its status to the optional callback. Any
+      // OTHER (unknown) event falls through here and is silently ignored, keeping the stream tolerant.
+      else if (event === 'scribe' && typeof data.scribe === 'string') onScribe?.(data.scribe)
     }
     for (;;) {
       const { value, done } = await reader.read()

@@ -513,6 +513,13 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       // Scribe's real usage. A Scribe error throws ChatRequestError(502, ScribeError) → an honest SSE
       // error frame below (NEVER a persona-authored spec). No fence ⇒ finalReply === personaReply.
       const hasRequest = extractSpecRequest(personaReply) !== null
+      // F1(b) — LIVE DRAFTING SIGNAL: when (and only when) a REAL Scribe call is about to start, emit
+      // an ADDITIVE control frame so the FE can replace the generic "AKIS düşünüyor…" cue with an
+      // honest "Scribe spec'i hazırlıyor…" status (and lift Scribe to 'çalışıyor' in the header
+      // roster). It is data-only, never the final reply; old/other clients IGNORE the unknown `scribe`
+      // event entirely (the FE parser only acts on delta/done/error — see api/client.ts handleFrame),
+      // so it is backward-tolerant. Emitted before the interim `…` cue below.
+      if (hasRequest && deps.draftSpec) safeWrite(sseControl('scribe', { scribe: 'drafting' }))
       // Optional interim cue so the brief Scribe latency isn't a frozen stream (data-only, not the
       // final reply). The FE animates it; the `done` reply REPLACES it, so it never lingers.
       if (hasRequest && deps.draftSpec) onDelta('\n\n…')

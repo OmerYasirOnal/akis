@@ -534,6 +534,22 @@ function extractBuildSpec(message: string): { intro: string; spec: string } | nu
   return { intro: message.slice(0, m.index).trim(), spec }
 }
 
+/** Parse SSE frames from a raw response body into typed {event,data} records (mirrors the FE parser). */
+function parseSse(raw: string): { event: string; data: unknown }[] {
+  const out: { event: string; data: unknown }[] = []
+  for (const fr of raw.split(/\r?\n\r?\n/)) {
+    if (!fr.trim()) continue
+    let event = 'message'
+    let data = ''
+    for (const line of fr.split('\n')) {
+      if (line.startsWith('event:')) event = line.slice(6).trim()
+      else if (line.startsWith('data:')) data = line.slice(5).trim()
+    }
+    out.push({ event, data: data ? JSON.parse(data) : undefined })
+  }
+  return out
+}
+
 const REQUEST_REPLY = 'Scribe is drafting the spec…\n````akis-spec-request\nA todo app with due dates and dark mode\n````'
 
 describe('POST /api/chat — REAL Scribe handoff (akis-spec-request → akis-spec)', () => {
@@ -654,5 +670,41 @@ describe('POST /api/chat/stream — REAL Scribe handoff', () => {
     expect(res.statusCode).toBe(200) // SSE already hijacked — failure rides as an error frame
     expect(res.body).toContain('event: error')
     expect(res.body).toContain('ScribeError')
+  })
+
+  // F1(b) — LIVE DRAFTING SIGNAL: when the REAL Scribe call actually starts the route emits an
+  // ADDITIVE `scribe` control frame ({"scribe":"drafting"}) BEFORE the brief Scribe latency, so the
+  // FE can swap the generic typing cue for an honest "Scribe is drafting…" status. Additive — old
+  // clients ignore the unknown event entirely.
+  it('emits a `scribe`/drafting frame when (and only when) a real Scribe call starts', async () => {
+    const { provider } = streamProvider(['Scribe is drafting…\n', '````akis-spec-request\n', 'a todo app\n', '````'])
+    const { fn } = draftSpecSpy({ title: 'T', body: '# T\n\n## Acceptance criteria\n- x' })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'build it' } })
+    const frames = parseSse(res.body)
+    const drafting = frames.find(fr => fr.event === 'scribe')
+    expect(drafting).toBeDefined()
+    expect(drafting!.data).toEqual({ scribe: 'drafting' })
+    await f.close()
+  })
+
+  it('does NOT emit a `scribe`/drafting frame for an ordinary turn (no request fence)', async () => {
+    const { provider } = streamProvider(['Sure, tell me more.'])
+    const { fn } = draftSpecSpy({ title: 'x', body: 'x' })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'hello' } })
+    expect(parseSse(res.body).some(fr => fr.event === 'scribe')).toBe(false)
+    await f.close()
+  })
+
+  it('does NOT emit a `scribe`/drafting frame when draftSpec is unwired (no real Scribe to start)', async () => {
+    const { provider } = streamProvider(['````akis-spec-request\nx\n````'])
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider }) // no draftSpec
+    const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'build it' } })
+    expect(parseSse(res.body).some(fr => fr.event === 'scribe')).toBe(false)
+    await f.close()
   })
 })

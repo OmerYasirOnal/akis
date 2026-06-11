@@ -91,10 +91,18 @@ export function AgentBubble({ m }: { m: AgentMsg }) {
         })}
         {/* HONEST per-agent cost ("12.3k tok · 1 tool · 42s") — the transparency badge that used to
             ride the retired pipeline step. Absent/zero usage (Trace, mock) shows time only, never a
-            fabricated "0 tok". */}
-        {(() => { const badge = m.metrics ? metricsBadge(t, m.metrics) : undefined; return badge
-          ? <div className="ml-1 mt-0.5 truncate text-[10px] tabular-nums text-[#07D1AF]/60" title={badge}>{badge}</div>
-          : null })()}
+            fabricated "0 tok".
+            F3 — the chat-seeded build's SYNTHETIC Scribe stage carries NO duration/usage (the spec was
+            authored earlier, in chat), so metricsBadge returns undefined → instead of a blank line we
+            show an honest "spec was drafted in chat" caption. Scribe-only: a different LLM-free agent
+            (Trace) keeps its blank. An OLD persisted synthetic end with a 0s duration still produces a
+            badge ("0s") and so renders its timing line, not this caption (replay-safe). */}
+        {(() => {
+          const badge = m.metrics ? metricsBadge(t, m.metrics) : undefined
+          if (badge) return <div className="ml-1 mt-0.5 truncate text-[10px] tabular-nums text-[#07D1AF]/60" title={badge}>{badge}</div>
+          if (m.agent === 'scribe' && m.done) return <div className="ml-1 mt-0.5 text-[10px] italic text-slate-400">{t('chat.agent.scribeFromChat')}</div>
+          return null
+        })()}
       </div>
     </div>
   )
