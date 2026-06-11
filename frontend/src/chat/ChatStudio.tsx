@@ -22,16 +22,16 @@ import { Link } from '../router/router.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
-import { isVerified } from '@akis/shared'
+import { isVerified, CANCEL_IMMUNE_STATUSES } from '@akis/shared'
 import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord, SessionState } from '@akis/shared'
 
 /** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
  *  done/failed/cancelled are final, and verify_failed/push_failed are parked-but-finished
  *  (the user can iterate with a follow-up message rather than be stuck). Any OTHER status is a
- *  live, in-flight run → the live cockpit. */
-const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
-  'done', 'failed', 'cancelled', 'verify_failed', 'push_failed',
-])
+ *  live, in-flight run → the live cockpit.
+ *  F8 — aliased to the SHARED CANCEL_IMMUNE_STATUSES so this terminal-vs-live decision and the
+ *  backend's cancel-refusal guard read the exact same membership and can never drift. */
+const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = CANCEL_IMMUNE_STATUSES
 function isTerminalStatus(s: SessionStatus | undefined): boolean {
   return s !== undefined && TERMINAL_STATUSES.has(s)
 }

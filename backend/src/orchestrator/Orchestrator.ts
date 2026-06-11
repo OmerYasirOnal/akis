@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { initialSession, isVerified, type SessionState, type SpecArtifact } from '@akis/shared'
+import { initialSession, isVerified, CANCEL_IMMUNE_STATUSES, type SessionState, type SpecArtifact } from '@akis/shared'
 import { languageFor } from '../validator/ValidatorTypes.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
@@ -95,19 +95,17 @@ const DEFAULT_MAX_ITERATE = 3
  *  before giving up (matches appendExternalWrite's MAX_RETRY + patchExternalWrite's budget). */
 const MAX_RESILIENT_WRITE_RETRY = 5
 
-/** The TERMINAL run states — a run here is over and cannot be cancelled/driven further. */
-const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled'])
-
-/** A4 — statuses cancel() REFUSES to overwrite: the terminal set PLUS the parked-but-RETRYABLE
- *  states. push_failed/verify_failed are not dead ends — confirmPush accepts a push_failed retry
- *  and retryVerification re-runs a failed verify — so a blind cancel (e.g. the FE's 'New build'
- *  firing against a stale status snapshot) must not destroy the retry by stamping 'cancelled'
- *  over the park. A SEPARATE set, deliberately NOT a widening of TERMINAL_STATUSES: that const
- *  has other consumers (the resilient writer's no-resurrect check, route-level release) whose
- *  semantics must keep meaning "over", not "immune to cancel". The live-gate parks
- *  (awaiting_push_confirm / awaiting_critic_resolution) STAY cancellable — abandoning at a gate
- *  is a legitimate, user-requested stop. */
-const CANCEL_IMMUNE: ReadonlySet<string> = new Set([...TERMINAL_STATUSES, 'push_failed', 'verify_failed'])
+/** A4 — statuses cancel() REFUSES to overwrite: the terminal set (done/failed/cancelled) PLUS the
+ *  parked-but-RETRYABLE states. push_failed/verify_failed are not dead ends — confirmPush accepts a
+ *  push_failed retry and retryVerification re-runs a failed verify — so a blind cancel (e.g. the
+ *  FE's 'New build' firing against a stale status snapshot) must not destroy the retry by stamping
+ *  'cancelled' over the park. The live-gate parks (awaiting_push_confirm / awaiting_critic_resolution)
+ *  STAY cancellable — abandoning at a gate is a legitimate, user-requested stop.
+ *
+ *  F8 — this is the SHARED set (shared/src/session.ts CANCEL_IMMUNE_STATUSES); the frontend's
+ *  terminal-vs-live decision reads the SAME const, so the backend cancel-refusal (the authoritative
+ *  guard) and the FE's pre-cancel decision can never drift apart. */
+const CANCEL_IMMUNE: ReadonlySet<string> = CANCEL_IMMUNE_STATUSES
 
 /**
  * Conversational orchestrator. It decides the flow (no rigid FSM) and narrates,

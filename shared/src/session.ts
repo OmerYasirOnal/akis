@@ -12,6 +12,27 @@ export type SessionStatus =
   | 'verify_failed'
   | 'done' | 'push_failed' | 'failed' | 'cancelled'
 
+/**
+ * SINGLE SOURCE OF TRUTH for the "do not cancel this run" status set — the genuinely TERMINAL
+ * states (done/failed/cancelled) PLUS the parked-but-RETRYABLE states (push_failed/verify_failed).
+ * A blind cancel against one of these would either be a no-op (already over) or DESTROY a retry
+ * (confirmPush accepts a push_failed retry; retryVerification re-runs a failed verify) by stamping
+ * 'cancelled' over the park. The backend orchestrator's CANCEL_IMMUNE guard consumes this (so a
+ * stale-status cancel is refused server-side, the authoritative safety net) and the frontend's
+ * terminal-vs-live decision mirrors it, so the two can never drift apart (the F8 dedup).
+ *
+ * NOTE: the live-gate parks (awaiting_push_confirm / awaiting_critic_resolution) are DELIBERATELY
+ * absent — abandoning at a gate is a legitimate, user-requested stop, so those stay cancellable.
+ * Pure data (no token/gate authority); additive — no existing export changed.
+ */
+export const CANCEL_IMMUNE_STATUSES = new Set<SessionStatus>([
+  'done', 'failed', 'cancelled', 'push_failed', 'verify_failed',
+])
+/** True ⇔ `status` is in CANCEL_IMMUNE_STATUSES (over, or a retryable park a cancel must not clobber). */
+export function isCancelImmune(status: SessionStatus | undefined): boolean {
+  return status !== undefined && CANCEL_IMMUNE_STATUSES.has(status)
+}
+
 export interface SpecArtifact { title: string; body: string }
 export interface CodeArtifact { files: { filePath: string; content: string }[] }
 
