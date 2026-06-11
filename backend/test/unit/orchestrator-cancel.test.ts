@@ -83,4 +83,55 @@ describe('Run control — cancel is a clean terminal abandon (no gate bypass)', 
     const { orch } = makeOrch()
     await expect(orch.cancel('nope')).rejects.toThrow(/not found/)
   })
+
+  // ── A4 — RETRYABLE PARKS ARE CANCEL-IMMUNE. push_failed/verify_failed are parked-but-
+  //    retryable: confirmPush accepts a push_failed retry and retryVerification re-runs a failed
+  //    verify. A blind cancel (e.g. the FE's 'New build' firing against a stale status snapshot)
+  //    used to overwrite them with terminal 'cancelled', destroying the retry. They join the
+  //    cancel-immune set; the gate-park statuses (awaiting_push_confirm / awaiting_critic_
+  //    resolution) STAY cancellable — the live-gate abandon tests above must hold untouched. ──
+  it('A4: cancel REFUSES a push_failed park (WrongStatusError) and the retry still ships afterwards', async () => {
+    const { orch, services } = makeOrch()
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id) // → awaiting_push_confirm (verified)
+    const original = services.github.createRepo.bind(services.github)
+    let fail = true
+    services.github.createRepo = async (id: string) => { if (fail) throw new Error('transient'); return original(id) }
+    await expect(orch.confirmPush(s.id)).rejects.toThrow(/transient/) // → push_failed (retryable park)
+    expect((await services.store.get(s.id))!.status).toBe('push_failed')
+
+    // The blind cancel must NOT destroy the park…
+    await expect(orch.cancel(s.id)).rejects.toBeInstanceOf(WrongStatusError)
+    expect((await services.store.get(s.id))!.status).toBe('push_failed') // …status untouched
+
+    // …and the retryability SURVIVED: a later gated confirmPush retry ships.
+    fail = false
+    const done = await orch.confirmPush(s.id)
+    expect(done.status).toBe('done')
+    expect(services.github.read(s.id).length).toBeGreaterThan(0)
+  })
+
+  it('A4: cancel REFUSES a verify_failed park (WrongStatusError) and the verify retry still works', async () => {
+    const store = new MockSessionStore()
+    let passing = false
+    // A runner whose outcome flips between the first verify and the retry (recovery-test pattern):
+    // a passing retry still mints a REAL branded token — retryability must survive the cancel attempt.
+    const services = buildServices({
+      store, skillsDir, mockCriticScore: 90,
+      testRunner: { run: (files, opts) => createMockTestRunner({ testsRun: passing ? 2 : 3, passed: passing }).run(files, opts) },
+    })
+    const orch = new Orchestrator(services)
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    expect((await orch.runToVerification(s.id)).status).toBe('verify_failed')
+
+    await expect(orch.cancel(s.id)).rejects.toBeInstanceOf(WrongStatusError)
+    expect((await services.store.get(s.id))!.status).toBe('verify_failed') // the park survived
+
+    passing = true
+    const after = await orch.retryVerification(s.id) // the retry path is intact
+    expect(after.status).toBe('awaiting_push_confirm')
+    expect(isVerified(after)).toBe(true)
+  })
 })

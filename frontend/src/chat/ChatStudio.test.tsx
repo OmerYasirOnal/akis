@@ -417,6 +417,69 @@ describe('ChatStudio — P0-1 single spec approval (chat-approved spec seed)', (
     expect(body.chat!.some(t => t.content.includes('I’m AKIS'))).toBe(false) // greeting excluded
   })
 
+  // ── A4 — 'New build' must NEVER destroy a parked RETRYABLE run off a STALE status snapshot.
+  //    Parked states (push_failed/verify_failed) are signaled only via `recovery` events — the
+  //    snapshot effect never re-fetches for them, so backendStatus can still read the pre-park
+  //    status (e.g. awaiting_push_confirm). The guard now does a FRESH getSession read (fire-and-
+  //    forget — the UI reset stays synchronous) and only cancels a genuinely non-terminal run. ──
+  /** Like studioFetch, but getSession resolves `first` on the FIRST read (the stale snapshot) and
+   *  `later` afterwards (the fresh read at click time). */
+  function staleParkFetch(first: string, later: string): (path: string, init?: RequestInit) => Promise<Response> {
+    const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
+    let getCalls = 0
+    return async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && init?.method === 'POST') {
+        return { ok: true, status: 201, json: async () => ({ id: 'snew', status: 'building', idea: '# TODO App\nA list.', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      if (path.endsWith('/sessions/snew/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/snew')) {
+        getCalls++
+        const status = getCalls === 1 ? first : later
+        return { ok: true, status: 200, json: async () => ({ id: 'snew', status, code: { files: [{ filePath: 'index.html', content: '<html/>' }] }, version: 1 }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  async function clickNewBuildAfterPark(first: string, later: string) {
+    const api = new ApiClient('', vi.fn(staleParkFetch(first, later)))
+    const getSession = vi.spyOn(api, 'getSession')
+    const cancelRun = vi.spyOn(api, 'cancelRun').mockResolvedValue({} as never)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
+    // The snapshot effect has taken its (about-to-be-stale) read.
+    await waitFor(() => expect(getSession).toHaveBeenCalledWith('snew'))
+    const snapshotReads = getSession.mock.calls.length
+    await userEvent.click(await screen.findByRole('button', { name: 'New build' }))
+    // The guard re-reads FRESH at click time (fire-and-forget) before deciding.
+    await waitFor(() => expect(getSession.mock.calls.length).toBeGreaterThan(snapshotReads))
+    return { cancelRun }
+  }
+
+  it("A4: 'New build' does NOT cancel a run parked push_failed behind a stale awaiting_push_confirm snapshot", async () => {
+    const { cancelRun } = await clickNewBuildAfterPark('awaiting_push_confirm', 'push_failed')
+    // Settle the fresh-read promise chain, then prove no cancel was fired at the retryable park.
+    await new Promise(r => setTimeout(r, 0))
+    expect(cancelRun).not.toHaveBeenCalled()
+  })
+
+  it("A4: 'New build' does NOT cancel a run parked verify_failed behind a stale building snapshot", async () => {
+    const { cancelRun } = await clickNewBuildAfterPark('building', 'verify_failed')
+    await new Promise(r => setTimeout(r, 0))
+    expect(cancelRun).not.toHaveBeenCalled()
+  })
+
+  it("A4 control: a genuinely LIVE run (fresh status building) IS cancelled by 'New build'", async () => {
+    const { cancelRun } = await clickNewBuildAfterPark('building', 'building')
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('snew'))
+  })
+
   it("P1-6: 'New build' on a NON-TERMINAL run cancels it (api.cancel) before clearing", async () => {
     const captured: { body?: unknown } = {}
     const api = new ApiClient('', vi.fn(studioFetch(captured)))

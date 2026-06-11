@@ -98,6 +98,17 @@ const MAX_RESILIENT_WRITE_RETRY = 5
 /** The TERMINAL run states — a run here is over and cannot be cancelled/driven further. */
 const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled'])
 
+/** A4 — statuses cancel() REFUSES to overwrite: the terminal set PLUS the parked-but-RETRYABLE
+ *  states. push_failed/verify_failed are not dead ends — confirmPush accepts a push_failed retry
+ *  and retryVerification re-runs a failed verify — so a blind cancel (e.g. the FE's 'New build'
+ *  firing against a stale status snapshot) must not destroy the retry by stamping 'cancelled'
+ *  over the park. A SEPARATE set, deliberately NOT a widening of TERMINAL_STATUSES: that const
+ *  has other consumers (the resilient writer's no-resurrect check, route-level release) whose
+ *  semantics must keep meaning "over", not "immune to cancel". The live-gate parks
+ *  (awaiting_push_confirm / awaiting_critic_resolution) STAY cancellable — abandoning at a gate
+ *  is a legitimate, user-requested stop. */
+const CANCEL_IMMUNE: ReadonlySet<string> = new Set([...TERMINAL_STATUSES, 'push_failed', 'verify_failed'])
+
 /**
  * Conversational orchestrator. It decides the flow (no rigid FSM) and narrates,
  * but the 4 gates are STRUCTURAL — branded capability tokens + a verifier-only
@@ -322,7 +333,9 @@ export class Orchestrator {
   async cancel(id: string): Promise<SessionState> {
     const cur = await this.s.store.get(id)
     if (!cur) throw new Error(`session ${id} not found`)
-    if (TERMINAL_STATUSES.has(cur.status)) throw new WrongStatusError('cancel', cur.status)
+    // A4: terminal AND parked-retryable (push_failed/verify_failed) statuses refuse — see
+    // CANCEL_IMMUNE. Same WrongStatusError → 409 via CONFLICT_ERRORS at the route.
+    if (CANCEL_IMMUNE.has(cur.status)) throw new WrongStatusError('cancel', cur.status)
     const out = await this.s.store.update(id, { status: 'cancelled' }, cur.version)
     this.narrate(id, 'Run cancelled.')
     // Terminal `session/cancelled`: the live view stops driving the run and the ingestion
