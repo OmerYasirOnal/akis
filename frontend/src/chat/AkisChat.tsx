@@ -80,6 +80,13 @@ function forStorage(nodes: readonly ThreadEntry[]): ThreadNode[] {
   return dropPlaceholder([...nodes]).map(n => (isRun(n) ? n : { role: (n as ChatMsg).role, content: (n as ChatMsg).content }))
 }
 
+/** The AKIS (AK) monogram avatar — the orchestrator/chat persona identity. Shared by the plain reply
+ *  bubble AND the split-out intro-prose bubble so a build-ready reply's conversational intro keeps the
+ *  AK identity (F1(a)) — only its spec CARD section is branded as Scribe. */
+function AkAvatar(): ReactNode {
+  return <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
+}
+
 /**
  * One assistant bubble. A component (not inline JSX in the map) so `useSmoothText` sits at a
  * stable hook position regardless of how the thread grows/shrinks. Every extraction runs on
@@ -111,54 +118,62 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
   const { text: stripped } = extractSuggestions(content)
   const smoothed = useSmoothText(stripped, streaming)
   const displayed = streaming ? smoothed : stripped
-  // IDENTITY: a build-ready spec belongs to SCRIBE's identity in the UI, even though the chat-seeded
-  // build SKIPS the Scribe pipeline agent (the chat assistant drafts the spec — P0-1 short-circuit).
-  // The owner's call: present the spec card AS Scribe (Sc avatar + "Scribe" name) so the spec reads
-  // as Scribe's work, not AKIS's. Presentation-only — no second model call, no gate change; an
-  // ordinary (non-spec) assistant reply stays AKIS (AK). When `detected`, render the role-tinted
-  // Scribe monogram (the same one the run-block uses) instead of the AK monogram.
+  // IDENTITY (F1(a) — SPLIT rendering): a build-ready reply is NOT branded wholesale as Scribe. The
+  // conversational INTRO prose AKIS authored stays AKIS (AK) — so a streamed reply keeps the AK
+  // identity from the first token to the final reply, no mid-message flip when the spec fence lands.
+  // ONLY the spec CARD section is identified as Scribe (Sc avatar + "Scribe" label), since the spec
+  // reads as Scribe's work. Presentation-only — no second model call, no gate change. A spec-only
+  // reply (no intro) renders just the Sc card; an ordinary (non-spec) reply is a plain AK bubble.
+  if (detected) {
+    return (
+      <div className="space-y-3">
+        {/* The intro prose, if any, as a normal AKIS (AK) bubble — its own avatar row. */}
+        {detected.intro && (
+          <div className="flex items-start gap-3">
+            <AkAvatar />
+            <div className="min-w-0 max-w-[46rem] flex-1">
+              <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+                <Markdown content={detected.intro} />
+              </div>
+            </div>
+          </div>
+        )}
+        {/* The build-ready spec CARD as Scribe (Sc) — the only section that carries Scribe's identity. */}
+        <div className="flex items-start gap-3">
+          <Avatar role="scribe" />
+          {/* ~46rem reading measure — slightly wider than an agent bubble so the spec-card document
+              preview it can contain isn't cramped. */}
+          <div className="min-w-0 max-w-[46rem] flex-1 space-y-3">
+            {/* Name the author so the build-ready spec reads as Scribe's work (matches the avatar). */}
+            <div className="text-xs font-semibold text-sky-200">{AGENT_NAMES.scribe}</div>
+            <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} isSpecStarted={isSpecStarted} />
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="flex items-start gap-3">
-      {detected
-        ? <Avatar role="scribe" />
-        : <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>}
+      <AkAvatar />
       {/* Bounded reading measure (~46rem): a long AKIS reply no longer runs edge-to-edge on a wide
-          window (the owner's "yazı çizgilere taşıyor"). Slightly wider than an agent bubble so the
-          spec-card document preview it can contain isn't cramped. */}
+          window (the owner's "yazı çizgilere taşıyor"). */}
       <div className="min-w-0 max-w-[46rem] flex-1 space-y-3">
-        {detected
-          ? (
-            <>
-              {/* Name the author so the build-ready spec reads as Scribe's work (matches the avatar). */}
-              <div className="text-xs font-semibold text-sky-200">{AGENT_NAMES.scribe}</div>
-              {detected.intro && (
-                <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
-                  <Markdown content={detected.intro} />
-                </div>
-              )}
-              <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} isSpecStarted={isSpecStarted} />
-            </>
-          )
-          : (
-            <>
-              {/* `group relative` anchors a hover/focus-revealed Copy on the plain reply. It is
-                  NOT rendered while streaming (would copy a half-stream) nor when empty; once
-                  present it stays in the DOM via opacity so it's RTL-findable + keyboard-reachable.
-                  Copies `stripped` (the visible reply, suggestion block already removed). */}
-              <div className="group relative rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 pr-10 text-slate-200">
-                <Markdown content={displayed} />
-                {!streaming && stripped.trim() && (
-                  <CopyButton text={stripped} label={t('copy.reply')}
-                    className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
-                )}
-              </div>
-              {truncated && (
-                <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
-                  {t('akis.spec.truncated')}
-                </div>
-              )}
-            </>
+        {/* `group relative` anchors a hover/focus-revealed Copy on the plain reply. It is
+            NOT rendered while streaming (would copy a half-stream) nor when empty; once
+            present it stays in the DOM via opacity so it's RTL-findable + keyboard-reachable.
+            Copies `stripped` (the visible reply, suggestion block already removed). */}
+        <div className="group relative rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 pr-10 text-slate-200">
+          <Markdown content={displayed} />
+          {!streaming && stripped.trim() && (
+            <CopyButton text={stripped} label={t('copy.reply')}
+              className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
           )}
+        </div>
+        {truncated && (
+          <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
+            {t('akis.spec.truncated')}
+          </div>
+        )}
       </div>
     </div>
   )
