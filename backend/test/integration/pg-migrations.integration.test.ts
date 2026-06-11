@@ -176,11 +176,14 @@ describe.skipIf(!url)('pgvector real column upgrade (guarded, skips without the 
       )
       expect(colRows[0]!.udt_name).toBe('vector')
 
-      // The ANN index exists.
+      // DEAD-INDEX REMOVAL (audit quick-win, e1b6c81): the ivfflat ANN index is no longer created —
+      // no query uses it (ranking is in-JS), so ensurePgVectorColumn now DROPs it best-effort.
+      // Assert the removal held: the upgrade must NOT leave the write-tax index behind. (When
+      // ranking moves into pgvector SQL, the index returns TOGETHER with the query that uses it.)
       const { rows: idxRows } = await pool.query(
         "SELECT indexname FROM pg_indexes WHERE tablename='vector_chunks' AND indexname='vector_chunks_vector_ann_idx'",
       )
-      expect(idxRows.length).toBe(1)
+      expect(idxRows.length).toBe(0)
 
       // A real vector round-trips through the store (write-through to the vector(N) column) and a
       // native pgvector distance query runs against it. The 'vector' mode serializes the embedding
