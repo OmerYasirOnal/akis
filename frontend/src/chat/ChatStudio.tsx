@@ -5,7 +5,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import { specSeedFromMarkdown } from './buildSpec.js'
 import { actionErrorText } from './actionError.js'
 import { AkisChat } from './AkisChat.js'
-import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, type ThreadNode } from './akisThread.js'
+import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, renameThread, migrateLegacyKey, anchorKey, findThreadKeyForRun, DRAFT_KEY, type ThreadNode } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
@@ -17,11 +17,12 @@ import { TrustReportCard } from '../components/TrustReportCard.js'
 import { PublishButton } from '../components/PublishButton.js'
 import { ExternalWriteCard } from '../components/ExternalWriteCard.js'
 import { AgentWriteProposals } from '../components/AgentWriteProposals.js'
-import { AgentRoster } from '../components/AgentRoster.js'
+import { AgentRoster, type AgentPresence } from '../components/AgentRoster.js'
 import { Link } from '../router/router.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
+import { isVerified } from '@akis/shared'
 import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord, SessionState } from '@akis/shared'
 
 /** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
@@ -33,6 +34,22 @@ const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
 ])
 function isTerminalStatus(s: SessionStatus | undefined): boolean {
   return s !== undefined && TERMINAL_STATUSES.has(s)
+}
+
+/** PREVIEW-UNGATED (owner 2026-06-11): "if Proto wrote code, the user must ALWAYS be able to
+ *  preview it — Trace/Critic gate VERIFICATION and PUSH, never SEEING the app." A run is
+ *  PREVIEWABLE once Proto has persisted code AND the run has settled past mid-write: every
+ *  TERMINAL status (done/failed/cancelled/verify_failed/push_failed) PLUS the two awaiting-gates
+ *  that only ever park AFTER code exists (awaiting_critic_resolution / awaiting_push_confirm).
+ *  EXCLUDED are the pre-code / mid-write statuses (composing / awaiting_spec_approval / building):
+ *  there is nothing — or only a half-written tree — to boot. The code-presence guard at the call
+ *  site (codeFiles from the snapshot) is the primary signal; this status set is the belt-and-
+ *  suspenders that keeps a stale mid-flight frame from offering Run before the files land. */
+const PREVIEWABLE_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+  ...TERMINAL_STATUSES, 'awaiting_critic_resolution', 'awaiting_push_confirm',
+])
+function isPreviewableStatus(s: SessionStatus | undefined): boolean {
+  return s !== undefined && PREVIEWABLE_STATUSES.has(s)
 }
 
 /**
@@ -115,9 +132,26 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // The active run's folded live view, reported UP by its RunBlock (exactly ONE reporter — the
   // active run — so no shared per-event setState storm). Drives the header roster + the right rail.
   const [activeView, setActiveView] = useState<SessionView>(() => emptyView(''))
+  // F1(b) — PRE-BUILD Scribe presence, lifted up from AkisChat (the REAL Scribe handoff runs at chat
+  // time, before any run/SessionView exists). It overrides the roster's Scribe dot to 'working' while
+  // drafting and 'done' once the spec card is present; AkisChat reports 'idle' once a build is active,
+  // so the event-driven roster then takes over unchanged.
+  const [scribePresence, setScribePresence] = useState<AgentPresence>('idle')
   // Bumping this key REMOUNTS AkisChat so it re-reads the (re-seeded/cleared) thread from storage —
   // how "new build" and "reopen" reset/seed the spine without AkisChat owning that lifecycle.
   const [threadKey, setThreadKey] = useState(0)
+  // PER-CONVERSATION SPINE KEY (the reorder/clobber fix). The active conversation persists its
+  // spine under THIS storage key — `akis_chat_thread:draft` before any build, then the first run's
+  // anchor key (`akis_chat_thread:<id>`) once a build starts (promoted via renameThread). A History
+  // reopen points it at that session's anchor key, so switching chats never overwrites another
+  // conversation's spine (the H1 root cause). AkisChat reads/writes through this prop; the studio's
+  // own loadThread/saveThread calls below pass it too. Starts at the draft key (a fresh, pre-build
+  // conversation); the deep-link/reopen flows below repoint it.
+  const [threadStorageKey, setThreadStorageKey] = useState<string>(DRAFT_KEY)
+  // One-time forward migration of the legacy single-key spine into the per-conversation scheme, run
+  // BEFORE AkisChat's first mount reads its draft key (so a legacy install's conversation isn't lost
+  // and isn't double-counted). useState initializer runs exactly once, synchronously, pre-render.
+  useState(() => { migrateLegacyKey(); return 0 })
   // Synchronous re-entrancy guard for the build start: `busy` is async React state, so two
   // fast clicks on "Approve & Build" both pass a `busy` check before the re-render lands and
   // create TWO sessions (one orphaned). A ref flips synchronously, so the second click is dropped.
@@ -150,6 +184,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // The LAST persisted publish outcome (session.publish) — fed to PublishButton so a just-deployed
   // live URL / honest failure survives a tab-switch or refresh.
   const [publishRecord, setPublishRecord] = useState<PublishRecord | undefined>(undefined)
+  // The DURABLE verification truth from the snapshot (isVerified = VerifyToken presence), kept
+  // SEPARATE from activeView so the RunBlock reporter's empty-replay resets can't clobber it; the
+  // render falls back to it only when the live view hasn't learned `verified` (review MED — the
+  // ungated preview must never boot an app with zero verification wording). Settled states only.
+  const [snapshotVerified, setSnapshotVerified] = useState<boolean | undefined>(undefined)
 
   /** Keep the address bar's ?s= deep-link pointing at the ACTIVE session (refresh-safe). */
   const syncUrl = (id: string): void => {
@@ -170,16 +209,24 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (activeSessionId && activeSessionId !== id && !isTerminalStatus(backendStatus)) {
       void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient */ })
     }
-    // MERGE — never overwrite. The local spine, when it already anchors THIS run (has its run
-    // marker), is the richest copy: it holds the pre-build, sessionId-less turns the server can
-    // never store (typed before the build existed) AND is re-saved on every same-device turn, so
-    // it is authoritative. mergeSpine keeps it in that case; otherwise (cleared storage / another
-    // device) it rebuilds from the server turns. Either way the conversation is not lost on return.
+    // PER-CONVERSATION KEY: the reopened build's spine lives under its OWN anchor key — never the
+    // draft (and never another conversation's key), so reopening here can't clobber the chat the
+    // user just left. MERGE — never overwrite. The local spine FOR THIS ANCHOR, when it already has
+    // the run marker, is the richest copy: it holds the pre-build, sessionId-less turns the server
+    // can never store AND is re-saved on every same-device turn, so it is authoritative. mergeSpine
+    // keeps it in that case; otherwise (cleared storage / another device / a legacy reopen) it
+    // rebuilds from the server turns, placing the marker AFTER the phase:'pre' turns (the H2 fix).
+    // MULTI-RUN REOPEN (review MED): the spine anchors to the FIRST run's id, but syncUrl points
+    // the URL at the LATEST — so first look for the spine that already CONTAINS this run (the
+    // rich same-device copy with every run block) and adopt it; only a genuinely unknown run
+    // (cleared storage / other device) falls back to its own anchor and the server rebuild.
+    const key = findThreadKeyForRun(id) ?? anchorKey(id)
     const restoredTurns = (chat ?? [])
       .filter(turn => turn.content.trim().length > 0)
-      .map(turn => ({ role: turn.role, content: turn.content }))
-    const nodes: ThreadNode[] = mergeSpine({ local: loadThread(), serverTurns: restoredTurns, id, greeting: t('akis.greeting'), idea })
-    saveThread(nodes)
+      .map(turn => ({ role: turn.role, content: turn.content, ...(turn.phase ? { phase: turn.phase } : {}) }))
+    const nodes: ThreadNode[] = mergeSpine({ local: loadThread(key), serverTurns: restoredTurns, id, greeting: t('akis.greeting'), idea })
+    saveThread(nodes, key)
+    setThreadStorageKey(key)
     setThreadKey(k => k + 1)
     // #35: a REOPEN must NOT auto-(re)boot the local preview — the user may only want to read the
     // transcript, and spawning a process per reopen is wasteful. Pre-seed autoRan with the reopened
@@ -230,10 +277,21 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Snapshot effect — targets the ACTIVE run for codeFiles/editsBase/backendStatus/publish + the
   // honest 404 → sessionGone (which drives the right rail; the visible card is inside the run-block).
   useEffect(() => {
-    if (!activeSessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); return }
+    if (!activeSessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); setSnapshotVerified(undefined); return }
     let cancelled = false
     void api.getSession(activeSessionId)
-      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false) } })
+      .then(s => {
+        if (cancelled) return
+        setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false)
+        // VERIFICATION HONESTY for the ungated preview (review MED): the live view only learns
+        // `verified` from the SSE done fold — an evicted-replay reopen of a parked session
+        // (verify_failed/cancelled/…) would boot a runnable app with NO verification wording.
+        // Keep the DURABLE truth (isVerified = VerifyToken) in its OWN state and let the render
+        // fall back to it — writing into activeView would race the active RunBlock's reporter
+        // (its empty-replay view reset clobbers a seeded value). Settled/parked states only, so a
+        // mid-build live run keeps today's chip timing.
+        setSnapshotVerified(isPreviewableStatus(s.status) ? isVerified(s) : undefined)
+      })
       .catch(e => {
         if (cancelled) return
         // A 404 means the session is genuinely GONE → honest recovery. Any OTHER error (network,
@@ -278,8 +336,17 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // build existed — historyForApi skips the greeting, run markers AND error rows). The server
       // seeds them ATOMICALLY onto session.chat (a NON-gate column) so a CROSS-DEVICE reopen
       // rehydrates them too; same-device reopen is already covered by the local-spine merge in seedRun.
-      const preBuildChat = historyForApi(loadThread(), t('akis.greeting'))
+      const preBuildChat = historyForApi(loadThread(threadStorageKey), t('akis.greeting'))
       const s = await api.startSession(idea, undefined, baseId, specSeedFromMarkdown(idea), preBuildChat)
+      // PROMOTE the conversation to its anchor on the FIRST build: rename the draft spine to this
+      // run's anchor key so the whole conversation (greeting + pre-build turns + the run marker
+      // appendRun is about to add) persists under `akis_chat_thread:<s.id>`. A multi-run thread is
+      // ALREADY anchored (key !== draft) → no-op, so later runs keep accreting onto the same anchor.
+      // Must precede the setActiveSessionId/setThreadStorageKey below so appendRun's persist lands
+      // under the new key. renameThread is a no-op when from===to.
+      const key = threadStorageKey === DRAFT_KEY ? anchorKey(s.id) : threadStorageKey
+      renameThread(threadStorageKey, key)
+      setThreadStorageKey(key)
       // The NEW build becomes the active run. codeFiles reset to the new session's snapshot effect;
       // editsBase reflects the new session (the snapshot effect re-reads it).
       setActiveSessionId(s.id); setActiveIdea(idea); setActiveView(emptyView(s.id)); setStartingSpec(undefined)
@@ -349,8 +416,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     }
     setSessionGone(false)
     setActiveSessionId(undefined); setActiveIdea(''); setActiveView(emptyView('')); setActionError(undefined); setStartingSpec(undefined); setBackendStatus(undefined)
-    // Drop the persisted spine + remount AkisChat so it re-seeds a clean greeting (no run markers).
-    clearThread(); setThreadKey(k => k + 1)
+    // Drop the CURRENT conversation's spine, reset to a FRESH draft key + remount AkisChat so it
+    // re-seeds a clean greeting (no run markers). Per-conversation keying: we clear ONLY this
+    // conversation's key (the prior anchored conversations stay reopenable from History) and the new
+    // empty conversation begins as a draft again. Clear the new draft key too, so a leftover draft
+    // from a previously-abandoned conversation never bleeds into this fresh one.
+    clearThread(threadStorageKey); clearThread(DRAFT_KEY); setThreadStorageKey(DRAFT_KEY); setThreadKey(k => k + 1)
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
   }, [activeSessionId, backendStatus, api])
 
@@ -393,7 +464,22 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // durable status. (The inline agent-stage bubbles still come from the live view; only the
   // result-rail is made resilient.)
   const isDone = status === 'done' || backendStatus === 'done'
-  const canRun = !!activeSessionId && (isDone || activeView.verified !== undefined)
+  // PREVIEW-UNGATED (owner 2026-06-11): the ▶ Run path keys on CODE PRESENCE + a settled-enough
+  // status — NOT on verification. A session parked at verify_failed / awaiting_critic_resolution /
+  // push_failed / cancelled / failed WITH CODE used to offer no Run anywhere (a dead end: "Run the
+  // app to see it live here" with no button). Now: Proto wrote code (codeFiles from the snapshot,
+  // populated by the snapshot effect once persisted) AND the run is past mid-write
+  // (isPreviewableStatus(backendStatus)) — with `isDone` as the live fast-path for a fresh build
+  // whose backendStatus snapshot still lags at undefined while activeView.status already flipped
+  // to 'done' and codeFiles arrived. DELIBERATELY SEPARATE from `isDone` so trust/publish/external-
+  // write semantics (all gated on isDone below) stay EXACTLY as today — preview honesty travels via
+  // the independent 'unverified' chip, never by widening done-ness. The backend startPreview route
+  // is itself ungated (code-presence 409 only, no verify check), and an unsupported stack (Python,
+  // etc.) is answered honestly by the boot path — this just makes the button EXIST so the user SEES
+  // that instead of nothing.
+  const canRun = !!activeSessionId && !!codeFiles?.length && (isDone || isPreviewableStatus(backendStatus))
+  // The drawer's trust dot/chip: live fold first, durable snapshot fallback (review MED honesty).
+  const drawerVerified = activeView.verified ?? snapshotVerified
   // BUILD-AWARE CHAT context key: ALWAYS the active session id. It used to be gated on
   // codeFiles?.length, which made every turn before the code snapshot landed (a reopen/F5 race) —
   // and every turn about a code-less/failed build — STATELESS, so AKIS confidently answered
@@ -426,7 +512,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Shared frame header: the live agent roster (active run) + history (+ New chat once a run exists).
   const header = (
     <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
-      <AgentRoster view={activeView} />
+      <AgentRoster view={activeView} scribeOverride={scribePresence} />
       <div className="flex shrink-0 items-center gap-2">
         <HistoryMenu builds={recent} onOpen={openSession} />
         {/* PROMINENT "new build" (owner 2026-06-10): this is the ONLY door out of an active chat into a
@@ -443,6 +529,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const chat = (
     <AkisChat
       key={threadKey}
+      storageKey={threadStorageKey}
       api={api}
       baseUrl={baseUrl}
       {...(makeClient ? { makeClient } : {})}
@@ -457,6 +544,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       onActiveView={setActiveView}
       onReactivate={reactivateRun}
       onActionError={setActionError}
+      onScribeActivity={setScribePresence}
       starting={startingWorkflowCard}
     />
   )
@@ -601,10 +689,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           onOpen={openDrawer}
           onClose={closeDrawer}
           allowAutoOpen={false}
-          {...(activeView.verified !== undefined ? { verified: activeView.verified } : {})}
+          {...(drawerVerified !== undefined ? { verified: drawerVerified } : {})}
           cards={cards}
           preview={
-            <PreviewPanel view={activeView} device={device} onDevice={setDevice} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+            <PreviewPanel view={activeView} device={device} onDevice={setDevice} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} {...(snapshotVerified !== undefined ? { fallbackVerified: snapshotVerified } : {})} />
           }
         />
       )}

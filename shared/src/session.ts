@@ -252,6 +252,17 @@ export interface ChatTurn {
   role: 'user' | 'assistant'
   content: string
   at: string
+  /**
+   * ADDITIVE, NON-GATE conversation-phase marker. `'pre'` means this turn was typed BEFORE the
+   * build existed (the spec-shaping conversation, seeded ATOMICALLY at session creation). A
+   * post-build follow-up turn (appended later via the chat route) carries NO phase. It exists so a
+   * cross-device / cleared-storage REBUILD of the chat spine can place the run marker
+   * DETERMINISTICALLY — pre-build turns BEFORE the run marker, post-build turns after — instead of
+   * guessing from timestamps (the seed shares one creation instant, so `at` alone can't split a
+   * same-second exchange). Optional + additive: absent on legacy/older rows (treated as pre-build,
+   * preserving today's render), so it is fully replay-safe and never widens the gate-write surface.
+   */
+  phase?: 'pre'
 }
 
 /** Hard cap on persisted chat turns per session — oldest dropped first (bounded jsonb row). */

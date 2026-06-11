@@ -85,11 +85,15 @@ describe('ChatStudio F5/deep-link rehydrate — the persisted conversation survi
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
     await waitFor(() => expect(getSessionSpy).toHaveBeenCalledWith('s1'))
     // The pre-build turn survived the reseed — in BOTH the visible thread AND the persisted spine
-    // (the old overwrite seed dropped it from both; the merge keeps it).
+    // (the old overwrite seed dropped it from both; the merge keeps it). PER-CONVERSATION KEYING:
+    // the legacy single-key spine (with the s1 run marker) is migrated to s1's ANCHOR key on mount,
+    // then the reopen merges/keeps it there — so the persisted copy now lives under `…:s1`.
     await waitFor(() => expect(screen.getByText('a note app please')).toBeInTheDocument())
-    expect(JSON.parse(localStorage.getItem('akis_chat_thread')!)).toEqual(
+    expect(JSON.parse(localStorage.getItem('akis_chat_thread:s1')!)).toEqual(
       expect.arrayContaining([expect.objectContaining({ content: 'a note app please' })]),
     )
+    // The legacy key was migrated away (no stale duplicate under the old global key).
+    expect(localStorage.getItem('akis_chat_thread')).toBeNull()
   })
 })
 
@@ -173,6 +177,111 @@ describe('ChatStudio stale deep-link recovery', () => {
 })
 
 const viewWith = (p: Partial<SessionView>): SessionView => ({ ...emptyView('s1'), ...p })
+
+// ── PREVIEW UNGATED FROM VERIFICATION (owner 2026-06-11): "if Proto wrote code, the user must ALWAYS
+//    be able to preview it." canRun keys on CODE PRESENCE + a settled-enough status (every TERMINAL
+//    status + awaiting_critic_resolution + awaiting_push_confirm), NOT on verification. A session parked
+//    at verify_failed / awaiting_critic_resolution / cancelled WITH code used to offer no ▶ Run anywhere
+//    (a dead end). It must now offer Run; a session mid-building WITHOUT code must NOT. The unverified
+//    chip stays independent (honesty); trust/publish stay gated on done. ──
+describe('ChatStudio — preview ungated from verification (Run keys on code presence + settled status)', () => {
+  beforeEach(() => { localStorage.clear() })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  const CODE = { files: [{ filePath: 'index.html', content: '<html/>' }] }
+
+  /** Deep-link a session whose getSession resolves to `body` (with code/status). The drawer is closed
+   *  by default; the Run button lives in its (aria-hidden) subtree, so we query with `hidden: true`. */
+  function previewFetch(id: string, body: Record<string, unknown>): (path: string) => Promise<Response> {
+    return async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id, idea: 'an app', status: body.status, verified: body.verified }]), text: async () => '' } as unknown as Response
+      if (path.endsWith(`/sessions/${id}/log`)) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith(`/sessions/${id}`)) return { ok: true, status: 200, json: async () => body, text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  /** Render a deep-linked session + return its drawer once the snapshot effect has settled. */
+  async function renderDeepLink(id: string, body: Record<string, unknown>) {
+    window.history.replaceState({}, '', `/?s=${id}`)
+    const api = new ApiClient('', vi.fn(previewFetch(id, body)))
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    // Settle the getSession snapshot effect (codeFiles/backendStatus drive canRun) before asserting:
+    // the RunBlock subscribes the stream once the active run is seeded, so connectedUrl pins "settled".
+    await waitFor(() => expect(fake.connectedUrl).toBe(`/sessions/${id}/events`))
+    return drawer
+  }
+
+  // PreviewPanel renders the SAME "Run app" control on TWO surfaces while there's no live URL (the header
+  // pill AND the empty-state CTA), so getAllByRole — a singular getByRole would throw "multiple elements".
+  const runButtons = (drawer: HTMLElement): HTMLElement[] =>
+    within(drawer).queryAllByRole('button', { name: /Run app/i, hidden: true })
+
+  it('offers ▶ Run for a verify_failed session WITH code (the dead-end this fixes)', async () => {
+    const drawer = await renderDeepLink('svf', { id: 'svf', status: 'verify_failed', verified: false, version: 3, code: CODE })
+    // The Run button(s) live in the (aria-hidden, closed) drawer — query the a11y tree with hidden:true.
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
+  })
+
+  it('offers ▶ Run for an awaiting_critic_resolution session WITH code', async () => {
+    const drawer = await renderDeepLink('sacr', { id: 'sacr', status: 'awaiting_critic_resolution', verified: false, version: 1, code: CODE })
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
+  })
+
+  it('offers ▶ Run for a cancelled session WITH code', async () => {
+    const drawer = await renderDeepLink('scan', { id: 'scan', status: 'cancelled', verified: false, version: 1, code: CODE })
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
+  })
+
+  it('does NOT offer Run for a mid-building session WITHOUT code (nothing to preview yet)', async () => {
+    const drawer = await renderDeepLink('sbuild', { id: 'sbuild', status: 'building', version: 1 })
+    // No code → no Run button anywhere in the drawer, even after the snapshot settles (connectedUrl set).
+    expect(runButtons(drawer).length).toBe(0)
+  })
+
+  it('does NOT offer Run for an awaiting_spec_approval session (pre-code mid-flight) even if a status leaks', async () => {
+    // Belt-and-suspenders: a pre-code status is NOT in PREVIEWABLE_STATUSES; with no code files it must
+    // never offer Run (the code-presence guard AND the status guard both fail here).
+    const drawer = await renderDeepLink('sspec', { id: 'sspec', status: 'awaiting_spec_approval', version: 1 })
+    expect(runButtons(drawer).length).toBe(0)
+  })
+
+  it('does NOT widen trust/publish: they stay HIDDEN for a non-done session WITH code (gated on done)', async () => {
+    const drawer = await renderDeepLink('svf3', { id: 'svf3', status: 'verify_failed', verified: false, version: 1, code: CODE })
+    // Run is offered (preview ungated)…
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
+    // …but TrustReportCard / PublishButton are still done-gated, so neither surfaces for verify_failed —
+    // proving canRun was widened WITHOUT widening isDone (the sacred trust/publish semantics hold).
+    expect(within(drawer).queryByText(/Trust report|Güven raporu/i)).toBeNull()
+    expect(within(drawer).queryByText(/Publish to your server|Sunucuna yayınla/i)).toBeNull()
+  })
+
+  // VERIFICATION HONESTY in the ungated states (review MED): the live view only learns `verified`
+  // from the SSE done fold — an evicted-replay reopen would boot a runnable app with no verification
+  // wording. The snapshot effect now seeds it from the DURABLE truth (isVerified = VerifyToken).
+  it('a reopened verify_failed session shows the worded UNVERIFIED chip (snapshot-seeded honesty)', async () => {
+    const drawer = await renderDeepLink('svhon', { id: 'svhon', status: 'verify_failed', version: 2, code: CODE })
+    // No verifyToken on the snapshot → isVerified=false → the worded chip renders "unverified".
+    await waitFor(() => expect(within(drawer).getByText('unverified')).toBeInTheDocument())
+  })
+
+  it('a reopened DONE session with a VerifyToken shows the worded VERIFIED chip even with an empty replay', async () => {
+    const drawer = await renderDeepLink('svok', {
+      id: 'svok', status: 'done', version: 4, code: CODE,
+      verifyToken: { sessionId: 'svok', codeDigest: 'd', testsRun: 3, passed: true, at: 't' },
+    })
+    await waitFor(() => expect(within(drawer).getByText('verified')).toBeInTheDocument())
+  })
+
+  it('does NOT seed the chip mid-build: a building snapshot leaves view.verified untouched', async () => {
+    const drawer = await renderDeepLink('sbmid', { id: 'sbmid', status: 'building', version: 1, code: CODE })
+    await new Promise(r => setTimeout(r, 0))
+    expect(within(drawer).queryByText('unverified')).toBeNull()
+    expect(within(drawer).queryByText('verified')).toBeNull()
+  })
+})
 
 describe('RunPipeline sessionGone precedence', () => {
   it('suppresses the connectionGone banner when sessionGone is true', () => {
@@ -614,5 +723,220 @@ describe('ChatStudio — preview-w gating (no-run void fix + first-frame seed)',
     // its full box (header/✕/body) off-screen instead of shrinking to nothing.
     expect(shell.style.getPropertyValue('--preview-drawer-w')).toBe('480px')
     expect(shell.style.getPropertyValue('--preview-drawer-w')).not.toBe('0px')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// SPINE ORDERING + PER-CONVERSATION KEYING — the recurring "messages/cards reorder when you switch
+// chats and come back" bug. Two root causes, both pinned here:
+//   H1 — ONE global spine key: opening chat B clobbered chat A's spine, so returning to A lost its
+//        correctly-ordered local copy and fell into the server REBUILD branch.
+//   H2 — the rebuild put the run marker ABOVE all restored turns, so the run block rendered above the
+//        conversation that produced it (the screenshot).
+// The fix keys each conversation under its own anchor (`akis_chat_thread:<id>`) and tags pre-build
+// turns `phase:'pre'` so a rebuild is chronologic. These tests assert visual ORDER, not just presence.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+describe('ChatStudio — spine ordering survives chat switching (the reorder bug)', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  /** A fake stream (terminal runs fold /log, no EventSource needed for these order assertions). */
+  class FakeStream2 { connectedUrl?: string; connect(url: string): void { this.connectedUrl = url } close(): void {} }
+
+  /** DOM order of the first match of each probe (by document position). Returns the probes sorted by
+   *  where their text/test-id appears in the rendered tree — so we can assert "conversation ABOVE run". */
+  function domOrder(probes: { label: string; node: HTMLElement | null }[]): string[] {
+    const present = probes.filter((p): p is { label: string; node: HTMLElement } => p.node !== null)
+    return present
+      .sort((a, b) => (a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      .map(p => p.label)
+  }
+
+  /** getSession/listMySessions harness for two PERSISTED builds. Each carries phase-tagged chat so a
+   *  rebuild (no local spine) is chronologic. The /log replay is empty (the run block is identified by
+   *  its Trust ledger, which always renders). */
+  function reopenFetch(): (path: string) => Promise<Response> {
+    const sessions: Record<string, unknown> = {
+      sA: { id: 'sA', idea: 'Expense tracker', status: 'done', version: 3, chat: [
+        { role: 'user', content: 'Expense tracker for freelancers', at: '2026-06-10T10:00:00.000Z', phase: 'pre' },
+        { role: 'assistant', content: 'Here is the Alpha spec', at: '2026-06-10T10:00:00.000Z', phase: 'pre' },
+        { role: 'user', content: 'why did Alpha tests fail?', at: '2026-06-10T10:05:00.000Z' }, // post-build (no phase)
+      ] },
+      sB: { id: 'sB', idea: 'Recipe box', status: 'done', version: 2, chat: [
+        { role: 'user', content: 'Recipe box app', at: '2026-06-10T11:00:00.000Z', phase: 'pre' },
+        { role: 'assistant', content: 'Here is the Beta spec', at: '2026-06-10T11:00:00.000Z', phase: 'pre' },
+      ] },
+    }
+    return async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([
+        { id: 'sA', idea: 'Expense tracker', status: 'done', verified: true },
+        { id: 'sB', idea: 'Recipe box', status: 'done', verified: true },
+      ]), text: async () => '' } as unknown as Response
+      for (const id of ['sA', 'sB']) {
+        if (path.endsWith(`/sessions/${id}/log`)) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+        if (path.endsWith(`/sessions/${id}`)) return { ok: true, status: 200, json: async () => sessions[id], text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  async function reopenFromHistory(name: RegExp): Promise<void> {
+    await userEvent.click(await screen.findByRole('button', { name: /Recent/i }))
+    await userEvent.click(await screen.findByRole('menuitem', { name }))
+  }
+
+  it('REBUILD (cross-device/cleared storage) places the conversation ABOVE the run block', async () => {
+    // No local spine → the rebuild branch runs. With phase tags it must be chronologic: pre-build
+    // turns ABOVE the run marker, the post-build follow-up BELOW it (the H2 fix, the screenshot bug).
+    window.history.replaceState({}, '', '/?s=sA')
+    const api = new ApiClient('', vi.fn(reopenFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+    await waitFor(() => expect(screen.getByText('Here is the Alpha spec')).toBeInTheDocument())
+    const order = domOrder([
+      { label: 'pre-user', node: screen.queryByText('Expense tracker for freelancers') },
+      { label: 'pre-assistant', node: screen.queryByText('Here is the Alpha spec') },
+      { label: 'run', node: screen.queryByLabelText('Trust ledger') },
+      { label: 'post-user', node: screen.queryByText('why did Alpha tests fail?') },
+    ])
+    expect(order).toEqual(['pre-user', 'pre-assistant', 'run', 'post-user'])
+  })
+
+  it('switching A → B → A keeps BOTH conversations intact and correctly ordered (the clobber fix)', async () => {
+    // PER-CONVERSATION KEYING: each conversation persists under its own anchor key, so opening B
+    // never overwrites A. Returning to A finds A's own (correctly ordered) spine — not a scrambled
+    // rebuild seeded off B's leftover spine (the H1 root cause).
+    const api = new ApiClient('', vi.fn(reopenFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+
+    // Open A (rebuild), then B, then A again.
+    await reopenFromHistory(/Expense tracker/i)
+    await waitFor(() => expect(screen.getByText('Here is the Alpha spec')).toBeInTheDocument())
+    await reopenFromHistory(/Recipe box/i)
+    await waitFor(() => expect(screen.getByText('Here is the Beta spec')).toBeInTheDocument())
+    // Returning to A: its conversation is whole AND in order — A's spine was not clobbered by B.
+    await reopenFromHistory(/Expense tracker/i)
+    await waitFor(() => expect(screen.getByText('Here is the Alpha spec')).toBeInTheDocument())
+    expect(screen.getByText('Expense tracker for freelancers')).toBeInTheDocument()
+    // B's turns are NOT bleeding into A's view (separate keys).
+    expect(screen.queryByText('Here is the Beta spec')).toBeNull()
+    expect(screen.queryByText('Recipe box app')).toBeNull()
+    const order = domOrder([
+      { label: 'pre-assistant', node: screen.queryByText('Here is the Alpha spec') },
+      { label: 'run', node: screen.queryByLabelText('Trust ledger') },
+      { label: 'post-user', node: screen.queryByText('why did Alpha tests fail?') },
+    ])
+    expect(order).toEqual(['pre-assistant', 'run', 'post-user'])
+    // Each conversation's spine lives under its OWN anchor key (never the legacy global key).
+    expect(localStorage.getItem('akis_chat_thread:sA')).not.toBeNull()
+    expect(localStorage.getItem('akis_chat_thread:sB')).not.toBeNull()
+    expect(localStorage.getItem('akis_chat_thread')).toBeNull()
+  })
+
+  it('a same-device local spine (richer than the server) keeps its order on reopen', async () => {
+    // After a real session, the local spine under the anchor key holds the conversation in order.
+    // A reopen MERGES (keeps) it — the run block stays below the conversation, no rebuild scramble.
+    localStorage.setItem('akis_chat_thread:sA', JSON.stringify([
+      { role: 'assistant', content: 'GREETING-LOCAL' },
+      { role: 'user', content: 'Expense tracker for freelancers' },
+      { role: 'assistant', content: 'Here is the Alpha spec' },
+      { role: 'run', sessionId: 'sA', idea: 'Expense tracker' },
+      { role: 'user', content: 'why did Alpha tests fail?' },
+    ]))
+    window.history.replaceState({}, '', '/?s=sA')
+    const api = new ApiClient('', vi.fn(reopenFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+    await waitFor(() => expect(screen.getByText('Here is the Alpha spec')).toBeInTheDocument())
+    const order = domOrder([
+      { label: 'pre-user', node: screen.queryByText('Expense tracker for freelancers') },
+      { label: 'pre-assistant', node: screen.queryByText('Here is the Alpha spec') },
+      { label: 'run', node: screen.queryByLabelText('Trust ledger') },
+      { label: 'post-user', node: screen.queryByText('why did Alpha tests fail?') },
+    ])
+    expect(order).toEqual(['pre-user', 'pre-assistant', 'run', 'post-user'])
+  })
+
+  it('a MULTI-RUN local spine keeps its INTERLEAVE order on reopen (turn · run1 · turn · run2 · turn)', async () => {
+    // The reorder bug bit multi-run threads hardest: each follow-up build appends a NEW run marker IN
+    // PLACE in the spine, so a real conversation is turn → run1 → turn → run2 → turn. A reopen MERGES
+    // the local anchor spine (it already holds both run markers for this conversation → it is the
+    // richest copy), so the two run-blocks must stay PINNED between exactly the turns that surround
+    // them — never collapsed above the conversation or reordered relative to each other.
+    localStorage.setItem('akis_chat_thread:m1', JSON.stringify([
+      { role: 'assistant', content: 'GREETING-LOCAL' },
+      { role: 'user', content: 'budget tracker idea' },
+      { role: 'assistant', content: 'Here is the v1 spec' },
+      { role: 'run', sessionId: 'm1', idea: 'budget tracker' },        // run 1 (the anchor)
+      { role: 'user', content: 'add a dark mode toggle' },              // follow-up between the builds
+      { role: 'assistant', content: 'Here is the v2 spec' },
+      { role: 'run', sessionId: 'm2', idea: 'budget tracker dark' },    // run 2 (the edit)
+      { role: 'user', content: 'why is the chart blank?' },             // tail follow-up
+    ]))
+    window.history.replaceState({}, '', '/?s=m1')
+    // Both runs resolve + replay an empty log; the menu lists the anchor build. m2 is terminal (the
+    // reopen makes m1 the active run), so its block folds /log without an EventSource — both still
+    // render their Trust ledger, which is the run-block's stable structural marker.
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'm1', idea: 'budget tracker', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      for (const id of ['m1', 'm2']) {
+        if (path.endsWith(`/sessions/${id}/log`)) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+        if (path.endsWith(`/sessions/${id}`)) return { ok: true, status: 200, json: async () => ({ id, idea: 'budget tracker', status: 'done', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+    await waitFor(() => expect(screen.getByText('Here is the v2 spec')).toBeInTheDocument())
+    // Two run-blocks → two Trust ledgers, in spine order. compareDocumentPosition gives us their
+    // relative DOM positions so we can pin each between its surrounding turns.
+    const ledgers = screen.getAllByLabelText('Trust ledger')
+    expect(ledgers).toHaveLength(2)
+    const order = domOrder([
+      { label: 'turn1', node: screen.queryByText('budget tracker idea') },
+      { label: 'spec1', node: screen.queryByText('Here is the v1 spec') },
+      { label: 'run1', node: ledgers[0] ?? null },
+      { label: 'turn2', node: screen.queryByText('add a dark mode toggle') },
+      { label: 'spec2', node: screen.queryByText('Here is the v2 spec') },
+      { label: 'run2', node: ledgers[1] ?? null },
+      { label: 'turn3', node: screen.queryByText('why is the chart blank?') },
+    ])
+    expect(order).toEqual(['turn1', 'spec1', 'run1', 'turn2', 'spec2', 'run2', 'turn3'])
+  })
+
+  it('reopening a multi-run thread BY THE SECOND run id adopts the anchor spine — both run blocks survive (review MED)', async () => {
+    // The spine anchors to the FIRST run (m1), but syncUrl points the URL at the LATEST build — so a
+    // plain F5 lands on /?s=m2. Looking only under anchorKey(m2) would find nothing → rebuild → run 1's
+    // block silently dropped (the regression the reviewer pinned). findThreadKeyForRun must locate the
+    // m1-anchored spine that CONTAINS m2 and adopt it: both ledgers render, fully interleaved.
+    localStorage.setItem('akis_chat_thread:m1', JSON.stringify([
+      { role: 'assistant', content: 'GREETING-LOCAL' },
+      { role: 'user', content: 'budget tracker idea' },
+      { role: 'run', sessionId: 'm1', idea: 'budget tracker' },
+      { role: 'user', content: 'add a dark mode toggle' },
+      { role: 'run', sessionId: 'm2', idea: 'budget tracker dark' },
+      { role: 'user', content: 'why is the chart blank?' },
+    ]))
+    window.history.replaceState({}, '', '/?s=m2') // ← the LATER run's id (what F5 actually sees)
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'm2', idea: 'budget tracker dark', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      for (const id of ['m1', 'm2']) {
+        if (path.endsWith(`/sessions/${id}/log`)) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+        if (path.endsWith(`/sessions/${id}`)) return { ok: true, status: 200, json: async () => ({ id, idea: 'budget tracker', status: 'done', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+    await waitFor(() => expect(screen.getAllByLabelText('Trust ledger')).toHaveLength(2)) // BOTH blocks
+    const ledgers = screen.getAllByLabelText('Trust ledger')
+    const order = domOrder([
+      { label: 'turn1', node: screen.queryByText('budget tracker idea') },
+      { label: 'run1', node: ledgers[0] ?? null },
+      { label: 'turn2', node: screen.queryByText('add a dark mode toggle') },
+      { label: 'run2', node: ledgers[1] ?? null },
+      { label: 'turn3', node: screen.queryByText('why is the chart blank?') },
+    ])
+    expect(order).toEqual(['turn1', 'run1', 'turn2', 'run2', 'turn3'])
+    // The rich spine stayed under its anchor — no empty m2 rebuild was written over it.
+    expect(localStorage.getItem('akis_chat_thread:m1')).not.toBeNull()
   })
 })

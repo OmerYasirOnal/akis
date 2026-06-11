@@ -86,10 +86,12 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'note app', chat: [{ role: 'user', content: 'a note app' }] } })
     expect(res.statusCode).toBe(201)
     const created = res.json()
-    expect(created.chat).toEqual([{ role: 'user', content: 'a note app', at: expect.any(String) }])
+    // phase:'pre' tags the seed as the BEFORE-the-build conversation, so a cross-device/cleared-
+    // storage rebuild can place the run marker AFTER it (the FE spine-ordering fix).
+    expect(created.chat).toEqual([{ role: 'user', content: 'a note app', at: expect.any(String), phase: 'pre' }])
     const { id } = created
     const s = (await app.inject({ method: 'GET', url: `/sessions/${id}` })).json()
-    expect(s.chat).toEqual([{ role: 'user', content: 'a note app', at: expect.any(String) }])
+    expect(s.chat).toEqual([{ role: 'user', content: 'a note app', at: expect.any(String), phase: 'pre' }])
   })
 
   it('startSession drops empty/invalid chat turns, server-sets the timestamp, and caps to CHAT_TURNS_MAX', async () => {
@@ -124,7 +126,7 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     })).json()
     // The 201 already reflects the seeded chat (set at creation, NOT a post-start re-read).
     expect(created.status).toBe('building')
-    expect(created.chat).toEqual([{ role: 'user', content: 'a todo app', at: expect.any(String) }])
+    expect(created.chat).toEqual([{ role: 'user', content: 'a todo app', at: expect.any(String), phase: 'pre' }])
     // The auto-kicked build reaches the push gate — it is NOT raced to `failed` by a chat write.
     await vi.waitFor(async () => {
       const cur = (await app.inject({ method: 'GET', url: `/sessions/${created.id}` })).json()
@@ -132,7 +134,7 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     })
     const cur = (await app.inject({ method: 'GET', url: `/sessions/${created.id}` })).json()
     expect(cur.status).not.toBe('failed')
-    expect(cur.chat).toEqual([{ role: 'user', content: 'a todo app', at: expect.any(String) }])
+    expect(cur.chat).toEqual([{ role: 'user', content: 'a todo app', at: expect.any(String), phase: 'pre' }])
   })
 
   it('P0-1: a malformed spec seed (missing body) -> 400 (a build never proceeds on a half spec)', async () => {

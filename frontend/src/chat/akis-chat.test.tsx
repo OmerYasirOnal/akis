@@ -70,10 +70,11 @@ describe('AkisChat', () => {
     expect(onBuild).toHaveBeenCalledWith('# TODO App\nA list.')
   })
 
-  it('the build-ready spec message is presented AS Scribe (Sc avatar + "Scribe" name), not AKIS', async () => {
-    // P2: the spec belongs to Scribe's identity in the UI even though the chat-seeded build skips
-    // the Scribe pipeline agent. The spec-card assistant message gets the Sc monogram + a "Scribe"
-    // name label; the greeting (a plain assistant message) keeps the AK monogram.
+  it('F1(a) — SPLIT rendering: the intro prose is an AK bubble, only the spec CARD carries Scribe (Sc) identity', async () => {
+    // F1(a): the message must NOT flip wholesale to Scribe. The conversational intro AKIS authored
+    // ("Here's a spec 👇") stays AK; only the spec-card section is identified as Scribe (Sc avatar +
+    // "Scribe" label). The greeting (also a plain AK message) keeps AK too — so there are MULTIPLE AK
+    // avatars and exactly ONE Scribe identity (on the card).
     const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
     const api = new ApiClient('', chatFetch(reply))
     render(<I18nProvider><AkisChat api={api} onBuild={() => {}} /></I18nProvider>)
@@ -84,8 +85,10 @@ describe('AkisChat', () => {
     // The spec card carries Scribe's identity: a "Scribe" name label + the "Sc" role monogram.
     expect(screen.getByText('Scribe')).toBeInTheDocument()
     expect(screen.getByText('Sc')).toBeInTheDocument()
-    // The greeting (a non-spec assistant message) still renders as AKIS.
-    expect(screen.getByText('AK')).toBeInTheDocument()
+    // The intro prose still renders, and it sits under an AK identity — the greeting AND the intro are
+    // both AK, so there is MORE than one AK avatar (the intro no longer hides under Scribe).
+    expect(screen.getByText("Here's a spec 👇")).toBeInTheDocument()
+    expect(screen.getAllByText('AK').length).toBeGreaterThanOrEqual(2)
   })
 
   it('a plain (non-spec) assistant reply stays AKIS (AK) — no Scribe identity leaks onto ordinary chat', async () => {

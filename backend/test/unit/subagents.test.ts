@@ -43,6 +43,18 @@ describe('ScribeAgent', () => {
     const out = await scribe.run({ sessionId: 's1', laneId: 'main', idea: 'thing' })
     expect(out.type).toBe('clarify')
   })
+  it('SCRIBE_SYSTEM carries the supported-stack default + the unsupported-stack honesty note (owner 2026-06-11)', () => {
+    // Specs DEFAULT to the end-to-end-supported surfaces (browser apps + Node services); only an
+    // explicitly-insisted unsupported stack is drafted, and then the spec body must carry an honest
+    // "verification/preview not supported" note. The existing JSON-shape/backend-signaling lines are
+    // untouched (no loosening) — this only ADDS the stack guidance.
+    expect(SCRIBE_SYSTEM).toMatch(/SUPPORTED STACK DEFAULT/)
+    expect(SCRIBE_SYSTEM).toMatch(/browser apps .*and Node services/i)
+    expect(SCRIBE_SYSTEM).toMatch(/DEFAULT every spec/i)
+    expect(SCRIBE_SYSTEM).toMatch(/explicit honesty note/i)
+    // The Turkish exemplar for the unsupported-stack note is present (TR+EN parity of behavior).
+    expect(SCRIBE_SYSTEM).toMatch(/doğrulama\/önizleme desteklenmez/i)
+  })
   it('invokes the provider and emits tool_call + tool_result (CORE-AC1 / CF2)', async () => {
     let calls = 0
     const provider = { name: 'fake', model: 'm', async chat() { calls++; return { text: '{"kind":"spec","title":"Spec for: x","body":"# x"}' } } }

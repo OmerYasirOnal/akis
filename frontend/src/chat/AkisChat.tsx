@@ -12,7 +12,7 @@ import { useSmoothText } from './useSmoothText.js'
 import { ModelChip, type Effort } from './ModelChip.js'
 import { ModelPicker, type ModelSelection } from './ModelPicker.js'
 import { loadModelPref, saveModelPref, type ModelPref } from './modelPref.js'
-import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, type AkisMsg, type ThreadNode } from './akisThread.js'
+import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, DRAFT_KEY, type AkisMsg, type ThreadNode } from './akisThread.js'
 import { RunBlock } from './RunBlock.js'
 import { Avatar } from './ChatThread.js'
 import { AGENT_NAMES } from '../agents/names.js'
@@ -80,6 +80,13 @@ function forStorage(nodes: readonly ThreadEntry[]): ThreadNode[] {
   return dropPlaceholder([...nodes]).map(n => (isRun(n) ? n : { role: (n as ChatMsg).role, content: (n as ChatMsg).content }))
 }
 
+/** The AKIS (AK) monogram avatar — the orchestrator/chat persona identity. Shared by the plain reply
+ *  bubble AND the split-out intro-prose bubble so a build-ready reply's conversational intro keeps the
+ *  AK identity (F1(a)) — only its spec CARD section is branded as Scribe. */
+function AkAvatar(): ReactNode {
+  return <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>
+}
+
 /**
  * One assistant bubble. A component (not inline JSX in the map) so `useSmoothText` sits at a
  * stable hook position regardless of how the thread grows/shrinks. Every extraction runs on
@@ -111,54 +118,62 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
   const { text: stripped } = extractSuggestions(content)
   const smoothed = useSmoothText(stripped, streaming)
   const displayed = streaming ? smoothed : stripped
-  // IDENTITY: a build-ready spec belongs to SCRIBE's identity in the UI, even though the chat-seeded
-  // build SKIPS the Scribe pipeline agent (the chat assistant drafts the spec — P0-1 short-circuit).
-  // The owner's call: present the spec card AS Scribe (Sc avatar + "Scribe" name) so the spec reads
-  // as Scribe's work, not AKIS's. Presentation-only — no second model call, no gate change; an
-  // ordinary (non-spec) assistant reply stays AKIS (AK). When `detected`, render the role-tinted
-  // Scribe monogram (the same one the run-block uses) instead of the AK monogram.
+  // IDENTITY (F1(a) — SPLIT rendering): a build-ready reply is NOT branded wholesale as Scribe. The
+  // conversational INTRO prose AKIS authored stays AKIS (AK) — so a streamed reply keeps the AK
+  // identity from the first token to the final reply, no mid-message flip when the spec fence lands.
+  // ONLY the spec CARD section is identified as Scribe (Sc avatar + "Scribe" label), since the spec
+  // reads as Scribe's work. Presentation-only — no second model call, no gate change. A spec-only
+  // reply (no intro) renders just the Sc card; an ordinary (non-spec) reply is a plain AK bubble.
+  if (detected) {
+    return (
+      <div className="space-y-3">
+        {/* The intro prose, if any, as a normal AKIS (AK) bubble — its own avatar row. */}
+        {detected.intro && (
+          <div className="flex items-start gap-3">
+            <AkAvatar />
+            <div className="min-w-0 max-w-[46rem] flex-1">
+              <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
+                <Markdown content={detected.intro} />
+              </div>
+            </div>
+          </div>
+        )}
+        {/* The build-ready spec CARD as Scribe (Sc) — the only section that carries Scribe's identity. */}
+        <div className="flex items-start gap-3">
+          <Avatar role="scribe" />
+          {/* ~46rem reading measure — slightly wider than an agent bubble so the spec-card document
+              preview it can contain isn't cramped. */}
+          <div className="min-w-0 max-w-[46rem] flex-1 space-y-3">
+            {/* Name the author so the build-ready spec reads as Scribe's work (matches the avatar). */}
+            <div className="text-xs font-semibold text-sky-200">{AGENT_NAMES.scribe}</div>
+            <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} isSpecStarted={isSpecStarted} />
+          </div>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="flex items-start gap-3">
-      {detected
-        ? <Avatar role="scribe" />
-        : <div className="grid h-8 w-8 shrink-0 place-items-center rounded-full bg-gradient-to-br from-[#07D1AF] to-violet-500 text-[10px] font-black text-slate-950">AK</div>}
+      <AkAvatar />
       {/* Bounded reading measure (~46rem): a long AKIS reply no longer runs edge-to-edge on a wide
-          window (the owner's "yazı çizgilere taşıyor"). Slightly wider than an agent bubble so the
-          spec-card document preview it can contain isn't cramped. */}
+          window (the owner's "yazı çizgilere taşıyor"). */}
       <div className="min-w-0 max-w-[46rem] flex-1 space-y-3">
-        {detected
-          ? (
-            <>
-              {/* Name the author so the build-ready spec reads as Scribe's work (matches the avatar). */}
-              <div className="text-xs font-semibold text-sky-200">{AGENT_NAMES.scribe}</div>
-              {detected.intro && (
-                <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 text-slate-200">
-                  <Markdown content={detected.intro} />
-                </div>
-              )}
-              <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} isSpecStarted={isSpecStarted} />
-            </>
-          )
-          : (
-            <>
-              {/* `group relative` anchors a hover/focus-revealed Copy on the plain reply. It is
-                  NOT rendered while streaming (would copy a half-stream) nor when empty; once
-                  present it stays in the DOM via opacity so it's RTL-findable + keyboard-reachable.
-                  Copies `stripped` (the visible reply, suggestion block already removed). */}
-              <div className="group relative rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 pr-10 text-slate-200">
-                <Markdown content={displayed} />
-                {!streaming && stripped.trim() && (
-                  <CopyButton text={stripped} label={t('copy.reply')}
-                    className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
-                )}
-              </div>
-              {truncated && (
-                <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
-                  {t('akis.spec.truncated')}
-                </div>
-              )}
-            </>
+        {/* `group relative` anchors a hover/focus-revealed Copy on the plain reply. It is
+            NOT rendered while streaming (would copy a half-stream) nor when empty; once
+            present it stays in the DOM via opacity so it's RTL-findable + keyboard-reachable.
+            Copies `stripped` (the visible reply, suggestion block already removed). */}
+        <div className="group relative rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.04] px-4 py-2.5 pr-10 text-slate-200">
+          <Markdown content={displayed} />
+          {!streaming && stripped.trim() && (
+            <CopyButton text={stripped} label={t('copy.reply')}
+              className="absolute right-2 top-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100" />
           )}
+        </div>
+        {truncated && (
+          <div role="alert" className="rounded-xl border border-amber-400/40 bg-amber-400/10 px-4 py-2.5 text-sm text-amber-200">
+            {t('akis.spec.truncated')}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -166,10 +181,16 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
 
 export function AkisChat({
   api, onBuild, building, buildStarting, starting,
-  activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView, onReactivate, onActionError,
-  baseUrl = '', makeClient,
+  activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView, onReactivate, onActionError, onScribeActivity,
+  baseUrl = '', makeClient, storageKey,
 }: {
   api: ApiClient
+  /** The localStorage key this conversation's spine persists under (per-conversation keying). The
+   *  studio owns it: `akis_chat_thread:draft` before a build, then the first run's anchor key. It can
+   *  change mid-mount exactly ONCE — when the first build promotes the draft to its anchor — so the
+   *  persist effect always writes under the CURRENT value. Defaults to the draft key for standalone
+   *  callers/tests that mount AkisChat without the studio. */
+  storageKey?: string
   /** The Chat-to-Build seam (the ONLY build entry). May return the new session id (sync or async)
    *  so the chat can append the inline run marker IN PLACE; returning void keeps standalone callers
    *  (and the akis-chat tests) working — no run marker is appended then. */
@@ -201,17 +222,31 @@ export function AkisChat({
   onReactivate?: (id: string) => void
   /** Surface a run-block recovery/gate action failure to the studio's error banner. */
   onActionError?: (msg: string) => void
+  /** F1(b) — CHAT-LEVEL Scribe presence, lifted UP so the header roster reflects the REAL Scribe
+   *  handoff that happens at chat time: 'working' while the spec is being drafted, 'done' once the
+   *  spec card is present pre-build, 'idle' otherwise. Pre-build ONLY — once a build starts, the
+   *  event-driven roster (the active run's SessionView) takes over and this override goes 'idle'. */
+  onScribeActivity?: (presence: 'idle' | 'working' | 'done') => void
   baseUrl?: string
   makeClient?: () => EventStreamClient
 }) {
   const { t } = useI18n()
   const greeting = t('akis.greeting')
+  // The per-conversation storage key (see the prop). Resolved once for the persist effect + the
+  // initial load; AkisChat is REMOUNTED (key={threadKey}) on every reseed/new-chat, so the initial
+  // value is always the conversation the studio just selected. The only mid-mount change is the
+  // draft→anchor promotion on the first build, which the persist effect picks up via its dep.
+  const spineKey = storageKey ?? DRAFT_KEY
   const [nodes, setNodes] = useState<ThreadEntry[]>(() => {
-    const saved = loadThread()
+    const saved = loadThread(spineKey)
     return saved.length ? saved : [{ role: 'assistant', content: greeting }]
   })
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  // F1(b): true between the `scribe`/drafting stream frame and the turn finishing — the REAL Scribe
+  // call is running at chat time. Swaps the generic "AKIS is thinking…" cue for an honest "Scribe is
+  // drafting…" status and lifts Scribe to 'working' in the header roster (see the presence effect below).
+  const [drafting, setDrafting] = useState(false)
   // ── Model picker (CHAT-ONLY visibility + selection) ──
   // The user's saved provider/model/effort preference (safe-parsed from localStorage).
   const [modelPref, setModelPref] = useState<ModelPref>(() => loadModelPref())
@@ -244,9 +279,12 @@ export function AkisChat({
   const pendingRunScroll = useRef<string | undefined>(undefined)
 
   // Persist the WHOLE spine on every change so it survives a build start + reload: chat messages
-  // AND run markers serialize to the same key. Strip the transient streaming placeholder/flag so a
-  // reload never restores a half-streamed "in-flight" bubble (the flag is UI-only state).
-  useEffect(() => { saveThread(forStorage(nodes)) }, [nodes])
+  // AND run markers serialize under THIS conversation's key (spineKey). Strip the transient
+  // streaming placeholder/flag so a reload never restores a half-streamed "in-flight" bubble (the
+  // flag is UI-only state). spineKey is in the deps so the draft→anchor promotion on first build
+  // re-persists the spine under the new anchor key (the studio also renames the existing entry, so
+  // either ordering is safe).
+  useEffect(() => { saveThread(forStorage(nodes), spineKey) }, [nodes, spineKey])
 
   // Autofocus the composer on mount so the user can start typing immediately.
   useEffect(() => { inputRef.current?.focus() }, [])
@@ -325,6 +363,29 @@ export function AkisChat({
   // the rAF coalescer is meant to avoid). The predicate matches a SpecCard's CURRENT (possibly
   // EDITED) text against the run markers — so an edited-then-built card correctly reads "started".
   const isSpecStarted = useCallback((spec: string): boolean => startedSpecs.has(spec.trim()), [startedSpecs])
+
+  // F1(b) — CHAT-LEVEL Scribe presence (header-roster override), reported UP. PRE-BUILD ONLY: once a
+  // build is active the event-driven roster (the active run's SessionView) owns Scribe, so we report
+  // 'idle' here and let it win. Otherwise: 'working' while the spec is being drafted (the live signal),
+  // 'done' once a NON-built spec card is present in the spine (Scribe finished its chat-time draft),
+  // else 'idle'. Detection mirrors AssistantMessage (extractBuildSpec gated on onBuild). Spread across a
+  // memo so the effect only fires on a real transition (no per-frame callback storm during streaming).
+  const scribePresence = useMemo<'idle' | 'working' | 'done'>(() => {
+    if (activeSessionId) return 'idle' // a build is live → defer to the event-driven roster
+    if (drafting) return 'working'
+    if (onBuild) {
+      for (const n of nodes) {
+        if (!isMsg(n) || n.role !== 'assistant') continue
+        const spec = extractBuildSpec(n.content)
+        if (spec && !startedSpecs.has(spec.spec.trim())) return 'done'
+      }
+    }
+    return 'idle'
+  }, [activeSessionId, drafting, onBuild, nodes, startedSpecs])
+  // Report the presence UP only when it CHANGES (and only when a parent wired the callback). The
+  // effect dep is the scalar presence string, so a streaming build's per-frame node churn never
+  // re-fires it unless the derived presence actually transitioned.
+  useEffect(() => { onScribeActivity?.(scribePresence) }, [scribePresence, onScribeActivity])
 
   // One STABLE no-op for the optional gate/recovery callbacks a standalone caller (or a test) may omit.
   // The fallback used to be an INLINE `?? (() => {})` per prop per render — a fresh function identity each
@@ -453,9 +514,12 @@ export function AkisChat({
           return next
         })
       }
+      // F1(b): the additive `scribe`/drafting frame → flip the live drafting signal on. NEVER a delta,
+      // never part of the reply (the client routes it here, not through onDelta). Cleared in `finally`.
+      const onScribe = (status: string): void => { if (status === 'drafting') setDrafting(true) }
       // CHAT-ONLY overrides (see chatOverrides above): never forwarded to a build. The trailing
       // sessionId (build-aware context) is a SEPARATE positional arg, so it never collides with them.
-      const { reply } = await api.chatWithAkisStream(text, history, onDelta, chatOverrides(), ctxId)
+      const { reply } = await api.chatWithAkisStream(text, history, onDelta, chatOverrides(), ctxId, onScribe)
       finalize(reply)
     } catch (streamErr) {
       // Streaming failed (provider lacks it, a mid-stream drop, or an SSE `error` frame):
@@ -486,7 +550,7 @@ export function AkisChat({
           setNodes(m => [...m, { role: 'error', content: errorText(err) }])
         }
       }
-    } finally { setBusy(false) }
+    } finally { setBusy(false); setDrafting(false) }
   }
 
   // Send an arbitrary message (typed, or a tapped suggestion chip) — adds the user bubble and
@@ -637,7 +701,9 @@ export function AkisChat({
             {starting}
           </div>
         )}
-        {busy && <div className="ml-11 text-xs text-teal-300">{t('akis.thinking')}</div>}
+        {/* F1(b): while the REAL Scribe is drafting at chat time, swap the generic "AKIS is thinking…"
+            cue for an honest "Scribe is drafting…" status so the brief Scribe latency is legible. */}
+        {busy && <div className="ml-11 text-xs text-teal-300">{t(drafting ? 'chat.scribe.drafting' : 'akis.thinking')}</div>}
       </div>
         {/* SCROLL-TO-LATEST pill — floats over the scroll area only when the user is scrolled up,
             so new content below is one click away (theme: cosmic teal/violet, matches the composer). */}

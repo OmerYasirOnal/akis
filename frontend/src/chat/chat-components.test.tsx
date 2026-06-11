@@ -52,6 +52,40 @@ describe('ChatThread', () => {
     expect(screen.getByRole('button', { name: 'Confirm push' })).toBeInTheDocument()
     expect(screen.queryByText(/github\.com\//)).toBeNull()
   })
+  // F3 — the chat-seeded build's synthetic Scribe stage has NO duration (the drafting happened at chat
+  // time). A metrics-less Scribe agent bubble shows an honest "spec was drafted in chat" caption instead
+  // of a fabricated "0s" timing line.
+  it('F3 — a metrics-less Scribe agent stage shows the "spec was drafted in chat" caption (no 0s)', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'a', kind: 'agent', agent: 'scribe', tools: [], notes: [], done: true, ok: true, attempts: 1, metrics: { toolCalls: 0 } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByText('spec was drafted in chat')).toBeInTheDocument()
+    expect(screen.queryByText(/\b0s\b/)).toBeNull()
+  })
+  it('F3 — a Scribe stage WITH real metrics shows the badge, NOT the chat caption', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'a', kind: 'agent', agent: 'scribe', tools: [], notes: [], done: true, ok: true, attempts: 1, metrics: { usage: { inTokens: 1000, outTokens: 500 }, durationMs: 42000, toolCalls: 1 } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByText('spec was drafted in chat')).toBeNull()
+    expect(screen.getByText(/42s/)).toBeInTheDocument()
+  })
+  it('F3 — replay-safe: an OLD synthetic Scribe end (0s duration) still renders its timing line, not the caption', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'a', kind: 'agent', agent: 'scribe', tools: [], notes: [], done: true, ok: true, attempts: 1, metrics: { durationMs: 0, toolCalls: 0 } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByText('spec was drafted in chat')).toBeNull()
+    expect(screen.getByText(/0s/)).toBeInTheDocument()
+  })
+  it('F3 — a metrics-less NON-Scribe agent (e.g. Trace) shows NO chat caption (caption is Scribe-only)', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'a', kind: 'agent', agent: 'trace', tools: [], notes: [], done: true, ok: true, attempts: 1, metrics: { toolCalls: 0 } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByText('spec was drafted in chat')).toBeNull()
+  })
   it("the preview-ready path is a real LINK to the running app (new tab), not a label (owner 2026-06-11)", () => {
     const msgs: ChatMessage[] = [
       { id: 'p', kind: 'preview', ready: true, url: '/preview/abc-123/' },
@@ -135,6 +169,24 @@ describe('ChatStudio', () => {
     // The live pipeline mounts: the spec gate surfaces an Approve button (>=1; pipeline + raw log).
     await waitFor(() => expect(screen.getAllByRole('button', { name: 'Approve spec' }).length).toBeGreaterThanOrEqual(1))
     expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('F1(b) — the header roster shows Scribe "done" once a spec card is present pre-build (lift threads through)', async () => {
+    // Drive a non-stream spec reply (the stream path fails → fallback carries the akis-spec block).
+    // Pre-build (no session started yet) the chat-level Scribe presence is lifted up to the header
+    // roster, which must read 'done' for Scribe — not the stale 'idle' it sat at before this fix.
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: SPEC_REPLY }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
+    // Once the spec card lands (pre-build, no Approve clicked) Scribe reads 'done' in the header roster.
+    await screen.findByRole('button', { name: 'Approve & Build' })
+    await waitFor(() => expect(screen.getAllByText('done').length).toBeGreaterThanOrEqual(1))
   })
 
   it('on build start, scrolls the run HEADER to the top (block:start) instead of the column bottom (H3)', async () => {
