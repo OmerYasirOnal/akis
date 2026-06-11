@@ -77,6 +77,27 @@ describe('CONTRACT: orchestrator HTTP routes (CF1)', () => {
     expect(done.json().status).toBe('done')
   })
 
+  it('HONESTY (Option A): a spec-seeded POST with scribeUsage threads the REAL Scribe spend onto the synthetic Scribe agent_end', async () => {
+    const { app } = makeApp({ passing: true })
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const created = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: seed.body, spec: seed, scribeUsage: { inTokens: 200, outTokens: 500 } } })).json()
+    expect(created.status).toBe('building')
+    await vi.waitFor(async () => {
+      const log = (await app.inject({ method: 'GET', url: `/sessions/${created.id}/log` })).json()
+      const scribeEnd = log.events.map((e: { event: unknown }) => e.event).find((ev: { kind?: string; role?: string }) => ev.kind === 'agent_end' && ev.role === 'scribe')
+      expect(scribeEnd?.metrics?.usage).toEqual({ inTokens: 200, outTokens: 500 })
+    })
+  })
+
+  it('a MALFORMED scribeUsage is silently DROPPED (observability, never 400s a build)', async () => {
+    const { app } = makeApp({ passing: true })
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    // Negative / non-numeric usage is invalid → dropped, the build still starts (201/building).
+    const res = await app.inject({ method: 'POST', url: '/sessions', payload: { idea: seed.body, spec: seed, scribeUsage: { inTokens: -1, outTokens: 'lots' } } })
+    expect(res.statusCode).toBe(201)
+    expect(res.json().status).toBe('building')
+  })
+
   it('startSession seeds session.chat from the client pre-build conversation (bounded, round-trips through GET)', async () => {
     // The pre-build, sessionId-less conversation that SHAPED the spec is sent at build start so a
     // reopen (same OR cross device) also rehydrates it. Seeded ATOMICALLY into the creation state

@@ -52,6 +52,15 @@ export interface StartInput {
    * byte-identical to today (no `chat` field set).
    */
   chat?: import('@akis/shared').ChatTurn[]
+  /**
+   * HONESTY UPGRADE (Option A): the REAL token spend of the chat-time Scribe draft. On the chat
+   * flow the REAL Scribe authors the spec BEFORE this seeded start, so its agent_start/_end is
+   * synthesized here (run() is short-circuited). When the caller threads Scribe's real usage, the
+   * synthetic agent_end reports it instead of an honest "—", so the roster/analytics reflect the
+   * true spend. DATA ONLY (observability) — never a gate input. Absent ⇒ "—" (byte-identical to
+   * today: the seeded start had no usage to report). Only meaningful alongside `spec` (the seed path).
+   */
+  scribeUsage?: { inTokens: number; outTokens: number }
 }
 
 export class AlreadyPushedError extends Error {
@@ -251,9 +260,12 @@ export class Orchestrator {
       // call, no store write, no gate authority, no token mint; the spec gate stays minted exactly once.
       const scribeStartedAt = Date.now()
       this.s.bus.emit({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
-      // No LLM call on this path → usage absent (buildAgentMetrics collapses {0,0}/undefined → "—");
-      // only the real activation wall-time + the zero tool-call count are honestly reported.
-      this.s.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, metrics: buildAgentMetrics(undefined, scribeStartedAt, 0), agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
+      // HONESTY (Option A): the REAL Scribe authored this spec at chat time. When its real usage was
+      // threaded through (input.scribeUsage), report it so the roster/analytics reflect the true token
+      // spend instead of an honest "—". Absent ⇒ buildAgentMetrics collapses undefined → "—" (byte-
+      // identical to before): no LLM call happened ON THIS PATH, only the real activation wall-time +
+      // the zero tool-call count are reported. GATE-SAFE: metrics are observability, never a gate input.
+      this.s.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, metrics: buildAgentMetrics(input.scribeUsage, scribeStartedAt, 0), agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
       // The SpecCard's "Approve & Build" is the SINGLE human action for BOTH the gate and the
       // run (#124 collapsed the separate Approve click) — so the RUN must be kicked HERE,
       // server-side. Fire-and-forget: awaiting it would hold the POST /sessions response open
