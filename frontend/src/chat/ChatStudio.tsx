@@ -22,6 +22,7 @@ import { Link } from '../router/router.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
+import { isVerified } from '@akis/shared'
 import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord, SessionState } from '@akis/shared'
 
 /** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
@@ -33,6 +34,22 @@ const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
 ])
 function isTerminalStatus(s: SessionStatus | undefined): boolean {
   return s !== undefined && TERMINAL_STATUSES.has(s)
+}
+
+/** PREVIEW-UNGATED (owner 2026-06-11): "if Proto wrote code, the user must ALWAYS be able to
+ *  preview it — Trace/Critic gate VERIFICATION and PUSH, never SEEING the app." A run is
+ *  PREVIEWABLE once Proto has persisted code AND the run has settled past mid-write: every
+ *  TERMINAL status (done/failed/cancelled/verify_failed/push_failed) PLUS the two awaiting-gates
+ *  that only ever park AFTER code exists (awaiting_critic_resolution / awaiting_push_confirm).
+ *  EXCLUDED are the pre-code / mid-write statuses (composing / awaiting_spec_approval / building):
+ *  there is nothing — or only a half-written tree — to boot. The code-presence guard at the call
+ *  site (codeFiles from the snapshot) is the primary signal; this status set is the belt-and-
+ *  suspenders that keeps a stale mid-flight frame from offering Run before the files land. */
+const PREVIEWABLE_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+  ...TERMINAL_STATUSES, 'awaiting_critic_resolution', 'awaiting_push_confirm',
+])
+function isPreviewableStatus(s: SessionStatus | undefined): boolean {
+  return s !== undefined && PREVIEWABLE_STATUSES.has(s)
 }
 
 /**
@@ -167,6 +184,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // The LAST persisted publish outcome (session.publish) — fed to PublishButton so a just-deployed
   // live URL / honest failure survives a tab-switch or refresh.
   const [publishRecord, setPublishRecord] = useState<PublishRecord | undefined>(undefined)
+  // The DURABLE verification truth from the snapshot (isVerified = VerifyToken presence), kept
+  // SEPARATE from activeView so the RunBlock reporter's empty-replay resets can't clobber it; the
+  // render falls back to it only when the live view hasn't learned `verified` (review MED — the
+  // ungated preview must never boot an app with zero verification wording). Settled states only.
+  const [snapshotVerified, setSnapshotVerified] = useState<boolean | undefined>(undefined)
 
   /** Keep the address bar's ?s= deep-link pointing at the ACTIVE session (refresh-safe). */
   const syncUrl = (id: string): void => {
@@ -251,10 +273,21 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Snapshot effect — targets the ACTIVE run for codeFiles/editsBase/backendStatus/publish + the
   // honest 404 → sessionGone (which drives the right rail; the visible card is inside the run-block).
   useEffect(() => {
-    if (!activeSessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); return }
+    if (!activeSessionId) { setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setSessionGone(false); setBackendStatus(undefined); setPublishRecord(undefined); setSnapshotVerified(undefined); return }
     let cancelled = false
     void api.getSession(activeSessionId)
-      .then(s => { if (!cancelled) { setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false) } })
+      .then(s => {
+        if (cancelled) return
+        setCodeFiles(s.code?.files); setTestEvidence(s.testEvidence); setEditsBase(!!s.base); setBackendStatus(s.status); setPublishRecord(s.publish); setSessionGone(false)
+        // VERIFICATION HONESTY for the ungated preview (review MED): the live view only learns
+        // `verified` from the SSE done fold — an evicted-replay reopen of a parked session
+        // (verify_failed/cancelled/…) would boot a runnable app with NO verification wording.
+        // Keep the DURABLE truth (isVerified = VerifyToken) in its OWN state and let the render
+        // fall back to it — writing into activeView would race the active RunBlock's reporter
+        // (its empty-replay view reset clobbers a seeded value). Settled/parked states only, so a
+        // mid-build live run keeps today's chip timing.
+        setSnapshotVerified(isPreviewableStatus(s.status) ? isVerified(s) : undefined)
+      })
       .catch(e => {
         if (cancelled) return
         // A 404 means the session is genuinely GONE → honest recovery. Any OTHER error (network,
@@ -427,7 +460,22 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // durable status. (The inline agent-stage bubbles still come from the live view; only the
   // result-rail is made resilient.)
   const isDone = status === 'done' || backendStatus === 'done'
-  const canRun = !!activeSessionId && (isDone || activeView.verified !== undefined)
+  // PREVIEW-UNGATED (owner 2026-06-11): the ▶ Run path keys on CODE PRESENCE + a settled-enough
+  // status — NOT on verification. A session parked at verify_failed / awaiting_critic_resolution /
+  // push_failed / cancelled / failed WITH CODE used to offer no Run anywhere (a dead end: "Run the
+  // app to see it live here" with no button). Now: Proto wrote code (codeFiles from the snapshot,
+  // populated by the snapshot effect once persisted) AND the run is past mid-write
+  // (isPreviewableStatus(backendStatus)) — with `isDone` as the live fast-path for a fresh build
+  // whose backendStatus snapshot still lags at undefined while activeView.status already flipped
+  // to 'done' and codeFiles arrived. DELIBERATELY SEPARATE from `isDone` so trust/publish/external-
+  // write semantics (all gated on isDone below) stay EXACTLY as today — preview honesty travels via
+  // the independent 'unverified' chip, never by widening done-ness. The backend startPreview route
+  // is itself ungated (code-presence 409 only, no verify check), and an unsupported stack (Python,
+  // etc.) is answered honestly by the boot path — this just makes the button EXIST so the user SEES
+  // that instead of nothing.
+  const canRun = !!activeSessionId && !!codeFiles?.length && (isDone || isPreviewableStatus(backendStatus))
+  // The drawer's trust dot/chip: live fold first, durable snapshot fallback (review MED honesty).
+  const drawerVerified = activeView.verified ?? snapshotVerified
   // BUILD-AWARE CHAT context key: ALWAYS the active session id. It used to be gated on
   // codeFiles?.length, which made every turn before the code snapshot landed (a reopen/F5 race) —
   // and every turn about a code-less/failed build — STATELESS, so AKIS confidently answered
@@ -637,10 +685,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           onOpen={openDrawer}
           onClose={closeDrawer}
           allowAutoOpen={false}
-          {...(activeView.verified !== undefined ? { verified: activeView.verified } : {})}
+          {...(drawerVerified !== undefined ? { verified: drawerVerified } : {})}
           cards={cards}
           preview={
-            <PreviewPanel view={activeView} device={device} onDevice={setDevice} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+            <PreviewPanel view={activeView} device={device} onDevice={setDevice} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} {...(snapshotVerified !== undefined ? { fallbackVerified: snapshotVerified } : {})} />
           }
         />
       )}
