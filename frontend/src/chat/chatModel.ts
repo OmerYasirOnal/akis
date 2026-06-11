@@ -131,6 +131,19 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
       default: break
     }
   }
+  // A3.5 — POST-PASS over the singleton maps (so event arrival order can't matter): a PARKED push
+  // (recovery push_failed 'awaiting') contradicts a still-'awaiting' push_confirm gate row. The
+  // backend intentionally emits NO gate event on a push failure — gates are sacred, only the
+  // success path moves push_confirm — so without this the inline "Confirm push" GateBubble sat
+  // right above the push_failed Retry card: two actionable rows for the SAME gated action. Drop
+  // the gate card; the RecoveryBubble's retry drives the SAME gated confirmPush (Gate 4 still
+  // mints), so exactly one actionable row remains. PRESENTATION-ONLY: the on-wire gate state and
+  // the SessionView/TrustLedger fold are untouched, and a later resolved retry (gate 'satisfied'
+  // on the wire + recovery 'resolved') passes through here unchanged — normal behavior resumes.
+  const pushGate = gates.get('push_confirm')
+  if (pushGate?.state === 'awaiting' && recoveries.get('push_failed')?.state === 'awaiting') {
+    return items.filter(m => m !== pushGate)
+  }
   return items
 }
 

@@ -79,6 +79,50 @@ describe('foldRunBubbles', () => {
     expect(gateCards[0]!.delivery).toEqual({ owner: 'ada', repo: 'todo-app' })
   })
 
+  // ── A3.5 — a PARKED push (recovery push_failed 'awaiting') contradicts a still-'awaiting'
+  //    push_confirm gate row: the backend NEVER emits a gate event on a push failure (gates are
+  //    sacred — only the success path moves the gate), so the inline GateBubble kept showing
+  //    "Confirm push" right above the push_failed Retry card — two actionable rows for ONE action.
+  //    The fold (presentation layer ONLY) drops the awaiting push_confirm GateMsg in that case;
+  //    the RecoveryBubble's retry drives the SAME gated confirm path, so exactly one row remains. ──
+  it('A3.5: gate(push_confirm awaiting) then recovery(push_failed awaiting) folds with NO awaiting gate card', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+    ])
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
+    expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(true)
+  })
+
+  it('A3.5: the ORDER-REVERSED sequence (recovery first, gate after) folds the same way (post-pass)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+    ])
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
+    expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(true)
+  })
+
+  it('A3.5: a retry SUCCESS continuation (gate satisfied + recovery resolved) keeps the satisfied gate card', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'resolved' }), // the retry succeeded
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'satisfied' }),
+      ev({ kind: 'done', verified: true, provider: 'mock' }),
+    ])
+    const gateCards = msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm') as GateMsg[]
+    expect(gateCards).toHaveLength(1) // normal gate behavior resumed — the singleton card is back
+    expect(gateCards[0]!.state).toBe('satisfied')
+    // No contradictory card: the recovery is resolved (the bubble renders nothing when resolved).
+    expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(false)
+  })
+
+  it('A3.5: an awaiting push_confirm gate WITHOUT a push failure is untouched (the normal gate moment)', () => {
+    const msgs = foldRunBubbles([ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' })])
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(1)
+  })
+
   it('folds a recovery into a singleton card that flips awaiting → resolved in place', () => {
     const msgs = foldRunBubbles([
       ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' }),

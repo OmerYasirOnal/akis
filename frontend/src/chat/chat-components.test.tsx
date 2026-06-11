@@ -123,6 +123,25 @@ describe('RecoveryBubble', () => {
       onProceed={() => {}} onAbandon={() => {}} onRetry={() => {}} onConfirm={() => {}} />))
     expect(container).toBeEmptyDOMElement()
   })
+
+  // A3.5 — the push-failure event sequence must render exactly ONE actionable row: the push retry.
+  // The backend deliberately emits NO gate event on a push failure (gates are sacred), so without
+  // the fold-layer drop the still-awaiting "Confirm push" GateBubble sat right above the
+  // push_failed Retry card — two competing buttons for the SAME gated confirm action.
+  it('A3.5: the push-failure sequence renders ONE actionable button (the retry) and NO "Confirm push"', async () => {
+    const { foldRunBubbles } = await import('./chatModel.js')
+    const evf = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
+      ({ agent: 'orchestrator', laneId: 'main', sessionId: 's1', ts: 0, ...(e as object) }) as AkisEvent
+    const msgs = foldRunBubbles([
+      evf({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      evf({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+    ])
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByRole('button', { name: 'Confirm push' })).toBeNull()
+    const buttons = screen.getAllByRole('button')
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0]).toHaveTextContent('Push failed — retry')
+  })
 })
 
 /** A controllable fake stream client (EventStreamClient-shaped). */
