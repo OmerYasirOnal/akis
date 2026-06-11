@@ -85,11 +85,15 @@ describe('ChatStudio F5/deep-link rehydrate — the persisted conversation survi
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
     await waitFor(() => expect(getSessionSpy).toHaveBeenCalledWith('s1'))
     // The pre-build turn survived the reseed — in BOTH the visible thread AND the persisted spine
-    // (the old overwrite seed dropped it from both; the merge keeps it).
+    // (the old overwrite seed dropped it from both; the merge keeps it). PER-CONVERSATION KEYING:
+    // the legacy single-key spine (with the s1 run marker) is migrated to s1's ANCHOR key on mount,
+    // then the reopen merges/keeps it there — so the persisted copy now lives under `…:s1`.
     await waitFor(() => expect(screen.getByText('a note app please')).toBeInTheDocument())
-    expect(JSON.parse(localStorage.getItem('akis_chat_thread')!)).toEqual(
+    expect(JSON.parse(localStorage.getItem('akis_chat_thread:s1')!)).toEqual(
       expect.arrayContaining([expect.objectContaining({ content: 'a note app please' })]),
     )
+    // The legacy key was migrated away (no stale duplicate under the old global key).
+    expect(localStorage.getItem('akis_chat_thread')).toBeNull()
   })
 })
 
@@ -614,5 +618,135 @@ describe('ChatStudio — preview-w gating (no-run void fix + first-frame seed)',
     // its full box (header/✕/body) off-screen instead of shrinking to nothing.
     expect(shell.style.getPropertyValue('--preview-drawer-w')).toBe('480px')
     expect(shell.style.getPropertyValue('--preview-drawer-w')).not.toBe('0px')
+  })
+})
+
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+// SPINE ORDERING + PER-CONVERSATION KEYING — the recurring "messages/cards reorder when you switch
+// chats and come back" bug. Two root causes, both pinned here:
+//   H1 — ONE global spine key: opening chat B clobbered chat A's spine, so returning to A lost its
+//        correctly-ordered local copy and fell into the server REBUILD branch.
+//   H2 — the rebuild put the run marker ABOVE all restored turns, so the run block rendered above the
+//        conversation that produced it (the screenshot).
+// The fix keys each conversation under its own anchor (`akis_chat_thread:<id>`) and tags pre-build
+// turns `phase:'pre'` so a rebuild is chronologic. These tests assert visual ORDER, not just presence.
+// ════════════════════════════════════════════════════════════════════════════════════════════════
+describe('ChatStudio — spine ordering survives chat switching (the reorder bug)', () => {
+  beforeEach(() => { localStorage.clear(); window.history.replaceState({}, '', '/') })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  /** A fake stream (terminal runs fold /log, no EventSource needed for these order assertions). */
+  class FakeStream2 { connectedUrl?: string; connect(url: string): void { this.connectedUrl = url } close(): void {} }
+
+  /** DOM order of the first match of each probe (by document position). Returns the probes sorted by
+   *  where their text/test-id appears in the rendered tree — so we can assert "conversation ABOVE run". */
+  function domOrder(probes: { label: string; node: HTMLElement | null }[]): string[] {
+    const present = probes.filter((p): p is { label: string; node: HTMLElement } => p.node !== null)
+    return present
+      .sort((a, b) => (a.node.compareDocumentPosition(b.node) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1))
+      .map(p => p.label)
+  }
+
+  /** getSession/listMySessions harness for two PERSISTED builds. Each carries phase-tagged chat so a
+   *  rebuild (no local spine) is chronologic. The /log replay is empty (the run block is identified by
+   *  its Trust ledger, which always renders). */
+  function reopenFetch(): (path: string) => Promise<Response> {
+    const sessions: Record<string, unknown> = {
+      sA: { id: 'sA', idea: 'Expense tracker', status: 'done', version: 3, chat: [
+        { role: 'user', content: 'Expense tracker for freelancers', at: '2026-06-10T10:00:00.000Z', phase: 'pre' },
+        { role: 'assistant', content: 'Here is the Alpha spec', at: '2026-06-10T10:00:00.000Z', phase: 'pre' },
+        { role: 'user', content: 'why did Alpha tests fail?', at: '2026-06-10T10:05:00.000Z' }, // post-build (no phase)
+      ] },
+      sB: { id: 'sB', idea: 'Recipe box', status: 'done', version: 2, chat: [
+        { role: 'user', content: 'Recipe box app', at: '2026-06-10T11:00:00.000Z', phase: 'pre' },
+        { role: 'assistant', content: 'Here is the Beta spec', at: '2026-06-10T11:00:00.000Z', phase: 'pre' },
+      ] },
+    }
+    return async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([
+        { id: 'sA', idea: 'Expense tracker', status: 'done', verified: true },
+        { id: 'sB', idea: 'Recipe box', status: 'done', verified: true },
+      ]), text: async () => '' } as unknown as Response
+      for (const id of ['sA', 'sB']) {
+        if (path.endsWith(`/sessions/${id}/log`)) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+        if (path.endsWith(`/sessions/${id}`)) return { ok: true, status: 200, json: async () => sessions[id], text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  async function reopenFromHistory(name: RegExp): Promise<void> {
+    await userEvent.click(await screen.findByRole('button', { name: /Recent/i }))
+    await userEvent.click(await screen.findByRole('menuitem', { name }))
+  }
+
+  it('REBUILD (cross-device/cleared storage) places the conversation ABOVE the run block', async () => {
+    // No local spine → the rebuild branch runs. With phase tags it must be chronologic: pre-build
+    // turns ABOVE the run marker, the post-build follow-up BELOW it (the H2 fix, the screenshot bug).
+    window.history.replaceState({}, '', '/?s=sA')
+    const api = new ApiClient('', vi.fn(reopenFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+    await waitFor(() => expect(screen.getByText('Here is the Alpha spec')).toBeInTheDocument())
+    const order = domOrder([
+      { label: 'pre-user', node: screen.queryByText('Expense tracker for freelancers') },
+      { label: 'pre-assistant', node: screen.queryByText('Here is the Alpha spec') },
+      { label: 'run', node: screen.queryByLabelText('Trust ledger') },
+      { label: 'post-user', node: screen.queryByText('why did Alpha tests fail?') },
+    ])
+    expect(order).toEqual(['pre-user', 'pre-assistant', 'run', 'post-user'])
+  })
+
+  it('switching A → B → A keeps BOTH conversations intact and correctly ordered (the clobber fix)', async () => {
+    // PER-CONVERSATION KEYING: each conversation persists under its own anchor key, so opening B
+    // never overwrites A. Returning to A finds A's own (correctly ordered) spine — not a scrambled
+    // rebuild seeded off B's leftover spine (the H1 root cause).
+    const api = new ApiClient('', vi.fn(reopenFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+
+    // Open A (rebuild), then B, then A again.
+    await reopenFromHistory(/Expense tracker/i)
+    await waitFor(() => expect(screen.getByText('Here is the Alpha spec')).toBeInTheDocument())
+    await reopenFromHistory(/Recipe box/i)
+    await waitFor(() => expect(screen.getByText('Here is the Beta spec')).toBeInTheDocument())
+    // Returning to A: its conversation is whole AND in order — A's spine was not clobbered by B.
+    await reopenFromHistory(/Expense tracker/i)
+    await waitFor(() => expect(screen.getByText('Here is the Alpha spec')).toBeInTheDocument())
+    expect(screen.getByText('Expense tracker for freelancers')).toBeInTheDocument()
+    // B's turns are NOT bleeding into A's view (separate keys).
+    expect(screen.queryByText('Here is the Beta spec')).toBeNull()
+    expect(screen.queryByText('Recipe box app')).toBeNull()
+    const order = domOrder([
+      { label: 'pre-assistant', node: screen.queryByText('Here is the Alpha spec') },
+      { label: 'run', node: screen.queryByLabelText('Trust ledger') },
+      { label: 'post-user', node: screen.queryByText('why did Alpha tests fail?') },
+    ])
+    expect(order).toEqual(['pre-assistant', 'run', 'post-user'])
+    // Each conversation's spine lives under its OWN anchor key (never the legacy global key).
+    expect(localStorage.getItem('akis_chat_thread:sA')).not.toBeNull()
+    expect(localStorage.getItem('akis_chat_thread:sB')).not.toBeNull()
+    expect(localStorage.getItem('akis_chat_thread')).toBeNull()
+  })
+
+  it('a same-device local spine (richer than the server) keeps its order on reopen', async () => {
+    // After a real session, the local spine under the anchor key holds the conversation in order.
+    // A reopen MERGES (keeps) it — the run block stays below the conversation, no rebuild scramble.
+    localStorage.setItem('akis_chat_thread:sA', JSON.stringify([
+      { role: 'assistant', content: 'GREETING-LOCAL' },
+      { role: 'user', content: 'Expense tracker for freelancers' },
+      { role: 'assistant', content: 'Here is the Alpha spec' },
+      { role: 'run', sessionId: 'sA', idea: 'Expense tracker' },
+      { role: 'user', content: 'why did Alpha tests fail?' },
+    ]))
+    window.history.replaceState({}, '', '/?s=sA')
+    const api = new ApiClient('', vi.fn(reopenFetch()))
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+    await waitFor(() => expect(screen.getByText('Here is the Alpha spec')).toBeInTheDocument())
+    const order = domOrder([
+      { label: 'pre-user', node: screen.queryByText('Expense tracker for freelancers') },
+      { label: 'pre-assistant', node: screen.queryByText('Here is the Alpha spec') },
+      { label: 'run', node: screen.queryByLabelText('Trust ledger') },
+      { label: 'post-user', node: screen.queryByText('why did Alpha tests fail?') },
+    ])
+    expect(order).toEqual(['pre-user', 'pre-assistant', 'run', 'post-user'])
   })
 })

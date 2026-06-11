@@ -5,7 +5,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import { specSeedFromMarkdown } from './buildSpec.js'
 import { actionErrorText } from './actionError.js'
 import { AkisChat } from './AkisChat.js'
-import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, type ThreadNode } from './akisThread.js'
+import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, renameThread, migrateLegacyKey, anchorKey, DRAFT_KEY, type ThreadNode } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
@@ -118,6 +118,18 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Bumping this key REMOUNTS AkisChat so it re-reads the (re-seeded/cleared) thread from storage —
   // how "new build" and "reopen" reset/seed the spine without AkisChat owning that lifecycle.
   const [threadKey, setThreadKey] = useState(0)
+  // PER-CONVERSATION SPINE KEY (the reorder/clobber fix). The active conversation persists its
+  // spine under THIS storage key — `akis_chat_thread:draft` before any build, then the first run's
+  // anchor key (`akis_chat_thread:<id>`) once a build starts (promoted via renameThread). A History
+  // reopen points it at that session's anchor key, so switching chats never overwrites another
+  // conversation's spine (the H1 root cause). AkisChat reads/writes through this prop; the studio's
+  // own loadThread/saveThread calls below pass it too. Starts at the draft key (a fresh, pre-build
+  // conversation); the deep-link/reopen flows below repoint it.
+  const [threadStorageKey, setThreadStorageKey] = useState<string>(DRAFT_KEY)
+  // One-time forward migration of the legacy single-key spine into the per-conversation scheme, run
+  // BEFORE AkisChat's first mount reads its draft key (so a legacy install's conversation isn't lost
+  // and isn't double-counted). useState initializer runs exactly once, synchronously, pre-render.
+  useState(() => { migrateLegacyKey(); return 0 })
   // Synchronous re-entrancy guard for the build start: `busy` is async React state, so two
   // fast clicks on "Approve & Build" both pass a `busy` check before the re-render lands and
   // create TWO sessions (one orphaned). A ref flips synchronously, so the second click is dropped.
@@ -170,16 +182,20 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (activeSessionId && activeSessionId !== id && !isTerminalStatus(backendStatus)) {
       void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient */ })
     }
-    // MERGE — never overwrite. The local spine, when it already anchors THIS run (has its run
-    // marker), is the richest copy: it holds the pre-build, sessionId-less turns the server can
-    // never store (typed before the build existed) AND is re-saved on every same-device turn, so
-    // it is authoritative. mergeSpine keeps it in that case; otherwise (cleared storage / another
-    // device) it rebuilds from the server turns. Either way the conversation is not lost on return.
+    // PER-CONVERSATION KEY: the reopened build's spine lives under its OWN anchor key — never the
+    // draft (and never another conversation's key), so reopening here can't clobber the chat the
+    // user just left. MERGE — never overwrite. The local spine FOR THIS ANCHOR, when it already has
+    // the run marker, is the richest copy: it holds the pre-build, sessionId-less turns the server
+    // can never store AND is re-saved on every same-device turn, so it is authoritative. mergeSpine
+    // keeps it in that case; otherwise (cleared storage / another device / a legacy reopen) it
+    // rebuilds from the server turns, placing the marker AFTER the phase:'pre' turns (the H2 fix).
+    const key = anchorKey(id)
     const restoredTurns = (chat ?? [])
       .filter(turn => turn.content.trim().length > 0)
-      .map(turn => ({ role: turn.role, content: turn.content }))
-    const nodes: ThreadNode[] = mergeSpine({ local: loadThread(), serverTurns: restoredTurns, id, greeting: t('akis.greeting'), idea })
-    saveThread(nodes)
+      .map(turn => ({ role: turn.role, content: turn.content, ...(turn.phase ? { phase: turn.phase } : {}) }))
+    const nodes: ThreadNode[] = mergeSpine({ local: loadThread(key), serverTurns: restoredTurns, id, greeting: t('akis.greeting'), idea })
+    saveThread(nodes, key)
+    setThreadStorageKey(key)
     setThreadKey(k => k + 1)
     // #35: a REOPEN must NOT auto-(re)boot the local preview — the user may only want to read the
     // transcript, and spawning a process per reopen is wasteful. Pre-seed autoRan with the reopened
@@ -278,8 +294,17 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // build existed — historyForApi skips the greeting, run markers AND error rows). The server
       // seeds them ATOMICALLY onto session.chat (a NON-gate column) so a CROSS-DEVICE reopen
       // rehydrates them too; same-device reopen is already covered by the local-spine merge in seedRun.
-      const preBuildChat = historyForApi(loadThread(), t('akis.greeting'))
+      const preBuildChat = historyForApi(loadThread(threadStorageKey), t('akis.greeting'))
       const s = await api.startSession(idea, undefined, baseId, specSeedFromMarkdown(idea), preBuildChat)
+      // PROMOTE the conversation to its anchor on the FIRST build: rename the draft spine to this
+      // run's anchor key so the whole conversation (greeting + pre-build turns + the run marker
+      // appendRun is about to add) persists under `akis_chat_thread:<s.id>`. A multi-run thread is
+      // ALREADY anchored (key !== draft) → no-op, so later runs keep accreting onto the same anchor.
+      // Must precede the setActiveSessionId/setThreadStorageKey below so appendRun's persist lands
+      // under the new key. renameThread is a no-op when from===to.
+      const key = threadStorageKey === DRAFT_KEY ? anchorKey(s.id) : threadStorageKey
+      renameThread(threadStorageKey, key)
+      setThreadStorageKey(key)
       // The NEW build becomes the active run. codeFiles reset to the new session's snapshot effect;
       // editsBase reflects the new session (the snapshot effect re-reads it).
       setActiveSessionId(s.id); setActiveIdea(idea); setActiveView(emptyView(s.id)); setStartingSpec(undefined)
@@ -349,8 +374,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     }
     setSessionGone(false)
     setActiveSessionId(undefined); setActiveIdea(''); setActiveView(emptyView('')); setActionError(undefined); setStartingSpec(undefined); setBackendStatus(undefined)
-    // Drop the persisted spine + remount AkisChat so it re-seeds a clean greeting (no run markers).
-    clearThread(); setThreadKey(k => k + 1)
+    // Drop the CURRENT conversation's spine, reset to a FRESH draft key + remount AkisChat so it
+    // re-seeds a clean greeting (no run markers). Per-conversation keying: we clear ONLY this
+    // conversation's key (the prior anchored conversations stay reopenable from History) and the new
+    // empty conversation begins as a draft again. Clear the new draft key too, so a leftover draft
+    // from a previously-abandoned conversation never bleeds into this fresh one.
+    clearThread(threadStorageKey); clearThread(DRAFT_KEY); setThreadStorageKey(DRAFT_KEY); setThreadKey(k => k + 1)
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
   }, [activeSessionId, backendStatus, api])
 
@@ -443,6 +472,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const chat = (
     <AkisChat
       key={threadKey}
+      storageKey={threadStorageKey}
       api={api}
       baseUrl={baseUrl}
       {...(makeClient ? { makeClient } : {})}

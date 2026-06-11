@@ -12,7 +12,7 @@ import { useSmoothText } from './useSmoothText.js'
 import { ModelChip, type Effort } from './ModelChip.js'
 import { ModelPicker, type ModelSelection } from './ModelPicker.js'
 import { loadModelPref, saveModelPref, type ModelPref } from './modelPref.js'
-import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, type AkisMsg, type ThreadNode } from './akisThread.js'
+import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, DRAFT_KEY, type AkisMsg, type ThreadNode } from './akisThread.js'
 import { RunBlock } from './RunBlock.js'
 import { Avatar } from './ChatThread.js'
 import { AGENT_NAMES } from '../agents/names.js'
@@ -167,9 +167,15 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
 export function AkisChat({
   api, onBuild, building, buildStarting, starting,
   activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView, onReactivate, onActionError,
-  baseUrl = '', makeClient,
+  baseUrl = '', makeClient, storageKey,
 }: {
   api: ApiClient
+  /** The localStorage key this conversation's spine persists under (per-conversation keying). The
+   *  studio owns it: `akis_chat_thread:draft` before a build, then the first run's anchor key. It can
+   *  change mid-mount exactly ONCE — when the first build promotes the draft to its anchor — so the
+   *  persist effect always writes under the CURRENT value. Defaults to the draft key for standalone
+   *  callers/tests that mount AkisChat without the studio. */
+  storageKey?: string
   /** The Chat-to-Build seam (the ONLY build entry). May return the new session id (sync or async)
    *  so the chat can append the inline run marker IN PLACE; returning void keeps standalone callers
    *  (and the akis-chat tests) working — no run marker is appended then. */
@@ -206,8 +212,13 @@ export function AkisChat({
 }) {
   const { t } = useI18n()
   const greeting = t('akis.greeting')
+  // The per-conversation storage key (see the prop). Resolved once for the persist effect + the
+  // initial load; AkisChat is REMOUNTED (key={threadKey}) on every reseed/new-chat, so the initial
+  // value is always the conversation the studio just selected. The only mid-mount change is the
+  // draft→anchor promotion on the first build, which the persist effect picks up via its dep.
+  const spineKey = storageKey ?? DRAFT_KEY
   const [nodes, setNodes] = useState<ThreadEntry[]>(() => {
-    const saved = loadThread()
+    const saved = loadThread(spineKey)
     return saved.length ? saved : [{ role: 'assistant', content: greeting }]
   })
   const [input, setInput] = useState('')
@@ -244,9 +255,12 @@ export function AkisChat({
   const pendingRunScroll = useRef<string | undefined>(undefined)
 
   // Persist the WHOLE spine on every change so it survives a build start + reload: chat messages
-  // AND run markers serialize to the same key. Strip the transient streaming placeholder/flag so a
-  // reload never restores a half-streamed "in-flight" bubble (the flag is UI-only state).
-  useEffect(() => { saveThread(forStorage(nodes)) }, [nodes])
+  // AND run markers serialize under THIS conversation's key (spineKey). Strip the transient
+  // streaming placeholder/flag so a reload never restores a half-streamed "in-flight" bubble (the
+  // flag is UI-only state). spineKey is in the deps so the draft→anchor promotion on first build
+  // re-persists the spine under the new anchor key (the studio also renames the existing entry, so
+  // either ordering is safe).
+  useEffect(() => { saveThread(forStorage(nodes), spineKey) }, [nodes, spineKey])
 
   // Autofocus the composer on mount so the user can start typing immediately.
   useEffect(() => { inputRef.current?.focus() }, [])
