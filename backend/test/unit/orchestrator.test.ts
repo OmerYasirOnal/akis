@@ -99,6 +99,10 @@ describe('Orchestrator — chat-approved spec seed (P0-1: single spec approval)'
     expect(scribeEnds[0]).toMatchObject({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId: 'main' })
     // No LLM call on this path → metrics carry NO usage block (buildAgentMetrics collapses absent → "—").
     expect((scribeEnds[0] as { metrics?: { usage?: unknown } }).metrics?.usage).toBeUndefined()
+    // F3 — HONEST DURATION: the synthetic start/end fire back-to-back at session start, so a wall-clock
+    // duration would be a meaningless "0s" (the REAL drafting happened earlier, in chat). Omit it — the
+    // FE then shows an honest "spec was drafted in chat" caption instead of a fabricated timing line.
+    expect((scribeEnds[0] as { metrics?: { durationMs?: number } }).metrics?.durationMs).toBeUndefined()
     // GATE-SAFETY: the spec gate is still minted EXACTLY ONCE (one satisfied, never an awaiting).
     const gates = events.filter(e => e.kind === 'gate' && (e as { gate: string }).gate === 'spec_approval')
     expect(gates.filter(e => (e as { state: string }).state === 'satisfied')).toHaveLength(1)

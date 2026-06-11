@@ -10,7 +10,6 @@ import type { OrchestratorServices } from '../di/services.js'
 import { MockGitHubAdapter } from '../di/MockGitHubAdapter.js'
 import type { SessionPatch } from '../store/SessionStore.js'
 import { buildAdvisoryTools } from '../agent/tools/advisoryTools.js'
-import { buildAgentMetrics } from '../agent/metrics.js'
 import type { AdvisoryPhase } from '../agent/dynamic/AdvisoryAgent.js'
 import { signPassport } from '../verify/passport.js'
 import type { BuildPassport, VerifyToken } from '@akis/shared'
@@ -249,11 +248,14 @@ export class Orchestrator {
       // with a synthetic agent_start immediately followed by agent_end(ok:true), using the SAME payload
       // shape ScribeAgent.run() emits. GATE-SAFE: these are pure observability bus EVENTS — no LLM
       // call, no store write, no gate authority, no token mint; the spec gate stays minted exactly once.
-      const scribeStartedAt = Date.now()
       this.s.bus.emit({ kind: 'agent_start', role: 'scribe', agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
-      // No LLM call on this path → usage absent (buildAgentMetrics collapses {0,0}/undefined → "—");
-      // only the real activation wall-time + the zero tool-call count are honestly reported.
-      this.s.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, metrics: buildAgentMetrics(undefined, scribeStartedAt, 0), agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
+      // F3 — HONEST DURATION: this synthetic start/end fire BACK-TO-BACK at session start, so a wall-clock
+      // duration would be a meaningless "0s" (the REAL drafting happened earlier, at chat time, by the
+      // chat persona's Scribe handoff). So we OMIT durationMs entirely — only the honest zero tool-call
+      // count rides. usage stays ABSENT (the reverted double-charge seam: UsageCollector taps agent_end,
+      // so a usage block here would re-bill Scribe's chat-time spend). The FE renders a metrics-less
+      // Scribe stage as an honest "spec was drafted in chat" caption instead of a fabricated timing line.
+      this.s.bus.emit({ kind: 'agent_end', role: 'scribe', ok: true, metrics: { toolCalls: 0 }, agent: 'scribe', laneId: 'main', sessionId: id, ts: nextTs() })
       // The SpecCard's "Approve & Build" is the SINGLE human action for BOTH the gate and the
       // run (#124 collapsed the separate Approve click) — so the RUN must be kicked HERE,
       // server-side. Fire-and-forget: awaiting it would hold the POST /sessions response open
