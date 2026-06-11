@@ -320,9 +320,12 @@ async function expandSpecRequest(
   const request = extractSpecRequest(reply)
   if (!request) return { reply } // ordinary turn — byte-identical, no Scribe call
   if (!draftSpec) return { reply: stripSpecRequest(reply) } // no Scribe wired → degrade to prose
+  // Per-turn clamp (review LOW): MAX_HISTORY bounds the COUNT, this bounds each turn's SIZE — a
+  // client sending 12 huge turns must not inflate Scribe's prompt (mirrors /sessions' TURN_MAX_CHARS).
+  const bounded = conversation.map(t => ({ role: t.role, content: t.content.slice(0, SCRIBE_BRIEF_MAX_CHARS) }))
   let drafted: Awaited<ReturnType<NonNullable<ChatDeps['draftSpec']>>>
   try {
-    drafted = await draftSpec({ brief: request.brief.slice(0, SCRIBE_BRIEF_MAX_CHARS), conversation })
+    drafted = await draftSpec({ brief: request.brief.slice(0, SCRIBE_BRIEF_MAX_CHARS), conversation: bounded })
   } catch (err) {
     // Provider error → honest error row; NEVER fall back to a persona-authored spec.
     throw new ChatRequestError(502, 'ScribeError', err instanceof Error ? err.message : 'Scribe failed to draft the spec')
