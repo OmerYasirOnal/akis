@@ -126,6 +126,26 @@ export function renameThread(from: string, to: string, store: Pick<Storage, 'get
 }
 
 /**
+ * Find the spine key whose conversation CONTAINS the given run (review MED — multi-run threads):
+ * the spine is anchored to the FIRST run's id, but `syncUrl` points the address bar at the LATEST
+ * run, so an F5 / History reopen of a later run would look under `anchorKey(laterId)`, find
+ * nothing, and rebuild — dropping the earlier run blocks. This bounded scan (same enumeration
+ * clearAllThreads uses) locates the anchor whose nodes include a marker for `sessionId`, so the
+ * reopen adopts the rich, correctly-ordered local spine instead. Undefined when no spine holds it.
+ */
+export function findThreadKeyForRun(sessionId: string, store: Storage | undefined = defaultStore()): string | undefined {
+  try {
+    if (!store) return undefined
+    const keys: string[] = []
+    for (let i = 0; i < store.length; i++) {
+      const k = store.key(i)
+      if (k && k.startsWith(KEY_PREFIX)) keys.push(k)
+    }
+    return keys.find(k => loadThread(k, store).some(n => isRun(n) && n.sessionId === sessionId))
+  } catch { return undefined }
+}
+
+/**
  * One-time forward migration of the LEGACY single-key spine to the per-conversation scheme.
  * Old installs persisted everything under `akis_chat_thread`; this moves it to the right per-
  * conversation key so no conversation is lost when the keying changes:

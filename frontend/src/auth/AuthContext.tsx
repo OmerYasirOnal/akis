@@ -30,8 +30,12 @@ export function AuthProvider({ api, children }: { api: ApiClient; children: Reac
     return () => { active = false }
   }, [api])
 
-  const login = async (email: string, password: string): Promise<void> => { setUser((await api.login(email, password)).user) }
-  const signup = async (name: string, email: string, password: string): Promise<void> => { setUser((await api.signup({ name, email, password })).user) }
+  // SIGN-IN ALSO SWEEPS (gate-keeper LOW): if the previous user closed the browser without logging
+  // out (no logout/401 ever ran), their persisted spines would survive into the NEXT account's
+  // session on this machine. Display-only chat text — no token/capability — but still another
+  // user's conversation, so a fresh sign-in/sign-up starts from a clean slate.
+  const login = async (email: string, password: string): Promise<void> => { const u = (await api.login(email, password)).user; clearAllThreads(); setUser(u) }
+  const signup = async (name: string, email: string, password: string): Promise<void> => { const u = (await api.signup({ name, email, password })).user; clearAllThreads(); setUser(u) }
   // Clear local state even if the network/server call fails — never leave a user
   // looking signed-in after a logout attempt.
   const logout = async (): Promise<void> => { try { await api.logout() } finally { clearAllThreads(); setUser(null) } }

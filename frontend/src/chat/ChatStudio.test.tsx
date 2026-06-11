@@ -901,4 +901,42 @@ describe('ChatStudio — spine ordering survives chat switching (the reorder bug
     ])
     expect(order).toEqual(['turn1', 'spec1', 'run1', 'turn2', 'spec2', 'run2', 'turn3'])
   })
+
+  it('reopening a multi-run thread BY THE SECOND run id adopts the anchor spine — both run blocks survive (review MED)', async () => {
+    // The spine anchors to the FIRST run (m1), but syncUrl points the URL at the LATEST build — so a
+    // plain F5 lands on /?s=m2. Looking only under anchorKey(m2) would find nothing → rebuild → run 1's
+    // block silently dropped (the regression the reviewer pinned). findThreadKeyForRun must locate the
+    // m1-anchored spine that CONTAINS m2 and adopt it: both ledgers render, fully interleaved.
+    localStorage.setItem('akis_chat_thread:m1', JSON.stringify([
+      { role: 'assistant', content: 'GREETING-LOCAL' },
+      { role: 'user', content: 'budget tracker idea' },
+      { role: 'run', sessionId: 'm1', idea: 'budget tracker' },
+      { role: 'user', content: 'add a dark mode toggle' },
+      { role: 'run', sessionId: 'm2', idea: 'budget tracker dark' },
+      { role: 'user', content: 'why is the chart blank?' },
+    ]))
+    window.history.replaceState({}, '', '/?s=m2') // ← the LATER run's id (what F5 actually sees)
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'm2', idea: 'budget tracker dark', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      for (const id of ['m1', 'm2']) {
+        if (path.endsWith(`/sessions/${id}/log`)) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+        if (path.endsWith(`/sessions/${id}`)) return { ok: true, status: 200, json: async () => ({ id, idea: 'budget tracker', status: 'done', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+    await waitFor(() => expect(screen.getAllByLabelText('Trust ledger')).toHaveLength(2)) // BOTH blocks
+    const ledgers = screen.getAllByLabelText('Trust ledger')
+    const order = domOrder([
+      { label: 'turn1', node: screen.queryByText('budget tracker idea') },
+      { label: 'run1', node: ledgers[0] ?? null },
+      { label: 'turn2', node: screen.queryByText('add a dark mode toggle') },
+      { label: 'run2', node: ledgers[1] ?? null },
+      { label: 'turn3', node: screen.queryByText('why is the chart blank?') },
+    ])
+    expect(order).toEqual(['turn1', 'run1', 'turn2', 'run2', 'turn3'])
+    // The rich spine stayed under its anchor — no empty m2 rebuild was written over it.
+    expect(localStorage.getItem('akis_chat_thread:m1')).not.toBeNull()
+  })
 })

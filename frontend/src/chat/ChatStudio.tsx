@@ -5,7 +5,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import { specSeedFromMarkdown } from './buildSpec.js'
 import { actionErrorText } from './actionError.js'
 import { AkisChat } from './AkisChat.js'
-import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, renameThread, migrateLegacyKey, anchorKey, DRAFT_KEY, type ThreadNode } from './akisThread.js'
+import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, renameThread, migrateLegacyKey, anchorKey, findThreadKeyForRun, DRAFT_KEY, type ThreadNode } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
@@ -216,7 +216,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // can never store AND is re-saved on every same-device turn, so it is authoritative. mergeSpine
     // keeps it in that case; otherwise (cleared storage / another device / a legacy reopen) it
     // rebuilds from the server turns, placing the marker AFTER the phase:'pre' turns (the H2 fix).
-    const key = anchorKey(id)
+    // MULTI-RUN REOPEN (review MED): the spine anchors to the FIRST run's id, but syncUrl points
+    // the URL at the LATEST — so first look for the spine that already CONTAINS this run (the
+    // rich same-device copy with every run block) and adopt it; only a genuinely unknown run
+    // (cleared storage / other device) falls back to its own anchor and the server rebuild.
+    const key = findThreadKeyForRun(id) ?? anchorKey(id)
     const restoredTurns = (chat ?? [])
       .filter(turn => turn.content.trim().length > 0)
       .map(turn => ({ role: turn.role, content: turn.content, ...(turn.phase ? { phase: turn.phase } : {}) }))
