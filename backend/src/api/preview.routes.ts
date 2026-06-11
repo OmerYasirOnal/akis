@@ -53,10 +53,12 @@ function sanitizeResponseHeaders(headers: http.IncomingHttpHeaders, id: string, 
   return out
 }
 
-/** Materialize a session's produced code and boot it in the registry (the POST /preview
- *  body, extracted so the ship-time PREWARM can reuse the exact same path). Returns the
- *  entry, or undefined when there is nothing to preview. */
-export async function startPreviewForSession(
+/** The RAW boot work: materialize a session's produced code and start it in the registry. Returns
+ *  the entry, or undefined when there is nothing to preview. NOT called directly — it runs ONLY
+ *  inside the per-session serializer (see PreviewStartCoordinator) so two concurrent boots for one
+ *  session can never interleave (caller B's start() would tear down caller A's materialized dir,
+ *  and A's failure path would clobber B's ready entry — PreviewRegistry.ts unconditional set/delete). */
+async function materializeAndStart(
   store: PreviewDeps['store'],
   registry: PreviewDeps['registry'],
   id: string,
@@ -69,6 +71,94 @@ export async function startPreviewForSession(
 }
 
 /**
+ * F1 — PER-SESSION START SERIALIZATION. Every door into a preview boot for one session (the manual
+ * POST route, the FE auto-run, the ship-time restart tap) funnels through ONE coordinator so:
+ *   (a) two concurrent starts for a session are IMPOSSIBLE — a second caller COALESCES onto the
+ *       in-flight promise instead of racing (the destructive interleave above).
+ *   (b) a `done` arriving while a start/restart is in flight is NOT dropped: it sets a pending-done
+ *       flag and the in-flight start's .finally runs exactly ONE trailing restart (many → one).
+ *   (c) before a RESTART (the done-with-ready trigger) the registry entry is re-read INSIDE the
+ *       serialized section — if it is no longer 'ready' (user pressed Stop, or it was evicted in the
+ *       async window) the restart is SKIPPED, so a teardown isn't immediately undone.
+ *
+ * The registry's OWN internals (eviction, cap) are out of scope — this is route-level serialization.
+ */
+class PreviewStartCoordinator {
+  private inFlight = new Map<string, Promise<PreviewEntry | undefined>>()
+  private pendingDone = new Set<string>()
+  constructor(private store: PreviewDeps['store'], private registry: PreviewDeps['registry']) {}
+
+  /** Serialized start for an EXPLICIT request (POST route / FE auto-run). Coalesces onto an in-flight
+   *  start for the same session (the second caller awaits the first's result — no second boot). */
+  start(id: string): Promise<PreviewEntry | undefined> {
+    return this.serialize(id, () => materializeAndStart(this.store, this.registry, id))
+  }
+
+  /** The ship-time `done` tap. Decides skip/restart/prewarm, but the in-flight check comes FIRST so a
+   *  `done` landing mid-start is COALESCED into a single trailing restart rather than thrashing. */
+  onDone(id: string): void {
+    // A start/restart is already running → record the done; the in-flight .finally runs ONE trailing
+    // restart. (Coalesces N rapid dones to one — they all just (re)set the same flag.)
+    if (this.inFlight.has(id)) { this.pendingDone.add(id); return }
+    const cur = this.registry.get(id)
+    if (cur && cur.status === 'starting') return // an untracked boot is in flight — don't thrash it
+    if (cur && cur.status === 'ready') { void this.restart(id); return }
+    // CAP (audit bigger-bet): a warm-up is never worth evicting a live preview or OOMing the box — at
+    // capacity the prewarm silently skips; the user's explicit Run still works (it evicts).
+    if (this.registry.atCapacity()) return
+    void this.serialize(id, () => materializeAndStart(this.store, this.registry, id)).catch(() => {})
+  }
+
+  /** A3.3 RESTART (done-with-ready): re-boot the live preview to serve a rebuild's NEW bytes. The
+   *  liveness precondition (c) re-reads the entry inside the serialized section — a Stop/eviction in
+   *  the async window means there is nothing live to restart, so it's skipped. Bypasses the capacity
+   *  gate: this session already holds its slot and registry.start() stops it before re-booting. */
+  private restart(id: string): Promise<PreviewEntry | undefined> {
+    return this.serialize(id, () => {
+      const cur = this.registry.get(id)
+      if (!cur || cur.status !== 'ready') return Promise.resolve(undefined) // (c) Stop/evicted → skip
+      return materializeAndStart(this.store, this.registry, id)
+    }).catch(() => undefined) // best-effort: a failed re-warm leaves the next Run to pay the boot
+  }
+
+  /** Run `work` as the session's SOLE in-flight start; coalesce concurrent callers onto it. The
+   *  .finally drains exactly ONE pending-done into a trailing restart (then loops only if another
+   *  done landed during THAT restart — bounded coalescing, never an unbounded chain). */
+  private serialize(id: string, work: () => Promise<PreviewEntry | undefined>): Promise<PreviewEntry | undefined> {
+    const existing = this.inFlight.get(id)
+    if (existing) return existing
+    const p = (async () => work())()
+      .finally(() => {
+        this.inFlight.delete(id)
+        if (this.pendingDone.delete(id)) void this.restart(id) // (b) one trailing restart, coalesced
+      })
+    this.inFlight.set(id, p)
+    return p
+  }
+}
+
+/** Per-REGISTRY coordinator (a worktree/test may build several registries; each gets its own
+ *  serializer state). The POST route and the prewarm tap are wired with the SAME registry instance,
+ *  so they share ONE coordinator — that is what makes their starts mutually serialized. */
+const coordinators = new WeakMap<object, PreviewStartCoordinator>()
+function coordinatorFor(store: PreviewDeps['store'], registry: PreviewDeps['registry']): PreviewStartCoordinator {
+  let c = coordinators.get(registry as object)
+  if (!c) { c = new PreviewStartCoordinator(store, registry); coordinators.set(registry as object, c) }
+  return c
+}
+
+/** Materialize a session's produced code and boot it in the registry (the POST /preview body + the
+ *  FE auto-run), SERIALIZED per session (F1). Returns the entry, or undefined when there is nothing
+ *  to preview (or a concurrent start already owns the boot — the coalesced result). */
+export async function startPreviewForSession(
+  store: PreviewDeps['store'],
+  registry: PreviewDeps['registry'],
+  id: string,
+): Promise<PreviewEntry | undefined> {
+  return coordinatorFor(store, registry).start(id)
+}
+
+/**
  * PERCEIVED-LATENCY: pre-warm the preview the moment a session ships (the `done` event) —
  * install+boot happen while the user is still reading the shipped card, so the first
  * "Run app" click finds a READY entry instead of paying the whole boot. Fire-and-forget
@@ -76,49 +166,23 @@ export async function startPreviewForSession(
  * user-clicked Run — this only moves WHEN it starts).
  *
  * A3.3 — a `done` while a preview is already up means a REBUILD (change request) just shipped:
- *   - 'ready'    → RESTART. The live process/materialized dir serves the PREVIOUS build's bytes,
- *     and skipping emitted NO new preview_status frame — the user stared at the OLD app forever.
- *     startPreviewForSession re-materializes the NEW files into a fresh workspace and
- *     registry.start() stops the prior entry FIRST (same session slot — the maxConcurrent cap is
- *     reused, never consumed twice; the capacity gate below is for NEW slots only). Both serving
- *     types are covered by the same path: a node app re-boots (starting→ready frames), a static
- *     app re-points the entry's dir (a fresh ready frame) — either way the NEW bytes are served
- *     and a fresh 'ready' reaches the FE (which remounts the iframe on every ready fold).
- *   - 'starting' → still SKIP: a boot is already in flight — don't thrash it.
+ *   - 'ready'    → RESTART (re-materialize the NEW files; registry.start() stops the prior entry
+ *     first → the maxConcurrent cap is reused, never doubled). A node app re-boots, a static app
+ *     re-points its dir; either way a fresh 'ready' reaches the FE.
+ *   - 'starting' → SKIP: a boot is already in flight — don't thrash it.
+ *
+ * F1 — the tap delegates to the shared per-session coordinator so a `done` can never race the
+ * manual POST start, and a `done` landing mid-boot is coalesced into one trailing restart.
  */
 export function wirePreviewPrewarm(
   bus: { tap(fn: (e: { kind: string; sessionId: string }) => void): () => void },
   store: PreviewDeps['store'],
   registry: PreviewDeps['registry'],
 ): () => void {
-  // Restart-in-flight guard: startPreviewForSession awaits store.get + materialize BEFORE
-  // registry.start flips the entry to 'starting', so a second rapid `done` inside that window
-  // would still read 'ready' and fire a concurrent duplicate restart.
-  const restarting = new Set<string>()
+  const coordinator = coordinatorFor(store, registry)
   return bus.tap(e => {
     if (e.kind !== 'done') return
-    const cur = registry.get(e.sessionId)
-    if (cur && cur.status === 'starting') return // boot in flight — don't thrash it
-    if (cur && cur.status === 'ready') {
-      if (restarting.has(e.sessionId)) return
-      restarting.add(e.sessionId)
-      // A3.3 restart (see the doc above) — bypasses the capacity gate: this session already
-      // holds its slot and start() stops it before re-booting, so the cap can't be exceeded.
-      void startPreviewForSession(store, registry, e.sessionId)
-        .catch(() => {
-          /* best-effort: a failed re-warm leaves the next Run to pay the boot, as before */
-        })
-        .finally(() => {
-          restarting.delete(e.sessionId)
-        })
-      return
-    }
-    // CAP (audit bigger-bet): a warm-up is never worth evicting a live preview or OOMing the box —
-    // at capacity the prewarm silently skips; the user's explicit Run still works (it evicts).
-    if (registry.atCapacity()) return
-    void startPreviewForSession(store, registry, e.sessionId).catch(() => {
-      /* best-effort: a failed prewarm just means Run pays the boot, as before */
-    })
+    coordinator.onDone(e.sessionId)
   })
 }
 
