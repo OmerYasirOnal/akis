@@ -107,6 +107,80 @@ describe('AkisChat (streaming)', () => {
     expect(alert).toHaveTextContent(/empty reply/i)
   })
 
+  // F1(b) — LIVE DRAFTING SIGNAL. The additive `scribe`/drafting frame lifts a chat-level Scribe
+  // presence UP to the parent (onScribeActivity) so the header roster can show Scribe 'working' while
+  // drafting and 'done' once the spec card lands — and the in-chat typing cue swaps to "Scribe is
+  // drafting…". The frame is NOT a delta and never enters the reply text.
+  it('reports Scribe presence UP (working → done) as the drafting frame then the spec arrive', async () => {
+    // A controllable stream so the 'working' transition (drafting frame received, spec not yet landed)
+    // is a real intermediate render — a fully-synchronous stream would batch straight to 'done'.
+    let enqueue!: (s: string) => void
+    let close!: () => void
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/chat/stream')) {
+        const enc = new TextEncoder()
+        const body = new ReadableStream<Uint8Array>({
+          start(c) { enqueue = (s: string) => c.enqueue(enc.encode(s)); close = () => c.close() },
+        })
+        return { ok: true, status: 200, body, json: async () => ({}) } as unknown as Response
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const presence: string[] = []
+    render(<I18nProvider><AkisChat api={api} onBuild={() => {}} onScribeActivity={p => presence.push(p)} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build it')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    enqueue(frame('delta', { text: "Here's a spec 👇\n" }))
+    enqueue(frame('scribe', { scribe: 'drafting' }))
+    await waitFor(() => expect(presence).toContain('working')) // drafting started → 'working'
+    enqueue(frame('delta', { text: '```akis-spec\n# TODO App\nA list.\n```' }))
+    enqueue(frame('done', { reply: "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```" }))
+    close()
+    await waitFor(() => expect(screen.getByText('Build-ready spec')).toBeInTheDocument())
+    // Ends on 'done' (the spec card is present pre-build).
+    expect(presence[presence.length - 1]).toBe('done')
+  })
+
+  it('an ordinary turn (no spec) never lifts a Scribe presence other than idle', async () => {
+    const fetchFn = streamFetch([frame('delta', { text: 'Just chatting.' }), frame('done', { reply: 'Just chatting.' })])
+    const api = new ApiClient('', fetchFn)
+    const presence: string[] = []
+    render(<I18nProvider><AkisChat api={api} onBuild={() => {}} onScribeActivity={p => presence.push(p)} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hi')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await waitFor(() => expect(screen.getByText('Just chatting.')).toBeInTheDocument())
+    expect(presence.every(p => p === 'idle')).toBe(true)
+  })
+
+  it('shows the "Scribe is drafting…" status (not the generic cue) while a real Scribe call runs', async () => {
+    // A controllable stream: emit the drafting frame, then PAUSE — so the drafting status is observable
+    // before the spec/done lands. The generic cue must NOT be shown during the drafting window.
+    let enqueue!: (s: string) => void
+    let close!: () => void
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/chat/stream')) {
+        const enc = new TextEncoder()
+        const body = new ReadableStream<Uint8Array>({
+          start(c) { enqueue = (s: string) => c.enqueue(enc.encode(s)); close = () => c.close() },
+        })
+        return { ok: true, status: 200, body, json: async () => ({}) } as unknown as Response
+      }
+      return { ok: false, status: 404, json: async () => ({}) } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(<I18nProvider><AkisChat api={api} onBuild={() => {}} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build it')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    enqueue(frame('delta', { text: 'Handing off… ' }))
+    enqueue(frame('scribe', { scribe: 'drafting' }))
+    await waitFor(() => expect(screen.getByText('Scribe is drafting the spec…')).toBeInTheDocument())
+    expect(screen.queryByText('AKIS is thinking…')).toBeNull()
+    enqueue(frame('done', { reply: 'Handing off… ' }))
+    close()
+    await waitFor(() => expect(screen.queryByText('Scribe is drafting the spec…')).toBeNull())
+  })
+
   it('EXCLUDES error rows + the in-flight placeholder from the next send history', async () => {
     let attempt = 0
     const fetchFn = vi.fn(async (path: string, _init?: RequestInit) => {

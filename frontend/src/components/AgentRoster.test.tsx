@@ -18,6 +18,33 @@ describe('AgentRoster', () => {
   })
 })
 
+describe('AgentRoster — F1(b) pre-build scribeOverride', () => {
+  // Each agent's localized status appears TWICE in the DOM (an sr-only span + a hidden-then-sm:inline
+  // span), so counts are 2× the agent count. The override raises ONLY Scribe above idle: a 'working'/
+  // 'done' override means exactly ONE agent (Scribe) is non-idle while the other four stay idle (×2).
+  it("raises Scribe to 'working' while drafting (the four others stay idle)", () => {
+    render(<I18nProvider><AgentRoster view={emptyView('s1')} scribeOverride="working" /></I18nProvider>)
+    expect(screen.getAllByText('working').length).toBe(2) // ONLY Scribe (×2 spans)
+    expect(screen.getAllByText('idle').length).toBe(8)    // the four non-Scribe agents (×2 spans)
+  })
+
+  it("raises Scribe to 'done' once the spec card is present", () => {
+    render(<I18nProvider><AgentRoster view={emptyView('s1')} scribeOverride="done" /></I18nProvider>)
+    expect(screen.getAllByText('done').length).toBe(2)
+    expect(screen.getAllByText('idle').length).toBe(8)
+  })
+
+  it("an 'idle' override is a no-op — every agent reads idle (the override never LOWERS the view)", () => {
+    render(<I18nProvider><AgentRoster view={emptyView('s1')} scribeOverride="idle" /></I18nProvider>)
+    expect(screen.getAllByText('idle').length).toBe(10) // all five agents (×2 spans), nothing raised
+  })
+
+  it('the scribe-only override never flips another role', () => {
+    render(<I18nProvider><AgentRoster view={emptyView('s1')} scribeOverride="working" /></I18nProvider>)
+    expect(screen.queryAllByText('working').length).toBe(2) // ONLY Scribe — no other role flipped
+  })
+})
+
 describe('presenceOf — Scribe falls back to done on a chat-seeded build', () => {
   it('returns "done" for scribe when there is NO scribe lane step but the spec gate is satisfied', () => {
     // Chat-seeded builds short-circuit Scribe's lane, so the only signal that the spec stage

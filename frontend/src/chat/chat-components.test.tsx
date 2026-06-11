@@ -171,6 +171,24 @@ describe('ChatStudio', () => {
     expect(screen.getAllByText('Scribe').length).toBeGreaterThanOrEqual(2)
   })
 
+  it('F1(b) — the header roster shows Scribe "done" once a spec card is present pre-build (lift threads through)', async () => {
+    // Drive a non-stream spec reply (the stream path fails → fallback carries the akis-spec block).
+    // Pre-build (no session started yet) the chat-level Scribe presence is lifted up to the header
+    // roster, which must read 'done' for Scribe — not the stale 'idle' it sat at before this fix.
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 500, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply: SPEC_REPLY }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    const fake = new FakeStream()
+    render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'build a qr app{Enter}')
+    // Once the spec card lands (pre-build, no Approve clicked) Scribe reads 'done' in the header roster.
+    await screen.findByRole('button', { name: 'Approve & Build' })
+    await waitFor(() => expect(screen.getAllByText('done').length).toBeGreaterThanOrEqual(1))
+  })
+
   it('on build start, scrolls the run HEADER to the top (block:start) instead of the column bottom (H3)', async () => {
     // jsdom has no scrollIntoView — install a spy so we can assert WHAT the auto-scroll targets.
     const spy = vi.fn()

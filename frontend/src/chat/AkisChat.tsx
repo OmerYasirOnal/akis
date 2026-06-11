@@ -181,7 +181,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
 
 export function AkisChat({
   api, onBuild, building, buildStarting, starting,
-  activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView, onReactivate, onActionError,
+  activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView, onReactivate, onActionError, onScribeActivity,
   baseUrl = '', makeClient,
 }: {
   api: ApiClient
@@ -216,6 +216,11 @@ export function AkisChat({
   onReactivate?: (id: string) => void
   /** Surface a run-block recovery/gate action failure to the studio's error banner. */
   onActionError?: (msg: string) => void
+  /** F1(b) — CHAT-LEVEL Scribe presence, lifted UP so the header roster reflects the REAL Scribe
+   *  handoff that happens at chat time: 'working' while the spec is being drafted, 'done' once the
+   *  spec card is present pre-build, 'idle' otherwise. Pre-build ONLY — once a build starts, the
+   *  event-driven roster (the active run's SessionView) takes over and this override goes 'idle'. */
+  onScribeActivity?: (presence: 'idle' | 'working' | 'done') => void
   baseUrl?: string
   makeClient?: () => EventStreamClient
 }) {
@@ -227,6 +232,10 @@ export function AkisChat({
   })
   const [input, setInput] = useState('')
   const [busy, setBusy] = useState(false)
+  // F1(b): true between the `scribe`/drafting stream frame and the turn finishing — the REAL Scribe
+  // call is running at chat time. Swaps the generic "AKIS is thinking…" cue for an honest "Scribe is
+  // drafting…" status and lifts Scribe to 'working' in the header roster (see the presence effect below).
+  const [drafting, setDrafting] = useState(false)
   // ── Model picker (CHAT-ONLY visibility + selection) ──
   // The user's saved provider/model/effort preference (safe-parsed from localStorage).
   const [modelPref, setModelPref] = useState<ModelPref>(() => loadModelPref())
@@ -340,6 +349,29 @@ export function AkisChat({
   // the rAF coalescer is meant to avoid). The predicate matches a SpecCard's CURRENT (possibly
   // EDITED) text against the run markers — so an edited-then-built card correctly reads "started".
   const isSpecStarted = useCallback((spec: string): boolean => startedSpecs.has(spec.trim()), [startedSpecs])
+
+  // F1(b) — CHAT-LEVEL Scribe presence (header-roster override), reported UP. PRE-BUILD ONLY: once a
+  // build is active the event-driven roster (the active run's SessionView) owns Scribe, so we report
+  // 'idle' here and let it win. Otherwise: 'working' while the spec is being drafted (the live signal),
+  // 'done' once a NON-built spec card is present in the spine (Scribe finished its chat-time draft),
+  // else 'idle'. Detection mirrors AssistantMessage (extractBuildSpec gated on onBuild). Spread across a
+  // memo so the effect only fires on a real transition (no per-frame callback storm during streaming).
+  const scribePresence = useMemo<'idle' | 'working' | 'done'>(() => {
+    if (activeSessionId) return 'idle' // a build is live → defer to the event-driven roster
+    if (drafting) return 'working'
+    if (onBuild) {
+      for (const n of nodes) {
+        if (!isMsg(n) || n.role !== 'assistant') continue
+        const spec = extractBuildSpec(n.content)
+        if (spec && !startedSpecs.has(spec.spec.trim())) return 'done'
+      }
+    }
+    return 'idle'
+  }, [activeSessionId, drafting, onBuild, nodes, startedSpecs])
+  // Report the presence UP only when it CHANGES (and only when a parent wired the callback). The
+  // effect dep is the scalar presence string, so a streaming build's per-frame node churn never
+  // re-fires it unless the derived presence actually transitioned.
+  useEffect(() => { onScribeActivity?.(scribePresence) }, [scribePresence, onScribeActivity])
 
   // One STABLE no-op for the optional gate/recovery callbacks a standalone caller (or a test) may omit.
   // The fallback used to be an INLINE `?? (() => {})` per prop per render — a fresh function identity each
@@ -468,9 +500,12 @@ export function AkisChat({
           return next
         })
       }
+      // F1(b): the additive `scribe`/drafting frame → flip the live drafting signal on. NEVER a delta,
+      // never part of the reply (the client routes it here, not through onDelta). Cleared in `finally`.
+      const onScribe = (status: string): void => { if (status === 'drafting') setDrafting(true) }
       // CHAT-ONLY overrides (see chatOverrides above): never forwarded to a build. The trailing
       // sessionId (build-aware context) is a SEPARATE positional arg, so it never collides with them.
-      const { reply } = await api.chatWithAkisStream(text, history, onDelta, chatOverrides(), ctxId)
+      const { reply } = await api.chatWithAkisStream(text, history, onDelta, chatOverrides(), ctxId, onScribe)
       finalize(reply)
     } catch (streamErr) {
       // Streaming failed (provider lacks it, a mid-stream drop, or an SSE `error` frame):
@@ -501,7 +536,7 @@ export function AkisChat({
           setNodes(m => [...m, { role: 'error', content: errorText(err) }])
         }
       }
-    } finally { setBusy(false) }
+    } finally { setBusy(false); setDrafting(false) }
   }
 
   // Send an arbitrary message (typed, or a tapped suggestion chip) — adds the user bubble and
@@ -652,7 +687,9 @@ export function AkisChat({
             {starting}
           </div>
         )}
-        {busy && <div className="ml-11 text-xs text-teal-300">{t('akis.thinking')}</div>}
+        {/* F1(b): while the REAL Scribe is drafting at chat time, swap the generic "AKIS is thinking…"
+            cue for an honest "Scribe is drafting…" status so the brief Scribe latency is legible. */}
+        {busy && <div className="ml-11 text-xs text-teal-300">{t(drafting ? 'chat.scribe.drafting' : 'akis.thinking')}</div>}
       </div>
         {/* SCROLL-TO-LATEST pill — floats over the scroll area only when the user is scrolled up,
             so new content below is one click away (theme: cosmic teal/violet, matches the composer). */}

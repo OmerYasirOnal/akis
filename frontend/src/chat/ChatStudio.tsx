@@ -17,7 +17,7 @@ import { TrustReportCard } from '../components/TrustReportCard.js'
 import { PublishButton } from '../components/PublishButton.js'
 import { ExternalWriteCard } from '../components/ExternalWriteCard.js'
 import { AgentWriteProposals } from '../components/AgentWriteProposals.js'
-import { AgentRoster } from '../components/AgentRoster.js'
+import { AgentRoster, type AgentPresence } from '../components/AgentRoster.js'
 import { Link } from '../router/router.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
@@ -115,6 +115,11 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // The active run's folded live view, reported UP by its RunBlock (exactly ONE reporter — the
   // active run — so no shared per-event setState storm). Drives the header roster + the right rail.
   const [activeView, setActiveView] = useState<SessionView>(() => emptyView(''))
+  // F1(b) — PRE-BUILD Scribe presence, lifted up from AkisChat (the REAL Scribe handoff runs at chat
+  // time, before any run/SessionView exists). It overrides the roster's Scribe dot to 'working' while
+  // drafting and 'done' once the spec card is present; AkisChat reports 'idle' once a build is active,
+  // so the event-driven roster then takes over unchanged.
+  const [scribePresence, setScribePresence] = useState<AgentPresence>('idle')
   // Bumping this key REMOUNTS AkisChat so it re-reads the (re-seeded/cleared) thread from storage —
   // how "new build" and "reopen" reset/seed the spine without AkisChat owning that lifecycle.
   const [threadKey, setThreadKey] = useState(0)
@@ -426,7 +431,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Shared frame header: the live agent roster (active run) + history (+ New chat once a run exists).
   const header = (
     <div className="flex items-center justify-between gap-3 border-b border-white/10 px-4 py-2">
-      <AgentRoster view={activeView} />
+      <AgentRoster view={activeView} scribeOverride={scribePresence} />
       <div className="flex shrink-0 items-center gap-2">
         <HistoryMenu builds={recent} onOpen={openSession} />
         {/* PROMINENT "new build" (owner 2026-06-10): this is the ONLY door out of an active chat into a
@@ -457,6 +462,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       onActiveView={setActiveView}
       onReactivate={reactivateRun}
       onActionError={setActionError}
+      onScribeActivity={setScribePresence}
       starting={startingWorkflowCard}
     />
   )
