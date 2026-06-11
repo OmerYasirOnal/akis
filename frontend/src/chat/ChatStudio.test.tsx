@@ -230,6 +230,13 @@ describe('ChatStudio — preview ungated from verification (Run keys on code pre
     await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
   })
 
+  // A3.1 belt-and-suspenders: push_failed is the remaining parked-terminal state with code —
+  // the VERIFIED-but-unshipped park. Seeing/running the app must never hinge on the push.
+  it('offers ▶ Run for a push_failed session WITH code', async () => {
+    const drawer = await renderDeepLink('spf', { id: 'spf', status: 'push_failed', verified: true, version: 3, code: CODE })
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
+  })
+
   it('offers ▶ Run for a cancelled session WITH code', async () => {
     const drawer = await renderDeepLink('scan', { id: 'scan', status: 'cancelled', verified: false, version: 1, code: CODE })
     await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
