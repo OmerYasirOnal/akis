@@ -394,6 +394,45 @@ describe('ChatStudio — a recovery park refreshes the durable snapshot (Run app
     await waitFor(() =>
       expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
   })
+
+  // F6 — the CRITIC park has the SAME signal shape as push_failed/verify_failed (a store write of
+  // 'awaiting_critic_resolution' + ONLY a recovery event, v.status untouched). It was omitted from the
+  // snapshot-refresh deps, so a reopened/mid-build critic park never re-read the durable status and
+  // ▶ Run stayed hidden until a reload. Adding activeView.recovery?.critic re-fetches on the park.
+  it('critic recovery re-fetches the snapshot → ▶ Run surfaces live', async () => {
+    EmitStream.created = []
+    window.history.replaceState({}, '', '/?s=spark')
+    const CODE = { files: [{ filePath: 'index.html', content: '<html/>' }] }
+    let getCalls = 0
+    let parked = false // the durable truth flips to a previewable park right before the recovery emit
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'spark', idea: 'an app', status: 'building', verified: false }]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark')) {
+        getCalls++
+        return { ok: true, status: 200, json: async () => ({ id: 'spark', status: parked ? 'awaiting_critic_resolution' : 'building', version: 3, code: CODE }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')!)
+    await waitFor(() => expect(getCalls).toBeGreaterThan(0))
+
+    // No Run yet: building is not previewable (code mid-write).
+    expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBe(0)
+    const readsBeforePark = getCalls
+
+    // The critic parks — only a recovery event arrives (v.status untouched, the bug's exact shape).
+    parked = true
+    live.emit(ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' }), 1)
+
+    // The park must re-trigger the snapshot read; the fresh awaiting_critic_resolution (+ code) flips canRun.
+    await waitFor(() => expect(getCalls).toBeGreaterThan(readsBeforePark))
+    await waitFor(() =>
+      expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
+  })
 })
 
 describe('RunPipeline sessionGone precedence', () => {

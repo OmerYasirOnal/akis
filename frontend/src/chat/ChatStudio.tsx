@@ -310,11 +310,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     return () => { cancelled = true }
     // activeView.connectionGone in the deps (Opus review M1): the LIVE frozen-tab case — a silent
     // server restart emits no status change, so the 404 probe must re-run when the stream gives up.
-    // pushFailed/verifyFailed retry-state in the deps (live-verify LOW 2026-06-11): a park is
+    // pushFailed/verifyFailed/critic recovery-state in the deps (live-verify LOW + F6): a park is
     // signaled ONLY by a `recovery` event (v.status untouched), so without these the snapshot kept
-    // the mid-build status and ▶ Run stayed hidden until a reload. The park (and its resolution)
+    // the mid-build status and ▶ Run stayed hidden until a reload. F6 — the CRITIC park has the
+    // SAME signal shape (a store write of 'awaiting_critic_resolution' + a recovery event, no status
+    // change on the wire), so it must re-trigger the snapshot read too. The park (and its resolution)
     // re-reads the durable status so canRun flips live.
-  }, [activeSessionId, status, api, activeView.connectionGone, activeView.pushFailed?.retry, activeView.verifyFailed?.retry])
+  }, [activeSessionId, status, api, activeView.connectionGone, activeView.pushFailed?.retry, activeView.verifyFailed?.retry, activeView.recovery?.critic])
 
   // The single build path: the chat-authored spec becomes a session via the UNCHANGED startSession
   // → the same 4 structural gates + pipeline + History. The ONLY caller is the Chat-to-Build
