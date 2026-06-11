@@ -92,6 +92,20 @@ describe('wirePreviewPrewarm (ship-time boot, task #50 perceived latency)', () =
     expect(start).not.toHaveBeenCalled()
   })
 
+  it('two rapid done events for the SAME ready session restart exactly ONCE (in-flight guard)', async () => {
+    // startPreviewForSession awaits store.get + materialize BEFORE registry.start flips the entry
+    // to 'starting' — without a synchronous guard, a second `done` in that window reads a
+    // still-'ready' entry and fires a concurrent duplicate restart (review LOW, 2026-06-11).
+    const bus = new EventBus()
+    const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'ready', dir: '/x' } })
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
+    bus.emit(done('s1'))
+    await until(() => start.mock.calls.length > 0)
+    await settle()
+    expect(start).toHaveBeenCalledTimes(1)
+  })
+
   it("the 'ready' RESTART is not blocked by the capacity gate (the session already holds its slot)", async () => {
     const bus = new EventBus()
     const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'ready', dir: '/x' }, atCapacity: true })

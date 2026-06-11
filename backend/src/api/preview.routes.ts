@@ -91,16 +91,26 @@ export function wirePreviewPrewarm(
   store: PreviewDeps['store'],
   registry: PreviewDeps['registry'],
 ): () => void {
+  // Restart-in-flight guard: startPreviewForSession awaits store.get + materialize BEFORE
+  // registry.start flips the entry to 'starting', so a second rapid `done` inside that window
+  // would still read 'ready' and fire a concurrent duplicate restart.
+  const restarting = new Set<string>()
   return bus.tap(e => {
     if (e.kind !== 'done') return
     const cur = registry.get(e.sessionId)
     if (cur && cur.status === 'starting') return // boot in flight — don't thrash it
     if (cur && cur.status === 'ready') {
+      if (restarting.has(e.sessionId)) return
+      restarting.add(e.sessionId)
       // A3.3 restart (see the doc above) — bypasses the capacity gate: this session already
       // holds its slot and start() stops it before re-booting, so the cap can't be exceeded.
-      void startPreviewForSession(store, registry, e.sessionId).catch(() => {
-        /* best-effort: a failed re-warm leaves the next Run to pay the boot, as before */
-      })
+      void startPreviewForSession(store, registry, e.sessionId)
+        .catch(() => {
+          /* best-effort: a failed re-warm leaves the next Run to pay the boot, as before */
+        })
+        .finally(() => {
+          restarting.delete(e.sessionId)
+        })
       return
     }
     // CAP (audit bigger-bet): a warm-up is never worth evicting a live preview or OOMing the box —
