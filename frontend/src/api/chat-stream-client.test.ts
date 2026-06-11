@@ -65,4 +65,40 @@ describe('ApiClient.chatWithAkisStream', () => {
     const api = new ApiClient('', fetchFn)
     await expect(api.chatWithAkisStream('hi', [], () => {})).rejects.toThrow()
   })
+
+  // F1(b) — the additive `scribe`/drafting control frame. The parser dispatches it to the optional
+  // onScribe callback (the FE's live "Scribe is drafting…" signal) but it is NEVER a delta nor part
+  // of the reply, so the conversation text is byte-identical with or without it.
+  it('dispatches the `scribe` drafting frame to onScribe (and never as a delta / into the reply)', async () => {
+    const fetchFn = sseFetch([
+      frame('delta', { text: 'Handing off… ' }),
+      frame('scribe', { scribe: 'drafting' }),
+      frame('delta', { text: 'done' }),
+      frame('done', { reply: 'Handing off… done' }),
+    ])
+    const api = new ApiClient('', fetchFn)
+    const deltas: string[] = []
+    const scribe: string[] = []
+    const { reply } = await api.chatWithAkisStream('build it', [], d => deltas.push(d), undefined, undefined, s => scribe.push(s))
+    expect(scribe).toEqual(['drafting'])
+    expect(deltas).toEqual(['Handing off… ', 'done']) // the scribe frame was NOT a delta
+    expect(reply).toBe('Handing off… done')
+  })
+
+  // BACKWARD-TOLERANT: an UNKNOWN event (and the scribe frame when onScribe is omitted) is ignored —
+  // it must never throw, never become a delta, never corrupt the reply (old clients stay correct).
+  it('safely IGNORES an unknown event and the scribe frame when onScribe is absent', async () => {
+    const fetchFn = sseFetch([
+      frame('delta', { text: 'A' }),
+      frame('scribe', { scribe: 'drafting' }),
+      frame('mystery', { whatever: 1 }),
+      frame('delta', { text: 'B' }),
+      frame('done', { reply: 'AB' }),
+    ])
+    const api = new ApiClient('', fetchFn)
+    const deltas: string[] = []
+    const { reply } = await api.chatWithAkisStream('hi', [], d => deltas.push(d)) // no onScribe
+    expect(deltas).toEqual(['A', 'B'])
+    expect(reply).toBe('AB')
+  })
 })
