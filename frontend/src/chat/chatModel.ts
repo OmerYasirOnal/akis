@@ -15,8 +15,11 @@ export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passe
 export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: boolean; findings: number; critical: boolean; iteration: number }
 /** A parked run awaiting a HUMAN recovery decision — the inline actionable card (proceed/abandon a
  *  stuck critic, retry a failed verify/push). NOT a structural gate: the server never bypasses
- *  verify/push. A singleton per recovery-kind, flipped awaiting→resolved as the user acts. */
-export interface RecoveryMsg { id: string; kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed' | 'push_failed'; state: 'awaiting' | 'resolved' }
+ *  verify/push. A singleton per recovery-kind, flipped awaiting→resolved as the user acts.
+ *  F5 — `delivery` is COPIED off the suppressed push_confirm gate (the post-pass below) onto the
+ *  surviving push_failed recovery so the retry card can still SHOW the push destination
+ *  ("→ github.com/owner/repo") — the gate was the only renderer of it before. Optional/additive. */
+export interface RecoveryMsg { id: string; kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed' | 'push_failed'; state: 'awaiting' | 'resolved'; delivery?: { owner: string; repo: string } }
 // F3 — `stopped` marks a TERMINAL non-live preview (the local run was torn down / a replay's last
 // frame projected to 'stopped'): the bubble reads as a recoverable PAUSE, NOT a forever "starting…".
 // `url` is CLEARED on any terminal non-live frame (stopped/failed/unsupported) so a dead /preview/
@@ -153,16 +156,27 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
     }
   }
   // A3.5 — POST-PASS over the singleton maps (so event arrival order can't matter): a PARKED push
-  // (recovery push_failed 'awaiting') contradicts a still-'awaiting' push_confirm gate row. The
-  // backend intentionally emits NO gate event on a push failure — gates are sacred, only the
-  // success path moves push_confirm — so without this the inline "Confirm push" GateBubble sat
-  // right above the push_failed Retry card: two actionable rows for the SAME gated action. Drop
-  // the gate card; the RecoveryBubble's retry drives the SAME gated confirmPush (Gate 4 still
-  // mints), so exactly one actionable row remains. PRESENTATION-ONLY: the on-wire gate state and
-  // the SessionView/TrustLedger fold are untouched, and a later resolved retry (gate 'satisfied'
-  // on the wire + recovery 'resolved') passes through here unchanged — normal behavior resumes.
+  // (a push_failed recovery) contradicts a still-'awaiting' push_confirm gate row. The backend
+  // intentionally emits NO gate event on a push failure — gates are sacred, only the success path
+  // moves push_confirm — so without this the inline "Confirm push" GateBubble sat right above the
+  // push_failed Retry card: two actionable rows for the SAME gated action. Drop the gate card; the
+  // RecoveryBubble's retry drives the SAME gated confirmPush (Gate 4 still mints), so exactly one
+  // actionable row remains. PRESENTATION-ONLY: the on-wire gate state and the SessionView/TrustLedger
+  // fold are untouched.
+  //
+  // F7 — drop the gate whenever a push_failed recovery EXISTS in EITHER state (awaiting OR resolved)
+  // while the gate still reads 'awaiting'. On a successful retry the orchestrator emits recovery
+  // 'resolved' BEFORE gate 'satisfied', so for ONE frame the gate is still 'awaiting' while the
+  // recovery is already 'resolved' — the old awaiting-only condition let the suppressed Confirm-push
+  // card resurrect for that frame (a click → AlreadyPushed 409). Suppressing on resolved-too closes
+  // that window; once the gate flips to 'satisfied' it's no longer awaiting → normal behavior resumes.
   const pushGate = gates.get('push_confirm')
-  if (pushGate?.state === 'awaiting' && recoveries.get('push_failed')?.state === 'awaiting') {
+  const pushRecovery = recoveries.get('push_failed')
+  if (pushGate?.state === 'awaiting' && pushRecovery) {
+    // F5 — the gate was the ONLY renderer of the push DESTINATION (delivery). Carry it onto the
+    // surviving recovery card so the retry still shows "→ github.com/owner/repo" (additive; no-op
+    // when the gate had none — anonymous/keyless sessions).
+    if (pushGate.delivery && !pushRecovery.delivery) pushRecovery.delivery = pushGate.delivery
     return items.filter(m => m !== pushGate)
   }
   return items

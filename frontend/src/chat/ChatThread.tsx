@@ -171,8 +171,18 @@ export function RecoveryBubble({ m, onProceed, onAbandon, onRetry, onConfirm, bu
             className="rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.verify.retry')}</button>
         )}
         {m.recovery === 'push_failed' && (
-          <button onClick={onConfirm} disabled={busy}
-            className="rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.push.retry')}</button>
+          <>
+            {/* F5 — the push DESTINATION, carried off the suppressed push_confirm gate (the A3.5 post-pass
+                drops that gate, which was the only renderer of `delivery`). Reuses the gate's own target
+                copy/i18n key so the retry card still shows where the push delivers. */}
+            {m.delivery && (
+              <div className="mb-2 truncate text-[11px] text-amber-200/80" title={`github.com/${m.delivery.owner}/${m.delivery.repo}`}>
+                {t('chat.gate.target')} · <span className="font-mono text-teal-300">→ github.com/{m.delivery.owner}/{m.delivery.repo}</span>
+              </div>
+            )}
+            <button onClick={onConfirm} disabled={busy}
+              className="rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.push.retry')}</button>
+          </>
         )}
       </div>
     </div>

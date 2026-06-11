@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { foldRunBubbles, type AgentMsg, type GateMsg, type CodeReviewMsg } from './chatModel.js'
+import { foldRunBubbles, type AgentMsg, type GateMsg, type CodeReviewMsg, type RecoveryMsg } from './chatModel.js'
 import type { AkisEvent } from '@akis/shared'
 
 const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
@@ -101,6 +101,58 @@ describe('foldRunBubbles', () => {
     ])
     expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
     expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(true)
+  })
+
+  // F5 — dropping the awaiting push_confirm gate also drops the only renderer of the push DESTINATION
+  // (delivery). The post-pass COPIES it onto the surviving push_failed recovery so the retry card can
+  // still show "→ github.com/owner/repo".
+  it('F5: the dropped gate\'s delivery is carried onto the surviving push_failed recovery card', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting', delivery: { owner: 'ada', repo: 'todo-app' } }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+    ])
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
+    const rec = msgs.find(m => m.kind === 'recovery' && m.recovery === 'push_failed') as RecoveryMsg
+    expect(rec.state).toBe('awaiting')
+    expect(rec.delivery).toEqual({ owner: 'ada', repo: 'todo-app' })
+  })
+
+  it('F5: a gate without delivery (anonymous/keyless) leaves the recovery delivery-less (no-op)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+    ])
+    const rec = msgs.find(m => m.kind === 'recovery' && m.recovery === 'push_failed') as RecoveryMsg
+    expect(rec.delivery).toBeUndefined()
+  })
+
+  // F7 — on a successful retry the orchestrator emits recovery 'resolved' BEFORE gate 'satisfied', so
+  // for ONE frame the gate is still 'awaiting' while the recovery is already 'resolved'. The
+  // resurrection window: the old awaiting-only suppression let the Confirm-push card reappear (click →
+  // AlreadyPushed 409). Suppress on resolved-too closes it; once gate 'satisfied' lands, it folds normally.
+  it('F7: gate(awaiting) → recovery(awaiting) → recovery(resolved) [no gate satisfied yet] → NO actionable gate card', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'resolved' }), // retry succeeded; gate satisfied not emitted yet
+    ])
+    // The one-frame resurrection is closed: no awaiting push_confirm gate card survives.
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
+    // The recovery is resolved (its bubble renders nothing) — exactly zero actionable rows for the push.
+    expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(false)
+  })
+
+  it('F7: then the gate satisfied event folds normally (the satisfied singleton card is back)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'resolved' }),
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'satisfied' }),
+      ev({ kind: 'done', verified: true, provider: 'mock' }),
+    ])
+    const gateCards = msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm') as GateMsg[]
+    expect(gateCards).toHaveLength(1)
+    expect(gateCards[0]!.state).toBe('satisfied') // not awaiting → GateBubble renders nothing; no resurrection
   })
 
   it('A3.5: a retry SUCCESS continuation (gate satisfied + recovery resolved) keeps the satisfied gate card', () => {
