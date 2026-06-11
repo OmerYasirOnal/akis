@@ -73,8 +73,18 @@ export async function startPreviewForSession(
  * install+boot happen while the user is still reading the shipped card, so the first
  * "Run app" click finds a READY entry instead of paying the whole boot. Fire-and-forget
  * and NON-GATING (the preview carries no verify/push authority; same sandbox posture as a
- * user-clicked Run — this only moves WHEN it starts). Skipped when a preview is already
- * up for the session (never kill something the user is interacting with).
+ * user-clicked Run — this only moves WHEN it starts).
+ *
+ * A3.3 — a `done` while a preview is already up means a REBUILD (change request) just shipped:
+ *   - 'ready'    → RESTART. The live process/materialized dir serves the PREVIOUS build's bytes,
+ *     and skipping emitted NO new preview_status frame — the user stared at the OLD app forever.
+ *     startPreviewForSession re-materializes the NEW files into a fresh workspace and
+ *     registry.start() stops the prior entry FIRST (same session slot — the maxConcurrent cap is
+ *     reused, never consumed twice; the capacity gate below is for NEW slots only). Both serving
+ *     types are covered by the same path: a node app re-boots (starting→ready frames), a static
+ *     app re-points the entry's dir (a fresh ready frame) — either way the NEW bytes are served
+ *     and a fresh 'ready' reaches the FE (which remounts the iframe on every ready fold).
+ *   - 'starting' → still SKIP: a boot is already in flight — don't thrash it.
  */
 export function wirePreviewPrewarm(
   bus: { tap(fn: (e: { kind: string; sessionId: string }) => void): () => void },
@@ -84,7 +94,15 @@ export function wirePreviewPrewarm(
   return bus.tap(e => {
     if (e.kind !== 'done') return
     const cur = registry.get(e.sessionId)
-    if (cur && (cur.status === 'ready' || cur.status === 'starting')) return
+    if (cur && cur.status === 'starting') return // boot in flight — don't thrash it
+    if (cur && cur.status === 'ready') {
+      // A3.3 restart (see the doc above) — bypasses the capacity gate: this session already
+      // holds its slot and start() stops it before re-booting, so the cap can't be exceeded.
+      void startPreviewForSession(store, registry, e.sessionId).catch(() => {
+        /* best-effort: a failed re-warm leaves the next Run to pay the boot, as before */
+      })
+      return
+    }
     // CAP (audit bigger-bet): a warm-up is never worth evicting a live preview or OOMing the box —
     // at capacity the prewarm silently skips; the user's explicit Run still works (it evicts).
     if (registry.atCapacity()) return

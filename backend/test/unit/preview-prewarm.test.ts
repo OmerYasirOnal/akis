@@ -69,13 +69,36 @@ describe('wirePreviewPrewarm (ship-time boot, task #50 perceived latency)', () =
     expect(start).not.toHaveBeenCalled()
   })
 
-  it('an already-running preview is NEVER replaced (the user may be interacting with it)', async () => {
+  // A3.3 — a rebuild (change request) that completes while a preview is LIVE used to early-return,
+  // so the old process/materialized dir kept serving the PREVIOUS build's bytes with NO new
+  // preview_status frame. The `done` of a NEW build now RESTARTS a 'ready' preview (start() stops
+  // the same session's entry first → the maxConcurrent slot is reused, never consumed twice).
+  it("a 'ready' preview IS restarted on done — the rebuild's new bytes must be served (A3.3)", async () => {
     const bus = new EventBus()
     const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'ready', dir: '/x' } })
     wirePreviewPrewarm(bus, store, registry)
     bus.emit(done('s1'))
+    await until(() => start.mock.calls.length > 0)
+    expect(start).toHaveBeenCalledTimes(1)
+    expect(start.mock.calls[0]?.[0]).toBe('s1')
+  })
+
+  it("a 'starting' preview still SKIPS — a boot already in flight is not thrashed (A3.3)", async () => {
+    const bus = new EventBus()
+    const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'starting', dir: '/x' } })
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
     await settle()
     expect(start).not.toHaveBeenCalled()
+  })
+
+  it("the 'ready' RESTART is not blocked by the capacity gate (the session already holds its slot)", async () => {
+    const bus = new EventBus()
+    const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'ready', dir: '/x' }, atCapacity: true })
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
+    await until(() => start.mock.calls.length > 0)
+    expect(start).toHaveBeenCalledTimes(1) // start() stops s1 first → the slot is REUSED, not doubled
   })
 
   it('a session with no produced code is a silent no-op (and a throwing start cannot crash the tap)', async () => {
