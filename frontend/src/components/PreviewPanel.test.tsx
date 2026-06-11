@@ -14,8 +14,9 @@ import type { SessionView } from '../live/types.js'
 
 const renderI18n = (ui: ReactElement) => render(<I18nProvider>{ui}</I18nProvider>)
 
-/** Minimal SessionView with a preview URL knob — everything else is an inert default. */
-const viewWith = (url: string | undefined): SessionView => ({
+/** Minimal SessionView with a preview URL knob — everything else is an inert default. The optional
+ *  `verified` knob drives the honest verified/unverified chip (PREVIEW-UNGATED tests below). */
+const viewWith = (url: string | undefined, verified?: boolean): SessionView => ({
   sessionId: 's1',
   status: 'done',
   lanes: [],
@@ -23,6 +24,7 @@ const viewWith = (url: string | undefined): SessionView => ({
   tests: { testsRun: 0, passed: false, ran: false },
   preview: { ready: !!url, ...(url !== undefined ? { url } : {}) },
   errors: [],
+  ...(verified !== undefined ? { verified } : {}),
 })
 
 const renderPanel = (url: string | undefined) =>
@@ -106,4 +108,42 @@ test('copy lifts the ABSOLUTE preview URL (resolved against the studio origin)',
     // @ts-expect-error — remove the fake so other suites see the original (absent) clipboard.
     delete navigator.clipboard
   }
+})
+
+// ── PREVIEW UNGATED FROM VERIFICATION (owner 2026-06-11): "if Proto wrote code, the user must ALWAYS
+//    be able to preview it — Trace/Critic gate VERIFICATION + PUSH, never SEEING the app." The Run
+//    affordance here is purely `onRun && canRun` (the studio derives canRun from CODE-PRESENCE + a
+//    settled status, NOT from verification). These pin the panel's own contract: Run is offered for an
+//    UNVERIFIED build with no live URL yet (the empty-state branch), the honest 'unverified' chip rides
+//    alongside it, and Run is withheld only when the studio says !canRun. ──
+test('offers ▶ Run in the empty-state when onRun && canRun (no live URL yet) — even UNVERIFIED', () => {
+  renderI18n(
+    <PreviewPanel view={viewWith(undefined, false)} device="responsive" onDevice={() => {}} onRun={() => {}} canRun />,
+  )
+  // Two surfaces carry the same control (header pill + empty-state CTA); both say "Run app".
+  const runs = screen.getAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i })
+  expect(runs.length).toBeGreaterThan(0)
+})
+
+test('keeps the honest "unverified" chip on an unverified preview (independent of Run/done)', () => {
+  renderI18n(
+    <PreviewPanel view={viewWith(undefined, false)} device="responsive" onDevice={() => {}} onRun={() => {}} canRun />,
+  )
+  // verified === false → the chip reads "unverified" (NOT "verified"); the Run path coexists with it.
+  expect(screen.getByText(/^unverified$|^doğrulanmadı$/i)).toBeInTheDocument()
+  expect(screen.queryByText(/^verified$|^doğrulandı$/i)).toBeNull()
+})
+
+test('shows the "verified" chip only when view.verified === true', () => {
+  renderI18n(
+    <PreviewPanel view={viewWith('/preview/abc/', true)} device="responsive" onDevice={() => {}} onRun={() => {}} canRun />,
+  )
+  expect(screen.getByText(/^verified$|^doğrulandı$/i)).toBeInTheDocument()
+})
+
+test('withholds ▶ Run when !canRun (studio gates the boot affordance, not the panel)', () => {
+  renderI18n(
+    <PreviewPanel view={viewWith(undefined, false)} device="responsive" onDevice={() => {}} onRun={() => {}} canRun={false} />,
+  )
+  expect(screen.queryByRole('button', { name: /Run app|Uygulamayı çalıştır/i })).toBeNull()
 })

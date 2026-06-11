@@ -35,6 +35,22 @@ function isTerminalStatus(s: SessionStatus | undefined): boolean {
   return s !== undefined && TERMINAL_STATUSES.has(s)
 }
 
+/** PREVIEW-UNGATED (owner 2026-06-11): "if Proto wrote code, the user must ALWAYS be able to
+ *  preview it — Trace/Critic gate VERIFICATION and PUSH, never SEEING the app." A run is
+ *  PREVIEWABLE once Proto has persisted code AND the run has settled past mid-write: every
+ *  TERMINAL status (done/failed/cancelled/verify_failed/push_failed) PLUS the two awaiting-gates
+ *  that only ever park AFTER code exists (awaiting_critic_resolution / awaiting_push_confirm).
+ *  EXCLUDED are the pre-code / mid-write statuses (composing / awaiting_spec_approval / building):
+ *  there is nothing — or only a half-written tree — to boot. The code-presence guard at the call
+ *  site (codeFiles from the snapshot) is the primary signal; this status set is the belt-and-
+ *  suspenders that keeps a stale mid-flight frame from offering Run before the files land. */
+const PREVIEWABLE_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
+  ...TERMINAL_STATUSES, 'awaiting_critic_resolution', 'awaiting_push_confirm',
+])
+function isPreviewableStatus(s: SessionStatus | undefined): boolean {
+  return s !== undefined && PREVIEWABLE_STATUSES.has(s)
+}
+
 /**
  * The AKIS chat studio. There is ONE way to start a build: by TALKING to AKIS. The
  * conversation is a full-height, fixed-frame chat — it shapes the idea and produces a
@@ -398,7 +414,21 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // durable status. (The inline agent-stage bubbles still come from the live view; only the
   // result-rail is made resilient.)
   const isDone = status === 'done' || backendStatus === 'done'
-  const canRun = !!activeSessionId && (isDone || activeView.verified !== undefined)
+  // PREVIEW-UNGATED (owner 2026-06-11): the ▶ Run path keys on CODE PRESENCE + a settled-enough
+  // status — NOT on verification. A session parked at verify_failed / awaiting_critic_resolution /
+  // push_failed / cancelled / failed WITH CODE used to offer no Run anywhere (a dead end: "Run the
+  // app to see it live here" with no button). Now: Proto wrote code (codeFiles from the snapshot,
+  // populated by the snapshot effect once persisted) AND the run is past mid-write
+  // (isPreviewableStatus(backendStatus)) — with `isDone` as the live fast-path for a fresh build
+  // whose backendStatus snapshot still lags at undefined while activeView.status already flipped
+  // to 'done' and codeFiles arrived. DELIBERATELY SEPARATE from `isDone` so trust/publish/external-
+  // write semantics (all gated on isDone below) stay EXACTLY as today — preview honesty travels via
+  // the independent 'unverified' chip, never by widening done-ness. The backend startPreview route
+  // is itself ungated (code-presence 409 only, no verify check), and an unsupported stack (Python,
+  // etc.) is answered honestly by the boot path — this just makes the button EXIST so the user SEES
+  // that instead of nothing.
+  const canPreview = !!activeSessionId && !!codeFiles?.length && (isDone || isPreviewableStatus(backendStatus))
+  const canRun = canPreview
   // BUILD-AWARE CHAT context key: ALWAYS the active session id. It used to be gated on
   // codeFiles?.length, which made every turn before the code snapshot landed (a reopen/F5 race) —
   // and every turn about a code-less/failed build — STATELESS, so AKIS confidently answered
