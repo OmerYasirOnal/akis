@@ -105,18 +105,6 @@ describe('Orchestrator — chat-approved spec seed (P0-1: single spec approval)'
     expect(gates.some(e => (e as { state: string }).state === 'awaiting')).toBe(false)
   })
 
-  it('HONESTY (Option A): a seeded start with scribeUsage reports the REAL Scribe token spend on the synthetic agent_end (not "—")', async () => {
-    const { orch, services } = makeOrch()
-    const seed = { title: 'Minimal Todo', body: '# Minimal Todo\nAdd, list, complete todos.' }
-    // The REAL Scribe authored this spec at chat time; its usage is threaded through start().
-    const s = await orch.start({ idea: seed.body, spec: seed, scribeUsage: { inTokens: 123, outTokens: 456 } })
-    await vi.waitFor(async () => expect((await services.store.get(s.id))!.status).toBe('awaiting_push_confirm'))
-    const ends = services.bus.recent(s.id).filter(e => e.kind === 'agent_end' && (e as { role: string }).role === 'scribe')
-    expect(ends).toHaveLength(1)
-    // The synthetic Scribe end now carries the REAL usage (honest roster/analytics) — no longer "—".
-    expect((ends[0] as { metrics?: { usage?: unknown } }).metrics?.usage).toEqual({ inTokens: 123, outTokens: 456 })
-  })
-
   it('an idea-only (non-seeded) start does NOT add synthetic Scribe events — the REAL ScribeAgent runs and emits exactly one scribe start/end (no double-emit)', async () => {
     const { orch, services } = makeOrch()
     const s = await orch.start({ idea: 'build a todo web app' })

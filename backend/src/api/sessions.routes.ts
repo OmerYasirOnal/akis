@@ -166,7 +166,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   const notFound = (reply: FastifyReply, id: string): FastifyReply =>
     reply.code(404).send({ error: `session ${id} not found`, code: 'NotFound' })
 
-  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string; spec?: { title?: unknown; body?: unknown }; chat?: unknown; scribeUsage?: { inTokens?: unknown; outTokens?: unknown } } }>('/sessions', async (req, reply) => {
+  app.post<{ Body: { idea?: string; workflowId?: string; baseSessionId?: string; spec?: { title?: unknown; body?: unknown }; chat?: unknown } }>('/sessions', async (req, reply) => {
     const idea = typeof req.body?.idea === 'string' ? req.body.idea.trim() : ''
     if (!idea) return reply.code(400).send({ error: 'idea required', code: 'BadRequest' })
     // OPTIONAL pre-build conversation (the spec-shaping turns typed BEFORE this build existed, so they
@@ -199,20 +199,6 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       const body = typeof rawSpec.body === 'string' ? rawSpec.body.trim() : ''
       if (!title || !body) return reply.code(400).send({ error: 'spec must have a non-empty title and body', code: 'BadRequest' })
       spec = { title, body }
-    }
-    // HONESTY UPGRADE (Option A): the REAL token spend of the chat-time Scribe draft, so the seeded
-    // start's synthetic Scribe agent_end reports the true usage instead of "—". UNTRUSTED → accept only
-    // a {inTokens, outTokens} pair of FINITE NON-NEGATIVE numbers; anything else is silently DROPPED
-    // (this is observability, never a gate input — a malformed value must never 400 a build). Only
-    // meaningful with a spec seed (the chat path); ignored otherwise. Absent ⇒ "—" (byte-identical).
-    let scribeUsage: { inTokens: number; outTokens: number } | undefined
-    const rawUsage = req.body?.scribeUsage
-    if (spec && rawUsage && typeof rawUsage === 'object') {
-      const inTok = rawUsage.inTokens
-      const outTok = rawUsage.outTokens
-      if (typeof inTok === 'number' && typeof outTok === 'number' && Number.isFinite(inTok) && Number.isFinite(outTok) && inTok >= 0 && outTok >= 0) {
-        scribeUsage = { inTokens: inTok, outTokens: outTok }
-      }
     }
     let orch = orchestrator
     const workflowId = req.body?.workflowId
@@ -259,7 +245,7 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       // no code. Seeding at creation is a single write with NO concurrent update. GATE-SAFE: `chat` is
       // the non-gate conversation column; this only sets the INITIAL state (see initialSession). The
       // returned session already carries the seeded chat, so the 201 reflects it without a re-read.
-      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}), ...(baseDelivery ? { delivery: baseDelivery } : {}), ...(seedTurns.length ? { chat: seedTurns } : {}), ...(scribeUsage ? { scribeUsage } : {}) })
+      const s = await orch.start({ idea, ...(ownerId ? { ownerId } : {}), ...(spec ? { spec } : {}), ...(base ? { base } : {}), ...(baseDelivery ? { delivery: baseDelivery } : {}), ...(seedTurns.length ? { chat: seedTurns } : {}) })
       if (orch !== orchestrator) bindOrchestrator(s.id, orch)
       return reply.code(201).send(s)
     } catch (err) { return sendError(reply, err) }
