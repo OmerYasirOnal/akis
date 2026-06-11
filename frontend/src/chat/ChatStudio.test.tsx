@@ -749,4 +749,51 @@ describe('ChatStudio — spine ordering survives chat switching (the reorder bug
     ])
     expect(order).toEqual(['pre-user', 'pre-assistant', 'run', 'post-user'])
   })
+
+  it('a MULTI-RUN local spine keeps its INTERLEAVE order on reopen (turn · run1 · turn · run2 · turn)', async () => {
+    // The reorder bug bit multi-run threads hardest: each follow-up build appends a NEW run marker IN
+    // PLACE in the spine, so a real conversation is turn → run1 → turn → run2 → turn. A reopen MERGES
+    // the local anchor spine (it already holds both run markers for this conversation → it is the
+    // richest copy), so the two run-blocks must stay PINNED between exactly the turns that surround
+    // them — never collapsed above the conversation or reordered relative to each other.
+    localStorage.setItem('akis_chat_thread:m1', JSON.stringify([
+      { role: 'assistant', content: 'GREETING-LOCAL' },
+      { role: 'user', content: 'budget tracker idea' },
+      { role: 'assistant', content: 'Here is the v1 spec' },
+      { role: 'run', sessionId: 'm1', idea: 'budget tracker' },        // run 1 (the anchor)
+      { role: 'user', content: 'add a dark mode toggle' },              // follow-up between the builds
+      { role: 'assistant', content: 'Here is the v2 spec' },
+      { role: 'run', sessionId: 'm2', idea: 'budget tracker dark' },    // run 2 (the edit)
+      { role: 'user', content: 'why is the chart blank?' },             // tail follow-up
+    ]))
+    window.history.replaceState({}, '', '/?s=m1')
+    // Both runs resolve + replay an empty log; the menu lists the anchor build. m2 is terminal (the
+    // reopen makes m1 the active run), so its block folds /log without an EventSource — both still
+    // render their Trust ledger, which is the run-block's stable structural marker.
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'm1', idea: 'budget tracker', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      for (const id of ['m1', 'm2']) {
+        if (path.endsWith(`/sessions/${id}/log`)) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+        if (path.endsWith(`/sessions/${id}`)) return { ok: true, status: 200, json: async () => ({ id, idea: 'budget tracker', status: 'done', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new FakeStream2() as unknown as EventStreamClient} />))
+    await waitFor(() => expect(screen.getByText('Here is the v2 spec')).toBeInTheDocument())
+    // Two run-blocks → two Trust ledgers, in spine order. compareDocumentPosition gives us their
+    // relative DOM positions so we can pin each between its surrounding turns.
+    const ledgers = screen.getAllByLabelText('Trust ledger')
+    expect(ledgers).toHaveLength(2)
+    const order = domOrder([
+      { label: 'turn1', node: screen.queryByText('budget tracker idea') },
+      { label: 'spec1', node: screen.queryByText('Here is the v1 spec') },
+      { label: 'run1', node: ledgers[0] ?? null },
+      { label: 'turn2', node: screen.queryByText('add a dark mode toggle') },
+      { label: 'spec2', node: screen.queryByText('Here is the v2 spec') },
+      { label: 'run2', node: ledgers[1] ?? null },
+      { label: 'turn3', node: screen.queryByText('why is the chart blank?') },
+    ])
+    expect(order).toEqual(['turn1', 'spec1', 'run1', 'turn2', 'spec2', 'run2', 'turn3'])
+  })
 })
