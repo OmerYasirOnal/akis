@@ -384,9 +384,13 @@ export function AkisChat({
         // English "(NoKey) No API key for provider x" on a user-facing error row.
         : ApiError.is(err) && err.code === 'NoKey'
           ? t('akis.error.noKey')
-          : ApiError.is(err)
-            ? `(${err.code ?? 'error'}) ${err.message}`
-            : t('akis.error.network')
+          // Scribe handoff failure (Option A): the REAL Scribe couldn't draft the build-ready spec.
+          // An HONEST, localized row (never a persona-authored spec fallback) — the user retries.
+          : ApiError.is(err) && err.code === 'ScribeError'
+            ? t('akis.error.scribe')
+            : ApiError.is(err)
+              ? `(${err.code ?? 'error'}) ${err.message}`
+              : t('akis.error.network')
 
   // The quota row: the localized sentence + the reset date when the usage state knows it.
   const quotaErrorText = (): string => {
@@ -463,7 +467,11 @@ export function AkisChat({
       // ApiError(429,'QuotaExceeded') from the pre-hijack JSON, so render it directly rather than
       // falling into the else branch that RE-CALLS the non-stream /api/chat — that second request
       // would just 429 again (a redundant blocked call). Short-circuit removes it.
-      if (ApiError.is(streamErr) && (streamErr.status === 401 || streamErr.status === 429)) {
+      // A ScribeError (the REAL Scribe handoff failed) is also FINAL: re-calling /api/chat would
+      // just re-emit the request fence → Scribe fails again (a redundant second Scribe call). Show
+      // the honest localized row directly. (NEVER falls back to a persona-authored spec.)
+      const isFinal = ApiError.is(streamErr) && (streamErr.status === 401 || streamErr.status === 429 || streamErr.code === 'ScribeError')
+      if (isFinal) {
         setNodes(m => [...m, { role: 'error', content: errorText(streamErr) }])
       } else {
         try {

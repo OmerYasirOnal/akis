@@ -181,29 +181,40 @@ describe('POST /api/chat/stream — per-request overrides', () => {
   })
 })
 
-describe('AKIS_PERSONA — Chat-to-Build contract', () => {
-  it('instructs AKIS to emit the build-ready spec in a fenced `akis-spec` block', () => {
-    // The FE keys on this exact fence tag; the contract must not silently drift. Four
-    // backticks so a spec body's own ```code blocks don't close the akis-spec fence early.
-    expect(AKIS_PERSONA).toContain('````akis-spec')
-    expect(AKIS_PERSONA).toMatch(/akis-spec/)
+describe('AKIS_PERSONA — Chat→Scribe HANDOFF contract (Option A: REAL Scribe authors the spec)', () => {
+  it('instructs AKIS to emit the build-ready HANDOFF in a fenced `akis-spec-request` block', () => {
+    // EVOLVED (NOT loosened): the persona no longer authors the full spec — it emits a COMPACT
+    // request fence the route hands to the REAL Scribe. The fence-strictness assertion stays:
+    // FOUR backticks so a brief's own ```code examples don't close the request fence early, and
+    // the info string is the exact tag the route's parser keys on.
+    expect(AKIS_PERSONA).toContain('````akis-spec-request')
+    expect(AKIS_PERSONA).toMatch(/akis-spec-request/)
+  })
+  it('STOPS the persona from authoring the full spec itself (the REAL Scribe does)', () => {
+    // The whole point of Option A: AKIS must NOT write the full build spec. The persona must say so
+    // explicitly, AND must NOT instruct emitting a build `akis-spec` block (only the route emits that,
+    // from Scribe's output). We assert the persona text contains no bare ````akis-spec OPENING that is
+    // not the request fence — i.e. every ````akis-spec occurrence is part of ````akis-spec-request.
+    expect(AKIS_PERSONA).toMatch(/never write the full (build )?spec/i)
+    const bareSpecFences = AKIS_PERSONA.match(/````akis-spec(?!-request)/g) ?? []
+    expect(bareSpecFences).toHaveLength(0)
   })
   it('tells AKIS NOT to ask the user to copy-paste the spec', () => {
     expect(AKIS_PERSONA.toLowerCase()).toContain('copy-paste')
   })
   it('still tells AKIS to keep chatting and never claim to have built anything', () => {
     expect(AKIS_PERSONA).toMatch(/keep chatting/i)
-    expect(AKIS_PERSONA).toMatch(/Never claim to have built/i)
+    expect(AKIS_PERSONA).toMatch(/never claim to have built/i)
   })
-  it('tells AKIS to HAND OFF the spec card to Scribe (not claim AKIS wrote it) — matches the Sc identity in the UI', () => {
-    // P2: the spec card is presented under SCRIBE's identity in the UI, so the surrounding prose
-    // must hand off to Scribe ("Scribe drafted the spec below") rather than AKIS claiming it.
-    expect(AKIS_PERSONA).toMatch(/HAND OFF to Scribe/i)
-    expect(AKIS_PERSONA).toMatch(/Scribe drafted the spec/i)
+  it('hands off the spec drafting to Scribe (the dedicated agent), matching the Sc identity in the UI', () => {
+    // The spec card is presented under SCRIBE's identity; the persona must hand off to Scribe ("Scribe
+    // is drafting the spec") rather than claiming it wrote the spec.
+    expect(AKIS_PERSONA).toMatch(/Scribe.*(is drafting|drafts) the/i)
+    expect(AKIS_PERSONA).toMatch(/Scribe — a separate, dedicated agent/i)
   })
-  it('tells AKIS to emit a fresh akis-spec block when asked to change the current app (not edit it directly)', () => {
+  it('tells AKIS to emit an akis-spec-request when asked to change the current app (not edit it directly)', () => {
     expect(AKIS_PERSONA).toMatch(/CHANGE the current app/i)
-    expect(AKIS_PERSONA).toMatch(/FRESH FULL `akis-spec` block/i)
+    expect(AKIS_PERSONA).toMatch(/`akis-spec-request` block whose brief describes the EDITED app/i)
     expect(AKIS_PERSONA).toMatch(/do NOT claim you changed it/i)
   })
 })
@@ -486,5 +497,162 @@ describe('Build-aware chat — gate-safety contract (server-level)', () => {
     expect(afterState.chat?.[0]).toMatchObject({ role: 'user', content: 'what does this app do?' })
     expect(afterState.chat?.[1]?.role).toBe('assistant')
     expect(afterState.version).toBe(beforeState.version + 1)
+  })
+})
+
+// ── REAL Scribe HANDOFF (Option A): the persona emits an akis-spec-request; the route ──
+// ── invokes the REAL Scribe and emits Scribe's spec as the standard akis-spec block.   ──
+
+/** A provider returning a canned reply (the persona's handoff). Records the request for assertions. */
+function fixedReplyProvider(reply: string) {
+  const calls: ChatRequest[] = []
+  const provider: LlmProvider = {
+    name: 'persona', model: 'persona-1',
+    async chat(req: ChatRequest): Promise<ChatResult> { calls.push(req); return { text: reply } },
+  }
+  return { provider, calls }
+}
+
+/** A draftSpec spy: records the input and returns a canned spec (the REAL Scribe stand-in). */
+function draftSpecSpy(spec: { title: string; body: string }, opts: { usage?: { inTokens: number; outTokens: number }; parsed?: boolean; throws?: boolean } = {}) {
+  const inputs: { brief: string; conversation?: { role: 'user' | 'assistant'; content: string }[] }[] = []
+  const fn = async (input: { brief: string; conversation?: { role: 'user' | 'assistant'; content: string }[] }) => {
+    inputs.push(input)
+    if (opts.throws) throw new Error('scribe provider down')
+    return { spec, parsed: opts.parsed ?? true, ...(opts.usage ? { usage: opts.usage } : {}) }
+  }
+  return { fn, inputs }
+}
+
+/** Minimal BE stand-in for the FE's extractBuildSpec — keys on the standard `akis-spec` fence so a
+ *  test can assert the route emitted the block the FE will promote to a SpecCard. */
+function extractBuildSpec(message: string): { intro: string; spec: string } | null {
+  const m = /(^|\n)[ ]{0,3}(`{3,})akis-spec(?:[ \t][^\n]*)?\n([\s\S]*?)\r?\n[ ]{0,3}\2`*[ \t]*(?:\n|$)/.exec(message)
+  if (!m) return null
+  const spec = (m[3] ?? '').trim()
+  if (!spec) return null
+  return { intro: message.slice(0, m.index).trim(), spec }
+}
+
+const REQUEST_REPLY = 'Scribe is drafting the spec…\n````akis-spec-request\nA todo app with due dates and dark mode\n````'
+
+describe('POST /api/chat — REAL Scribe handoff (akis-spec-request → akis-spec)', () => {
+  it('detects the request fence, calls Scribe, and the reply carries a valid akis-spec block', async () => {
+    const { provider } = fixedReplyProvider(REQUEST_REPLY)
+    const spec = { title: 'Todo App', body: '# Todo App\n\n## Problem\nTrack todos.\n\n## Acceptance criteria\n- Given … Then …' }
+    const { fn, inputs } = draftSpecSpy(spec, { usage: { inTokens: 100, outTokens: 200 } })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'yes build it', history: [{ role: 'user', content: 'I want a todo app' }] } })
+    expect(res.statusCode).toBe(200)
+    const reply = res.json().reply as string
+    // The REAL Scribe was invoked with the brief + the conversation.
+    expect(inputs).toHaveLength(1)
+    expect(inputs[0]!.brief).toBe('A todo app with due dates and dark mode')
+    expect(extractBuildSpec(reply)).not.toBeNull() // the FE will promote this to a SpecCard
+    expect(extractBuildSpec(reply)!.spec).toContain('# Todo App')
+    // The internal request fence is GONE from the final reply (never rendered raw to the user).
+    expect(reply).not.toContain('akis-spec-request')
+  })
+
+  it('threads the conversation turns into the Scribe call (the route history + new message)', async () => {
+    const { provider } = fixedReplyProvider(REQUEST_REPLY)
+    const { fn, inputs } = draftSpecSpy({ title: 'T', body: '# T\n\n## Acceptance criteria\n- x' })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    await f.inject({ method: 'POST', url: '/api/chat', payload: {
+      message: 'build it',
+      history: [{ role: 'user', content: 'I want a todo app' }, { role: 'assistant', content: 'Any extras?' }],
+    } })
+    const convo = inputs[0]!.conversation ?? []
+    const joined = convo.map(m => m.content).join('\n')
+    expect(joined).toContain('I want a todo app')
+    expect(joined).toContain('build it') // the new user message is part of the context
+  })
+
+  it('Scribe failure → an HONEST error (502 ScribeError), NEVER a persona-authored spec', async () => {
+    const { provider } = fixedReplyProvider(REQUEST_REPLY)
+    const { fn } = draftSpecSpy({ title: 'x', body: 'x' }, { throws: true })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'build it' } })
+    expect(res.statusCode).toBe(502)
+    expect(res.json().code).toBe('ScribeError')
+  })
+
+  it('Scribe returns an UNPARSEABLE draft → honest error, no fake spec', async () => {
+    const { provider } = fixedReplyProvider(REQUEST_REPLY)
+    const { fn } = draftSpecSpy({ title: 'Spec for: x', body: 'x' }, { parsed: false })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'build it' } })
+    expect(res.statusCode).toBe(502)
+    expect(res.json().code).toBe('ScribeError')
+  })
+
+  it('no request fence ⇒ Scribe is NEVER called (an ordinary turn is byte-identical)', async () => {
+    const { provider } = fixedReplyProvider('Sure, tell me more about the app.')
+    const { fn, inputs } = draftSpecSpy({ title: 'x', body: 'x' })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'I have an idea' } })
+    expect(res.statusCode).toBe(200)
+    expect(inputs).toHaveLength(0)
+    expect(res.json().reply).toBe('Sure, tell me more about the app.')
+  })
+
+  it('request fence but NO draftSpec dep ⇒ graceful degrade (the fence is stripped, prose renders)', async () => {
+    const { provider } = fixedReplyProvider(REQUEST_REPLY)
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider }) // no draftSpec wired
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'build it' } })
+    expect(res.statusCode).toBe(200)
+    const reply = res.json().reply as string
+    expect(reply).not.toContain('akis-spec-request') // raw marker never rendered
+    expect(reply).toContain('Scribe is drafting') // the prose survives
+  })
+})
+
+describe('POST /api/chat/stream — REAL Scribe handoff', () => {
+  function streamProvider(pieces: string[]) {
+    const calls: ChatRequest[] = []
+    const p: LlmProvider = {
+      name: 'persona', model: 'persona-1',
+      async chat(req: ChatRequest): Promise<ChatResult> { calls.push(req); return { text: pieces.join('') } },
+      async chatStream(req: ChatRequest, onDelta): Promise<ChatResult> {
+        calls.push(req)
+        for (const piece of pieces) onDelta(piece)
+        return { text: pieces.join('') }
+      },
+    }
+    return { provider: p, calls }
+  }
+
+  it('the terminal done frame carries the akis-spec block (Scribe authored it post-stream)', async () => {
+    const { provider } = streamProvider(['Scribe is drafting…\n', '````akis-spec-request\n', 'a todo app\n', '````'])
+    const spec = { title: 'Todo App', body: '# Todo App\n\n## Acceptance criteria\n- x' }
+    const { fn, inputs } = draftSpecSpy(spec, { usage: { inTokens: 50, outTokens: 90 } })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'build it' } })
+    expect(res.statusCode).toBe(200)
+    expect(inputs).toHaveLength(1)
+    // The done frame's reply is authoritative — it carries the akis-spec block, no request fence.
+    const doneFrame = res.body.split(/\r?\n\r?\n/).find(fr => fr.includes('event: done')) ?? ''
+    const dataLine = doneFrame.split('\n').find(l => l.startsWith('data:'))?.slice(5).trim() ?? '{}'
+    const reply = (JSON.parse(dataLine) as { reply?: string }).reply ?? ''
+    expect(extractBuildSpec(reply)).not.toBeNull()
+    expect(reply).not.toContain('akis-spec-request')
+  })
+
+  it('Scribe failure on the stream path emits an honest error frame (ScribeError)', async () => {
+    const { provider } = streamProvider(['````akis-spec-request\nx\n````'])
+    const { fn } = draftSpecSpy({ title: 'x', body: 'x' }, { throws: true })
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'build it' } })
+    expect(res.statusCode).toBe(200) // SSE already hijacked — failure rides as an error frame
+    expect(res.body).toContain('event: error')
+    expect(res.body).toContain('ScribeError')
   })
 })
