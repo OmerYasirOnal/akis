@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ApiClient, GitHubConnectionStatus } from '../api/client.js'
-import { SectionTitle, Button, Input, ErrorNote } from '../ui/kit.js'
+import { SectionTitle, Button, ErrorNote, EmptyState } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 
 /** A one-line banner keyed off `?github=…` on the Settings URL after the OAuth round-trip.
@@ -8,13 +8,13 @@ import { useI18n } from '../i18n/I18nContext.js'
 type Banner = 'connected' | 'error' | 'denied' | 'unavailable'
 const BANNER_OK: Banner[] = ['connected']
 
-/** Per-user GitHub connection card. Connect YOUR GitHub so AKIS ships verified builds to a
- *  repo YOU own (the gated push then targets that repo instead of the server-wide env token).
- *  The token never reaches the browser — only the connection status (username/repo/scopes). */
+/** Per-user GitHub connection card. A2.1 — TOKEN-ONLY connect: connecting ONLY authenticates YOUR
+ *  GitHub account; every PROJECT gets its OWN repo auto-created (private) in your personal namespace
+ *  at push time. There is NO repo input anymore. The token never reaches the browser — only the
+ *  connection status (username/scopes). "Import an existing repo" is a deferred, separate step. */
 export function GitHubConnection({ api }: { api: ApiClient }) {
   const { t } = useI18n()
   const [status, setStatus] = useState<GitHubConnectionStatus | undefined>()
-  const [repo, setRepo] = useState('')
   const [busy, setBusy] = useState(false)
   const [err, setErr] = useState<string | undefined>()
   const [banner, setBanner] = useState<Banner | undefined>()
@@ -56,15 +56,22 @@ export function GitHubConnection({ api }: { api: ApiClient }) {
       )}
       {err && <div className="mb-3"><ErrorNote>{err}</ErrorNote></div>}
 
-      {status === undefined ? null : !status.configured ? (
-        <div className="text-sm text-slate-400">{t('settings.github.notConfigured')}</div>
+      {/* While the first status fetch is in flight (status still undefined, before the catch sets a
+          default) show an inline spinner row — mirrors HistoryPage — so a slow link never leaves a
+          blank card body. (preview-drawer loading state + round-2 EmptyState, both kept.) */}
+      {status === undefined ? (
+        <div className="flex items-center gap-3 rounded-xl border border-white/10 bg-white/[0.02] px-3 py-4 text-sm text-slate-400">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#07D1AF]/40 border-t-[#07D1AF]" />
+          {t('settings.loading')}
+        </div>
+      ) : !status.configured ? (
+        <EmptyState>{t('settings.github.notConfigured')}</EmptyState>
       ) : status.connected ? (
         <div className="flex flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3">
+          {/* A2.1: the connected account (login) — NO repo row anymore (per-project repos). */}
           <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
             <span className="text-slate-400">{t('settings.github.username')}</span>
             <span className="text-slate-100">{status.username || '—'}</span>
-            <span className="text-slate-400">{t('settings.github.repoLabel')}</span>
-            <span className="font-mono text-slate-100">{status.repo || '—'}</span>
             {status.scopes && status.scopes.length > 0 && (<>
               <span className="text-slate-400">{t('settings.github.scopes')}</span>
               <span className="flex flex-wrap gap-1">
@@ -76,28 +83,26 @@ export function GitHubConnection({ api }: { api: ApiClient }) {
               <span className="text-slate-300">{new Date(status.connectedAt).toLocaleString()}</span>
             </>)}
           </div>
+          {/* The standing disclosure: per-project private repos in the connected account. */}
+          <span className="text-xs text-slate-500">{t('settings.github.autoRepoNote')}</span>
           <div>
             <Button variant="subtle" onClick={() => void disconnect()} disabled={busy}>{t('settings.github.disconnect')}</Button>
           </div>
         </div>
       ) : (
         <div className="flex flex-col gap-2">
-          <div className="flex flex-wrap items-center gap-3">
-            <Input aria-label={t('settings.github.repoLabel')} value={repo} placeholder={t('settings.github.repoPlaceholder')}
-              onChange={e => setRepo(e.target.value)} className="min-w-0 flex-1" />
-            {/* Full-page redirect into the connect flow (never an XHR — it leaves the SPA for
-                github.com and returns to /settings?github=…). Disabled until a repo is entered. */}
+          {/* A2.1 — TOKEN-ONLY connect: no repo input. A full-page redirect into the connect flow
+              (never an XHR — it leaves the SPA for github.com and returns to /settings?github=…). */}
+          <div>
             <a
-              href={repo.trim() ? api.githubConnectUrl(repo.trim()) : undefined}
-              aria-disabled={!repo.trim()}
-              className={`rounded-xl px-4 py-2 text-sm font-semibold transition ${repo.trim()
-                ? 'bg-gradient-to-r from-[#07D1AF] to-violet-500 text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] hover:brightness-110'
-                : 'pointer-events-none cursor-not-allowed border border-white/10 bg-white/[0.03] text-slate-500'}`}
+              href={api.githubConnectUrl()}
+              className="inline-block rounded-xl bg-gradient-to-r from-[#07D1AF] to-violet-500 px-4 py-2 text-sm font-semibold text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] transition hover:brightness-110"
             >
               {t('settings.github.connect')}
             </a>
           </div>
-          <span className="text-xs text-slate-500">{t('settings.github.repoHint')}</span>
+          {/* The disclosure: connecting only authenticates; each project gets its own PRIVATE repo. */}
+          <span className="text-xs text-slate-500">{t('settings.github.autoRepoNote')}</span>
         </div>
       )}
     </div>

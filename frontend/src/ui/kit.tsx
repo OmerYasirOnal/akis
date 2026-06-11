@@ -20,17 +20,30 @@ export function SectionTitle({ children, sub }: { children: ReactNode; sub?: Rea
   )
 }
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'subtle'; full?: boolean }
-export function Button({ variant = 'primary', full, className = '', ...rest }: ButtonProps) {
-  // focus-visible (keyboard-only) teal ring so keyboard users get a visible focus indicator
-  // on every button across the studio, without showing the ring on mouse clicks.
-  const base = 'rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950'
+/** A small inline spinner that adopts the current text color (so it reads on any button
+ *  variant / surface). Decorative — the surrounding control carries the busy semantics. */
+export function Spinner({ className = '' }: { className?: string }) {
+  return <span aria-hidden className={`inline-block h-4 w-4 animate-spin rounded-full border-2 border-current border-r-transparent ${className}`} />
+}
+
+type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & { variant?: 'primary' | 'ghost' | 'subtle'; full?: boolean; loading?: boolean }
+export function Button({ variant = 'primary', full, loading = false, className = '', children, disabled, ...rest }: ButtonProps) {
+  // focus-visible (keyboard-only) teal ring so keyboard users get a visible focus indicator on
+  // every button, without showing the ring on mouse clicks. When `loading`, show a spinner BEFORE
+  // the label (keep the action verb visible — never a bare "…"), set aria-busy, and disable so
+  // the action can't double-fire.
+  const base = 'inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2 text-sm font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950'
   const styles = {
     primary: 'bg-gradient-to-r from-[#07D1AF] to-violet-500 text-slate-950 shadow-[0_0_22px_rgba(7,209,175,0.35)] hover:brightness-110',
     ghost: 'border border-white/15 bg-white/[0.03] text-slate-200 hover:border-white/30',
     subtle: 'text-slate-400 hover:text-slate-200',
   }[variant]
-  return <button className={`${base} ${styles} ${full ? 'w-full' : ''} ${className}`} {...rest} />
+  return (
+    <button className={`${base} ${styles} ${full ? 'w-full' : ''} ${className}`} aria-busy={loading || undefined} disabled={disabled || loading} {...rest}>
+      {loading && <Spinner />}
+      {children}
+    </button>
+  )
 }
 
 export function Field({ label, hint, children }: { label: string; hint?: ReactNode; children: ReactNode }) {
@@ -42,7 +55,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
         <span className="mb-1 block text-xs font-medium uppercase tracking-wider text-slate-400">{label}</span>
         {children}
       </label>
-      {hint && <span className="mt-1 block text-xs text-slate-500">{hint}</span>}
+      {hint && <span className="mt-1 block text-xs text-slate-400">{hint}</span>}
     </div>
   )
 }
@@ -50,7 +63,7 @@ export function Field({ label, hint, children }: { label: string; hint?: ReactNo
 export function Input({ className = '', ...rest }: InputHTMLAttributes<HTMLInputElement>) {
   return (
     <input
-      className={`w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 placeholder:text-slate-500 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 ${className}`}
+      className={`w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2.5 text-slate-100 placeholder:text-slate-400 focus:border-[#07D1AF] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 ${className}`}
       {...rest}
     />
   )
@@ -69,7 +82,7 @@ export function Select({ className = '', ...rest }: SelectHTMLAttributes<HTMLSel
   return (
     <select
       {...rest}
-      className={`w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] bg-no-repeat py-2.5 pl-3 pr-9 text-slate-100 focus:border-[#07D1AF] focus:outline-none focus:ring-1 focus:ring-[#07D1AF]/40 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+      className={`w-full appearance-none rounded-xl border border-white/10 bg-white/[0.04] bg-no-repeat py-2.5 pl-3 pr-9 text-slate-100 focus:border-[#07D1AF] focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/50 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
       // Merge AFTER the spread so a caller's `style` augments rather than clobbers the chevron +
       // dark color-scheme (mirrors the `className` merge contract above).
       style={{
@@ -90,8 +103,29 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 export function Stat({ label, value, accent = false }: { label: ReactNode; value: ReactNode; accent?: boolean }) {
   return (
     <Card className="px-4 py-3">
-      <div className="text-[11px] uppercase tracking-widest text-slate-500">{label}</div>
+      <div className="text-[11px] uppercase tracking-widest text-slate-400">{label}</div>
       <div className={`mt-1 text-2xl font-bold ${accent ? 'text-[#07D1AF]' : 'text-slate-100'}`}>{value}</div>
     </Card>
+  )
+}
+
+/** Default glyph for an EmptyState — a lock, reading as "not enabled / configured yet". */
+function LockGlyph() {
+  return (
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="4" y="11" width="16" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" />
+    </svg>
+  )
+}
+
+/** A designed "not available / not configured" state for a section — a centered, dashed-border
+ *  panel with a muted glyph + message — so an unconfigured card reads as INTENTIONALLY empty
+ *  rather than a broken card with one lone grey sentence in the corner. */
+export function EmptyState({ icon, children }: { icon?: ReactNode; children: ReactNode }) {
+  return (
+    <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-white/10 bg-white/[0.02] px-4 py-6 text-center">
+      <span className="text-slate-500">{icon ?? <LockGlyph />}</span>
+      <p className="max-w-sm text-sm text-slate-400">{children}</p>
+    </div>
   )
 }

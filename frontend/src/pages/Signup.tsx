@@ -3,6 +3,7 @@ import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
+import { PasswordInput } from '../ui/PasswordInput.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
 import { OAuthButtons } from './OAuthButtons.js'
@@ -34,16 +35,16 @@ export function Signup({ api }: { api: ApiClient }) {
       <div className="mb-4"><OAuthButtons api={api} /></div>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.name')}>
-          <Input autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder="Ada Lovelace" required />
+          <Input autoComplete="name" value={name} onChange={e => setName(e.target.value)} placeholder={t('auth.namePlaceholder')} required />
         </Field>
         <Field label={t('auth.email')}>
           <Input type="email" autoComplete="email" value={email} onChange={e => setEmail(e.target.value)} placeholder="you@example.com" required />
         </Field>
         <Field label={t('auth.password')} hint={t('auth.pwHint')}>
-          <Input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
-        <Button type="submit" full disabled={busy || !name || !email || password.length < 8}>{busy ? '…' : t('auth.signup.cta')}</Button>
+        <Button type="submit" full loading={busy} disabled={!name || !email || password.length < 8}>{t('auth.signup.cta')}</Button>
       </form>
     </AuthShell>
   )

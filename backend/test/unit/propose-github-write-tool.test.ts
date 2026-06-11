@@ -93,6 +93,56 @@ describe('recordGithubProposal (shared recorder)', () => {
   })
 })
 
+describe('NFR-11: digest dedupe is KEY-ORDER- and UNICODE-stable (recordGithubProposal)', () => {
+  // The content digest canonicalizes with a DEEP key sort (externalWriteGate.digestExternalWrite),
+  // so the SAME logical proposal recorded with its target/payload keys in a different order produces
+  // the SAME digest and dedupes to ONE record. A regression that hashed raw (un-sorted) JSON — or used
+  // a non-UTF8-safe canonicalizer — would mint two digests for the same content and append a duplicate
+  // card (and a confirm UI could bind the wrong bytes). These guards pin both invariances.
+  it('payload keys in DIFFERENT orders ⇒ identical digest ⇒ ONE record (same writeId)', async () => {
+    const store = await seededStore()
+    const a = await recordGithubProposal(store, 's1', {
+      action: 'issue_write', summary: 'open',
+      target: { owner: 'OmerYasirOnal', repo: 'akis' },
+      payload: { method: 'create', title: 'Bug', body: 'repro steps' },
+    })
+    const b = await recordGithubProposal(store, 's1', {
+      action: 'issue_write', summary: 'a DIFFERENT summary (not hashed)',
+      target: { repo: 'akis', owner: 'OmerYasirOnal' }, // target keys reordered
+      payload: { body: 'repro steps', title: 'Bug', method: 'create' }, // SAME keys, reordered
+    })
+    expect('writeId' in a && 'writeId' in b).toBe(true)
+    expect((b as { writeId: string }).writeId).toBe((a as { writeId: string }).writeId)
+    expect((a as { digest: string }).digest).toBe((b as { digest: string }).digest)
+    expect((await store.get('s1'))?.externalWrites).toHaveLength(1) // ONE card per content, order-independent
+  })
+
+  it('a TURKISH (non-ASCII) title/body with reordered keys ⇒ SAME digest ⇒ ONE record', async () => {
+    const store = await seededStore()
+    const tTarget = { owner: 'OmerYasirOnal', repo: 'akis', issue_number: 42 }
+    // Turkish content with dotted/dotless İ, ş, ğ, ç — the canonicalizer must be UTF-8 safe.
+    const trBody = 'AKIS bitirdi — 7 gerçek test geçti. İşlem doğrulandı; çalışma tamamlandı.'
+    const trTitle = 'Doğrulama tamamlandı'
+    const first = await recordGithubProposal(store, 's1', {
+      action: 'add_issue_comment', summary: 'yorum',
+      target: { owner: 'OmerYasirOnal', repo: 'akis', issue_number: 42 },
+      payload: { body: trBody, title: trTitle },
+    })
+    const again = await recordGithubProposal(store, 's1', {
+      action: 'add_issue_comment', summary: 'farklı özet',
+      target: { issue_number: 42, repo: 'akis', owner: 'OmerYasirOnal' }, // target keys reordered too
+      payload: { title: trTitle, body: trBody },                          // payload keys reordered
+    })
+    expect('writeId' in first && 'writeId' in again).toBe(true)
+    expect((again as { writeId: string }).writeId).toBe((first as { writeId: string }).writeId)
+    // The digest equals the gate's own canonical hash over the Turkish content (key-order/Unicode stable).
+    const expected = digestExternalWrite({ provider: 'github', action: 'add_issue_comment', target: tTarget, payload: { body: trBody, title: trTitle } })
+    expect((first as { digest: string }).digest).toBe(expected)
+    expect((again as { digest: string }).digest).toBe(expected)
+    expect((await store.get('s1'))?.externalWrites).toHaveLength(1) // the Turkish proposal dedupes to one
+  })
+})
+
 describe('proposeGithubWriteTool (LLM-callable handler)', () => {
   const tool = (store: MockSessionStore, sessionId = 's1') => proposeGithubWriteTool({ sessionId, store })
 

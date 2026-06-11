@@ -42,7 +42,7 @@ export function AccountSettings({ api }: { api: ApiClient }) {
   }
 
   return (
-    <div className="grid gap-6 md:grid-cols-2">
+    <div className="grid gap-6 md:grid-cols-2 md:gap-8">
       <form onSubmit={saveName} className="flex flex-col gap-3">
         <SectionTitle>{t('settings.profile.title')}</SectionTitle>
         <div className="text-sm text-slate-400">{user?.email}</div>
@@ -52,22 +52,24 @@ export function AccountSettings({ api }: { api: ApiClient }) {
         {nameErr && <ErrorNote>{nameErr}</ErrorNote>}
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={savingName || !name.trim() || name.trim() === user?.name}>{t('settings.profile.save')}</Button>
-          {nameSaved && <span className="text-xs text-[#07D1AF]">{t('settings.profile.saved')}</span>}
+          {nameSaved && <span role="status" className="text-xs text-[#07D1AF]">{t('settings.profile.saved')}</span>}
         </div>
       </form>
 
-      <form onSubmit={changePw} className="flex flex-col gap-3">
+      {/* A divider so "Profile" and "Change password" read as two distinct concerns: a top
+          border on mobile (stacked) and a left border on md+ (side-by-side columns). */}
+      <form onSubmit={changePw} className="flex flex-col gap-3 border-t border-white/10 pt-6 md:border-l md:border-t-0 md:pl-8 md:pt-0">
         <SectionTitle>{t('settings.password.title')}</SectionTitle>
         <Field label={t('settings.password.current')} hint={t('settings.password.currentHint')}>
-          <Input type="password" autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} placeholder="••••••••" />
+          <Input type="password" autoComplete="current-password" value={cur} onChange={e => setCur(e.target.value)} />
         </Field>
         <Field label={t('settings.password.new')} hint={t('auth.pwHint')}>
-          <Input type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} placeholder="••••••••" />
+          <Input type="password" autoComplete="new-password" value={next} onChange={e => setNext(e.target.value)} />
         </Field>
         {pwErr && <ErrorNote>{pwErr}</ErrorNote>}
         <div className="flex items-center gap-3">
           <Button type="submit" disabled={savingPw || next.length < 8}>{t('settings.password.change')}</Button>
-          {pwDone && <span className="text-xs text-[#07D1AF]">{t('settings.password.changed')}</span>}
+          {pwDone && <span role="status" className="text-xs text-[#07D1AF]">{t('settings.password.changed')}</span>}
         </div>
       </form>
     </div>

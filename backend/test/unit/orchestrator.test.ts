@@ -80,6 +80,73 @@ describe('Orchestrator — chat-approved spec seed (P0-1: single spec approval)'
     expect(done.status).toBe('done')
   })
 
+  it('a seed-started session RECORDS Scribe\'s stage as done — exactly one scribe agent_start + agent_end — so the roster never shows Scribe idle, and the spec gate is still minted exactly once', async () => {
+    const { orch, services } = makeOrch()
+    const seed = { title: 'Minimal Todo', body: '# Minimal Todo\nAdd, list, complete todos.' }
+    const s = await orch.start({ idea: seed.body, spec: seed })
+    expect(s.status).toBe('building')
+    // Let the auto-kicked run settle so this test's async work never leaks into another.
+    await vi.waitFor(async () => expect((await services.store.get(s.id))!.status).toBe('awaiting_push_confirm'))
+    const events = services.bus.recent(s.id)
+    // BUG GUARD: on the chat-seeded path Scribe is short-circuited (its run() never executes), so
+    // without a synthetic event the roster derives 'idle' ("beklemede") even though the spec WAS
+    // authored. The seeded branch must record Scribe's stage with a real agent_start + agent_end.
+    const scribeStarts = events.filter(e => e.kind === 'agent_start' && (e as { role: string }).role === 'scribe')
+    const scribeEnds = events.filter(e => e.kind === 'agent_end' && (e as { role: string }).role === 'scribe')
+    expect(scribeStarts).toHaveLength(1)
+    expect(scribeEnds).toHaveLength(1)
+    // The synthetic Scribe end is a SUCCESS (the spec is authored/approved), same payload shape as ScribeAgent.run().
+    expect(scribeEnds[0]).toMatchObject({ kind: 'agent_end', role: 'scribe', ok: true, agent: 'scribe', laneId: 'main' })
+    // No LLM call on this path → metrics carry NO usage block (buildAgentMetrics collapses absent → "—").
+    expect((scribeEnds[0] as { metrics?: { usage?: unknown } }).metrics?.usage).toBeUndefined()
+    // GATE-SAFETY: the spec gate is still minted EXACTLY ONCE (one satisfied, never an awaiting).
+    const gates = events.filter(e => e.kind === 'gate' && (e as { gate: string }).gate === 'spec_approval')
+    expect(gates.filter(e => (e as { state: string }).state === 'satisfied')).toHaveLength(1)
+    expect(gates.some(e => (e as { state: string }).state === 'awaiting')).toBe(false)
+  })
+
+  it('an idea-only (non-seeded) start does NOT add synthetic Scribe events — the REAL ScribeAgent runs and emits exactly one scribe start/end (no double-emit)', async () => {
+    const { orch, services } = makeOrch()
+    const s = await orch.start({ idea: 'build a todo web app' })
+    expect(s.status).toBe('awaiting_spec_approval')
+    // The real Scribe ran during start() (idea-only path). The synthetic emit lives ONLY on the
+    // seeded branch, so the count here stays exactly one — proving the synthetic block is gated to
+    // the seed path and never doubles Scribe up on the normal pipeline.
+    const events = services.bus.recent(s.id)
+    expect(events.filter(e => e.kind === 'agent_start' && (e as { role: string }).role === 'scribe')).toHaveLength(1)
+    expect(events.filter(e => e.kind === 'agent_end' && (e as { role: string }).role === 'scribe')).toHaveLength(1)
+  })
+
+  it('REGRESSION (race fix): a spec-seeded start that ALSO seeds chat bakes the chat into the INITIAL state (set before kickRun) so no post-start write races the pipeline → the auto-run reaches awaiting_push_confirm, NOT failed', async () => {
+    const { orch, services } = makeOrch()
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const chat = [{ role: 'user' as const, content: 'a todo app', at: new Date().toISOString() }]
+    // start() returns the PRE-KICK snapshot. The fix bakes `chat` into the creation state (version 0)
+    // BEFORE mintSpecApproval/kickRun, so the returned session ALREADY carries it — proving there is
+    // NO post-start store.update racing the fire-and-forget pipeline (which reads `version` then writes
+    // {code}; a chat patch landing between bumped the version → a `version conflict` → a silent `failed`).
+    const s = await orch.start({ idea: seed.body, spec: seed, chat })
+    // ATOMIC SEED: present immediately, before any pipeline write could have run.
+    expect(s.chat).toEqual(chat)
+    expect(s.status).toBe('building')
+    const justCreated = (await services.store.get(s.id))!
+    expect(justCreated.chat).toEqual(chat)
+    // The auto-kicked seeded run completes to the push gate — it is NOT driven to `failed` by a
+    // concurrent chat write (the race). isVerified holds, so the pipeline genuinely produced code.
+    await vi.waitFor(async () => expect((await services.store.get(s.id))!.status).toBe('awaiting_push_confirm'))
+    const after = (await services.store.get(s.id))!
+    expect(after.status).not.toBe('failed')
+    expect(after.chat).toEqual(chat) // the seed survived the whole pipeline (never clobbered/lost)
+    expect(isVerified(after)).toBe(true)
+  })
+
+  it('absent chat seed is byte-identical: a seeded start with NO chat carries no chat field', async () => {
+    const { orch } = makeOrch()
+    const seed = { title: 'Todo', body: '# Todo\nThe app.' }
+    const s = await orch.start({ idea: seed.body, spec: seed })
+    expect(s.chat).toBeUndefined()
+  })
+
   it('a second concurrent run is refused FAST (in-flight guard → WrongStatusError/409), never a double Proto run', async () => {
     const { orch } = makeOrch()
     const s = await orch.start({ idea: 'build a todo web app' })

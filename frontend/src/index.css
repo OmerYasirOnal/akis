@@ -83,6 +83,9 @@ code, pre, .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regu
 @media (prefers-reduced-motion: reduce) {
   .akis-stars, .akis-stars::after, .akis-aurora { animation: none; }
   .akis-fade-in { animation: none; }
+  /* Tailwind's animate-spin/animate-pulse (loading spinners, pulsing status dots) honor reduced-motion
+     too — the elements stay visible, just static, so SR/vestibular-sensitive users see no motion. */
+  .animate-spin, .animate-pulse { animation: none !important; }
 }
 
 /* Visible keyboard focus on interactive controls (WCAG 2.4.7). Tailwind's Preflight

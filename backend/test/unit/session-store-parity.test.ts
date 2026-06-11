@@ -27,7 +27,7 @@ function fakeSessionsTable(): SqlClient {
   // stringifies — the chat-array fix), and real pg returns those columns already PARSED on read.
   // Mirror that here: parse the jsonb columns back to JS values on SELECT, so the round-trip the
   // parity suite asserts (write object/array → get() returns the same) reflects real pg behaviour.
-  const JSONB = new Set(['spec', 'approval', 'code', 'verify_token', 'test_evidence', 'passport', 'publish', 'chat', 'base', 'external_writes'])
+  const JSONB = new Set(['spec', 'approval', 'code', 'verify_token', 'test_evidence', 'passport', 'publish', 'chat', 'base', 'external_writes', 'delivery'])
   const hydrate = (r: Record<string, unknown>): Record<string, unknown> => {
     const out = { ...r }
     for (const c of JSONB) if (typeof out[c] === 'string') out[c] = JSON.parse(out[c] as string)
@@ -39,8 +39,8 @@ function fakeSessionsTable(): SqlClient {
       const sql = text.trim()
       if (sql.startsWith('INSERT INTO sessions')) {
         // params are positional in the column list order used by PgSessionStore.create.
-        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, external_writes, version] = params
-        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, external_writes, version }
+        const [id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, external_writes, delivery, version] = params
+        const r = { id, status, idea, owner_id, spec, approval, code, verify_token, test_evidence, passport, publish, chat, base, external_writes, delivery, version }
         rows.set(id as string, r)
         order.push(id as string)
         return { rows: [] }
@@ -65,7 +65,7 @@ function fakeSessionsTable(): SqlClient {
         if (!cur || cur.version !== expected) return { rows: [] } // optimistic miss
         const next: Record<string, unknown> = { ...cur, version: (cur.version as number) + 1 }
         // apply whichever known columns this UPDATE set (by placeholder index).
-        for (const col of ['status', 'idea', 'owner_id', 'spec', 'code', 'approval', 'verify_token', 'test_evidence', 'passport', 'publish', 'chat', 'external_writes']) {
+        for (const col of ['status', 'idea', 'owner_id', 'spec', 'code', 'approval', 'verify_token', 'test_evidence', 'passport', 'publish', 'chat', 'external_writes', 'delivery']) {
           const i = num(sql, col)
           if (i >= 1) next[col] = params[i - 1]
         }
@@ -258,6 +258,20 @@ function paritySuite(name: string, make: () => SessionStore) {
       const got = await store.get('s1')
       expect(got?.externalWrites).toEqual(externalWrites)
       // externalWrites is NON-GATE: writing it never sets a gate token.
+      expect(isVerified(got!)).toBe(false)
+      expect(got?.approval).toBeUndefined()
+    })
+
+    it('A2.1: persists the ADDITIVE per-project delivery on the NORMAL update path + round-trips it via get() (durable on Pg too)', async () => {
+      const store = make()
+      await store.create(seed())
+      const delivery = { owner: 'ada', repo: 'gorev-takip-cizelgesi' }
+      const next = await store.update('s1', { delivery }, 0)
+      expect(next.version).toBe(1)
+      expect(next.delivery).toEqual(delivery) // returned by the write itself
+      const got = await store.get('s1')
+      expect(got?.delivery).toEqual(delivery) // survives on the Pg backend, not just Mock
+      // delivery is NON-GATE: writing it never sets a gate token nor changes verification.
       expect(isVerified(got!)).toBe(false)
       expect(got?.approval).toBeUndefined()
     })

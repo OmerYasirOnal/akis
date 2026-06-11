@@ -36,6 +36,11 @@ export const STRINGS = {
     // The push gate is untouched — the run parks push_failed and stays retryable.
     'recovery.push.deliveryFailed': 'Could not reach the GitHub push destination — check that the configured repository exists and the connected account can write to it, then retry.',
     'recovery.push.rateLimited': 'GitHub is rate-limiting requests right now — the destination is fine; wait a moment and retry the push.',
+    // NoGitHubDestinationError (a 409): a signed-in user with NO connected GitHub delivery target.
+    // Guides them to Settings → GitHub (where they connect an account + pick a repo) instead of
+    // letting the push fake-succeed to github.com/mock. The run stays push_failed → retry after connecting.
+    'recovery.push.notConnected': 'No GitHub destination is connected. Connect your GitHub account and choose a target repository in Settings, then retry the push.',
+    'recovery.push.connectCta': 'Connect GitHub in Settings',
     // Stale deep-link recovery: a session that NO LONGER EXISTS (server restart wiped the
     // in-memory store, DB loss, or external deletion) makes GET /sessions/:id return 404. The
     // honest recovery is to start a NEW build — not to hang on a frozen view. Distinct from the
@@ -65,7 +70,7 @@ export const STRINGS = {
     // the live preview when the run's verify/preview event carries `demo:true`, so a mock
     // "verified"/running app can never be mistaken for a real one AT THE RESULT.
     'result.demo.badge': 'DEMO · verification simulated',
-    'result.demo.title': 'This result was produced by the mock test runner — it is NOT a real ≥1-test pass. Add a provider key and disable AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY for a live, real-verified build.',
+    'result.demo.title': 'This result was produced by the mock test runner — it is NOT a real ≥1-test pass. Add a provider key in Settings for a live, real-verified build.',
     'chat.working': 'working…',
     'chat.revised': 'number of times this agent re-ran (critic-driven revisions)',
     'trust.headline': 'Builder & verifier are separate · deploy needs your approval · every step is auditable',
@@ -80,6 +85,8 @@ export const STRINGS = {
     'chat.gate.spec_approval': 'Spec approval',
     'chat.gate.push_confirm': 'Push confirm',
     'chat.gate.label': 'Gate',
+    // A2.1 — the per-project destination shown on the push-confirm card BEFORE the user confirms.
+    'chat.gate.target': 'Destination',
     'gate.state.awaiting': 'awaiting',
     'gate.state.satisfied': 'satisfied',
     'gate.state.rejected': 'rejected',
@@ -111,12 +118,18 @@ export const STRINGS = {
     'akis.ask': 'Ask AKIS anything…',
     'akis.send': 'Ask',
     'akis.suggestions': 'Suggested replies',
+    'akis.starters.title': 'Not sure where to start? Try one of these:',
+    'akis.starter.1': 'A habit tracker with daily streaks and reminders',
+    'akis.starter.2': 'A team standup bot that collects async updates',
+    'akis.starter.3': 'A URL shortener with click analytics',
+    'akis.starter.4': 'A Markdown notes app with full-text search',
     // ── Chat resilience: distinct error rows, retry, honest empties, truncated spec ──
     'akis.error.label': 'Message failed',
     'akis.error.retry': 'Retry',
     'akis.error.network': 'Couldn’t reach AKIS. Check your connection and try again.',
     'akis.error.empty': 'AKIS returned an empty reply. Try rephrasing, or retry.',
     'akis.error.unauthorized': 'Your session expired — taking you to sign in…',
+    'akis.error.scribe': 'Scribe couldn’t draft the spec just now. Try again, or rephrase what you want to build.',
     'akis.spec.truncated': 'The build-ready spec was cut off before it finished. Ask AKIS to resend it (e.g. “please resend the spec”).',
     'akis.transcript.title': 'Conversation with AKIS',
     'akis.transcript.show': 'Show conversation',
@@ -164,6 +177,11 @@ export const STRINGS = {
     'spec.build': 'Approve & Build',
     'spec.building': 'Starting workflow…',
     'spec.started': 'Workflow started',
+    // Once a spec has started building, its full body is collapsed (it stops eating ~60vh above the
+    // live activity) — a one-line summary chip + a toggle to re-reveal it (H1-Fix-B).
+    'spec.show': 'Show spec',
+    'spec.hide': 'Hide spec',
+    'spec.collapsed': 'Spec approved — building',
     'workflow.starting.title': 'Workflow is starting',
     'workflow.starting.body': 'Creating the run session and attaching the live agent stream.',
     'workflow.starting.elapsed': 'Elapsed',
@@ -182,16 +200,6 @@ export const STRINGS = {
     'preview.verified': 'verified',
     'preview.unverified': 'unverified',
     'preview.run': 'Run app',
-    'preview.collapse': 'Collapse preview',
-    'preview.expand': 'Expand preview',
-    'preview.collapsed': 'Preview',
-    'preview.tab.chat': 'Chat',
-    // Mobile pane-switcher tab → the live preview pane. Must NOT read "Preview" — that collides by
-    // accessible name with PreviewPanel's inner Preview tab once a run emits code files.
-    'preview.tab.live': 'Live view',
-    // Outer mobile pane-switcher tablist label — distinct from PreviewPanel's inner "Live preview"
-    // tablist so a screen reader can tell the two tablists apart.
-    'preview.pane.switcher': 'View',
     'preview.starting': 'starting…',
     'preview.booting': 'Booting the app…',
     'preview.rendering': 'Rendering your app…',
@@ -206,6 +214,23 @@ export const STRINGS = {
     'preview.unsupported': 'This app can’t be previewed live.',
     'preview.retry': 'Retry',
     'preview.bootSlow': 'Still booting — taking longer than expected.',
+    // ── Preview header actions (only when the URL is embeddable /preview/) ──
+    'preview.openTab': 'Open in new tab',
+    'preview.copyUrl': 'Copy URL',
+    'preview.refresh': 'Refresh preview',
+    // ── Preview drawer + device toggle ──
+    'preview.open': 'Open preview',
+    'preview.close': 'Close preview',
+    'preview.resize': 'Resize preview',
+    'preview.resizeValue': 'Preview {n}% of width',
+    'preview.resetHint': 'Drag to resize · double-click to reset width',
+    'preview.device.responsive': 'Responsive',
+    'preview.device.mobile': 'Mobile',
+    'preview.device.tablet': 'Tablet',
+    'preview.device.desktop': 'Desktop',
+    'preview.device.label': 'Preview width',
+    'preview.device.unit': 'px',
+    'preview.rotate': 'Rotate',
     // ── Publish to your own server (OCI) — POST-`done`, optional, NON-GATING ──
     'publish.title': 'Publish to your server',
     'publish.publish': 'Publish',
@@ -222,12 +247,13 @@ export const STRINGS = {
     'code.files': 'files',
     'code.empty': 'No code yet — files appear here once the agents finish writing the app.',
     'code.lines': 'lines',
+    'code.copyAll': 'Copy all',
     'copy.file': 'Copy file',
     'copy.codeBlock': 'Copy code',
     // ── Build history (studio redesign) ──
     'history.title': 'Build history',
     'history.sub': 'Every app you’ve built with AKIS — open one to revisit its run and preview.',
-    'history.button': 'History',
+    'history.button': 'Recent projects',
     'history.empty': 'No builds yet. Describe an app in the Studio to get started.',
     'history.loading': 'Loading your builds…',
     'history.openStudio': 'Open in Studio',
@@ -272,6 +298,9 @@ export const STRINGS = {
     'tests.fail': 'FAIL',
     'tests.scenarios': 'Scenarios',
     'tests.p95': 'p95',
+    // Honesty: a genuinely-unmeasured metric reads as honest-absent (tooltip), not broken. AKIS
+    // NEVER fabricates a number — '—' stays '—', the title just says WHY it's empty.
+    'tests.notMeasured': 'Not measured for this run',
     // ── Trust Report (auditable evidence behind the green checkmark) ──
     'trust.tab': 'Trust',
     'trust.title': 'Trust report',
@@ -299,8 +328,10 @@ export const STRINGS = {
     'nav.docs': 'Docs',
     'nav.logout': 'Sign out',
     'nav.toggleLanguage': 'Switch language',
+    'nav.primary': 'Primary',
+    'a11y.skipToContent': 'Skip to content',
     'mode.demo.badge': 'DEMO · mock-verified',
-    'mode.demo.title': 'Demo mode: builds use a mock provider and/or mock verification — "verified" is NOT from real tests. Add a provider key and disable AKIS_ALLOW_MOCK for live builds.',
+    'mode.demo.title': 'Demo mode: builds use a mock provider and/or mock verification — "verified" is NOT from real tests. To run live, real-verified builds, add a provider key in Settings.',
     'common.loading': 'Loading…',
     'auth.login.title': 'Welcome back',
     'auth.login.subtitle': 'Sign in to your AKIS studio.',
@@ -311,7 +342,10 @@ export const STRINGS = {
     'auth.signup.disabled': 'Signups are closed on this instance. Please sign in instead.',
     'auth.email': 'Email',
     'auth.password': 'Password',
+    'auth.password.show': 'Show password',
+    'auth.password.hide': 'Hide password',
     'auth.name': 'Name',
+    'auth.namePlaceholder': 'Ada Lovelace',
     'auth.noAccount': 'New to AKIS?',
     'auth.haveAccount': 'Already have an account?',
     'auth.pwHint': 'At least 8 characters.',
@@ -355,6 +389,11 @@ export const STRINGS = {
     'billing.ok.success': 'You’re on Pro — thanks! Your plan is active.',
     'billing.ok.cancel': 'Checkout cancelled — you’re still on the Free plan.',
     'settings.sub': 'Your account, agents, and workflow defaults.',
+    'settings.loading': 'Loading…',
+    'settings.group.account': 'Account',
+    'settings.group.providers': 'AI providers & keys',
+    'settings.group.integrations': 'Integrations',
+    'settings.group.agents': 'Agents & workflows',
     'settings.keys.title': 'Provider keys',
     'settings.keys.sub': 'Connect your own AI provider keys (stored encrypted on the server, never echoed).',
     'settings.keys.connected': 'Connected',
@@ -362,14 +401,14 @@ export const STRINGS = {
     'settings.keys.save': 'Save',
     'settings.keys.remove': 'Remove',
     'settings.keys.placeholder': 'Paste API key…',
+    'settings.keys.aria': '{provider} key',
     // ── Per-user GitHub connection ──
     'settings.github.title': 'GitHub delivery',
     'settings.github.sub': 'Connect your GitHub so AKIS ships verified builds to a repo you own.',
     'settings.github.connect': 'Connect GitHub',
     'settings.github.disconnect': 'Disconnect',
-    'settings.github.repoLabel': 'Target repository',
-    'settings.github.repoPlaceholder': 'owner/name',
-    'settings.github.repoHint': 'An existing repo you own — AKIS opens a pull request there. This grants the broad “repo” scope (read/write to your repositories).',
+    // A2.1 — the standing disclosure: connecting only authenticates; each project gets its own repo.
+    'settings.github.autoRepoNote': 'Connecting only authenticates your account. Every project gets its own PRIVATE repo, created for you in your personal account (named from the project). This grants the broad “repo” scope (read/write to your repositories).',
     'settings.github.username': 'Account',
     'settings.github.scopes': 'Scopes',
     'settings.github.connectedAt': 'Connected',
@@ -476,7 +515,7 @@ export const STRINGS = {
     // Publish destination (OCI free-tier) — the SSH key + host/dir/port for "publish to your own server".
     'settings.publish.title': 'Publish destination',
     'settings.publish.sub': 'Deploy a finished build to your own server (e.g. an Oracle Cloud free-tier instance) over SSH.',
-    'settings.publish.notConfigured': 'Publishing is not available — encryption is not configured on this server (set AI_KEY_ENCRYPTION_KEY).',
+    'settings.publish.notConfigured': 'Publishing isn’t available on this deployment yet — your administrator needs to enable encrypted credential storage on the server.',
     'settings.publish.host': 'Host',
     'settings.publish.hostHint': 'The instance hostname or IP — reachable over SSH from where AKIS runs.',
     'settings.publish.sshUser': 'SSH user',
@@ -802,6 +841,8 @@ export const STRINGS = {
     'recovery.push.retry': 'Push başarısız — yeniden dene',
     'recovery.push.deliveryFailed': 'GitHub push hedefine ulaşılamadı — yapılandırılan deponun var olduğunu ve bağlı hesabın yazma yetkisi olduğunu kontrol edip yeniden deneyin.',
     'recovery.push.rateLimited': 'GitHub şu anda istekleri hız sınırına takıyor — hedefte sorun yok; biraz bekleyip push\'u yeniden deneyin.',
+    'recovery.push.notConnected': 'Bağlı bir GitHub hedefi yok. Ayarlar\'dan GitHub hesabınızı bağlayıp bir hedef depo seçin, ardından push\'u yeniden deneyin.',
+    'recovery.push.connectCta': 'Ayarlar\'da GitHub bağla',
     // Eskimiş derin bağlantı kurtarma: ARTIK MEVCUT OLMAYAN bir oturum (sunucu yeniden başlaması
     // bellek deposunu sildi, DB kaybı ya da dış silme) GET /sessions/:id'in 404 dönmesine yol açar.
     // Dürüst kurtarma, donmuş bir görünümde takılmak değil YENİ bir geliştirme başlatmaktır. Geçici
@@ -841,6 +882,8 @@ export const STRINGS = {
     'chat.gate.spec_approval': 'Spec onayı',
     'chat.gate.push_confirm': 'Push onayı',
     'chat.gate.label': 'Kapı',
+    // A2.1 — kullanıcı onaylamadan ÖNCE push-onay kartında gösterilen proje deposu.
+    'chat.gate.target': 'Hedef',
     'gate.state.awaiting': 'bekliyor',
     'gate.state.satisfied': 'onaylandı',
     'gate.state.rejected': 'reddedildi',
@@ -872,12 +915,18 @@ export const STRINGS = {
     'akis.ask': 'AKIS’e bir şey sor…',
     'akis.send': 'Sor',
     'akis.suggestions': 'Önerilen yanıtlar',
+    'akis.starters.title': 'Nereden başlayacağını bilmiyor musun? Şunlardan birini dene:',
+    'akis.starter.1': 'Günlük seri ve hatırlatmalı bir alışkanlık takipçisi',
+    'akis.starter.2': 'Asenkron güncellemeleri toplayan bir takım standup botu',
+    'akis.starter.3': 'Tıklama analizli bir URL kısaltıcı',
+    'akis.starter.4': 'Tam metin aramalı bir Markdown not uygulaması',
     // ── Sohbet dayanıklılığı: ayrı hata satırları, yeniden dene, dürüst boş yanıt, kesilmiş spec ──
     'akis.error.label': 'Mesaj başarısız',
     'akis.error.retry': 'Yeniden dene',
     'akis.error.network': 'AKIS’e ulaşılamadı. Bağlantını kontrol et ve tekrar dene.',
     'akis.error.empty': 'AKIS boş bir yanıt döndürdü. Farklı ifade etmeyi dene ya da yeniden dene.',
     'akis.error.unauthorized': 'Oturumun sona erdi — seni girişe yönlendiriyoruz…',
+    'akis.error.scribe': 'Scribe şu an spec’i hazırlayamadı. Tekrar dene ya da ne inşa etmek istediğini farklı ifade et.',
     'akis.spec.truncated': 'İnşaya hazır spec tamamlanmadan kesildi. AKIS’ten yeniden göndermesini iste (örn. “spec’i tekrar gönder”).',
     'akis.transcript.title': 'AKIS ile konuşma',
     'akis.transcript.show': 'Konuşmayı göster',
@@ -925,6 +974,11 @@ export const STRINGS = {
     'spec.build': 'Onayla & Build',
     'spec.building': 'Workflow başlıyor…',
     'spec.started': 'Workflow başladı',
+    // Bir spec build’e başladığında tüm gövdesi katlanır (canlı etkinliğin üstünde ~60vh yer
+    // kaplamayı bırakır) — tek satırlık özet + tekrar açmak için bir düğme (H1-Fix-B).
+    'spec.show': 'Spec’i göster',
+    'spec.hide': 'Spec’i gizle',
+    'spec.collapsed': 'Spec onaylandı — inşa ediliyor',
     'workflow.starting.title': 'Workflow başlıyor',
     'workflow.starting.body': 'Çalışma oturumu oluşturuluyor ve canlı ajan akışı bağlanıyor.',
     'workflow.starting.elapsed': 'Geçen süre',
@@ -943,14 +997,6 @@ export const STRINGS = {
     'preview.verified': 'doğrulandı',
     'preview.unverified': 'doğrulanmadı',
     'preview.run': 'Uygulamayı çalıştır',
-    'preview.collapse': 'Önizlemeyi daralt',
-    'preview.expand': 'Önizlemeyi aç',
-    'preview.collapsed': 'Önizleme',
-    'preview.tab.chat': 'Sohbet',
-    // Canlı görünüm — "Önizleme" ile çakışmasın (PreviewPanel'in iç "Önizleme" sekmesi).
-    'preview.tab.live': 'Canlı görünüm',
-    // Mobil bölme değiştirici tablist etiketi — iç "Canlı önizleme" tablist'inden ayırt edilebilir.
-    'preview.pane.switcher': 'Görünüm',
     'preview.starting': 'başlıyor…',
     'preview.booting': 'Uygulama başlatılıyor…',
     'preview.rendering': 'Uygulaman çiziliyor…',
@@ -965,6 +1011,23 @@ export const STRINGS = {
     'preview.unsupported': 'Bu uygulama canlı önizlenemiyor.',
     'preview.retry': 'Yeniden dene',
     'preview.bootSlow': 'Hâlâ başlatılıyor — beklenenden uzun sürüyor.',
+    // ── Önizleme başlık eylemleri (yalnızca URL gömülebilir /preview/ olduğunda) ──
+    'preview.openTab': 'Yeni sekmede aç',
+    'preview.copyUrl': "URL'yi kopyala",
+    'preview.refresh': 'Önizlemeyi yenile',
+    // ── Önizleme çekmecesi + cihaz geçişi ──
+    'preview.open': 'Önizlemeyi aç',
+    'preview.close': 'Önizlemeyi kapat',
+    'preview.resize': 'Önizlemeyi yeniden boyutlandır',
+    'preview.resizeValue': "Önizleme genişliğin %{n}'i",
+    'preview.resetHint': 'Boyutlandırmak için sürükleyin · genişliği sıfırlamak için çift tıklayın',
+    'preview.device.responsive': 'Esnek',
+    'preview.device.mobile': 'Mobil',
+    'preview.device.tablet': 'Tablet',
+    'preview.device.desktop': 'Masaüstü',
+    'preview.device.label': 'Önizleme genişliği',
+    'preview.device.unit': 'px',
+    'preview.rotate': 'Döndür',
     // ── Kendi sunucuna yayınla (OCI) — `done` SONRASI, isteğe bağlı, KAPI DEĞİL ──
     'publish.title': 'Sunucuna yayınla',
     'publish.publish': 'Yayınla',
@@ -981,16 +1044,17 @@ export const STRINGS = {
     'code.files': 'dosya',
     'code.empty': 'Henüz kod yok — ajanlar uygulamayı yazmayı bitirince dosyalar burada görünür.',
     'code.lines': 'satır',
+    'code.copyAll': 'Tümünü kopyala',
     'copy.file': 'Dosyayı kopyala',
     'copy.codeBlock': 'Kodu kopyala',
     // P1-CORE-1: çalıştırma başına "bu sonuç simüle edildi" rozeti — verify gate kartında ve
     // canlı önizlemede, çalıştırmanın verify/preview olayı `demo:true` taşıdığında gösterilir.
     'result.demo.badge': 'DEMO · doğrulama simüle edildi',
-    'result.demo.title': 'Bu sonuç taklit (mock) test koşucusu tarafından üretildi — GERÇEK bir ≥1-test geçişi DEĞİLDİR. Canlı, gerçekten doğrulanmış bir derleme için bir sağlayıcı anahtarı ekleyin ve AKIS_ALLOW_MOCK / AKIS_DEMO_VERIFY seçeneklerini kapatın.',
+    'result.demo.title': 'Bu sonuç taklit (mock) test koşucusu tarafından üretildi — GERÇEK bir ≥1-test geçişi DEĞİLDİR. Canlı, gerçekten doğrulanmış bir derleme için Ayarlar’dan bir sağlayıcı anahtarı ekleyin.',
     // ── Geliştirme geçmişi (stüdyo yeniden tasarımı) ──
     'history.title': 'Geliştirme geçmişi',
     'history.sub': 'AKIS ile inşa ettiğin her uygulama — çalışmasını ve önizlemesini görmek için birini aç.',
-    'history.button': 'Geçmiş',
+    'history.button': 'Son projeler',
     'history.empty': 'Henüz geliştirme yok. Başlamak için Stüdyo’da bir uygulama tarif et.',
     'history.loading': 'Geliştirmelerin yükleniyor…',
     'history.openStudio': 'Stüdyoda aç',
@@ -1035,6 +1099,7 @@ export const STRINGS = {
     'tests.fail': 'KALDI',
     'tests.scenarios': 'Senaryolar',
     'tests.p95': 'p95',
+    'tests.notMeasured': 'Bu çalışma için ölçülmedi',
     // ── Güven Raporu (yeşil onayın arkasındaki denetlenebilir kanıt) ──
     'trust.tab': 'Güven',
     'trust.title': 'Güven raporu',
@@ -1062,8 +1127,10 @@ export const STRINGS = {
     'nav.docs': 'Dökümantasyon',
     'nav.logout': 'Çıkış yap',
     'nav.toggleLanguage': 'Dili değiştir',
+    'nav.primary': 'Birincil',
+    'a11y.skipToContent': 'İçeriğe geç',
     'mode.demo.badge': 'DEMO · sahte doğrulama',
-    'mode.demo.title': 'Demo modu: derlemeler bir taklit sağlayıcı ve/veya taklit doğrulama kullanır — "doğrulandı" GERÇEK testlerden gelmez. Gerçek derlemeler için bir sağlayıcı anahtarı ekleyin ve AKIS_ALLOW_MOCK seçeneğini kapatın.',
+    'mode.demo.title': 'Demo modu: derlemeler bir taklit sağlayıcı ve/veya taklit doğrulama kullanır — "doğrulandı" GERÇEK testlerden gelmez. Canlı, gerçekten doğrulanmış derlemeler için Ayarlar’dan bir sağlayıcı anahtarı ekleyin.',
     'common.loading': 'Yükleniyor…',
     'auth.login.title': 'Tekrar hoş geldin',
     'auth.login.subtitle': 'AKIS stüdyona giriş yap.',
@@ -1074,7 +1141,10 @@ export const STRINGS = {
     'auth.signup.disabled': 'Bu örnekte kayıt kapalı. Lütfen giriş yapın.',
     'auth.email': 'E-posta',
     'auth.password': 'Parola',
+    'auth.password.show': 'Parolayı göster',
+    'auth.password.hide': 'Parolayı gizle',
     'auth.name': 'İsim',
+    'auth.namePlaceholder': 'Ada Lovelace',
     'auth.noAccount': 'AKIS’te yeni misin?',
     'auth.haveAccount': 'Zaten hesabın var mı?',
     'auth.pwHint': 'En az 8 karakter.',
@@ -1118,6 +1188,11 @@ export const STRINGS = {
     'billing.ok.success': 'Pro’dasın — teşekkürler! Planın aktif.',
     'billing.ok.cancel': 'Ödeme iptal edildi — hâlâ Ücretsiz plandasın.',
     'settings.sub': 'Hesabın, ajanların ve varsayılan iş akışların.',
+    'settings.loading': 'Yükleniyor…',
+    'settings.group.account': 'Hesap',
+    'settings.group.providers': 'AI sağlayıcıları ve anahtarlar',
+    'settings.group.integrations': 'Entegrasyonlar',
+    'settings.group.agents': 'Ajanlar ve iş akışları',
     'settings.keys.title': 'Sağlayıcı anahtarları',
     'settings.keys.sub': 'Kendi AI sağlayıcı anahtarlarını bağla (sunucuda şifreli saklanır, asla geri gösterilmez).',
     'settings.keys.connected': 'Bağlı',
@@ -1125,14 +1200,14 @@ export const STRINGS = {
     'settings.keys.save': 'Kaydet',
     'settings.keys.remove': 'Kaldır',
     'settings.keys.placeholder': 'API anahtarını yapıştır…',
+    'settings.keys.aria': '{provider} anahtarı',
     // ── Kullanıcıya özel GitHub bağlantısı ──
     'settings.github.title': 'GitHub teslimatı',
     'settings.github.sub': 'GitHub hesabını bağla, AKIS doğrulanmış yapıları senin sahip olduğun bir depoya göndersin.',
     'settings.github.connect': 'GitHub’a bağlan',
     'settings.github.disconnect': 'Bağlantıyı kes',
-    'settings.github.repoLabel': 'Hedef depo',
-    'settings.github.repoPlaceholder': 'sahip/ad',
-    'settings.github.repoHint': 'Sahip olduğun mevcut bir depo — AKIS oraya bir pull request açar. Bu, geniş “repo” kapsamını verir (depolarına okuma/yazma).',
+    // A2.1 — duran bilgilendirme: bağlanmak yalnız kimlik doğrular; her proje kendi deposunu alır.
+    'settings.github.autoRepoNote': 'Bağlanmak yalnızca hesabını doğrular. Her proje, kişisel hesabında senin için oluşturulan kendi ÖZEL deposunu alır (ad projeden türetilir). Bu, geniş “repo” kapsamını verir (depolarına okuma/yazma).',
     'settings.github.username': 'Hesap',
     'settings.github.scopes': 'Kapsamlar',
     'settings.github.connectedAt': 'Bağlanma',
@@ -1233,7 +1308,7 @@ export const STRINGS = {
     // Yayın hedefi (OCI ücretsiz katman) — "kendi sunucuna yayınla" için SSH anahtarı + host/dizin/port.
     'settings.publish.title': 'Yayın hedefi',
     'settings.publish.sub': 'Tamamlanmış bir yapıyı SSH üzerinden kendi sunucuna dağıt (ör. bir Oracle Cloud ücretsiz katman örneği).',
-    'settings.publish.notConfigured': 'Yayınlama kullanılamıyor — bu sunucuda şifreleme yapılandırılmamış (AI_KEY_ENCRYPTION_KEY ayarla).',
+    'settings.publish.notConfigured': 'Yayınlama bu dağıtımda henüz kullanılamıyor — yöneticinin sunucuda şifreli kimlik bilgisi depolamayı etkinleştirmesi gerekiyor.',
     'settings.publish.host': 'Host',
     'settings.publish.hostHint': 'Örneğin host adı veya IP — AKIS’in çalıştığı yerden SSH ile erişilebilir olmalı.',
     'settings.publish.sshUser': 'SSH kullanıcısı',

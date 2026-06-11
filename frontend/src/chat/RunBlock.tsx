@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
@@ -28,7 +28,7 @@ import { actionErrorText } from './actionError.js'
  * session, GET /sessions/:id 404s — the block shows the same honest "session gone → start a new
  * build" recovery card the studio used, not a blank/frozen block.
  */
-export function RunBlock({
+function RunBlockInner({
   sessionId, idea, terminal = false, api, onApprove, onConfirm, onNewBuild,
   baseUrl = '', makeClient, onView, active = false, busy = false, onReactivate, onActionError,
 }: {
@@ -76,8 +76,13 @@ export function RunBlock({
     setRecovering(true)
     void Promise.resolve(fn(sessionId))
       // Surface a real failure (the SSE stream reflects a SUCCESS, but a rejected POST had no
-      // feedback). A 409 is an expected gate/precondition refusal → stay quiet, like the studio.
-      .catch((e: unknown) => { if (!(ApiError.is(e) && e.status === 409)) onActionError?.(actionErrorText(e, t)) })
+      // feedback). A 409 is an expected gate/precondition refusal → stay quiet, like the studio —
+      // EXCEPT NoGitHubDestinationError: that 409 carries actionable "connect GitHub" guidance the
+      // user must SEE (a silent swallow is the very confusion the demo flagged), so it surfaces.
+      .catch((e: unknown) => {
+        const isQuiet409 = ApiError.is(e) && e.status === 409 && e.code !== 'NoGitHubDestinationError'
+        if (!isQuiet409) onActionError?.(actionErrorText(e, t))
+      })
       .finally(() => setRecovering(false))
   }
   const onProceed = drive(id => api.resolveCritic(id, 'proceed'))
@@ -158,3 +163,16 @@ export function RunBlock({
     </section>
   )
 }
+
+/**
+ * PERF (chat-spine cascade): a run-block mounts its OWN useLiveChat, so it re-renders on its own SSE
+ * frames REGARDLESS of memo. The ACTIVE run reports its folded view UP every frame → ChatStudio
+ * setActiveView → the whole spine (AkisChat) re-renders → without memo, EVERY terminal RunBlock would
+ * re-render too (it received fresh inline prop identities). React.memo lets each terminal block BAIL on
+ * that parent cascade because all its props are now reference-stable (sessionId/idea/terminal/api/baseUrl
+ * are stable; the callbacks are stabilized at the call site — AkisChat's shared `noop` + ChatStudio's
+ * useCallback'd handlers). The active run still streams live: its internal useLiveChat state changes are
+ * NOT props, so memo never gates them — memo only blocks the redundant PARENT re-render of terminal
+ * siblings. `active`/`busy` legitimately change identity-free (booleans) and flip a block in/out of live.
+ */
+export const RunBlock = memo(RunBlockInner)

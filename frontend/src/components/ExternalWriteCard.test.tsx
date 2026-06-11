@@ -1,8 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react'
 import { ExternalWriteCard } from './ExternalWriteCard.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { RouterProvider } from '../router/router.js'
+import { ApiError } from '../api/client.js'
 import type { ApiClient, ExternalWriteSummary } from '../api/client.js'
 
 // Default connected status grants Confluence write so the legacy publish-to-Confluence flow still
@@ -103,5 +104,53 @@ describe('ExternalWriteCard (connection-aware publish to Jira/Confluence)', () =
     expect(screen.queryByText(/AKIS proposes: merge PR #4/)).not.toBeInTheDocument()
     // …but the executed one remains.
     expect(screen.getByText(/merged PR #2/)).toBeInTheDocument()
+  })
+})
+
+/* ───────────────────────── REGRESSION GUARDS (verified-but-unguarded) ───────────────────────── */
+
+/** Drive a connected card through propose → review so a confirm error is observable. The propose mock
+ *  returns a digest; the supplied confirm mock decides the failure mode. */
+async function reachReviewThenConfirm(api: ApiClient): Promise<void> {
+  ui(api)
+  await waitFor(() => screen.getByRole('button', { name: /Publish to Confluence/ }))
+  fireEvent.click(screen.getByRole('button', { name: /Publish to Confluence/ }))
+  fireEvent.change(screen.getByPlaceholderText(/Confluence space key/), { target: { value: 'ENG' } })
+  fireEvent.click(screen.getByRole('button', { name: /Review/ }))
+  await waitFor(() => expect(screen.getByText(/Content digest/)).toBeInTheDocument())
+  // propose-success triggers a second loadHistory() — let it settle before confirming so the only
+  // pending state update during the error assertion is the one under test (no stray act() warning).
+  await waitFor(() => expect((api.listExternalWrites as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThanOrEqual(2))
+  // confirm() is fire-and-forget (void confirm()); flush its async catch/finally inside act so the
+  // setErr + setBusy(false) updates are captured (no "not wrapped in act" warning).
+  await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Confirm \+ publish/ })); await Promise.resolve(); await Promise.resolve() })
+}
+
+describe('ExternalWriteCard — confirm error mapping (atlassian FR-23)', () => {
+  it('confirm rejects with ApiError(409) → shows the friendly mcpwrite.notConnected guidance (NOT the raw provider message)', async () => {
+    const api = makeApi({
+      // A 409 at confirm-time = the connection dropped / MCP unavailable. The card maps it to the
+      // localized "Connect … in Settings first." guidance instead of leaking the raw 409 string.
+      confirmExternalWrite: vi.fn(() => Promise.reject(new ApiError(409, 'McpUnavailable: token expired', 'McpUnavailable'))),
+    })
+    await reachReviewThenConfirm(api)
+    // The ErrorNote surfaces the friendly guidance — and the raw provider detail is NOT shown.
+    await waitFor(() => expect(screen.getByText(/Connect Jira\/Confluence in Settings first\./)).toBeInTheDocument())
+    // Wait for `busy` to settle back to false (Confirm usable again) so the trailing state update is captured.
+    await waitFor(() => expect(screen.getByRole('button', { name: /Confirm \+ publish/ })).not.toBeDisabled())
+    expect(screen.queryByText(/token expired/)).not.toBeInTheDocument()
+    // The card did NOT advance to a "done" panel on this failure.
+    expect(screen.queryByText(/PAGE-1/)).not.toBeInTheDocument()
+  })
+
+  it('confirm rejects with a NON-409 ApiError → shows that error\'s OWN message (not the 409 guidance)', async () => {
+    const api = makeApi({
+      confirmExternalWrite: vi.fn(() => Promise.reject(new ApiError(500, 'Confluence rejected the page body', 'WriteFailed'))),
+    })
+    await reachReviewThenConfirm(api)
+    // A non-409 surfaces e.message verbatim — the 409-only guidance must NOT be substituted.
+    await waitFor(() => expect(screen.getByText(/Confluence rejected the page body/)).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: /Confirm \+ publish/ })).not.toBeDisabled())
+    expect(screen.queryByText(/Connect Jira\/Confluence in Settings first\./)).not.toBeInTheDocument()
   })
 })

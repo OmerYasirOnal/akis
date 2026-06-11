@@ -87,11 +87,15 @@ describe('Login page', () => {
     expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining('/auth/login'), expect.objectContaining({ method: 'POST' }))
   })
 
-  it('maps a known ?error= code to its specific OAuth message', () => {
+  it('maps a known ?error= code to its specific OAuth message, rendered BY the OAuth buttons (not in the form)', () => {
     const { api } = fakeApi({ '/auth/me': () => ({ ok: false, status: 401, body: {} }) })
     window.history.pushState({}, '', '/login?error=oauth_denied')
     render(<I18nProvider><RouterProvider><AuthProvider api={api}><Login api={api} /></AuthProvider></RouterProvider></I18nProvider>)
-    expect(screen.getByText('Sign-in was cancelled or denied.')).toBeInTheDocument()
+    const msg = screen.getByText('Sign-in was cancelled or denied.')
+    expect(msg).toBeInTheDocument()
+    // an OAuth failure belongs next to the OAuth buttons that caused it — NOT at the bottom of the
+    // email/password form where it reads like a credentials error (UX-audit MEDIUM 4).
+    expect(msg.closest('form')).toBeNull()
   })
 
   it('falls back to the generic OAuth message for an unrecognized ?error= code', () => {

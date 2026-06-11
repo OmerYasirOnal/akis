@@ -100,7 +100,7 @@ describe('POST /api/chat/stream', () => {
     const a = await app(p)
     await a.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'spec me' } })
     expect(p.last?.maxTokens).toBe(CHAT_MAX_TOKENS)
-    expect(p.last?.system).toContain('````akis-spec') // the persona / Chat-to-Build contract
+    expect(p.last?.system).toContain('````akis-spec-request') // the persona / Chat→Scribe handoff contract
     await a.close()
   })
 

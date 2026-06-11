@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { RealGitHubAdapter, GitHubDeliveryError, type PushFetch } from '../../src/di/RealGitHubAdapter.js'
+import { RealGitHubAdapter, GitHubDeliveryError, githubRepoExists, type PushFetch } from '../../src/di/RealGitHubAdapter.js'
 import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
 
 const TOKEN = 'ghp_push_supersecrettoken_DO_NOT_LEAK'
@@ -21,16 +21,27 @@ const ok = (body: unknown, status = 200): Awaited<ReturnType<PushFetch>> => ({
  * commit-files / open-PR flow. `existingBranch` toggles whether the head ref already
  * exists (→ update path) and `existingPr` whether an open PR for the branch exists.
  */
-function fakeGitHub(opts: { existingBranch?: boolean; existingPr?: boolean } = {}) {
+function fakeGitHub(opts: { existingBranch?: boolean; existingPr?: boolean; repoMissing?: boolean; authedLogin?: string } = {}) {
   const calls: Array<{ method: string; url: string; headers: Record<string, string>; body?: unknown }> = []
+  // The repo starts absent when `repoMissing`; a successful POST /user/repos|/orgs/.../repos flips it on.
+  let repoExists = !opts.repoMissing
   const fetch: PushFetch = async (url, init) => {
     const method = init?.method ?? 'GET'
     const body = init?.body ? JSON.parse(init.body) : undefined
     calls.push({ method, url, headers: init?.headers ?? {}, body })
 
-    // Default-branch lookup
+    // Authed-user lookup (createRepo decides /user/repos vs /orgs/.../repos from this).
+    if (method === 'GET' && /\/user$/.test(url)) {
+      return ok({ login: opts.authedLogin ?? 'me' })
+    }
+    // Create a repo under the authed user or an org.
+    if (method === 'POST' && /\/(user|orgs\/[^/]+)\/repos$/.test(url)) {
+      repoExists = true
+      return ok({ html_url: 'https://github.com/me/proj' }, 201)
+    }
+    // Default-branch lookup (also the createRepo existence probe). 404 while the repo is absent.
     if (method === 'GET' && /\/repos\/[^/]+\/[^/]+$/.test(url)) {
-      return ok({ default_branch: 'main' })
+      return repoExists ? ok({ default_branch: 'main' }) : ok({ message: 'Not Found' }, 404)
     }
     // Base ref → base commit sha
     if (method === 'GET' && /\/git\/ref\/heads\/main$/.test(url)) {
@@ -86,10 +97,109 @@ function fakeGitHub(opts: { existingBranch?: boolean; existingPr?: boolean } = {
 }
 
 describe('RealGitHubAdapter (offline, injected fetch — GitHub REST API)', () => {
-  it('createRepo returns the configured repo HTML URL (no network needed for the URL)', async () => {
-    const { fetch } = fakeGitHub()
+  it('createRepo returns the configured repo HTML URL when the repo already exists (no create POST)', async () => {
+    const { fetch, calls } = fakeGitHub()
     const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
     expect(await a.createRepo('sess-1')).toBe('https://github.com/me/proj')
+    // An EXISTING repo must NOT be re-created — only the GET existence probe.
+    expect(calls.some(c => c.method === 'POST' && /\/repos$/.test(c.url))).toBe(false)
+  })
+
+  it('createRepo CREATES the repo when it is missing (404) — POST /user/repos with auto_init', async () => {
+    const { fetch, calls } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    expect(await a.createRepo('sess-1')).toBe('https://github.com/me/proj')
+    const create = calls.find(c => c.method === 'POST' && /\/user\/repos$/.test(c.url))
+    expect(create).toBeDefined()
+    // auto_init seeds an initial commit so the empty repo is immediately pushable (no 409 on the first push).
+    expect((create!.body as { name?: unknown; auto_init?: unknown }).name).toBe('proj')
+    expect((create!.body as { auto_init?: unknown }).auto_init).toBe(true)
+  })
+
+  it('createRepo creates under an ORG when the configured owner is not the authed user — POST /orgs/{owner}/repos', async () => {
+    const { fetch, calls } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
+    const a = new RealGitHubAdapter({ owner: 'acme-org', repo: 'proj', token: TOKEN, fetch })
+    expect(await a.createRepo('sess-1')).toBe('https://github.com/acme-org/proj')
+    expect(calls.some(c => c.method === 'POST' && /\/orgs\/acme-org\/repos$/.test(c.url))).toBe(true)
+    expect(calls.some(c => c.method === 'POST' && /\/user\/repos$/.test(c.url))).toBe(false)
+  })
+
+  it('createRepo sends Bearer auth on the create POST and the /user probe, and never leaks the token in the request body', async () => {
+    const { fetch, calls } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    await a.createRepo('sess-1')
+    for (const c of calls) expect(c.headers['Authorization']).toBe(`Bearer ${TOKEN}`)
+    // The token rides ONLY in the Authorization header, never the JSON body of the create POST.
+    const create = calls.find(c => c.method === 'POST' && /\/repos$/.test(c.url))!
+    expect(JSON.stringify(create.body)).not.toContain(TOKEN)
+  })
+
+  it('createRepo then pushFiles works end-to-end against a freshly-created repo', async () => {
+    const { fetch } = fakeGitHub({ repoMissing: true, authedLogin: 'me' })
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'proj', token: TOKEN, fetch })
+    await a.createRepo('sess-1') // creates + auto_init seeds the base commit
+    await expect(a.pushFiles('sess-1', FILES)).resolves.toBeUndefined()
+  })
+
+  it('pushFiles SEEDS an existing-but-empty repo (no base commit yet) via the contents API, then commits', async () => {
+    // A repo that exists but has ZERO commits: the default-branch ref 404s. pushFiles must
+    // seed an initial commit (PUT /contents/<path>) so the Git Data API has a base to layer on,
+    // instead of surfacing a misleading "repo not reachable".
+    const calls: Array<{ method: string; url: string; body?: unknown }> = []
+    let seeded = false
+    const fetch: PushFetch = async (url, init) => {
+      const method = init?.method ?? 'GET'
+      const body = init?.body ? JSON.parse(init.body) : undefined
+      calls.push({ method, url, body })
+      if (method === 'GET' && /\/repos\/[^/]+\/[^/]+$/.test(url)) return ok({ default_branch: 'main' })
+      // Base branch ref: 404 until the contents seed creates the first commit.
+      if (method === 'GET' && /\/git\/ref\/heads\/main$/.test(url)) {
+        return seeded ? ok({ object: { sha: 'baseCommitSha' } }) : ok({ message: 'Not Found' }, 404)
+      }
+      // Seed the empty repo (creates the initial commit on the default branch).
+      if (method === 'PUT' && /\/contents\//.test(url)) { seeded = true; return ok({ commit: { sha: 'seedCommit' } }, 201) }
+      if (method === 'GET' && /\/git\/ref\/heads\/akis-/.test(url)) return ok({ message: 'Not Found' }, 404)
+      if (method === 'GET' && /\/git\/commits\/baseCommitSha$/.test(url)) return ok({ tree: { sha: 'baseTreeSha' } })
+      if (method === 'POST' && /\/git\/blobs$/.test(url)) return ok({ sha: 'blob' }, 201)
+      if (method === 'POST' && /\/git\/trees$/.test(url)) return ok({ sha: 'newTreeSha' }, 201)
+      if (method === 'POST' && /\/git\/commits$/.test(url)) return ok({ sha: 'newCommitSha' }, 201)
+      if (method === 'POST' && /\/git\/refs$/.test(url)) return ok({ object: { sha: body?.sha } }, 201)
+      if (method === 'GET' && /\/pulls\?/.test(url)) return ok([])
+      if (method === 'POST' && /\/pulls$/.test(url)) return ok({ number: 1 }, 201)
+      return ok({ message: `unmatched ${method} ${url}` }, 500)
+    }
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'empty', token: TOKEN, fetch })
+    await expect(a.pushFiles('sess-1', FILES)).resolves.toBeUndefined()
+    expect(calls.some(c => c.method === 'PUT' && /\/contents\//.test(c.url))).toBe(true)
+  })
+
+  it('pushFiles tolerates the auto_init seed race (seed PUT 422 "already exists" = repo not empty after all)', async () => {
+    // createRepo's auto_init landed but the ref read briefly lagged (GitHub eventual consistency):
+    // refShaOrNull saw 404, the redundant seed PUT hits 422 because README.md already exists. The
+    // base commit DOES exist, so pushFiles must proceed — not park the run as push_failed.
+    let refReads = 0
+    const fetch: PushFetch = async (url, init) => {
+      const method = init?.method ?? 'GET'
+      const body = init?.body ? JSON.parse(init.body) : undefined
+      if (method === 'GET' && /\/repos\/[^/]+\/[^/]+$/.test(url)) return ok({ default_branch: 'main' })
+      if (method === 'GET' && /\/git\/ref\/heads\/main$/.test(url)) {
+        // First read lags (404) even though auto_init already committed; later reads see the ref.
+        refReads++
+        return refReads === 1 ? ok({ message: 'Not Found' }, 404) : ok({ object: { sha: 'baseCommitSha' } })
+      }
+      if (method === 'PUT' && /\/contents\//.test(url)) return ok({ message: 'sha wasn’t supplied' }, 422)
+      if (method === 'GET' && /\/git\/ref\/heads\/akis-/.test(url)) return ok({ message: 'Not Found' }, 404)
+      if (method === 'GET' && /\/git\/commits\/baseCommitSha$/.test(url)) return ok({ tree: { sha: 'baseTreeSha' } })
+      if (method === 'POST' && /\/git\/blobs$/.test(url)) return ok({ sha: 'blob' }, 201)
+      if (method === 'POST' && /\/git\/trees$/.test(url)) return ok({ sha: 'newTreeSha' }, 201)
+      if (method === 'POST' && /\/git\/commits$/.test(url)) return ok({ sha: 'newCommitSha' }, 201)
+      if (method === 'POST' && /\/git\/refs$/.test(url)) return ok({ object: { sha: body?.sha } }, 201)
+      if (method === 'GET' && /\/pulls\?/.test(url)) return ok([])
+      if (method === 'POST' && /\/pulls$/.test(url)) return ok({ number: 1 }, 201)
+      return ok({ message: `unmatched ${method} ${url}` }, 500)
+    }
+    const a = new RealGitHubAdapter({ owner: 'me', repo: 'lagging', token: TOKEN, fetch })
+    await expect(a.pushFiles('sess-1', FILES)).resolves.toBeUndefined()
   })
 
   it('pushFiles creates a branch, commits the files, and opens a PR (correct REST calls)', async () => {
@@ -194,5 +304,30 @@ describe('RealGitHubAdapter (offline, injected fetch — GitHub REST API)', () =
     try { await a.pushFiles('sess-1', FILES) } catch (e) { thrown = e }
     expect(thrown).toBeInstanceOf(Error)
     expect((thrown as Error).message).not.toContain(TOKEN)
+  })
+})
+
+describe('githubRepoExists (A2.1 collision probe)', () => {
+  it('true on GET 200, false on 404, undefined on any other status', async () => {
+    const at = (status: number): PushFetch => async () => ({ ok: status >= 200 && status < 300, status, headers: { get: () => null }, json: async () => ({}), text: async () => '' })
+    expect(await githubRepoExists('ada', 'app', TOKEN, at(200))).toBe(true)
+    expect(await githubRepoExists('ada', 'app', TOKEN, at(404))).toBe(false)
+    expect(await githubRepoExists('ada', 'app', TOKEN, at(403))).toBeUndefined()
+    expect(await githubRepoExists('ada', 'app', TOKEN, at(500))).toBeUndefined()
+  })
+
+  it('sends Bearer auth on the GET to /repos/{owner}/{repo} and NEVER leaks the token', async () => {
+    const seen: { url: string; auth: string | undefined }[] = []
+    const probe: PushFetch = async (url, init) => { seen.push({ url, auth: init?.headers?.Authorization }); return { ok: true, status: 200, headers: { get: () => null }, json: async () => ({}), text: async () => '' } }
+    await githubRepoExists('ada', 'todo-app', TOKEN, probe)
+    expect(seen[0]?.url).toBe('https://api.github.com/repos/ada/todo-app')
+    expect(seen[0]?.auth).toBe(`Bearer ${TOKEN}`)
+    // the token rides ONLY the header, never the url (a probe could otherwise leak it into logs).
+    expect(seen[0]?.url).not.toContain(TOKEN)
+  })
+
+  it('returns undefined (fail open) when the probe itself rejects — token-free', async () => {
+    const boom: PushFetch = async () => { throw new Error(`net err ${TOKEN}`) }
+    await expect(githubRepoExists('ada', 'app', TOKEN, boom)).resolves.toBeUndefined()
   })
 })

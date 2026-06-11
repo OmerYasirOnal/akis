@@ -26,6 +26,9 @@ describe('AccountSettings', () => {
     await userEvent.type(screen.getByLabelText('Display name'), 'Ada Lovelace')
     await userEvent.click(screen.getByRole('button', { name: /^Save$/ }))
     await waitFor(() => expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining('/auth/me'), expect.objectContaining({ method: 'PATCH' })))
+    // The save-success confirmation is a polite live region so SR users hear it (role="status").
+    const saved = await screen.findByText(/Saved/)
+    expect(saved).toHaveAttribute('role', 'status')
   })
 
   it('changes the password', async () => {
@@ -35,6 +38,9 @@ describe('AccountSettings', () => {
     await userEvent.type(screen.getByLabelText('New password'), 'newpassword9')
     await userEvent.click(screen.getByRole('button', { name: /Update password/i }))
     await waitFor(() => expect(fetchFn).toHaveBeenCalledWith(expect.stringContaining('/auth/change-password'), expect.objectContaining({ method: 'POST' })))
-    expect(await screen.findByText(/Password updated/)).toBeInTheDocument()
+    const done = await screen.findByText(/Password updated/)
+    expect(done).toBeInTheDocument()
+    // Same polite live region for the password-change confirmation.
+    expect(done).toHaveAttribute('role', 'status')
   })
 })

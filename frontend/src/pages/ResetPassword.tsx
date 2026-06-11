@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
-import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
+import { Button, Field, ErrorNote } from '../ui/kit.js'
+import { PasswordInput } from '../ui/PasswordInput.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
 
@@ -41,10 +42,10 @@ export function ResetPassword({ api }: { api: ApiClient }) {
       footer={<Link to="/login" className="font-semibold text-[#07D1AF] hover:underline">{t('auth.back')}</Link>}>
       <form className="flex flex-col gap-4" onSubmit={submit}>
         <Field label={t('auth.password')} hint={t('auth.pwHint')}>
-          <Input type="password" autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} placeholder="••••••••" required />
+          <PasswordInput autoComplete="new-password" value={password} onChange={e => setPassword(e.target.value)} required />
         </Field>
         {err && <ErrorNote>{err}</ErrorNote>}
-        <Button type="submit" full disabled={busy || password.length < 8}>{busy ? '…' : t('auth.reset.cta')}</Button>
+        <Button type="submit" full loading={busy} disabled={password.length < 8}>{t('auth.reset.cta')}</Button>
       </form>
     </AuthShell>
   )

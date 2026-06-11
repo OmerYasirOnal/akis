@@ -67,6 +67,18 @@ describe('foldRunBubbles', () => {
     expect(gateCards[0]!.state).toBe('satisfied')
   })
 
+  it('A2.1: carries the per-project delivery on the push_confirm gate, retained across the satisfied update', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting', delivery: { owner: 'ada', repo: 'todo-app' } }),
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'satisfied' }), // no delivery on satisfied
+    ])
+    const gateCards = msgs.filter(m => m.kind === 'gate') as GateMsg[]
+    expect(gateCards).toHaveLength(1)
+    expect(gateCards[0]!.state).toBe('satisfied')
+    // The destination is RETAINED (not cleared) after the satisfied event.
+    expect(gateCards[0]!.delivery).toEqual({ owner: 'ada', repo: 'todo-app' })
+  })
+
   it('folds a recovery into a singleton card that flips awaiting → resolved in place', () => {
     const msgs = foldRunBubbles([
       ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' }),

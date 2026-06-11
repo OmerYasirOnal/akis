@@ -1,20 +1,24 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useLayoutEffect, useRef, useCallback } from 'react'
 import type { StringKey } from '../i18n/catalog.js'
 import { ApiClient, ApiError } from '../api/client.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { specSeedFromMarkdown } from './buildSpec.js'
 import { actionErrorText } from './actionError.js'
 import { AkisChat } from './AkisChat.js'
-import { clearThread, saveThread, type ThreadNode } from './akisThread.js'
+import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, type ThreadNode } from './akisThread.js'
 import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
+import { useResizable, clampRatio } from './useResizable.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
+import { PreviewDrawer } from '../components/PreviewDrawer.js'
+import type { Device } from '../components/DeviceFrame.js'
 import { TrustReportCard } from '../components/TrustReportCard.js'
 import { PublishButton } from '../components/PublishButton.js'
 import { ExternalWriteCard } from '../components/ExternalWriteCard.js'
 import { AgentWriteProposals } from '../components/AgentWriteProposals.js'
 import { AgentRoster } from '../components/AgentRoster.js'
+import { Link } from '../router/router.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
@@ -70,12 +74,43 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // The active run's idea/spec text (for recentBuilds + base-merge); follows the active run.
   const [activeIdea, setActiveIdea] = useState('')
   const [busy, setBusy] = useState(false)
-  const [previewOpen, setPreviewOpen] = useState(true)
-  // MOBILE (below lg) the two panes can't sit side-by-side, so a stacked preview rail used to be
-  // pushed off-screen below a full-height chat — unreachable. On narrow viewports we show ONE pane
-  // at a time and a Chat/Preview tab toggle to switch. Desktop is untouched (the tabs are lg:hidden
-  // and the show/hide classes are lg:* no-ops, so the side-by-side split renders exactly as before).
-  const [mobileTab, setMobileTab] = useState<'chat' | 'preview'>('chat')
+  // Device preset for the preview iframe (Responsive default · Mobil 390 · Masaüstü min(1280,pane)).
+  // Lifted to the studio so it persists across tab flips; threaded into PreviewPanel → DeviceFrame,
+  // which sets the iframe's LOGICAL width only (no sandbox/src change).
+  const [device, setDevice] = useState<Device>('responsive')
+  // The studio SHELL width — measured read-only via a ResizeObserver — feeds useResizable so the
+  // drawer ratio clamps against the real container (the 28rem chat floor + 60% cap are width-relative,
+  // not viewport-relative). One setState per resize (no per-frame storm). The drawer itself is an
+  // ABSOLUTE sibling out of the flex flow, so this measures the chat column's available width.
+  const shellRef = useRef<HTMLDivElement | null>(null)
+  const [containerWidth, setContainerWidth] = useState(0)
+  // LOW-2 (no first-frame flash): on a reload where the persisted drawer is OPEN, `containerWidth`
+  // starts 0, so `previewW` resolves to '0px' and the drawer would paint at width:0 for the one frame
+  // before the ResizeObserver fires post-paint — a visible flash of a collapsed drawer. Measure the
+  // shell SYNCHRONOUSLY before paint here and seed `containerWidth` so `--preview-w` is already correct
+  // on the first frame. Guarded to only seed while still 0 (and only when the rect has real width) so
+  // it never fights the ResizeObserver below, which owns every subsequent resize. useLayoutEffect runs
+  // before the browser paints; useEffect would run after, defeating the purpose.
+  useLayoutEffect(() => {
+    const el = shellRef.current
+    if (!el) return
+    const w = el.getBoundingClientRect().width
+    if (w > 0) setContainerWidth(prev => (prev === 0 ? w : prev))
+  }, [])
+  useEffect(() => {
+    const el = shellRef.current
+    if (!el || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver(entries => {
+      const w = entries[0]?.contentRect.width
+      if (typeof w === 'number') setContainerWidth(w)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  // The drawer's open/width state lives in useResizable (persisted ratio + open in localStorage,
+  // re-clamped vs the current container). open/ratio drive the push-split; the keyboard splitter +
+  // pointer drag are wired below. Pure view-state — no gate authority.
+  const { open: previewOpen, ratio, openDrawer, closeDrawer, commitRatio, resetRatio, onKeyDown: onResizeKeyDown } = useResizable({ containerWidth })
   const [startingSpec, setStartingSpec] = useState<string | undefined>()
   // The active run's folded live view, reported UP by its RunBlock (exactly ONE reporter — the
   // active run — so no shared per-event setState storm). Drives the header roster + the right rail.
@@ -135,14 +170,15 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (activeSessionId && activeSessionId !== id && !isTerminalStatus(backendStatus)) {
       void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient */ })
     }
-    const restored: ThreadNode[] = (chat ?? [])
+    // MERGE — never overwrite. The local spine, when it already anchors THIS run (has its run
+    // marker), is the richest copy: it holds the pre-build, sessionId-less turns the server can
+    // never store (typed before the build existed) AND is re-saved on every same-device turn, so
+    // it is authoritative. mergeSpine keeps it in that case; otherwise (cleared storage / another
+    // device) it rebuilds from the server turns. Either way the conversation is not lost on return.
+    const restoredTurns = (chat ?? [])
       .filter(turn => turn.content.trim().length > 0)
       .map(turn => ({ role: turn.role, content: turn.content }))
-    const nodes: ThreadNode[] = [
-      { role: 'assistant', content: t('akis.greeting') },
-      { role: 'run', sessionId: id, idea: idea.trim() },
-      ...restored,
-    ]
+    const nodes: ThreadNode[] = mergeSpine({ local: loadThread(), serverTurns: restoredTurns, id, greeting: t('akis.greeting'), idea })
     saveThread(nodes)
     setThreadKey(k => k + 1)
     // #35: a REOPEN must NOT auto-(re)boot the local preview — the user may only want to read the
@@ -150,6 +186,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // id so the auto-preview effect skips it; a FRESH build / a LIVE completion still auto-previews
     // (autoRan was never set to that id). Manual "Run app" still boots a reopened build on demand.
     autoRan.current = id
+    // #35 (M5): pre-seed the drawer auto-open guard too, so a reopened build's preview becoming
+    // 'ready' (manual Run, or a replayed ready frame) does NOT slide the drawer open unbidden.
+    drawerAutoOpened.current = id
     setActiveSessionId(id); setActiveIdea(idea); setActiveView(emptyView(id))
     setBackendStatus(undefined); setActionError(undefined); setStartingSpec(undefined); setSessionGone(false)
     // Point the address bar at the reopened build so a refresh reloads THIS session, not the
@@ -210,7 +249,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // → the same 4 structural gates + pipeline + History. The ONLY caller is the Chat-to-Build
   // approval (AkisChat's SpecCard "Approve & Build"). startBuild RETURNS the new session id so
   // AkisChat can append the inline run marker at its slot; it sets the ACTIVE run here.
-  const startBuild = async (v: string): Promise<string | undefined> => {
+  // useCallback-STABLE so AkisChat's onBuild identity holds across the active run's per-frame
+  // setActiveView re-renders (the memoized RunBlock siblings then bail). Reactive deps only;
+  // syncUrl is a pure inner fn (no reactive closure).
+  const startBuild = useCallback(async (v: string): Promise<string | undefined> => {
     const idea = v.trim(); if (!idea || busy || startingRef.current) return undefined
     startingRef.current = true
     setBusy(true); setActionError(undefined); setStartingSpec(idea)
@@ -232,7 +274,12 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // minted server-side via the approvalAuthority) and FIRE-AND-FORGET kicks the run (the seeded-
       // start auto-kick) — NO second approve, NO client api.run. Multi-run = separate startSession
       // calls, each one session + one kick.
-      const s = await api.startSession(idea, undefined, baseId, specSeedFromMarkdown(idea))
+      // Send the PRE-BUILD conversation (the spec-shaping user/assistant turns typed before this
+      // build existed — historyForApi skips the greeting, run markers AND error rows). The server
+      // seeds them ATOMICALLY onto session.chat (a NON-gate column) so a CROSS-DEVICE reopen
+      // rehydrates them too; same-device reopen is already covered by the local-spine merge in seedRun.
+      const preBuildChat = historyForApi(loadThread(), t('akis.greeting'))
+      const s = await api.startSession(idea, undefined, baseId, specSeedFromMarkdown(idea), preBuildChat)
       // The NEW build becomes the active run. codeFiles reset to the new session's snapshot effect;
       // editsBase reflects the new session (the snapshot effect re-reads it).
       setActiveSessionId(s.id); setActiveIdea(idea); setActiveView(emptyView(s.id)); setStartingSpec(undefined)
@@ -249,11 +296,16 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       return s.id
     } catch (e) { setActionError(actionErrorText(e, t)); setStartingSpec(undefined); return undefined }
     finally { setBusy(false); startingRef.current = false }
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [busy, activeSessionId, backendStatus, codeFiles, api, t])
 
   /** Re-open a past build (BOTH History doors route here). Seeds a one-run thread + clean greeting;
-   *  the run-block replays /log + /events. */
-  const openSession = (b: RecentBuild): void => { openWithChat(b.id, b.idea) }
+   *  the run-block replays /log + /events. useCallback-stable so HistoryMenu's onOpen + the studio's
+   *  onNewBuild path don't churn the spine; openWithChat/seedRun are pure inner fns over the reactive
+   *  deps listed (their captured state is mirrored here). */
+  const openSession = useCallback((b: RecentBuild): void => { openWithChat(b.id, b.idea) },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [api, activeSessionId, backendStatus, t])
 
   // Stable across renders, so the gate callbacks keep a stable identity.
   const act = useCallback(async (fn: () => Promise<unknown>): Promise<void> => {
@@ -283,12 +335,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // Localized note for a failed/unsupported preview boot (carries the backend's short reason).
   const previewFailNote = (e: { status: 'starting' | 'ready' | 'failed' | 'stopped' | 'unsupported'; reason?: string }): string =>
     t(e.status === 'unsupported' ? 'preview.unsupported' : 'preview.failed') + (e.reason ? `: ${e.reason}` : '')
-  const runApp = (): Promise<void> => act(async () => {
+  const runApp = useCallback((): Promise<void> => act(async () => {
     if (!activeSessionId) return
     const e = await api.startPreview(activeSessionId)
     if (e.status === 'failed' || e.status === 'unsupported') setActionError(previewFailNote(e))
-  })
-  const newChat = (): void => {
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [act, activeSessionId, api, t])
+  const newChat = useCallback((): void => {
     // P1-6: 'New build' on a NON-TERMINAL active run must STOP it, not orphan it. Cancel the backend
     // pipeline (api.cancel → Orchestrator.cancel; only sets 'cancelled', NEVER mints) BEFORE clearing.
     if (activeSessionId && !isTerminalStatus(backendStatus)) {
@@ -299,7 +352,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // Drop the persisted spine + remount AkisChat so it re-seeds a clean greeting (no run markers).
     clearThread(); setThreadKey(k => k + 1)
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
-  }
+  }, [activeSessionId, backendStatus, api])
 
   // Auto-run the local preview once a build ships, so the app appears live with no extra click.
   const autoRan = useRef<string | undefined>(undefined)
@@ -312,6 +365,23 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeSessionId, status, api])
+
+  // #35 (M5) drawer auto-open guard — a SEPARATE ref from autoRan (the preview-boot guard) so the two
+  // concerns can't entangle. seedRun pre-seeds this with the reopened id (alongside autoRan) so a
+  // REOPEN never auto-opens the drawer (the user may only want the transcript). A FRESH build leaves
+  // it unset, so the first 'ready' frame auto-opens once. Closing the drawer keeps the id seeded, so a
+  // later 'ready' (a re-run within the same session) won't re-pop it against the user's choice.
+  const drawerAutoOpened = useRef<string | undefined>(undefined)
+  // AUTO-OPEN ON READY (H2): open the drawer the moment the ACTIVE run's preview is embeddable —
+  // `view.preview.ready === true` (a ready frame carries a /preview/:id/ url). NEVER on `starting`
+  // (that would slide an empty spinner in and out — the anti-flicker rule). Fires at most once per
+  // session via drawerAutoOpened. View-state only; reads the already-folded view (no SSE setState).
+  useEffect(() => {
+    if (activeSessionId && activeView.preview.ready && drawerAutoOpened.current !== activeSessionId) {
+      drawerAutoOpened.current = activeSessionId
+      openDrawer()
+    }
+  }, [activeSessionId, activeView.preview.ready, openDrawer])
 
   // AUTHORITATIVE done-ness: the SSE-derived activeView.status OR the persisted backendStatus
   // (from getSession). EITHER may know first — the live stream flips to 'done' immediately on a
@@ -359,7 +429,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       <AgentRoster view={activeView} />
       <div className="flex shrink-0 items-center gap-2">
         <HistoryMenu builds={recent} onOpen={openSession} />
-        {activeSessionId && <button onClick={newChat} className="shrink-0 rounded border border-white/10 px-2 py-0.5 text-xs text-slate-400 hover:text-slate-200">{t('chat.new')}</button>}
+        {/* PROMINENT "new build" (owner 2026-06-10): this is the ONLY door out of an active chat into a
+            fresh one (the Stüdyo-nav reset was reverted — it destroyed active chats), so it must read as
+            a primary action, not a ghost link: teal accent + semibold, same accessible name. */}
+        {activeSessionId && <button onClick={newChat} className="shrink-0 rounded-lg border border-teal-400/40 bg-teal-400/10 px-3 py-1 text-xs font-semibold text-teal-200 transition-colors hover:bg-teal-400/20 hover:text-teal-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60">{t('chat.new')}</button>}
       </div>
     </div>
   )
@@ -388,102 +461,153 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     />
   )
 
-  // Height-bounded so the chat scrolls INSIDE the frame instead of growing the page (stable, no
-  // jump). The conversation stays the primary surface; preview lives in the rail once a run exists.
-  // STABLE TREE: the chat <section> sits at the SAME tree position whether idle or building, so
-  // approving a spec (idle → build) never REMOUNTS AkisChat (which would discard the just-appended
-  // inline run marker). Only the rail is conditionally added as a sibling.
   const hasRun = !!activeSessionId
-  // Mobile pane visibility (below lg only). When a run exists, only the selected pane shows on
-  // narrow viewports; at lg and up both classes are no-ops so the desktop split is unchanged.
-  const chatPaneMobile = hasRun && mobileTab !== 'chat' ? 'hidden lg:flex' : 'flex'
-  const previewPaneMobile = hasRun && mobileTab !== 'preview' ? 'hidden lg:block' : 'block'
-  return (
-    <div className="flex min-h-[32rem] flex-col lg:h-[calc(100dvh-8.5rem)]">
-      {/* MOBILE reachability: below lg the chat and preview can't sit side-by-side, so the rail
-          would be stranded off-screen below a full-height chat. This Chat/Preview tablist (lg:hidden)
-          lets a narrow viewport switch panes. Only meaningful once a run exists (there's a rail). */}
-      {hasRun && (
-        <div role="tablist" aria-label={t('preview.pane.switcher')} className="mb-3 flex gap-1 rounded-xl border border-white/10 bg-white/[0.03] p-1 lg:hidden">
-          {(['chat', 'preview'] as const).map(tab => {
-            const selected = mobileTab === tab
-            return (
-              <button
-                key={tab}
-                role="tab"
-                aria-selected={selected}
-                onClick={() => setMobileTab(tab)}
-                className={`flex-1 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors ${selected ? 'bg-white/[0.08] text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}
-              >
-                {t(tab === 'chat' ? 'preview.tab.chat' : 'preview.tab.live')}
-              </button>
-            )
-          })}
-        </div>
-      )}
-      {/* WIDER SPLIT (live UX feedback): with the studio frame now using the viewport, the
-          preview earns real width — 46/48/50% at lg/xl/2xl — so the embedded app renders like an
-          actual app instead of a phone-width strip. Below lg everything stacks (grid-cols-1). */}
-      <div className={`grid min-h-0 flex-1 gap-6 transition-[grid-template-columns] duration-300 ease-out ${hasRun ? (previewOpen ? 'lg:grid-cols-[minmax(0,1fr)_minmax(30rem,46%)] xl:grid-cols-[minmax(0,1fr)_minmax(36rem,48%)] 2xl:grid-cols-[minmax(0,1fr)_minmax(42rem,50%)]' : 'lg:grid-cols-[minmax(0,1fr)_4rem]') : 'grid-cols-1'}`}>
-        <section className={`min-h-0 flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.02] shadow-[0_0_60px_rgba(124,58,237,0.06)] backdrop-blur-sm ${chatPaneMobile}`}>
-          {header}
-          <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>
-            {actionError && <div role="alert" className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{actionError}</div>}
-            {editsBaseBadge}
-            <div className="min-h-0 flex-1">{chat}</div>
-          </div>
-        </section>
 
-        {/* Live preview rail — the actually-running app (the ACTIVE run). Only once a run exists. */}
-        {hasRun && (
-          <aside className={`min-h-0 overflow-y-auto rounded-2xl border border-white/10 bg-white/[0.02] backdrop-blur-sm transition-all duration-300 ${previewOpen ? 'p-4' : 'p-2'} ${previewPaneMobile}`}>
-            {/* Desktop-only collapse toggle. Hidden under lg: below lg the rail is reached via the
-                mobile pane-switcher, and the collapsed 4rem strip is a desktop-split affordance —
-                exposing it on mobile would strand the user in a confusing collapsed-strip dead-end. */}
-            <div className={`mb-2 hidden lg:flex ${previewOpen ? 'justify-end' : 'justify-center'}`}>
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(v => !v)}
-                aria-label={t(previewOpen ? 'preview.collapse' : 'preview.expand')}
-                className="rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-xs text-slate-300 hover:bg-white/[0.08] hover:text-slate-100"
-              >
-                {previewOpen ? '›' : '‹'}
-              </button>
+  // RESIZE GEOMETRY BRIDGE. The drawer is geometry-agnostic — it hands the parent a raw clientX and we
+  // map it to a width/ratio (only the parent knows the shell's rect). The drawer is RIGHT-anchored, so
+  // its width is `shellRight - clientX`; dividing by the container gives the ratio (then clamped to the
+  // 30rem floor / 60% cap / 28rem chat floor). The LIVE drag writes the `--preview-w` px var directly on
+  // the shell (one DOM write per rAF, no React commit) so chat padding + drawer width move in lockstep
+  // without a re-render storm; the COMMIT (on pointerup) persists the ratio through useResizable.
+  const ratioFromClientX = useCallback((clientX: number): number => {
+    const rect = shellRef.current?.getBoundingClientRect()
+    if (!rect || !rect.width) return ratio
+    return clampRatio((rect.right - clientX) / rect.width, rect.width)
+  }, [ratio])
+  const onPointerWidth = useCallback((clientX: number): void => {
+    const el = shellRef.current
+    if (!el) return
+    // A drag only ever runs while the drawer is OPEN, so both vars carry the same live width during it:
+    // `--preview-w` eases the chat padding, `--preview-drawer-w` the drawer's own width — written together
+    // so the split tracks the cursor 1:1 (one DOM write per rAF, no React commit). On release the next
+    // render restores both committed values (the open branch keeps them equal), so there's no flash.
+    const px = `${Math.round(ratioFromClientX(clientX) * (el.getBoundingClientRect().width || containerWidth))}px`
+    el.style.setProperty('--preview-w', px)
+    el.style.setProperty('--preview-drawer-w', px)
+  }, [ratioFromClientX, containerWidth])
+  const commitFromClientX = useCallback((clientX: number): void => { commitRatio(ratioFromClientX(clientX)) }, [commitRatio, ratioFromClientX])
+
+  // TWO split vars, DECOUPLED so the drawer can slide its FULL self (✕ included) off-screen when closed:
+  //  • `--preview-drawer-w` — the drawer's OWN width. ALWAYS the real ratio*containerWidth (never 0), so a
+  //    closed drawer keeps full width and `translateX(100%)` genuinely carries the whole box (header/✕/
+  //    body) off-canvas. Without this, a width:0 box translated 100% travels 0px → the ✕ paints at the
+  //    right edge with nothing closed (the Issue-1 bug).
+  //  • `--preview-w` — the CHAT push-padding only. 0 while closed → the chat reflows to full width; the
+  //    real width while open so the centered chat shifts into the remaining space. The drag path keeps
+  //    writing THIS var per rAF (it only runs while open, so the drawer width tracks it via the open
+  //    branch below; on release the render restores both committed values, no flash).
+  const fullPreviewW = containerWidth ? `${Math.round(clampRatio(ratio, containerWidth) * containerWidth)}px` : '0px'
+  // Reserve the push-split strip ONLY when the drawer is actually RENDERED — i.e. a real run exists
+  // (hasRun). The drawer's open/ratio persist in localStorage, so after a session with the drawer open
+  // a FRESH chat (activeSessionId undefined → no drawer mounted) would otherwise still pad the chat
+  // right by the full ratio for a drawer that isn't there — shifting the conversation left behind a
+  // large empty void (owner 2026-06-10). Gating on hasRun makes the no-run studio reflow full-width and
+  // center; the persisted ratio/open keep driving the split untouched for sessions WITH a run.
+  const previewW = hasRun && previewOpen ? fullPreviewW : '0px'
+
+  // The MOVED rail content (verbatim props + `!sessionGone && isDone` guards). Now the drawer's region A.
+  const cards = (
+    <>
+      {/* Edit-mode disclosure (honesty): the user judges the MERGED result in the drawer, so the
+          "edits a prior app" fact must travel here too — the same badge shown above the chat,
+          reused (renders only when editsBase, since editsBaseBadge is null otherwise). */}
+      {editsBaseBadge}
+      {activeSessionId && !sessionGone && isDone && <TrustReportCard sessionId={activeSessionId} api={api} />}
+      {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING. */}
+      {activeSessionId && !sessionGone && isDone && <PublishButton sessionId={activeSessionId} api={api} initialRecord={publishRecord} />}
+      {/* Agent-proposed GitHub writes — confirm cards for status:'proposed' writes an agent
+          recorded via propose_github_write. NOT gated on isDone: a proposal surfaces LIVE
+          during the build (it arrives as a propose_github_write tool_call); the human reads
+          the exact bound bytes and confirms. AKIS only proposes — never autonomous. */}
+      {activeSessionId && !sessionGone && <AgentWriteProposals sessionId={activeSessionId} api={api} />}
+      {/* Publish docs/issue to Jira/Confluence via MCP — propose → human-confirm → execute. */}
+      {activeSessionId && !sessionGone && isDone && <ExternalWriteCard sessionId={activeSessionId} idea={activeIdea} files={codeFiles} api={api} />}
+    </>
+  )
+
+  // Height-bounded so the chat scrolls INSIDE the frame instead of growing the page (stable, no
+  // jump). The conversation stays the primary surface; the preview lives in the slide-in drawer once a
+  // run exists. STABLE TREE: the chat <section> sits at the SAME tree position whether idle or building,
+  // so approving a spec (idle → build) never REMOUNTS AkisChat (which would discard the just-appended
+  // inline run marker). The drawer is added as an ABSOLUTE sibling of the chat <section>, never a wrapper.
+  return (
+    // `relative` so the drawer can be an absolute right-edge sibling (out of the flex flow — it can't
+    // collapse the chat height, C5). `--preview-w` cascades to chat padding + drawer width.
+    <div
+      ref={shellRef}
+      data-preview-shell
+      style={{ '--preview-w': previewW, '--preview-drawer-w': fullPreviewW } as React.CSSProperties}
+      // overflow-x-clip: the drawer is an absolute child anchored right-0 at its REAL width; when closed it
+      // is translateX(100%) PAST the shell's right edge. The shell sits inside the page's right padding, so
+      // without clipping the off-screen drawer peeks a sliver into that gap AND extends scrollWidth (a stray
+      // horizontal scrollbar). Clipping horizontally hides the closed drawer completely; the open drawer
+      // (right edge flush at the shell edge) and the edge-tab/separator (within bounds) are unaffected.
+      className="relative flex min-h-[32rem] flex-col overflow-x-clip lg:h-[calc(100dvh-8.5rem)]"
+    >
+      {/* The chat <section> KEEPS its exact tree slot (sacred — AkisChat key={threadKey}). Push-split:
+          on lg+ it reflows left by `--preview-w` when the drawer is open (so the centered chat shifts
+          into the remaining space); below lg the drawer is a full-screen overlay → NO padding (the
+          lg:[padding-right] arbitrary class applies the var only at lg+). */}
+      <section
+        // PUSH-SPLIT MOTION: the chat reflows its right padding by `--preview-w` as the drawer opens/
+        // closes. `motion-safe:` so it snaps INSTANTLY under prefers-reduced-motion (a11y) — it must
+        // stay in lockstep with the drawer's own `motion-safe` slide, so both honor the same media query.
+        // DRAG GUARD: during a separator drag the parent writes `--preview-w` per rAF; the padding ease
+        // would LAG the live cursor, so the shell carries `.is-dragging` for the drag and
+        // `[.is-dragging_&]:!transition-none` drops the ease → the split tracks the pointer 1:1. The next
+        // render after release restores the committed value with the transition back on (no flash).
+        // FOREGROUND SURFACE (Issue 3 — cohesion): the chat was `bg-white/[0.02]` (2% white = effectively
+        // invisible) with a diffuse outward violet page-glow, so the conversation melted into the page. Raise
+        // it to a clear elevated container — `bg-slate-900/60` + `border-white/12` + `backdrop-blur-md` + a
+        // CONTAINED inset top-light over a drop shadow (no outward bleed) — so the "place you talk" reads as a
+        // distinct foreground surface against the page and the rendered-app white that sits to its right.
+        // PADDING GATE: apply the push-split right-padding ONLY when a drawer is actually rendered for a
+        // run (hasRun) AND open — matching the `--preview-w` var's own hasRun gate above. A persisted
+        // open:true with no run leaves the chat at full width (no padding class, no zero-width ease firing).
+        className={`flex min-h-0 flex-1 flex-col overflow-hidden rounded-2xl border border-white/12 bg-slate-900/60 shadow-[inset_0_1px_0_rgba(255,255,255,0.04),0_8px_40px_rgba(0,0,0,0.45)] backdrop-blur-md motion-safe:transition-[padding] motion-safe:duration-300 motion-safe:ease-out [.is-dragging_&]:!transition-none ${hasRun && previewOpen ? 'lg:[padding-right:var(--preview-w)]' : ''}`}
+      >
+        {header}
+        <div className={`mx-auto flex min-h-0 w-full flex-1 flex-col gap-3 px-4 py-4 ${hasRun ? 'max-w-4xl xl:max-w-5xl 2xl:max-w-6xl' : 'max-w-3xl xl:max-w-4xl 2xl:max-w-5xl'}`}>
+          {actionError && (
+            <div role="alert" className="flex flex-wrap items-center gap-2 rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+              <span>{actionError}</span>
+              {/* CTA: a push refused for NO connected GitHub destination (recovery.push.notConnected)
+                  gets a direct Settings → GitHub link so the user can connect + retry, instead of a
+                  dead-end error. Detected by exact match on the localized string (its sole producer). */}
+              {actionError === t('recovery.push.notConnected') && (
+                <Link to="/settings" className="shrink-0 rounded border border-rose-300/40 px-2 py-0.5 font-semibold text-rose-100 hover:bg-rose-400/15">
+                  {t('recovery.push.connectCta')}
+                </Link>
+              )}
             </div>
-            {previewOpen ? (
-              <>
-                {activeSessionId && !sessionGone && isDone && <TrustReportCard sessionId={activeSessionId} api={api} />}
-                {/* Publish to your OWN server (OCI) — POST-`done`, optional, NON-GATING. */}
-                {activeSessionId && !sessionGone && isDone && <PublishButton sessionId={activeSessionId} api={api} initialRecord={publishRecord} />}
-                {/* Agent-proposed GitHub writes — confirm cards for status:'proposed' writes an agent
-                    recorded via propose_github_write. NOT gated on isDone: a proposal surfaces LIVE
-                    during the build (it arrives as a propose_github_write tool_call); the human reads
-                    the exact bound bytes and confirms. AKIS only proposes — never autonomous. */}
-                {activeSessionId && !sessionGone && <AgentWriteProposals sessionId={activeSessionId} api={api} />}
-                {/* Publish docs/issue to Jira/Confluence via MCP — propose → human-confirm → execute. */}
-                {activeSessionId && !sessionGone && isDone && <ExternalWriteCard sessionId={activeSessionId} idea={activeIdea} files={codeFiles} api={api} />}
-                <PreviewPanel view={activeView} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
-              </>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setPreviewOpen(true)}
-                title={t('preview.expand')}
-                className="flex min-h-40 w-full flex-col items-center justify-center gap-3 rounded-xl border border-white/10 bg-black/30 px-1 py-3 text-center text-xs text-slate-300 hover:border-teal-400/30 hover:text-teal-200"
-              >
-                <span aria-hidden className="text-base">▣</span>
-                {/* Vertical label (review): a horizontal word wraps/clips in the 4rem rail, worst in
-                    Turkish — read it down the narrow column instead. */}
-                <span className="[writing-mode:vertical-rl] tracking-wide">{t('preview.collapsed')}</span>
-                {activeView.verified !== undefined && (
-                  <span aria-hidden title={activeView.verified ? t('preview.verified') : t('preview.unverified')}
-                    className={`h-1.5 w-1.5 rounded-full ${activeView.verified ? 'bg-emerald-400' : 'bg-slate-500'}`} />
-                )}
-              </button>
-            )}
-          </aside>
-        )}
-      </div>
+          )}
+          {editsBaseBadge}
+          <div className="min-h-0 flex-1">{chat}</div>
+        </div>
+      </section>
+
+      {/* Live preview DRAWER — the actually-running app (the ACTIVE run) + the trust/publish/proposal
+          cards. An absolute right-edge sibling of the chat (never a wrapper). Only once a run exists.
+          allowAutoOpen=false (M1): a persisted open:true must NOT auto-show the mobile overlay on load
+          (FAB controls it). The keyboard splitter + the pointer-drag geometry bridge are wired in. */}
+      {hasRun && (
+        <PreviewDrawer
+          open={previewOpen}
+          ratio={ratio}
+          onKeyDown={onResizeKeyDown}
+          onReset={resetRatio}
+          onPointerWidth={onPointerWidth}
+          commitRatio={commitFromClientX}
+          onOpen={openDrawer}
+          onClose={closeDrawer}
+          allowAutoOpen={false}
+          {...(activeView.verified !== undefined ? { verified: activeView.verified } : {})}
+          cards={cards}
+          preview={
+            <PreviewPanel view={activeView} device={device} onDevice={setDevice} onRun={() => void runApp()} busy={busy} canRun={canRun} files={codeFiles} testEvidence={testEvidence} actionError={actionError} />
+          }
+        />
+      )}
     </div>
   )
 }

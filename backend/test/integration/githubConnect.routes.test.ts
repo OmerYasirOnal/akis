@@ -36,23 +36,33 @@ function app(opts: AppOpts = {}): { f: FastifyInstance; connections: GitHubConne
 
 afterEach(() => vi.restoreAllMocks())
 
-describe('GET /auth/github/connect', () => {
+describe('GET /auth/github/connect (A2.1 token-only — no repo required)', () => {
   it('401 when unauthenticated', async () => {
     const { f } = app({ userId: undefined })
-    const res = await f.inject({ method: 'GET', url: '/auth/github/connect?repo=ada/app' })
+    const res = await f.inject({ method: 'GET', url: '/auth/github/connect' })
     expect(res.statusCode).toBe(401)
   })
 
-  it('400 on a missing/malformed repo', async () => {
+  it('302s to github.com WITHOUT a repo query (A2.1: connect only authenticates)', async () => {
     const { f } = app({ userId: 'u1' })
-    expect((await f.inject({ method: 'GET', url: '/auth/github/connect' })).statusCode).toBe(400)
-    expect((await f.inject({ method: 'GET', url: '/auth/github/connect?repo=not-a-repo' })).statusCode).toBe(400)
-    expect((await f.inject({ method: 'GET', url: '/auth/github/connect?repo=a/b/c' })).statusCode).toBe(400)
+    const res = await f.inject({ method: 'GET', url: '/auth/github/connect' })
+    expect(res.statusCode).toBe(302)
+    const loc = res.headers.location as string
+    expect(loc.startsWith('https://github.com/login/oauth/authorize')).toBe(true)
+    expect(loc).toContain('scope=repo')
+    expect(loc).toContain('state=')
+  })
+
+  it('IGNORES a stray ?repo= and still 302s (token-only connect; per-project repos)', async () => {
+    const { f } = app({ userId: 'u1' })
+    const res = await f.inject({ method: 'GET', url: '/auth/github/connect?repo=anything-here' })
+    expect(res.statusCode).toBe(302)
+    expect((res.headers.location as string).startsWith('https://github.com/login/oauth/authorize')).toBe(true)
   })
 
   it('redirects ?github=unavailable when the OAuth app is not configured', async () => {
     const { f } = app({ userId: 'u1', env: { PUBLIC_BASE_URL: BASE } })
-    const res = await f.inject({ method: 'GET', url: '/auth/github/connect?repo=ada/app' })
+    const res = await f.inject({ method: 'GET', url: '/auth/github/connect' })
     expect(res.statusCode).toBe(302)
     expect(res.headers.location).toBe(`${BASE}/settings?github=unavailable`)
   })
@@ -60,19 +70,18 @@ describe('GET /auth/github/connect', () => {
   it('redirects ?github=unavailable when encryption cannot store (canStore=false)', async () => {
     const connections: GitHubConnectionStore = { ...new GitHubConnectionMemoryStore(), canStore: () => false } as GitHubConnectionStore
     const { f } = app({ userId: 'u1', connections })
-    const res = await f.inject({ method: 'GET', url: '/auth/github/connect?repo=ada/app' })
+    const res = await f.inject({ method: 'GET', url: '/auth/github/connect' })
     expect(res.headers.location).toBe(`${BASE}/settings?github=unavailable`)
   })
 
-  it('302s to github.com with scope=repo when authorized + configured', async () => {
+  it('302s to github.com with scope=repo when authorized + configured (no token in URL)', async () => {
     const { f } = app({ userId: 'u1' })
-    const res = await f.inject({ method: 'GET', url: '/auth/github/connect?repo=ada/app' })
+    const res = await f.inject({ method: 'GET', url: '/auth/github/connect' })
     expect(res.statusCode).toBe(302)
     const loc = res.headers.location as string
     expect(loc.startsWith('https://github.com/login/oauth/authorize')).toBe(true)
     expect(loc).toContain('scope=repo')
     expect(loc).toContain('state=')
-    // The repo is bound into the signed state, NOT a token-in-URL.
     expect(loc).not.toContain(ACCESS_TOKEN)
   })
 })
@@ -104,18 +113,19 @@ describe('GET /auth/github/callback', () => {
     expect(called).toBe(false)
   })
 
-  it('happy path stores an ENCRYPTED connection and redirects ?github=connected — no Set-Cookie', async () => {
+  it('happy path stores an ENCRYPTED token + LOGIN (no repo, A2.1) and redirects ?github=connected — no Set-Cookie', async () => {
     const { f, connections } = app({ userId: 'u1', http: fakeHttp })
-    const state = signConnectState('u1', 'ada/app', SECRET)
+    const state = signConnectState('u1', 'connect', SECRET)
     const res = await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${state}` })
     expect(res.statusCode).toBe(302)
     expect(res.headers.location).toBe(`${BASE}/settings?github=connected`)
     // The connect callback NEVER mints a session.
     expect(res.headers['set-cookie']).toBeUndefined()
-    // The connection was stored against the SIGNED-STATE user.
+    // The connection was stored against the SIGNED-STATE user — token + login, NO repo (token-only).
     expect(connections.getToken('u1')).toBe(ACCESS_TOKEN)
     const st = connections.status('u1')
-    expect(st).toMatchObject({ username: 'ada', repo: 'ada/app', scopes: ['repo'] })
+    expect(st).toMatchObject({ username: 'ada', scopes: ['repo'] })
+    expect(st?.repo).toBeUndefined() // A2.1: per-project repos — connect stores no repo
     // No token in any response body/header.
     expect(JSON.stringify(res.headers)).not.toContain(ACCESS_TOKEN)
   })
@@ -124,10 +134,40 @@ describe('GET /auth/github/callback', () => {
     const env = { ...GH_ENV, AUTH_COOKIE_SAMESITE: 'strict' }
     // userId undefined simulates the dropped cookie on the cross-site callback.
     const { f, connections } = app({ userId: undefined, env, http: fakeHttp })
-    const state = signConnectState('u1', 'ada/app', SECRET)
+    const state = signConnectState('u1', 'connect', SECRET)
     const res = await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${state}` })
     expect(res.headers.location).toBe(`${BASE}/settings?github=connected`)
     expect(connections.getToken('u1')).toBe(ACCESS_TOKEN)
+  })
+
+  it("REJECTS a well-signed NON-delivery state (MCP-flow 'r' slot) — no token exchange (gate-keeper F2)", async () => {
+    // An MCP-connect state carries its provider id in the second slot. Even though it is
+    // well-signed for the SAME user, this callback must not redeem it: assert the 'connect'
+    // sentinel BEFORE any exchange, symmetric with the MCP callback's own st.repo check.
+    let exchanged = 0
+    const http: HttpFetch = async (url) => { exchanged++; return fakeHttp(url) }
+    const { f, connections } = app({ userId: 'u1', http })
+    const mcpState = signConnectState('u1', 'atlassian', SECRET) // wrong flow, valid signature
+    const res = await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${mcpState}` })
+    expect(res.headers.location).toBe(`${BASE}/settings?github=error`)
+    expect(exchanged).toBe(0) // rejected BEFORE the token exchange
+    expect(connections.getToken('u1')).toBeUndefined()
+  })
+
+  it('FAILS the connect honestly when GET /user yields no login — nothing stored (login is the namespace)', async () => {
+    // A2.1 made the login LOAD-BEARING (it is the personal namespace per-project repos are created
+    // under): persisting a login-less row would present as "Connected" yet refuse every push.
+    const http: HttpFetch = async (url) => {
+      const j = (b: unknown, status = 200) => ({ ok: status < 300, status, json: async () => b, text: async () => JSON.stringify(b) })
+      if (url.includes('login/oauth/access_token')) return j({ access_token: ACCESS_TOKEN, scope: 'repo' })
+      if (url.endsWith('/user')) return j({ message: 'rate limited' }, 403) // soft-failed /user → '' login
+      throw new Error('unexpected ' + url)
+    }
+    const { f, connections } = app({ userId: 'u1', http })
+    const state = signConnectState('u1', 'connect', SECRET)
+    const res = await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${state}` })
+    expect(res.headers.location).toBe(`${BASE}/settings?github=error`)
+    expect(connections.getToken('u1')).toBeUndefined() // no half-connected dangling row
   })
 })
 
@@ -175,7 +215,7 @@ describe('no token EVER appears in logs (happy, error, exchange-failure)', () =>
     // Happy path.
     {
       const { f } = app({ userId: 'u1', http: fakeHttp })
-      await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${signConnectState('u1', 'ada/app', SECRET)}` })
+      await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${signConnectState('u1', 'connect', SECRET)}` })
     }
     // Forged-state error path.
     {
@@ -189,7 +229,7 @@ describe('no token EVER appears in logs (happy, error, exchange-failure)', () =>
         throw new Error('boom')
       }
       const { f } = app({ userId: 'u1', http: failing })
-      await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${signConnectState('u1', 'ada/app', SECRET)}` })
+      await f.inject({ method: 'GET', url: `/auth/github/callback?code=abc&state=${signConnectState('u1', 'connect', SECRET)}` })
     }
 
     expect(logs.join('\n')).not.toContain(ACCESS_TOKEN)

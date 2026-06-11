@@ -10,7 +10,10 @@ let dir: string
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'akis-report-')) })
 afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
 
-const app = () => buildServer({ keyStore: new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z'), env: { AUTH_JWT_SECRET: 'report-secret', AKIS_DEMO_VERIFY: '1' } })
+// NODE_ENV=test keeps the demo/keyless mock as the LEGITIMATE delivery destination (no per-user
+// `githubFor` is wired in test mode), so a confirm here reaches `done` honestly — the new mock-
+// fallback refusal only fires in REAL mode (an authenticated owner whose GitHub is unconnected).
+const app = () => buildServer({ keyStore: new JsonFileKeyStore(join(dir, 'keys.json'), MASTER, () => '2026-06-01T00:00:00Z'), env: { AUTH_JWT_SECRET: 'report-secret', AKIS_DEMO_VERIFY: '1', NODE_ENV: 'test' } })
 const cookieOf = (res: { headers: Record<string, unknown> }) => String(res.headers['set-cookie']).split(';')[0]!
 const signup = (s: ReturnType<typeof app>, email: string) =>
   s.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'U', email, password: 'password1234' } })

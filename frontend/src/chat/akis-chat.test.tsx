@@ -70,6 +70,36 @@ describe('AkisChat', () => {
     expect(onBuild).toHaveBeenCalledWith('# TODO App\nA list.')
   })
 
+  it('the build-ready spec message is presented AS Scribe (Sc avatar + "Scribe" name), not AKIS', async () => {
+    // P2: the spec belongs to Scribe's identity in the UI even though the chat-seeded build skips
+    // the Scribe pipeline agent. The spec-card assistant message gets the Sc monogram + a "Scribe"
+    // name label; the greeting (a plain assistant message) keeps the AK monogram.
+    const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
+    const api = new ApiClient('', chatFetch(reply))
+    render(<I18nProvider><AkisChat api={api} onBuild={() => {}} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'give me a spec')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+
+    await waitFor(() => expect(screen.getByText('Build-ready spec')).toBeInTheDocument())
+    // The spec card carries Scribe's identity: a "Scribe" name label + the "Sc" role monogram.
+    expect(screen.getByText('Scribe')).toBeInTheDocument()
+    expect(screen.getByText('Sc')).toBeInTheDocument()
+    // The greeting (a non-spec assistant message) still renders as AKIS.
+    expect(screen.getByText('AK')).toBeInTheDocument()
+  })
+
+  it('a plain (non-spec) assistant reply stays AKIS (AK) — no Scribe identity leaks onto ordinary chat', async () => {
+    const api = new ApiClient('', chatFetch('Just chatting, no spec.'))
+    render(<I18nProvider><AkisChat api={api} onBuild={() => {}} /></I18nProvider>)
+    await userEvent.type(screen.getByLabelText(/ask akis/i), 'hi')
+    await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
+    await waitFor(() => expect(screen.getByText('Just chatting, no spec.')).toBeInTheDocument())
+    // No spec → no Scribe name label / Sc monogram anywhere; AKIS (AK) avatars only.
+    expect(screen.queryByText('Scribe')).toBeNull()
+    expect(screen.queryByText('Sc')).toBeNull()
+    expect(screen.getAllByText('AK').length).toBeGreaterThan(0)
+  })
+
   it('shows NO SpecCard for a plain reply', async () => {
     const api = new ApiClient('', chatFetch('Just chatting, no spec.'))
     render(<I18nProvider><AkisChat api={api} onBuild={() => {}} /></I18nProvider>)
@@ -338,5 +368,37 @@ describe('AkisChat — streaming text smoothing', () => {
     expect(screen.getByRole('button', { name: 'Build a poll' })).toBeInTheDocument()
     // The raw fence marker must never render as prose.
     expect(screen.queryByText(/akis-suggest/)).toBeNull()
+  })
+})
+
+describe('AkisChat cold-start starter prompts', () => {
+  const STARTER1 = 'A habit tracker with daily streaks and reminders'
+
+  it('offers tappable starter prompts on a fresh thread (just the greeting, no active build)', () => {
+    const api = new ApiClient('', chatFetch('ok'))
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    expect(screen.getByText('Not sure where to start? Try one of these:')).toBeInTheDocument()
+    // all four example builds render as buttons that the user can tap directly
+    expect(screen.getByRole('button', { name: STARTER1 })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'A URL shortener with click analytics' })).toBeInTheDocument()
+  })
+
+  it('tapping a starter sends it directly (no typing) and then the starters disappear', async () => {
+    const api = new ApiClient('', chatFetch('Great — let’s build it.'))
+    render(<I18nProvider><AkisChat api={api} /></I18nProvider>)
+    await userEvent.click(screen.getByRole('button', { name: STARTER1 }))
+    // the tapped prompt becomes the user message...
+    await waitFor(() => expect(screen.getByText('Great — let’s build it.')).toBeInTheDocument())
+    expect(screen.getByText(STARTER1)).toBeInTheDocument() // user bubble
+    // ...and once the thread has moved past the lone greeting, the starters are gone
+    expect(screen.queryByText('Not sure where to start? Try one of these:')).toBeNull()
+    expect(screen.queryByRole('button', { name: STARTER1 })).toBeNull()
+  })
+
+  it('does NOT show starters once a build is active (activeSessionId set)', () => {
+    const api = new ApiClient('', chatFetch('ok'))
+    render(<I18nProvider><AkisChat api={api} activeSessionId="s1" /></I18nProvider>)
+    expect(screen.queryByText('Not sure where to start? Try one of these:')).toBeNull()
+    expect(screen.queryByRole('button', { name: STARTER1 })).toBeNull()
   })
 })

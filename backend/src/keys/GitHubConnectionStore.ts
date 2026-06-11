@@ -11,18 +11,26 @@ const GH_AAD_SCOPE = 'akis:github-conn:'
 export interface GitHubConnection {
   username: string
   scopes: string[]
-  /** "owner/name" of the target repo the gated push publishes into. */
-  repo: string
+  /**
+   * A2.1 — DEAD on new connections. Connecting GitHub now ONLY authenticates (token + login); the
+   * push target is PER-PROJECT (session.delivery, derived from the project title into the user's
+   * PERSONAL namespace = `username`). This field is preserved for OLD rows written before A2.1 and
+   * surfaced by status() only so they round-trip, but it is NEVER consulted for destination
+   * resolution anymore (buildUserAdapter reads session.delivery, not this). Absent on new connects.
+   */
+  repo?: string
   connectedAt: string
 }
 
 /** What the connect callback hands the store. The accessToken is the ONLY secret field;
- *  it is encrypted at rest, never returned by status, never logged. */
+ *  it is encrypted at rest, never returned by status, never logged. `username` is the authed
+ *  GitHub LOGIN (the personal namespace per-project repos are created under). A2.1: `repo` is
+ *  no longer collected at connect time (token-only connect) — it stays optional for back-compat. */
 export interface GitHubConnectionInput {
   accessToken: string
   username: string
   scopes: string[]
-  repo: string
+  repo?: string
 }
 
 export interface GitHubConnectionStore {
@@ -42,7 +50,9 @@ export interface GitHubConnectionStore {
 interface StoredRow extends EncryptedSecret {
   username: string
   scopes: string[]
-  repo: string
+  // A2.1: written only by OLD connections; new connects omit it (token-only). Optional, never read
+  // for destination resolution anymore.
+  repo?: string
   connectedAt: string
 }
 
@@ -83,7 +93,10 @@ export class JsonFileGitHubConnectionStore implements GitHubConnectionStore {
 
   set(userId: string, input: GitHubConnectionInput): void {
     const enc = encryptSecret(input.accessToken, userId, this.master, 'v1', GH_AAD_SCOPE)
-    this.rows[userId] = { ...enc, username: input.username, scopes: input.scopes, repo: input.repo, connectedAt: this.now() }
+    // A2.1: `repo` is conditionally spread (token-only connect omits it; exactOptionalPropertyTypes
+    // forbids assigning `undefined` to the now-optional field). A re-connect REPLACES the row, so
+    // an old connection's stale `repo` is naturally dropped on the next connect.
+    this.rows[userId] = { ...enc, username: input.username, scopes: input.scopes, ...(input.repo ? { repo: input.repo } : {}), connectedAt: this.now() }
     this.persist()
   }
 
@@ -108,7 +121,8 @@ export class JsonFileGitHubConnectionStore implements GitHubConnectionStore {
     // unset) must NOT be advertised as connected, or the FE shows a connection the push
     // path can't actually use (a split-brain). Fail closed to "not connected".
     if (this.getToken(userId) === undefined) return undefined
-    return { username: row.username, scopes: row.scopes, repo: row.repo, connectedAt: row.connectedAt }
+    // A2.1: surface a legacy `repo` only if present (round-trip old rows); never required for new ones.
+    return { username: row.username, scopes: row.scopes, ...(row.repo ? { repo: row.repo } : {}), connectedAt: row.connectedAt }
   }
 
   remove(userId: string): void {
@@ -131,7 +145,8 @@ export class GitHubConnectionMemoryStore implements GitHubConnectionStore {
   constructor(private now: () => string = () => new Date().toISOString()) {}
 
   set(userId: string, input: GitHubConnectionInput): void {
-    this.rows.set(userId, { token: input.accessToken, username: input.username, scopes: input.scopes, repo: input.repo, connectedAt: this.now() })
+    // A2.1: `repo` conditionally spread (token-only connect); a re-connect replaces the row.
+    this.rows.set(userId, { token: input.accessToken, username: input.username, scopes: input.scopes, ...(input.repo ? { repo: input.repo } : {}), connectedAt: this.now() })
   }
 
   getToken(userId: string): string | undefined {
@@ -141,7 +156,7 @@ export class GitHubConnectionMemoryStore implements GitHubConnectionStore {
   status(userId: string): GitHubConnection | undefined {
     const r = this.rows.get(userId)
     if (!r) return undefined
-    return { username: r.username, scopes: r.scopes, repo: r.repo, connectedAt: r.connectedAt }
+    return { username: r.username, scopes: r.scopes, ...(r.repo ? { repo: r.repo } : {}), connectedAt: r.connectedAt }
   }
 
   remove(userId: string): void {

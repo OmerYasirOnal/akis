@@ -18,9 +18,11 @@ import { Landing } from '../pages/Landing.js'
 import { ForgotPassword } from '../pages/ForgotPassword.js'
 import { ResetPassword } from '../pages/ResetPassword.js'
 import { I18nProvider, useI18n } from '../i18n/I18nContext.js'
+import type { StringKey } from '../i18n/catalog.js'
 import { RouterProvider, useRouter, Link, Navigate } from '../router/router.js'
 import { AuthProvider, useAuth } from '../auth/AuthContext.js'
 import { AccountMenu } from './AccountMenu.js'
+import { LanguageToggle } from '../ui/LanguageToggle.js'
 
 /** API base: same-origin in prod (fastify-static serves the FE); override via env in dev. */
 const BASE = (import.meta.env?.VITE_API_BASE as string | undefined) ?? ''
@@ -28,11 +30,16 @@ const BASE = (import.meta.env?.VITE_API_BASE as string | undefined) ?? ''
 function Brand() {
   const { t } = useI18n()
   return (
-    <Link to="/" className="flex items-center gap-3">
-      <AkisLogo size={34} className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
-      <div className="hidden sm:block">
-        <div className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-base font-extrabold leading-tight text-transparent">{t('app.title')}</div>
-      </div>
+    <Link to="/" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+      <AkisLogo size={34} alt="" className="drop-shadow-[0_0_16px_rgba(7,209,175,0.5)]" />
+      {/* The logo is decorative (alt="") to avoid a double "AKIS … AKIS" announce next to the
+          wordmark. The wordmark itself is shown on EVERY viewport — a compact "AKIS" on mobile
+          (so the brand isn't a bare glyph next to the DEMO badge) and the full title from sm —
+          so the visible text always names the home link with no sr-only fallback needed. */}
+      <span className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-base font-extrabold leading-tight text-transparent">
+        <span className="sm:hidden">AKIS</span>
+        <span className="hidden sm:inline">{t('app.title')}</span>
+      </span>
     </Link>
   )
 }
@@ -41,7 +48,9 @@ function NavLink({ to, label }: { to: string; label: string }) {
   const { path } = useRouter()
   const active = path === to
   return (
-    <Link to={to} className={`rounded-lg px-3 py-1.5 text-sm transition ${active ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>{label}</Link>
+    // aria-current="page" marks the active route for AT — only when active (conditional spread:
+    // exactOptionalPropertyTypes forbids passing the attribute as undefined).
+    <Link to={to} {...(active ? { ariaCurrent: 'page' as const } : {})} className={`shrink-0 rounded-lg px-3 py-1.5 text-sm transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950 ${active ? 'bg-white/10 text-slate-100' : 'text-slate-300 hover:text-slate-100'}`}>{label}</Link>
   )
 }
 
@@ -65,11 +74,39 @@ export function DemoBadge({ api }: { api: ApiClient }) {
   )
 }
 
+// Map an authed route → the i18n key for its human title. Reuses the existing nav.* labels
+// (they already name every route + carry full TR/EN parity), so the document.title and the
+// per-view <h1> stay localized and in sync with the nav. Unknown paths fall back to the app name.
+const ROUTE_TITLE_KEY: Record<string, StringKey> = {
+  '/': 'nav.dashboard',
+  '/history': 'nav.history',
+  '/analytics': 'nav.analytics',
+  '/workflows': 'nav.workflows',
+  '/settings': 'nav.settings',
+  '/docs': 'nav.docs',
+}
+
+// Routes whose page component already renders a visible <h1> of its own. AppFrame must NOT add
+// a second sr-only <h1> for these — two h1s on one view breaks the "unique top-level heading"
+// a11y requirement even when one is sr-only. DocsPage renders a prominent hero <h1>.
+const OWNS_OWN_H1 = new Set(['/docs'])
+
 /** The authenticated app frame: cosmic backdrop, top nav, and the routed page. */
 function AppFrame({ api }: { api: ApiClient }) {
-  const { t, locale, setLocale } = useI18n()
+  const { t, locale } = useI18n() // `locale` drives the document.title effect; the toggle itself moved to <LanguageToggle/>
   const { path } = useRouter()
   const { user, logout } = useAuth()
+
+  // The localized title for the current route (falls back to the app name for an unknown path).
+  const routeTitleKey = ROUTE_TITLE_KEY[path]
+  const routeTitle = routeTitleKey ? t(routeTitleKey) : t('app.title')
+
+  // Per-route document.title so browser tabs / history / bookmarks name the view (mirrors the
+  // <html lang> sync in I18nContext: guarded for SSR, re-runs on locale change for the right tongue).
+  useEffect(() => {
+    if (typeof document !== 'undefined') document.title = `${routeTitle} · AKIS`
+    // routeTitle already folds in path + locale; list both so intent is explicit.
+  }, [path, locale, routeTitle])
 
   const page = path === '/analytics' ? <AnalyticsPage api={api} />
     : path === '/history' ? <HistoryPage api={api} />
@@ -88,10 +125,24 @@ function AppFrame({ api }: { api: ApiClient }) {
   return (
     <div className="relative min-h-screen text-slate-100">
       <CosmicBackground />
+      {/* Skip link: the FIRST focusable element in the frame so keyboard/AT users can jump past
+          the nav straight to the routed content. Visually hidden until focused (sr-only →
+          focus:not-sr-only), then pinned top-left with the shared teal focus ring. */}
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-slate-900 focus:px-4 focus:py-2 focus:text-sm focus:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/60 focus:ring-offset-2 focus:ring-offset-slate-950">{t('a11y.skipToContent')}</a>
       <div className={`relative z-10 mx-auto px-4 py-6 sm:px-6 ${isStudio ? 'max-w-[120rem] lg:px-8 2xl:px-10' : 'max-w-6xl'}`}>
+        {/* One visually-hidden <h1> per authed view: the on-page SectionTitle is an <h2> (and is
+            reused as a sub-heading inside Analytics), so this gives each view a single, unique,
+            route-named top-level heading for AT heading navigation without altering the visuals.
+            EXCEPTION: routes in OWNS_OWN_H1 already render a visible <h1> inside their page
+            component — adding a second one (even sr-only) would create a duplicate-h1 violation. */}
+        {!OWNS_OWN_H1.has(path) && <h1 className="sr-only">{routeTitle}</h1>}
         <header className="mb-6 flex flex-wrap items-center justify-between gap-3">
           <Brand />
-          <nav className="order-3 flex w-full flex-wrap items-center gap-1 sm:order-none sm:w-auto">
+          {/* Mobile: a single horizontally-scrollable row (shrink-0 NavLinks + whitespace-nowrap)
+              instead of a wrapping multi-row pile — scales to longer TR labels without reflow and
+              keeps the header to two tidy rows. The thin scrollbar is hidden. From sm it's the
+              normal inline bar. */}
+          <nav aria-label={t('nav.primary')} className="order-3 -mx-1 flex w-full items-center gap-1 overflow-x-auto whitespace-nowrap px-1 py-1.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden sm:order-none sm:mx-0 sm:w-auto sm:overflow-visible sm:py-0 sm:px-0">
             <NavLink to="/" label={t('nav.dashboard')} />
             <NavLink to="/history" label={t('nav.history')} />
             <NavLink to="/analytics" label={t('nav.analytics')} />
@@ -101,26 +152,33 @@ function AppFrame({ api }: { api: ApiClient }) {
           </nav>
           <div className="flex items-center gap-2">
             <DemoBadge api={api} />
-            <button onClick={() => setLocale(locale === 'en' ? 'tr' : 'en')} aria-label={t('nav.toggleLanguage')}
-              className="rounded-lg border border-white/10 bg-white/[0.03] px-2 py-1 text-xs text-slate-300 hover:border-white/20">{locale.toUpperCase()}</button>
+            <LanguageToggle />
             <div className="hidden text-right sm:block">
               <div className="text-xs font-medium text-slate-200">{user?.name}</div>
             </div>
             {user && <AccountMenu user={user} logout={logout} />}
           </div>
         </header>
-        <Suspense fallback={<PageFallback />}>{page}</Suspense>
+        <main id="main">
+          <Suspense fallback={<PageFallback />}>{page}</Suspense>
+        </main>
       </div>
     </div>
   )
 }
 
-/** Cosmic frame for the public auth pages. */
+/** Cosmic frame for the public routes (auth pages + Landing/Docs). The pre-auth language
+ *  toggle lives in AuthShell (the auth pages only) — NOT here — so Landing/Docs, which carry
+ *  their own header toggle, don't get a duplicate/overlapping one. */
 function PublicFrame({ children }: { children: ReactNode }) {
+  const { t } = useI18n()
   return (
     <div className="relative min-h-screen text-slate-100">
       <CosmicBackground />
-      <div className="relative z-10">{children}</div>
+      {/* Same skip link + <main> landmark as the authed frame, so keyboard/AT users on the public
+          pages (Landing/Login/Docs — these already carry their own <h1>) can jump to content. */}
+      <a href="#main" className="sr-only focus:not-sr-only focus:absolute focus:left-4 focus:top-4 focus:z-50 focus:rounded-lg focus:bg-slate-900 focus:px-4 focus:py-2 focus:text-sm focus:text-slate-100 focus:outline-none focus:ring-2 focus:ring-[#07D1AF]/60 focus:ring-offset-2 focus:ring-offset-slate-950">{t('a11y.skipToContent')}</a>
+      <main id="main" className="relative z-10">{children}</main>
     </div>
   )
 }
@@ -145,11 +203,14 @@ function PublicDocs() {
   return (
     <div className="mx-auto max-w-6xl px-4 py-6 sm:px-6">
       <header className="mb-8 flex items-center justify-between">
-        <Link to="/" className="flex items-center gap-3">
-          <AkisLogo size={30} className="drop-shadow-[0_0_14px_rgba(7,209,175,0.5)]" />
+        <Link to="/" className="flex items-center gap-3 rounded-lg focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#07D1AF]/60 focus-visible:ring-offset-2 focus-visible:ring-offset-slate-950">
+          <AkisLogo size={30} alt="" className="drop-shadow-[0_0_14px_rgba(7,209,175,0.5)]" />
           <span className="bg-gradient-to-r from-[#07D1AF] via-cyan-200 to-violet-300 bg-clip-text text-sm font-extrabold text-transparent">{t('app.title')}</span>
         </Link>
-        <Link to="/login" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-slate-200 hover:border-white/20">{t('landing.cta.signin')}</Link>
+        <div className="flex items-center gap-2">
+          <LanguageToggle />
+          <Link to="/login" className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-1.5 text-sm text-slate-200 hover:border-white/20">{t('landing.cta.signin')}</Link>
+        </div>
       </header>
       <Suspense fallback={<PageFallback />}><DocsPage /></Suspense>
     </div>

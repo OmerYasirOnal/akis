@@ -18,20 +18,20 @@ describe('HistoryMenu', () => {
     const onOpen = vi.fn()
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }, { id: 's2', idea: 'a QR generator', ts: 0 }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={onOpen} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
     await userEvent.click(screen.getByRole('menuitem', { name: 'a QR generator' }))
     expect(onOpen).toHaveBeenCalledWith(builds[1])
   })
   it('shows an empty state when there are no builds', async () => {
     render(<I18nProvider><HistoryMenu builds={[]} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
     expect(screen.getByText(/No builds yet/)).toBeInTheDocument()
   })
   // P1-7: the menu carries the SAME minimal signal as the History page (localized status + ✓).
   it('shows a localized status pill + verified mark per build (not the raw enum)', async () => {
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0, status: 'done', verified: true }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
     expect(screen.getByText('Shipped')).toBeInTheDocument()   // localized, not "done"
     expect(screen.queryByText('done')).toBeNull()
     expect(screen.getByText(/verified/)).toBeInTheDocument()
@@ -39,8 +39,32 @@ describe('HistoryMenu', () => {
   it('omits the status pill for a legacy build with no status (no crash)', async () => {
     const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }]
     render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
-    await userEvent.click(screen.getByRole('button', { name: /History/ }))
+    await userEvent.click(screen.getByRole('button', { name: /Recent/ }))
     expect(screen.getByRole('menuitem', { name: /a todo app/ })).toBeInTheDocument()
+  })
+
+  // MENU A11Y: roving keyboard nav (mirrors ModelPicker's focus-on-open + focus-restore).
+  it('opens with the first item focused, ArrowDown moves focus, Escape closes + restores the trigger', async () => {
+    const builds = [{ id: 's1', idea: 'a todo app', ts: 0 }, { id: 's2', idea: 'a QR generator', ts: 0 }]
+    render(<I18nProvider><HistoryMenu builds={builds} onOpen={() => {}} /></I18nProvider>)
+    const trigger = screen.getByRole('button', { name: /Recent/ }) // in-card dropdown trigger (renamed from "History")
+    await userEvent.click(trigger)
+    // On open, focus lands on the first menuitem (not left on the trigger / <body>).
+    expect(screen.getByRole('menuitem', { name: /a todo app/ })).toHaveFocus()
+    // ArrowDown rovers to the next item; ArrowUp clamps back to the first.
+    await userEvent.keyboard('{ArrowDown}')
+    expect(screen.getByRole('menuitem', { name: /a QR generator/ })).toHaveFocus()
+    await userEvent.keyboard('{ArrowUp}')
+    expect(screen.getByRole('menuitem', { name: /a todo app/ })).toHaveFocus()
+    // End → last item; Home → first item.
+    await userEvent.keyboard('{End}')
+    expect(screen.getByRole('menuitem', { name: /a QR generator/ })).toHaveFocus()
+    await userEvent.keyboard('{Home}')
+    expect(screen.getByRole('menuitem', { name: /a todo app/ })).toHaveFocus()
+    // Escape closes the menu AND returns focus to the trigger (keyboard users aren't dropped).
+    await userEvent.keyboard('{Escape}')
+    expect(screen.queryByRole('menu')).toBeNull()
+    expect(trigger).toHaveFocus()
   })
 })
 

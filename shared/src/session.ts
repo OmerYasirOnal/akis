@@ -210,6 +210,18 @@ export interface SessionState {
    * `passport`/`testEvidence`, so it never widens the gate-write surface. Carries NO token/secret.
    */
   externalWrites?: ExternalWriteRecord[]
+  /**
+   * A2.1 — ADDITIVE, NON-GATE per-PROJECT GitHub delivery destination (owner/repo). PINNED once,
+   * when the run first reaches `awaiting_push_confirm` (in the orchestrator's verify-transition
+   * write), so the push-confirm card can SHOW the target BEFORE the human confirms, and so a
+   * retry / change-request reuses the SAME repo (never re-derives). `owner` is the connected
+   * user's GitHub LOGIN (their personal namespace); `repo` is the title-derived, collision-safe
+   * slug. Written on the NORMAL (generic-patch) update path — NOT a gate method — EXACTLY like
+   * `passport`/`testEvidence`, so it never widens the gate-write surface. It carries NO token and
+   * NO gate capability: it only names WHERE the already-gated push delivers, never whether/how.
+   * Absent for anonymous/keyless/unconnected sessions (those use the env→mock path unchanged).
+   */
+  delivery?: { owner: string; repo: string }
   version: number               // optimistic lock
 }
 
@@ -250,6 +262,12 @@ export function isVerified(s: SessionState): boolean {
   return s.verifyToken != null && s.verifyToken.sessionId === s.id
 }
 
-export function initialSession(id: string, idea: string, ownerId?: string): SessionState {
-  return { id, status: 'composing', idea, version: 0, ...(ownerId ? { ownerId } : {}) }
+export function initialSession(id: string, idea: string, ownerId?: string, chat?: ChatTurn[]): SessionState {
+  // ADDITIVE/NON-GATE: an optional pre-build conversation seed is baked into the CREATION state so the
+  // freshly-created session already carries it at version 0 — no post-create concurrent write can then
+  // race the fire-and-forget build pipeline (which reads `version` then writes; a chat patch landing
+  // mid-read→write bumped the version and conflicted the pipeline's {code} write → a silent `failed`).
+  // `chat` is conversation text only — it can never approve/verify/push/mint; this only seeds the initial
+  // state. Absent/empty ⇒ no `chat` field set (byte-identical to before).
+  return { id, status: 'composing', idea, version: 0, ...(ownerId ? { ownerId } : {}), ...(chat && chat.length ? { chat } : {}) }
 }

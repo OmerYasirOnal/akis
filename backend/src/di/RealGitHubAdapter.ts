@@ -83,10 +83,44 @@ export class RealGitHubAdapter implements GitHubAdapter {
     this.apiBase = (cfg.apiBase ?? 'https://api.github.com').replace(/\/+$/, '')
   }
 
-  /** The destination repo's HTML URL (no network needed). The mock's createRepo seeds an
-   *  in-memory repo; the real target already exists, so this just returns its URL. */
+  /**
+   * Ensure the destination repo EXISTS, then return its HTML URL. Idempotent:
+   *  - the repo already exists (GET 200) → no write, just the URL;
+   *  - the repo is MISSING (GET 404) → create it (POST /user/repos when the configured
+   *    owner is the authed user, else POST /orgs/{owner}/repos) with `auto_init: true` so
+   *    the brand-new repo gets an initial commit + default branch and is IMMEDIATELY
+   *    pushable — otherwise the first `pushFiles` would 404 on the absent base branch.
+   *
+   * `private: true` so an AKIS-created repo is not public by surprise. TOKEN-FREE errors
+   * exactly like the rest of the adapter — a create failure (no `repo`/`workflow` scope,
+   * name taken, org-membership) surfaces the STATUS only as a GitHubDeliveryError. */
   async createRepo(_sessionId: string): Promise<string> {
-    return `https://github.com/${this.cfg.owner}/${this.cfg.repo}`
+    const url = `https://github.com/${this.cfg.owner}/${this.cfg.repo}`
+    if (await this.repoExists()) return url
+    // Missing → create. Decide the create endpoint from the authed identity: a repo under the
+    // token owner's OWN account uses /user/repos; any other owner is treated as an org.
+    const login = await this.authedLogin()
+    const path = login && login.toLowerCase() === this.cfg.owner.toLowerCase()
+      ? '/user/repos'
+      : `/orgs/${enc(this.cfg.owner)}/repos`
+    await this.postAbsolute(path, { name: this.cfg.repo, private: true, auto_init: true })
+    return url
+  }
+
+  /** GET the repo — true (exists), false (404). Any other non-OK is a real delivery failure. */
+  private async repoExists(): Promise<boolean> {
+    const res = await this.send('GET', '')
+    if (res.status === 404) return false
+    if (!res.ok) throw this.httpError('/', res.status)
+    return true
+  }
+
+  /** The authed token's GitHub login (used only to choose /user vs /orgs for repo creation).
+   *  undefined when the call fails — createRepo then falls back to the /orgs path. */
+  private async authedLogin(): Promise<string | undefined> {
+    const res = await this.sendAbsolute('GET', '/user')
+    if (!res.ok) return undefined
+    return asString(((await res.json()) as { login?: unknown }).login)
   }
 
   /** No local store — reads belong to the RAG real reader (a separate concern). */
@@ -103,8 +137,18 @@ export class RealGitHubAdapter implements GitHubAdapter {
     const branch = `akis-${sanitizeRef(sessionId)}`
     const base = this.cfg.baseBranch?.trim() || (await this.defaultBranch())
 
+    // EMPTY-REPO seeding: a repo with no commits has no base branch ref (404). The Git Data
+    // API needs a base commit to layer on, so seed the very first commit via the contents API
+    // (which CAN write to an empty repo) — then the normal blob→tree→commit→ref→PR flow runs
+    // exactly as for a non-empty repo. createRepo's auto_init covers AKIS-created repos; this
+    // covers a user's manually-created empty repo (and is idempotent: a non-empty repo skips it).
+    let baseShaOrNull = await this.refShaOrNull(base)
+    if (baseShaOrNull === null) {
+      await this.seedInitialCommit(base)
+      baseShaOrNull = await this.refSha(base)
+    }
     // Base commit + its tree (the new tree is layered on top of it).
-    const baseSha = await this.refSha(base)
+    const baseSha = baseShaOrNull
     const baseCommit = await this.getJson(`/git/commits/${enc(baseSha)}`)
     const baseTreeSha = asString((baseCommit as { tree?: { sha?: unknown } }).tree?.sha)
     if (!baseTreeSha) throw new Error('github: base commit had no tree sha')
@@ -145,6 +189,21 @@ export class RealGitHubAdapter implements GitHubAdapter {
   private async defaultBranch(): Promise<string> {
     const repo = await this.getJson('')
     return asString((repo as { default_branch?: unknown }).default_branch) ?? 'main'
+  }
+
+  /** Seed the FIRST commit of an empty repo on `branch` via the contents API (which, unlike the
+   *  Git Data API, can write to a repo with no commits). Creates a minimal README so the branch
+   *  exists with a base commit for the real push to layer on. base64 content per the GH contract. */
+  private async seedInitialCommit(branch: string): Promise<void> {
+    const content = Buffer.from(`# ${this.cfg.repo}\n\nInitialized by AKIS.\n`, 'utf-8').toString('base64')
+    const res = await this.send('PUT', '/contents/README.md', {
+      message: 'AKIS: initialize repository', content, branch,
+    })
+    // 422 "sha wasn't supplied" = README already exists → the repo ISN'T empty after all. The one
+    // real window: createRepo's auto_init landed but the ref read briefly lagged (GitHub eventual
+    // consistency), so refShaOrNull saw 404 and we seeded redundantly. The goal of seeding — a base
+    // commit exists — is already met; treat it as success and let the caller's refSha() proceed.
+    if (!res.ok && res.status !== 422) throw this.httpError('/contents/README.md', res.status)
   }
 
   /** The commit sha a branch ref points at (throws if the ref is missing). */
@@ -201,8 +260,27 @@ export class RealGitHubAdapter implements GitHubAdapter {
 
   /** One request. `path` is appended to /repos/{owner}/{repo}. Bearer auth; the catch
    *  re-throws a fixed TOKEN-FREE message so no lower-level error can echo the token. */
-  private async send(method: string, path: string, body?: unknown): Promise<Awaited<ReturnType<PushFetch>>> {
-    const url = `${this.apiBase}/repos/${enc(this.cfg.owner)}/${enc(this.cfg.repo)}${path}`
+  private send(method: string, path: string, body?: unknown): Promise<Awaited<ReturnType<PushFetch>>> {
+    return this.request(method, `/repos/${enc(this.cfg.owner)}/${enc(this.cfg.repo)}${path}`, path, body)
+  }
+
+  /** One request to an ABSOLUTE API path (not under /repos/{owner}/{repo}) — used by createRepo
+   *  for `/user`, `/user/repos`, `/orgs/{owner}/repos`. Same Bearer auth + token-free catch. */
+  private sendAbsolute(method: string, path: string, body?: unknown): Promise<Awaited<ReturnType<PushFetch>>> {
+    return this.request(method, path, path, body)
+  }
+
+  /** POST to an absolute path and throw a structured GitHubDeliveryError on any non-OK. */
+  private async postAbsolute(path: string, body: unknown): Promise<unknown> {
+    const res = await this.sendAbsolute('POST', path, body)
+    if (!res.ok) throw this.httpError(path, res.status)
+    return res.json()
+  }
+
+  /** Shared fetch: Bearer auth + GitHub headers; the catch re-throws a fixed TOKEN-FREE
+   *  message (`errPath` is the API-relative path, never the token) so nothing can leak it. */
+  private async request(method: string, fullPath: string, errPath: string, body?: unknown): Promise<Awaited<ReturnType<PushFetch>>> {
+    const url = `${this.apiBase}${fullPath}`
     try {
       return await this.fetch(url, {
         method,
@@ -219,7 +297,7 @@ export class RealGitHubAdapter implements GitHubAdapter {
     } catch {
       // A lower-level error could (in theory) echo the request incl. the token — re-throw
       // a fixed, token-free message so nothing downstream can leak it.
-      throw new Error(`github: ${method} request to ${path || '/'} failed`)
+      throw new Error(`github: ${method} request to ${errPath || '/'} failed`)
     }
   }
 
@@ -234,6 +312,42 @@ export class RealGitHubAdapter implements GitHubAdapter {
 
 const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined)
 const asNumber = (v: unknown): number | undefined => (typeof v === 'number' ? v : undefined)
+
+/**
+ * A2.1 — standalone collision probe for per-project repo-name derivation: does `owner/repo`
+ * already exist on GitHub? Returns `true` (GET 200), `false` (404), or `undefined` when the
+ * answer is UNKNOWN (any other status / network error / no fetch). Same Bearer-auth + TOKEN-FREE
+ * discipline as the adapter (the token is only a header, never logged/returned). Standalone (not a
+ * method) so the destination resolver can probe ARBITRARY candidate names under the user's account
+ * without constructing a full per-candidate adapter. The caller treats `undefined` as "do not
+ * suffix" (fail-open: don't block delivery on a flaky probe; A2's createRepo still GET-probes the
+ * FINAL name idempotently before any create).
+ */
+export async function githubRepoExists(
+  owner: string,
+  repo: string,
+  token: string,
+  fetchImpl: PushFetch = defaultFetch,
+  apiBase = 'https://api.github.com',
+): Promise<boolean | undefined> {
+  const url = `${apiBase.replace(/\/+$/, '')}/repos/${enc(owner)}/${enc(repo)}`
+  try {
+    const res = await fetchImpl(url, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`, // NEVER logged
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'akis-platform',
+      },
+    })
+    if (res.status === 404) return false
+    if (res.ok) return true
+    return undefined // 401/403/5xx → unknown; caller fails open (no suffix)
+  } catch {
+    return undefined // network error → unknown (token-free; nothing to leak)
+  }
+}
 
 /** Percent-encode a path segment so a stray char can't break the URL; keep slashes in
  *  a ref like `feature/x` (GitHub accepts them in the ref path). */

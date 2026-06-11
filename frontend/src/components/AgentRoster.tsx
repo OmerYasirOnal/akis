@@ -31,11 +31,18 @@ export function presenceOf(view: SessionView, role: Role): AgentPresence {
     if (view.status === 'done') return 'done'
     if (view.status === 'failed') return 'failed'
   }
+  // Chat-seeded builds short-circuit Scribe's run() (the spec was authored + approved in chat),
+  // so there is NO scribe lane step — yet the spec stage genuinely happened. A satisfied
+  // spec-approval gate is that proof, so Scribe reads 'done' (not 'idle'/"beklemede") here. The
+  // backend now also emits a synthetic scribe agent_start/agent_end on that path, so a live build
+  // takes the lane-step branch above; this fallback covers any view folded without those events
+  // (e.g. an older replayed log). Mirrors the orchestrator status fallback.
+  if (role === 'scribe' && view.gates?.specApproval?.state === 'satisfied') return 'done'
   return 'idle'
 }
 
 const DOT: Record<AgentPresence, string> = {
-  idle: 'bg-slate-600',
+  idle: 'bg-slate-400',
   working: 'bg-teal-400 animate-pulse shadow-[0_0_8px_2px_rgba(7,209,175,0.6)]',
   done: 'bg-emerald-400',
   failed: 'bg-rose-400',
@@ -54,7 +61,7 @@ export const AgentRoster = memo(function AgentRoster({ view }: { view: SessionVi
             className="group flex items-center gap-2 rounded-full border border-white/10 bg-white/[0.03] px-3 py-1.5 transition hover:border-white/20">
             <span className={`grid h-6 w-6 place-items-center rounded-full bg-gradient-to-br ${a.tint} text-[9px] font-black text-slate-950`}>{a.name.slice(0, 2)}</span>
             <span className="text-xs font-semibold text-slate-200">{a.name}</span>
-            <span title={t(`roster.status.${p}`)} className={`h-1.5 w-1.5 rounded-full ${DOT[p]}`} aria-hidden="true" />
+            <span title={t(`roster.status.${p}`)} className={`h-2 w-2 rounded-full ${DOT[p]}`} aria-hidden="true" />
             <span className="sr-only">{t(`roster.status.${p}`)}</span>
             <span className="hidden text-[10px] text-slate-400 sm:inline" aria-hidden="true">{t(`roster.status.${p}`)}</span>
           </div>

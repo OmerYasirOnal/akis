@@ -28,7 +28,7 @@ import { selectMailer } from '../mail/selectMailer.js'
 import type { Mailer } from '../mail/Mailer.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
-import { registerChatRoutes } from './chat.routes.js'
+import { registerChatRoutes, type ChatDeps } from './chat.routes.js'
 import { registerUsageRoutes } from './usage.routes.js'
 import { registerBillingRoutes } from './billing.routes.js'
 import { registerOpsRoutes, buildOpsBlock } from './ops.routes.js'
@@ -575,7 +575,15 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
       } catch { /* version conflict — re-read once, then give up silently */ }
     }
   }
-  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), ownerOf: userIdOf, sessionRead, chatAppend })
+  // REAL Scribe HANDOFF (Option A): the chat route hands an `akis-spec-request` to the REAL Scribe.
+  // We bind `services.scribe.draftSpec` — the SAME Scribe instance the DEFAULT orchestrator runs (a
+  // chat-seeded build starts on the default orchestrator: POST /sessions with workflowId undefined),
+  // so the chat-time spec draft uses the SAME skill-injected prompt + configured scribe provider/model
+  // as that build's pipeline. DATA-ONLY (provider.chat + parse, bus-free): it mints/approves/verifies/
+  // pushes NOTHING — the human SpecCard click stays the sole approve path (the chat route still holds
+  // NO orchestrator handle). A provider error propagates so the route surfaces an honest chat error.
+  const draftSpec: ChatDeps['draftSpec'] = (input) => services.scribe.draftSpec(input)
+  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), ownerOf: userIdOf, sessionRead, chatAppend, draftSpec })
   // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
   // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
   // them the route is never registered (404) and there is no behavior change when RAG off.

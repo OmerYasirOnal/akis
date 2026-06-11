@@ -25,6 +25,14 @@ describe('actionErrorText — localized GitHub delivery failure surfacing', () =
     expect(actionErrorText(e, en)).not.toContain('repository exists')
   })
 
+  it('maps the NoGitHubDestinationError code (a 409) to the localized "connect GitHub" message (EN + TR), never the raw string', () => {
+    // The backend refuses an unconnected real-mode push with this stable code instead of a fake
+    // mock success. The FE must guide the user to Settings → GitHub, not show the raw message.
+    const e = new ApiError(409, 'No GitHub delivery destination — connect a GitHub account and target repo in Settings', 'NoGitHubDestinationError')
+    expect(actionErrorText(e, en)).toBe(STRINGS.en['recovery.push.notConnected'])
+    expect(actionErrorText(e, tr)).toBe(STRINGS.tr['recovery.push.notConnected'])
+  })
+
   it('falls back to "code: message" for any other ApiError (unchanged behavior)', () => {
     const e = new ApiError(409, 'Session already pushed', 'AlreadyPushedError')
     expect(actionErrorText(e, en)).toBe('AlreadyPushedError: Session already pushed')
@@ -33,5 +41,20 @@ describe('actionErrorText — localized GitHub delivery failure surfacing', () =
   it('stringifies a non-ApiError (unchanged behavior)', () => {
     expect(actionErrorText(new Error('boom'), en)).toBe('Error: boom')
     expect(actionErrorText('plain', en)).toBe('plain')
+  })
+})
+
+// Guard the push-recovery copy (incl. the new no-destination keys) — a one-locale add must fail here.
+describe('recovery.push.* i18n parity', () => {
+  const keys = (loc: 'en' | 'tr'): string[] => Object.keys(STRINGS[loc]).filter(k => k.startsWith('recovery.push.')).sort()
+  it('every EN recovery.push.* key exists in TR and vice-versa', () => {
+    expect(keys('en')).toEqual(keys('tr'))
+  })
+  it('the new no-destination keys are present + non-empty in BOTH locales', () => {
+    for (const loc of ['en', 'tr'] as const) {
+      for (const k of ['recovery.push.notConnected', 'recovery.push.connectCta'] as const) {
+        expect(STRINGS[loc][k], `${loc}:${k}`).toBeTruthy()
+      }
+    }
   })
 })
