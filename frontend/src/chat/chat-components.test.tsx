@@ -52,6 +52,40 @@ describe('ChatThread', () => {
     expect(screen.getByRole('button', { name: 'Confirm push' })).toBeInTheDocument()
     expect(screen.queryByText(/github\.com\//)).toBeNull()
   })
+  // F3 — the chat-seeded build's synthetic Scribe stage has NO duration (the drafting happened at chat
+  // time). A metrics-less Scribe agent bubble shows an honest "spec was drafted in chat" caption instead
+  // of a fabricated "0s" timing line.
+  it('F3 — a metrics-less Scribe agent stage shows the "spec was drafted in chat" caption (no 0s)', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'a', kind: 'agent', agent: 'scribe', tools: [], notes: [], done: true, ok: true, attempts: 1, metrics: { toolCalls: 0 } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByText('spec was drafted in chat')).toBeInTheDocument()
+    expect(screen.queryByText(/\b0s\b/)).toBeNull()
+  })
+  it('F3 — a Scribe stage WITH real metrics shows the badge, NOT the chat caption', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'a', kind: 'agent', agent: 'scribe', tools: [], notes: [], done: true, ok: true, attempts: 1, metrics: { usage: { inTokens: 1000, outTokens: 500 }, durationMs: 42000, toolCalls: 1 } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByText('spec was drafted in chat')).toBeNull()
+    expect(screen.getByText(/42s/)).toBeInTheDocument()
+  })
+  it('F3 — replay-safe: an OLD synthetic Scribe end (0s duration) still renders its timing line, not the caption', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'a', kind: 'agent', agent: 'scribe', tools: [], notes: [], done: true, ok: true, attempts: 1, metrics: { durationMs: 0, toolCalls: 0 } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByText('spec was drafted in chat')).toBeNull()
+    expect(screen.getByText(/0s/)).toBeInTheDocument()
+  })
+  it('F3 — a metrics-less NON-Scribe agent (e.g. Trace) shows NO chat caption (caption is Scribe-only)', () => {
+    const msgs: ChatMessage[] = [
+      { id: 'a', kind: 'agent', agent: 'trace', tools: [], notes: [], done: true, ok: true, attempts: 1, metrics: { toolCalls: 0 } },
+    ]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.queryByText('spec was drafted in chat')).toBeNull()
+  })
   it("the preview-ready path is a real LINK to the running app (new tab), not a label (owner 2026-06-11)", () => {
     const msgs: ChatMessage[] = [
       { id: 'p', kind: 'preview', ready: true, url: '/preview/abc-123/' },
