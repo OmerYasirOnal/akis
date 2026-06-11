@@ -217,6 +217,23 @@ describe('AKIS_PERSONA — Chat→Scribe HANDOFF contract (Option A: REAL Scribe
     expect(AKIS_PERSONA).toMatch(/`akis-spec-request` block whose brief describes the EDITED app/i)
     expect(AKIS_PERSONA).toMatch(/do NOT claim you changed it/i)
   })
+
+  // CAPABILITY HONESTY (owner 2026-06-11): end-to-end verification + live preview cover ONLY browser
+  // apps + Node services. For any other stack AKIS must DISCLOSE the limit and OFFER the supported
+  // alternative — never refuse, never silently proceed. This EVOLVES the persona contract; the fence
+  // assertions above are untouched (no loosening).
+  it('carries the capability-honesty rule: disclose + offer the supported alternative for unsupported stacks', () => {
+    expect(AKIS_PERSONA).toMatch(/CAPABILITY HONESTY/)
+    // The end-to-end-supported surfaces are named (browser apps + Node services).
+    expect(AKIS_PERSONA).toMatch(/browser apps/i)
+    expect(AKIS_PERSONA).toMatch(/Node services/i)
+    // Neither refuse nor silently proceed — disclose, then offer the supported alternative.
+    expect(AKIS_PERSONA).toMatch(/do NOT refuse and do NOT silently proceed/i)
+    expect(AKIS_PERSONA).toMatch(/cannot run real verification or a live preview/i)
+    expect(AKIS_PERSONA).toMatch(/OFFER the supported alternative/i)
+    // Identical behavior in every language (a Turkish disclosure exemplar is present).
+    expect(AKIS_PERSONA).toMatch(/canlı önizleme sunamam/i)
+  })
 })
 
 // ── BUILD-AWARE CHAT: read-only, owner-scoped, CONTENTS-FREE, gate-safe (sessionId) ──
