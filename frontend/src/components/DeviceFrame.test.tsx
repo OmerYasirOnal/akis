@@ -127,3 +127,22 @@ test('switching device resets orientation back to portrait', () => {
   expect(screen.getByTestId('device-frame').style.width).toBe('768px')
   expect(rotateBtn().getAttribute('aria-pressed')).toBe('false')
 })
+
+// ── CORNER CLIP (owner finding round-2 2026-06-11) ─────────────────────────────
+// In the READY state the iframe is a separate paint layer that ESCAPES the band wrapper's
+// `rounded-xl overflow-hidden` across the letterbox's `overflow-auto` scroll boundary — so a
+// running app's BOTTOM corners painted SQUARE against the rounded frame. The letterbox (the
+// iframe's immediate scroll container) must carry its OWN bottom radius so the iframe is clipped.
+// Verified in Brave (elementsFromPoint at the band corners → page bg, not the iframe). The
+// `device-frame` div's parent IS the letterbox; pin the class so a regression that drops it fails.
+test('the iframe letterbox carries a bottom corner clip so a ready iframe is rounded to the frame', () => {
+  renderI18n(<DeviceFrame device="responsive" paneWidth={900} onDevice={() => {}} tab="preview"><iframe title="x" /></DeviceFrame>)
+  const letterbox = screen.getByTestId('device-frame').parentElement
+  expect(letterbox).not.toBeNull()
+  // rounded-b-[11px] = the 12px band radius minus its 1px border; bottom-only (the top sits under
+  // the chrome strip, which already carries the band's top radius).
+  expect(letterbox!.className).toContain('rounded-b-[11px]')
+  // It is the SCROLL container the iframe escapes through — overflow-auto must remain so the clip
+  // applies at the right boundary (and horizontal scroll for wide presets is preserved).
+  expect(letterbox!.className).toContain('overflow-auto')
+})

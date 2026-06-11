@@ -159,8 +159,16 @@ export function DeviceFrame(
         </div>
       )}
 
-      {/* Dark letterbox container — owns the horizontal scroll so the chat pane is unaffected */}
-      <div className="relative flex-1 overflow-auto bg-slate-950">
+      {/* Dark letterbox container — owns the horizontal scroll so the chat pane is unaffected.
+          CORNER CLIP (owner finding round-2 2026-06-11): the band wrapper (PreviewPanel) is
+          `rounded-xl overflow-hidden`, but an iframe is a separate paint layer and ESCAPES an
+          ancestor's corner clip across this `overflow-auto` scroll boundary — so a READY app's
+          bottom corners rendered SQUARE against the band's rounded frame (verified in Brave: the
+          iframe painted into the corner; rounding HERE clips it). This letterbox is the iframe's
+          immediate scroll container, so its own `rounded-b-[11px]` (12px band radius − the band's
+          1px border) is what actually clips the iframe to the frame. Bottom-only: the top edge sits
+          under the browser-chrome strip, which already carries the band's top radius. */}
+      <div className="relative flex-1 overflow-auto rounded-b-[11px] bg-slate-950">
         <div
           data-testid="device-frame"
           // WIDTH MOTION (Task: polish): the logical width glides between presets and on rotate

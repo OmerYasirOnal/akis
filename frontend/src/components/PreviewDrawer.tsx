@@ -285,10 +285,13 @@ export function PreviewDrawer({
           control reads as part of the drawer's header bar rather than a lone ✕ floating on its own border
           line. The ✕ travels OFF-SCREEN with the aside when closed (overflow-hidden + translateX). `onClose`
           stays the bare prop — no gate authority here.
-          `pl-6`: the resize separator is an absolute 12px strip pinned to the aside's left edge, so the
-          header/body content needs a left inset that CLEARS it (owner finding 2026-06-11: content read as
-          glued to the splitter). 24px = the 12px handle + a ~12px breathing gap before the title. */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 pl-6 pr-3 py-2">
+          `pl-3`: the resize separator is an absolute 12px (`w-3`) HIT strip pinned to the aside's left edge,
+          but its VISIBLE mark is only the 1px hairline hugging that edge — so the content needs to clear just
+          the hairline, not the whole hit zone. 12px = the same visible inset as the right gap (`pr-3`), so the
+          seam→content distance MATCHES the content→right-edge distance (owner finding round-2 2026-06-11: the
+          old 24px `pl-6` made the LEFT gap read visibly wider than the right/bottom). The handle's `w-3` hit
+          area is unchanged — only the content padding moved. */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 pl-3 pr-3 py-2">
         <span className="truncate text-sm font-semibold text-slate-200">{t('preview.title')}</span>
         <button
           type="button"
@@ -300,15 +303,16 @@ export function PreviewDrawer({
         </button>
       </div>
 
-      {/* BODY — two scroll regions (H1). `pl-6` (vs `pr-3`) on both regions CLEARS the absolute 12px resize
-          separator pinned to the aside's left edge and leaves a ~12px breathing gap, so the cards + preview
-          surface never read as glued to the splitter (owner finding 2026-06-11). */}
+      {/* BODY — two scroll regions (H1). SYMMETRIC `pl-3 pr-3`: the resize separator's VISIBLE mark is only
+          the 1px hairline at the aside's left edge (the `w-3` HIT strip is invisible), so a 12px left inset
+          clears the hairline AND matches the 12px right gap — the seam→band distance now equals the band→
+          right-edge distance (owner finding round-2 2026-06-11: `pl-6` made the left gap read ~2× the right).
+          `pb-3` keeps the stats strip off the drawer's bottom edge. */}
       <div className="flex h-full min-h-0 flex-col">
         {/* Region A: gate-adjacent card stack — owns its own scrollbar, capped so the preview keeps height. */}
-        <div className="shrink-0 overflow-y-auto pl-6 pr-3 py-3 [max-height:50vh]">{cards}</div>
-        {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body.
-            `pb-3` keeps the stats strip off the drawer's bottom edge. */}
-        <div className="min-h-0 flex-1 pl-6 pr-3 pb-3">{preview}</div>
+        <div className="shrink-0 overflow-y-auto pl-3 pr-3 py-3 [max-height:50vh]">{cards}</div>
+        {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body. */}
+        <div className="min-h-0 flex-1 pl-3 pr-3 pb-3">{preview}</div>
       </div>
     </aside>
 

@@ -175,6 +175,26 @@ describe('PreviewDrawer (desktop)', () => {
     expect(sep.getAttribute('aria-description')).toBe(sep.getAttribute('title'))
   })
 
+  // SEAM GAP (owner finding round-2 2026-06-11): the visible distance from the resize seam (the aside's
+  // left edge / hairline) to the band must EQUAL the band→right-edge distance. The resize handle's HIT
+  // area is a separate absolute `w-3` strip (its VISIBLE mark is only the 1px hairline), so the body
+  // content needs to clear just the hairline — a SYMMETRIC `pl-3 pr-3` (12px each). The old `pl-6` (24px)
+  // made the left gap read ~2× the right (measured in Brave: 25px vs 12px → 13px vs 12px after). Pin the
+  // symmetric padding on BOTH desktop body regions so a regression back to `pl-6` fails; the handle's `w-3`
+  // hit area is asserted unchanged.
+  it('desktop body regions use SYMMETRIC pl-3 pr-3 so the seam gap ≈ the right gap (not the old pl-6)', () => {
+    renderDrawer({ open: true })
+    const cards = screen.getByTestId('cards-slot').parentElement! // region A wrapper
+    const preview = screen.getByTestId('preview-slot').parentElement! // region B wrapper
+    for (const region of [cards, preview]) {
+      expect(region.className).toContain('pl-3')
+      expect(region.className).toContain('pr-3')
+      expect(region.className).not.toContain('pl-6') // the old wide left inset is gone
+    }
+    // The resize handle's hit area is untouched — still the full 12px `w-3` strip (don't shrink the grab).
+    expect(screen.getByRole('separator').className).toContain('w-3')
+  })
+
   // DUPLICATE HEADER (owner finding B3, 2026-06-11): with a REAL PreviewPanel mounted in the preview slot,
   // the "Live preview" title must appear EXACTLY ONCE — in the drawer's own header chrome — never a second
   // time as an inner panel <h3> (which read as the same title stacked twice). This is the end-to-end pin.
