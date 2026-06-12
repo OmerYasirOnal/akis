@@ -153,4 +153,31 @@ describe('confirmPush — resilient terminal writes (P0-1)', () => {
     expect(servicesBus.recent(id).some(e => e.kind === 'recovery' && e.recovery === 'push_failed' && e.state === 'awaiting')).toBe(true)
     expect(servicesBus.recent(id).some(e => e.kind === 'gate' && e.gate === 'push_confirm' && e.state === 'satisfied')).toBe(false)
   })
+
+  it('FAILURE park: a concurrent CANCEL mid-push never masks the original push error and still shows the recovery card', async () => {
+    // reviewer LOW: the catch-path park write itself can throw — here a genuine concurrent cancel makes
+    // updateResilient refuse (RunCancelledError) rather than resurrect a park over 'cancelled'. The
+    // ORIGINAL push error must remain authoritative (not masked by the write's throw), and the recovery
+    // emit must already have fired (it precedes the park write), so the FE still renders "Push failed".
+    const gate = deferred()
+    const adapter = blockingAdapter(gate.promise)
+    const { orch, store, id, servicesBus } = await verifiedSessionWith(adapter)
+
+    const confirmP = orch.confirmPush(id)
+    await adapter.started
+    // awaiting_push_confirm is deliberately cancellable mid-push — flip the row to 'cancelled' now.
+    await orch.cancel(id)
+    expect((await store.get(id))?.status).toBe('cancelled')
+    gate.reject(new Error('boom: push died after the user cancelled')) // then the in-flight push fails
+
+    // The caller sees the ORIGINAL push error — NOT a RunCancelledError leaked from the park write.
+    await expect(confirmP).rejects.toThrow(/boom: push died after the user cancelled/)
+    // The cancel is honored: the row stays 'cancelled' (the park did NOT resurrect it to push_failed).
+    expect((await store.get(id))?.status).toBe('cancelled')
+    // The recovery card was emitted BEFORE the (throwing) park write, so the FE still surfaces it.
+    expect(servicesBus.recent(id).some(e => e.kind === 'recovery' && e.recovery === 'push_failed' && e.state === 'awaiting')).toBe(true)
+    // Never a fake success: Gate-4 satisfaction is absent and no 'done' event fired.
+    expect(servicesBus.recent(id).some(e => e.kind === 'gate' && e.gate === 'push_confirm' && e.state === 'satisfied')).toBe(false)
+    expect(servicesBus.recent(id).some(e => e.kind === 'done')).toBe(false)
+  })
 })

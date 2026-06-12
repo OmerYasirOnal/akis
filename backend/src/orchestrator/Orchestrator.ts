@@ -779,18 +779,24 @@ export class Orchestrator {
       repoUrl = await gh.createRepo(id)
       await pushToGitHub(token, gh, files)
     } catch (err) {
+      // RECOVERABLE, not a dead-end: surface the failure + park-retryable recovery FIRST, then persist.
+      // The FE surfaces a "Push failed — retry" action that re-runs the GATED confirmPush (Gate 4 still
+      // mints from the VerifyToken). These emits precede the store write deliberately (reviewer LOW): the
+      // park write below can itself throw — 5-conflict exhaustion or a genuine concurrent cancel
+      // (RunCancelledError) — and if it did, an emit ordered AFTER it would be skipped, so the user would
+      // never see the recovery card AND the original push `err` would be masked by the write's throw.
+      this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      this.emitRecovery(id, 'push_failed', 'awaiting')
       // P0-1: a REAL push (createRepo + N blob/tree/commit/ref/PR round-trips) takes 5-15s — ample
       // window for a concurrent chat turn (chatAppend) to bump the version, so the stale `cur.version`
       // lock would throw `version conflict` here and the user would see a raw 500 AFTER GitHub already
       // received the code (and a retry hits AlreadyPushedError confusion). updateResilient re-reads the
-      // fresh version; the patch is pure non-gate columns (status + delivery). Its concurrent-cancel
-      // refusal is desirable: if the user cancelled mid-push, do NOT resurrect the park over 'cancelled'.
-      await this.updateResilient(id, { status: 'push_failed', ...deliveryPatch })
-      this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
-      this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
-      // RECOVERABLE, not a dead-end: park retryable. The FE surfaces a "Push failed — retry"
-      // action that re-runs the GATED confirmPush (Gate 4 still mints from the VerifyToken).
-      this.emitRecovery(id, 'push_failed', 'awaiting')
+      // fresh version; the patch is pure non-gate columns (status + delivery). The try/catch keeps the
+      // ORIGINAL push error authoritative: a park-write failure (cancel-refusal — the user cancelled
+      // mid-push, so DON'T resurrect a park over 'cancelled' — or retry exhaustion) must never mask `err`.
+      try { await this.updateResilient(id, { status: 'push_failed', ...deliveryPatch }) }
+      catch { /* swallow: the original push `err` below is the authoritative failure the caller sees */ }
       throw err
     }
     this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: true, result: { url: repoUrl }, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
