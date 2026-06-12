@@ -45,13 +45,13 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   }, [starting])
   const fileCount = files?.length ?? 0
   const hasTrust = testEvidence !== undefined
-  // `tab` is local state, but the only control back to Preview is the tablist, which only renders
-  // when files OR test evidence exist. If those vanish (New chat / switching to a session with no
-  // code/evidence yet) a stale tab would hide the live preview/Run/TestStats with no way back.
-  // Derive the active surface so it can never be 'code' without files nor 'trust' without evidence
-  // — auto-recovers to Preview the moment the backing data goes.
+  // `tab` is local state, but the Code/Trust tab BUTTONS are conditionally gated (files / evidence),
+  // so when those vanish (New chat / switching to a session with no code/evidence yet) a stale `tab`
+  // would hide the live preview/Run/TestStats with no way back — the Preview tab is always present but
+  // a stale 'code'/'trust' value would still select an empty surface. Derive the active surface so it
+  // can never be 'code' without files nor 'trust' without evidence — auto-recovers to Preview the
+  // moment the backing data goes.
   const activeTab = tab === 'code' && fileCount === 0 ? 'preview' : tab === 'trust' && !hasTrust ? 'preview' : tab
-  const showTablist = fileCount > 0 || hasTrust
   const url = view.preview.url
   // IFRAME PAINT GATE (review HIGH: blank white flash): `preview.starting=false` means the SERVER
   // process is up, NOT that the iframe document has painted — so the bare bg-white iframe used to
@@ -93,32 +93,30 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   return (
     <div ref={panelRef} className="flex h-full min-h-0 flex-col gap-3">
       <div className="flex items-center justify-between gap-2">
-        {showTablist ? (
-          // Preview ⇄ Code ⇄ Trust toggle — Code surfaces once files exist, Trust once a
-          // verification has produced structured evidence.
-          <div role="tablist" aria-label={t('preview.title')} className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
-            {/* Tab buttons crossfade their active/hover state (transition-colors) for a settled toggle
-                rather than a hard cut; the tap-down scale is `motion-safe:` (instant under reduced-motion). */}
-            <button role="tab" aria-selected={activeTab === 'preview'} onClick={() => setTab('preview')}
-              className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'preview' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
-              {t('preview.tab.preview')}
+        {/* Preview ⇄ Code ⇄ Trust toggle — ALWAYS rendered (Code surfaces once files exist, Trust once a
+            verification has produced structured evidence). The lone Preview tab IS the panel's anchor, so
+            there is NO separate <h3> title here — that duplicated the drawer header's "Canlı önizleme"
+            (owner finding B3, 2026-06-11). The tablist still carries the aria-label for AT users. */}
+        <div role="tablist" aria-label={t('preview.title')} className="flex rounded-lg border border-white/10 bg-white/[0.03] p-0.5 text-xs">
+          {/* Tab buttons crossfade their active/hover state (transition-colors) for a settled toggle
+              rather than a hard cut; the tap-down scale is `motion-safe:` (instant under reduced-motion). */}
+          <button role="tab" aria-selected={activeTab === 'preview'} onClick={() => setTab('preview')}
+            className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'preview' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+            {t('preview.tab.preview')}
+          </button>
+          {fileCount > 0 && (
+            <button role="tab" aria-selected={activeTab === 'code'} onClick={() => setTab('code')}
+              className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+              {t('preview.tab.code')} <span className="text-slate-500">{fileCount}</span>
             </button>
-            {fileCount > 0 && (
-              <button role="tab" aria-selected={activeTab === 'code'} onClick={() => setTab('code')}
-                className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'code' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
-                {t('preview.tab.code')} <span className="text-slate-500">{fileCount}</span>
-              </button>
-            )}
-            {hasTrust && (
-              <button role="tab" aria-selected={activeTab === 'trust'} onClick={() => setTab('trust')}
-                className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'trust' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
-                {t('trust.tab')}
-              </button>
-            )}
-          </div>
-        ) : (
-          <h3 className="text-sm font-semibold text-slate-200">{t('preview.title')}</h3>
-        )}
+          )}
+          {hasTrust && (
+            <button role="tab" aria-selected={activeTab === 'trust'} onClick={() => setTab('trust')}
+              className={`rounded-md px-2.5 py-1 transition-colors motion-safe:active:scale-95 ${activeTab === 'trust' ? 'bg-white/10 text-slate-100' : 'text-slate-400 hover:text-slate-200'}`}>
+              {t('trust.tab')}
+            </button>
+          )}
+        </div>
         <div className="flex items-center gap-2">
           {/* Preview header actions — ONLY when the live URL is embeddable (`/preview/`) AND the
               Preview tab is active (Code/Trust don't show the running app). A non-/preview/ or

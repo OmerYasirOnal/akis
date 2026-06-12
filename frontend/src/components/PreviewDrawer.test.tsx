@@ -2,7 +2,9 @@ import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { PreviewDrawer } from './PreviewDrawer.js'
+import { PreviewPanel } from './PreviewPanel.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
+import type { SessionView } from '../live/types.js'
 import type { ReactElement } from 'react'
 
 /** PreviewDrawer reads i18n strings, so render it inside the provider (default: EN).
@@ -171,6 +173,57 @@ describe('PreviewDrawer (desktop)', () => {
     // EN default; the hint mentions "double-click to reset". (TR mirror exists in the catalog.)
     expect(sep.getAttribute('title')).toMatch(/double-click to reset/i)
     expect(sep.getAttribute('aria-description')).toBe(sep.getAttribute('title'))
+  })
+
+  // SEAM GAP (owner finding round-2 2026-06-11): the visible distance from the resize seam (the aside's
+  // left edge / hairline) to the band must EQUAL the band→right-edge distance. The resize handle's HIT
+  // area is a separate absolute `w-3` strip (its VISIBLE mark is only the 1px hairline), so the body
+  // content needs to clear just the hairline — a SYMMETRIC `pl-3 pr-3` (12px each). The old `pl-6` (24px)
+  // made the left gap read ~2× the right (measured in Brave: 25px vs 12px → 13px vs 12px after). Pin the
+  // symmetric padding on BOTH desktop body regions so a regression back to `pl-6` fails; the handle's `w-3`
+  // hit area is asserted unchanged.
+  it('desktop body regions use SYMMETRIC pl-3 pr-3 so the seam gap ≈ the right gap (not the old pl-6)', () => {
+    renderDrawer({ open: true })
+    const cards = screen.getByTestId('cards-slot').parentElement! // region A wrapper
+    const preview = screen.getByTestId('preview-slot').parentElement! // region B wrapper
+    for (const region of [cards, preview]) {
+      expect(region.className).toContain('pl-3')
+      expect(region.className).toContain('pr-3')
+      expect(region.className).not.toContain('pl-6') // the old wide left inset is gone
+    }
+    // The resize handle's hit area is untouched — still the full 12px `w-3` strip (don't shrink the grab).
+    expect(screen.getByRole('separator').className).toContain('w-3')
+  })
+
+  // OUTER CORNER (owner finding round-3 2026-06-11): the drawer docks over the studio's `rounded-2xl`
+  // chat card as a SIBLING — a square aside corner cut straight across the card's 16px curve at the
+  // shell's top/bottom-right (dark pixels spilling onto the page background, read as a "broken border").
+  // Pin the matching right-side radius + the overflow clip that makes the children follow the curve.
+  it('the desktop aside carries rounded-r-2xl (matches the chat card silhouette) + overflow-hidden', () => {
+    renderDrawer({ open: true })
+    const aside = screen.getByTestId('preview-drawer')
+    expect(aside.className).toContain('rounded-r-2xl')
+    expect(aside.className).toContain('overflow-hidden')
+  })
+
+  // DUPLICATE HEADER (owner finding B3, 2026-06-11): with a REAL PreviewPanel mounted in the preview slot,
+  // the "Live preview" title must appear EXACTLY ONCE — in the drawer's own header chrome — never a second
+  // time as an inner panel <h3> (which read as the same title stacked twice). This is the end-to-end pin.
+  it('renders the "Live preview" title exactly once (drawer header only — no duplicate inner heading)', () => {
+    const view: SessionView = {
+      sessionId: 's1', status: 'done', lanes: [], gates: {},
+      tests: { testsRun: 0, passed: false, ran: false },
+      preview: { ready: false }, errors: [],
+    }
+    renderDrawer({
+      open: true,
+      preview: <PreviewPanel view={view} device="responsive" onDevice={() => {}} />,
+    })
+    // The visible title text appears once. (The tablist's aria-label reuses the same string but is an
+    // attribute, not text content, so it does not show as a second on-screen "Live preview".)
+    expect(screen.getAllByText('Live preview')).toHaveLength(1)
+    // And it lives in the drawer's header chrome, not a panel heading.
+    expect(screen.queryByRole('heading', { name: /Live preview/i })).toBeNull()
   })
 })
 

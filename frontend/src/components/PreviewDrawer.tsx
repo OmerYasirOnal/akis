@@ -242,7 +242,12 @@ export function PreviewDrawer({
       // `overflow-hidden` (Issue 1/2) clips any region-B content during the slide + at narrow widths so the
       // collapsing/sliding box can never spill at the right edge. z-20: BELOW the edge-tab (z-30), the FAB
       // (z-40) and the mobile overlay (z-50) — the anti-jumble stacking order.
-      className="absolute inset-y-0 right-0 z-20 hidden flex-col overflow-hidden border-l border-white/10 bg-[#0B1220] shadow-2xl motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out lg:flex [&.is-dragging_iframe]:pointer-events-none"
+      // `rounded-r-2xl` (owner finding round-3 2026-06-11): the drawer is a SIBLING of the studio's
+      // `rounded-2xl` chat card (ChatStudio shell) docked over its right edge — a square corner here cut
+      // straight across the card's 16px corner curve, spilling dark pixels onto the page background at the
+      // drawer's top/bottom-right. Matching the card's radius keeps the shell's silhouette intact;
+      // `overflow-hidden` above already clips the header/body to the curve.
+      className="absolute inset-y-0 right-0 z-20 hidden flex-col overflow-hidden rounded-r-2xl border-l border-white/10 bg-[#0B1220] shadow-2xl motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out lg:flex [&.is-dragging_iframe]:pointer-events-none"
     >
       {/* LEFT-EDGE RESIZE SEPARATOR — keyboard splitter + pointer drag (capture on this stable node). */}
       <div
@@ -284,8 +289,14 @@ export function PreviewDrawer({
       {/* HEADER — one piece of chrome (Issue 2c/§2b): a labeled chrome row (preview title + ✕) so the close
           control reads as part of the drawer's header bar rather than a lone ✕ floating on its own border
           line. The ✕ travels OFF-SCREEN with the aside when closed (overflow-hidden + translateX). `onClose`
-          stays the bare prop — no gate authority here. */}
-      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 px-3 py-2">
+          stays the bare prop — no gate authority here.
+          `pl-3`: the resize separator is an absolute 12px (`w-3`) HIT strip pinned to the aside's left edge,
+          but its VISIBLE mark is only the 1px hairline hugging that edge — so the content needs to clear just
+          the hairline, not the whole hit zone. 12px = the same visible inset as the right gap (`pr-3`), so the
+          seam→content distance MATCHES the content→right-edge distance (owner finding round-2 2026-06-11: the
+          old 24px `pl-6` made the LEFT gap read visibly wider than the right/bottom). The handle's `w-3` hit
+          area is unchanged — only the content padding moved. */}
+      <div className="flex shrink-0 items-center justify-between gap-2 border-b border-white/10 pl-3 pr-3 py-2">
         <span className="truncate text-sm font-semibold text-slate-200">{t('preview.title')}</span>
         <button
           type="button"
@@ -297,12 +308,16 @@ export function PreviewDrawer({
         </button>
       </div>
 
-      {/* BODY — two scroll regions (H1). */}
+      {/* BODY — two scroll regions (H1). SYMMETRIC `pl-3 pr-3`: the resize separator's VISIBLE mark is only
+          the 1px hairline at the aside's left edge (the `w-3` HIT strip is invisible), so a 12px left inset
+          clears the hairline AND matches the 12px right gap — the seam→band distance now equals the band→
+          right-edge distance (owner finding round-2 2026-06-11: `pl-6` made the left gap read ~2× the right).
+          `pb-3` keeps the stats strip off the drawer's bottom edge. */}
       <div className="flex h-full min-h-0 flex-col">
         {/* Region A: gate-adjacent card stack — owns its own scrollbar, capped so the preview keeps height. */}
-        <div className="shrink-0 overflow-y-auto px-3 py-3 [max-height:50vh]">{cards}</div>
+        <div className="shrink-0 overflow-y-auto pl-3 pr-3 py-3 [max-height:50vh]">{cards}</div>
         {/* Region B: PreviewPanel — takes the rest; min-h-0 lets its inner DeviceFrame scroll, not the body. */}
-        <div className="min-h-0 flex-1">{preview}</div>
+        <div className="min-h-0 flex-1 pl-3 pr-3 pb-3">{preview}</div>
       </div>
     </aside>
 
@@ -392,10 +407,12 @@ export function PreviewDrawer({
             </button>
           </div>
 
-          {/* BODY — the same two scroll regions as the desktop drawer (H1). */}
+          {/* BODY — the same two scroll regions as the desktop drawer (H1). The mobile overlay has NO resize
+              separator, so its padding stays SYMMETRIC `px-3` (no `pl-6` inset); `pb-3` on region B keeps the
+              stats strip off the overlay's bottom edge (parity with desktop). */}
           <div className="flex h-full min-h-0 flex-col">
             <div className="shrink-0 overflow-y-auto px-3 py-3 [max-height:50vh]">{cards}</div>
-            <div className="min-h-0 flex-1">{preview}</div>
+            <div className="min-h-0 flex-1 px-3 pb-3">{preview}</div>
           </div>
         </div>
       </div>
