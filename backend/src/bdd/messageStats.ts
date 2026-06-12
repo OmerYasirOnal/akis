@@ -112,9 +112,17 @@ export function parseCucumberScenarios(ndjson: string): BddScenario[] {
     const name = pickleName.get(pickleId) || pickleId || startedId
     const statuses = stepStatuses.get(startedId) ?? []
     const bad = statuses.find(s => BAD.includes(s))
-    const passed = bad === undefined && statuses.length > 0 && !statuses.every(s => s === 'SKIPPED')
-    return passed
-      ? { name, passed: true }
-      : { name, passed: false, ...(bad ? { failedStatus: bad, failedStep: `step reported ${bad}` } : {}) }
+    const allSkipped = statuses.length > 0 && statuses.every(s => s === 'SKIPPED')
+    const passed = bad === undefined && statuses.length > 0 && !allSkipped
+    if (passed) return { name, passed: true }
+    // A finished-but-all-SKIPPED scenario is NOT a hard failure — it is UNMEASURED (the same
+    // class as a boot-smoke skipped probe). Stamp it with the SAME bounded reason `'skipped'`
+    // the e2e/boot-smoke half uses, so the shared `summarizeVerifyEvidence` classifier counts it
+    // as unmeasured (not a hard failure) on the full-cucumber path too — without it, an all-SKIPPED
+    // BDD scenario (no `bad`) had no reason and was mis-reported as a hard failure (P0-3a review LOW).
+    if (allSkipped) return { name, passed: false, failedStatus: 'skipped', failedStep: 'all steps skipped' }
+    // A finished, non-passing scenario with no identifiable bad step (a torn/partial stream) — keep
+    // it a hard failure with no fabricated reason (the classifier's generic 'failed' label).
+    return { name, passed: false, ...(bad ? { failedStatus: bad, failedStep: `step reported ${bad}` } : {}) }
   })
 }

@@ -38,6 +38,21 @@ describe('summarizeVerifyEvidence (P0-3a)', () => {
     expect(s.failingScenarios).toEqual([{ name: 'clicks the delete (Sil)', reason: 'missing literal' }])
   })
 
+  it('treats a BDD all-skipped scenario (suite bdd, reason "skipped") as unmeasured too', () => {
+    // The full-cucumber path stamps an all-SKIPPED scenario with reason 'skipped' (messageStats),
+    // so the classifier must read it as unmeasured on the BDD shape exactly as on the e2e shape.
+    const ev = evidence([
+      { name: 'a passing step', suite: 'bdd', passed: true },
+      { name: 'auth-gated route', suite: 'bdd', passed: false, reason: 'skipped', step: 'all steps skipped' },
+      { name: 'a real failure', suite: 'bdd', passed: false, reason: 'FAILED', step: 'step reported FAILED' },
+    ])
+    const s = summarizeVerifyEvidence(ev)!
+    expect(s.passedCount).toBe(1)
+    expect(s.failedCount).toBe(1) // ONLY the FAILED scenario
+    expect(s.unmeasuredCount).toBe(1) // the all-skipped one
+    expect(s.failingScenarios).toEqual([{ name: 'a real failure', reason: 'FAILED' }])
+  })
+
   it('caps failingScenarios at the requested count (default 3)', () => {
     const ev = evidence(Array.from({ length: 5 }, (_, i) => ({ name: `f${i}`, suite: 'e2e' as const, passed: false, reason: `status ${500 + i}` })))
     const s = summarizeVerifyEvidence(ev)!
