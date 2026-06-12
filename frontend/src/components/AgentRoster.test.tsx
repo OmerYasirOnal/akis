@@ -62,3 +62,32 @@ describe('presenceOf — Scribe falls back to done on a chat-seeded build', () =
     expect(presenceOf(view, 'proto')).toBe('idle')
   })
 })
+
+describe('presenceOf — Critic falls back to done/failed on a code_review verdict', () => {
+  // The Critic emits a `code_review` verdict but NO agent_start/agent_end, so without this fallback
+  // the strip read 'idle'/"beklemede" for the whole build even after the run block said
+  // "Kod incelemesi · Onaylandı". The verdict in `view.codeReview` is the proof it ran.
+  it('returns "done" for critic on an APPROVED (non-critical) verdict', () => {
+    const view = { ...emptyView('s1'), codeReview: { approved: true, findings: 0, critical: false, iteration: 1 } }
+    expect(presenceOf(view, 'critic')).toBe('done')
+  })
+
+  it('returns "done" for critic on a non-critical rejected verdict (it still finished its pass)', () => {
+    const view = { ...emptyView('s1'), codeReview: { approved: false, findings: 3, critical: false, iteration: 2 } }
+    expect(presenceOf(view, 'critic')).toBe('done')
+  })
+
+  it('returns "failed" for critic on a CRITICAL verdict (mirrors the rose-tone bubble / parked run)', () => {
+    const view = { ...emptyView('s1'), codeReview: { approved: false, findings: 5, critical: true, iteration: 1 } }
+    expect(presenceOf(view, 'critic')).toBe('failed')
+  })
+
+  it('still returns "idle" for critic when no code_review has happened', () => {
+    expect(presenceOf(emptyView('s1'), 'critic')).toBe('idle')
+  })
+
+  it('the code_review fallback is critic-only — another role stays idle on it', () => {
+    const view = { ...emptyView('s1'), codeReview: { approved: true, findings: 0, critical: false, iteration: 1 } }
+    expect(presenceOf(view, 'proto')).toBe('idle')
+  })
+})
