@@ -35,6 +35,25 @@ describe('ChatThread', () => {
     expect(screen.queryByRole('button', { name: 'Approve spec' })).toBeNull()
     expect(screen.getByText(/Shipped/)).toBeInTheDocument()
   })
+  // P1-5 — the Shipped card must read a human provider LABEL, never the raw wire slug.
+  it('P1-5 — the shipped card shows the provider DISPLAY label, not the raw slug (anthropic → "Anthropic (Claude)")', () => {
+    const msgs: ChatMessage[] = [{ id: 'd', kind: 'done', verified: true, provider: 'anthropic' }]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByText(/Anthropic \(Claude\)/)).toBeInTheDocument()
+    // The bare slug must NOT appear as a standalone token after the separator.
+    expect(screen.queryByText(/· anthropic$/)).toBeNull()
+  })
+  it('P1-5 — the mock provider renders as "Demo" (never "mock")', () => {
+    const msgs: ChatMessage[] = [{ id: 'd', kind: 'done', verified: false, provider: 'mock' }]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByText(/· Demo/)).toBeInTheDocument()
+    expect(screen.queryByText(/· mock/)).toBeNull()
+  })
+  it('P1-5 — an UNKNOWN provider slug passes through as-is (no crash)', () => {
+    const msgs: ChatMessage[] = [{ id: 'd', kind: 'done', verified: true, provider: 'futurellm' }]
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByText(/· futurellm/)).toBeInTheDocument()
+  })
   it('A2.1 — an awaiting push_confirm gate shows the per-project destination line before confirm', () => {
     const msgs: ChatMessage[] = [
       { id: 'g', kind: 'gate', gate: 'push_confirm', state: 'awaiting', delivery: { owner: 'ada', repo: 'todo-app' } },

@@ -2,6 +2,7 @@ import type { ChatMessage, UserMsg, AgentMsg, GateMsg, VerifyMsg, CodeReviewMsg,
 import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
 import { metricsBadge } from './metricsFormat.js'
+import { providerLabel } from './providerLabel.js'
 
 /** Friendly, localized labels for the raw agent tool names — so the activity reads as clean
  *  steps ("Kod yazılıyor…") instead of dev slugs ("dispatch_proto"). Unknown tools fall back
@@ -272,7 +273,7 @@ export function DoneBubble({ m }: { m: DoneMsg }) {
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
       <div className="rounded-2xl rounded-tl-sm border border-emerald-400/30 bg-gradient-to-br from-emerald-400/15 to-teal-400/10 px-4 py-2 text-sm text-emerald-200">
-        🚀 {t('chat.shipped')}{m.verified ? ` · ${t('chat.verified').toLowerCase()}` : ''}{m.provider ? ` · ${m.provider}` : ''}
+        🚀 {t('chat.shipped')}{m.verified ? ` · ${t('chat.verified').toLowerCase()}` : ''}{m.provider ? ` · ${providerLabel(m.provider)}` : ''}
       </div>
     </div>
   )

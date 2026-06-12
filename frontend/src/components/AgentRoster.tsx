@@ -38,6 +38,15 @@ export function presenceOf(view: SessionView, role: Role): AgentPresence {
   // takes the lane-step branch above; this fallback covers any view folded without those events
   // (e.g. an older replayed log). Mirrors the orchestrator status fallback.
   if (role === 'scribe' && view.gates?.specApproval?.state === 'satisfied') return 'done'
+  // The Critic runs a READ-ONLY code review and emits a `code_review` verdict — but NO
+  // agent_start/agent_end (the review path isn't a lane activation), so the lane-step branch above
+  // never fires for it and the strip sat 'idle'/"beklemede" for the whole build even after the run
+  // block read "Kod incelemesi · Onaylandı". The verdict IS the proof Critic ran, so derive presence
+  // from `view.codeReview` (a pure last-wins projection of the same event the bubble renders →
+  // deterministic + replay/reopen-safe, no backend change). A `critical` verdict (the run parks for
+  // a human recovery decision) reads 'failed' to mirror the bubble's rose tone; any other verdict
+  // (approved / non-critical findings) reads 'done' — Critic finished its pass either way.
+  if (role === 'critic' && view.codeReview) return view.codeReview.critical ? 'failed' : 'done'
   return 'idle'
 }
 

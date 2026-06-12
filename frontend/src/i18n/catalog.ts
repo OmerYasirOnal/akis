@@ -187,7 +187,12 @@ export const STRINGS = {
     // live activity) — a one-line summary chip + a toggle to re-reveal it (H1-Fix-B).
     'spec.show': 'Show spec',
     'spec.hide': 'Hide spec',
+    // The collapsed-chip subtitle is now RUN-STATUS aware (P1-4): a verified/finished or
+    // failed/parked build must not read "building" forever. `spec.collapsed` is the in-flight
+    // (default) copy; the two below cover the settled buckets.
     'spec.collapsed': 'Spec approved — building',
+    'spec.collapsed.done': 'Spec approved — build complete',
+    'spec.collapsed.parked': 'Spec approved — build stopped',
     'workflow.starting.title': 'Workflow is starting',
     'workflow.starting.body': 'Creating the run session and attaching the live agent stream.',
     'workflow.starting.elapsed': 'Elapsed',
@@ -989,7 +994,12 @@ export const STRINGS = {
     // kaplamayı bırakır) — tek satırlık özet + tekrar açmak için bir düğme (H1-Fix-B).
     'spec.show': 'Spec’i göster',
     'spec.hide': 'Spec’i gizle',
+    // Katlanmış çip alt-yazısı artık ÇALIŞMA-DURUMU farkında (P1-4): doğrulanmış/biten veya
+    // başarısız/durmuş bir build sonsuza dek "inşa ediliyor" dememeli. `spec.collapsed` devam-eden
+    // (varsayılan) metindir; alttaki ikisi yerleşmiş durumları kapsar.
     'spec.collapsed': 'Spec onaylandı — inşa ediliyor',
+    'spec.collapsed.done': 'Spec onaylandı — build tamamlandı',
+    'spec.collapsed.parked': 'Spec onaylandı — build durdu',
     'workflow.starting.title': 'Workflow başlıyor',
     'workflow.starting.body': 'Çalışma oturumu oluşturuluyor ve canlı ajan akışı bağlanıyor.',
     'workflow.starting.elapsed': 'Geçen süre',
