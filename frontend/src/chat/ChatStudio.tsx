@@ -316,7 +316,15 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // SAME signal shape (a store write of 'awaiting_critic_resolution' + a recovery event, no status
     // change on the wire), so it must re-trigger the snapshot read too. The park (and its resolution)
     // re-reads the durable status so canRun flips live.
-  }, [activeSessionId, status, api, activeView.connectionGone, activeView.pushFailed?.retry, activeView.verifyFailed?.retry, activeView.recovery?.critic])
+    // gates.pushConfirm?.state in the deps (PR-1 / demo-sweep D1-1): the PUSH gate is the THIRD park
+    // with that exact lagging-snapshot shape — the BE persists status:'awaiting_push_confirm' (+ the
+    // code) but emits ONLY a `gate push_confirm awaiting` event (emitGate; NO session/status frame),
+    // so the fold sets gates.pushConfirm.state WITHOUT touching v.status. Without this dep the snapshot
+    // stayed at the mid-build value ('building' — not previewable) AND at its pre-Proto codeFiles
+    // (undefined), so the push-gate card appeared with NO ▶ Run until F5. Re-reading on the gate fold
+    // lands the fresh status + code → canRun flips live. The gate's SATISFIED transition re-reads too
+    // (state changes awaiting→satisfied), harmlessly refreshing the now-done snapshot.
+  }, [activeSessionId, status, api, activeView.connectionGone, activeView.pushFailed?.retry, activeView.verifyFailed?.retry, activeView.recovery?.critic, activeView.gates.pushConfirm?.state])
 
   // The single build path: the chat-authored spec becomes a session via the UNCHANGED startSession
   // → the same 4 structural gates + pipeline + History. The ONLY caller is the Chat-to-Build
