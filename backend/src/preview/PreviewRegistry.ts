@@ -21,6 +21,25 @@ export interface PreviewEntry {
   dir: string
   type?: AppType      // how it's served — 'static' is served from `dir`, no process/port
   reason?: string
+  /** ADDITIVE (review 3399732516): a stable content hash of the materialized RepoFiles this entry
+   *  was started from — recorded ONLY on a ready entry. The done-tap/restart path compares the
+   *  session's CURRENT code digest against this: equal ⇒ identical bytes ⇒ SKIP the restart (don't
+   *  kill an app the user is inspecting nor re-pay npm install for the same code); differ ⇒ restart
+   *  (the A3.3 stale-bytes guarantee). Computed by the caller (the route, via verify/digest) and
+   *  passed into start() — the registry never imports verify/ (preview↔verify import cycle). */
+  digest?: string
+}
+
+/** Additive start options (audit P0-2 / review 3399732530 / 3399732516). All optional so existing
+ *  callers (and the explicit user POST) keep today's behavior. */
+export interface StartOpts {
+  /** Content digest of the materialized files (recorded on the ready entry — see PreviewEntry.digest). */
+  digest?: string
+  /** Capacity policy at the cap. 'allow' (default) = an EXPLICIT user start may evict the oldest
+   *  heavy preview (the user asked for THIS one). 'never' = a BACKGROUND start (done-tap restart /
+   *  prewarm) DECLINES at capacity instead of evicting — a warm-up is never worth killing a live
+   *  preview (review 3399732530 + the cap half of 3399732533). */
+  evict?: 'allow' | 'never'
 }
 
 /** A launched long-running preview process we can kill and inspect. */
@@ -145,6 +164,15 @@ const defaultProbe: Probe = async port => {
 export class PreviewRegistry {
   private entries = new Map<string, PreviewEntry>()
   private procs = new Map<string, PreviewProc>()
+  /** Monotonic ownership token per session (audit P0-2). Every call to start() mints a NEW token for
+   *  its launch; the async phases of that launch (install → probe-loop → ready) write SHARED state
+   *  (this.entries / this.procs) only while their token is STILL the current one for the session. A
+   *  launch that was superseded by a newer start() (or a stop()) reads a moved token and STANDS DOWN,
+   *  tearing down only its OWN half-made resources (its proc/port/dir) — it never clobbers the newer
+   *  launch's entry or untracks its proc. (The post-ready crash-watch already guarded this way via
+   *  status+port; this extends the SAME discipline to every async write.) */
+  private launchSeq = 0
+  private launchToken = new Map<string, number>()
   private launch: Launch
   private probe: Probe
   private commandOnPath: (cmd: string) => Promise<boolean>
@@ -179,41 +207,79 @@ export class PreviewRegistry {
 
   private set(e: PreviewEntry): PreviewEntry { this.entries.set(e.sessionId, e); this.deps.onStatus?.(e); return e }
 
-  async start(sessionId: string, dir: string, type: AppType): Promise<PreviewEntry> {
-    await this.stop(sessionId) // replace any prior preview for this session
+  /** Does `token` still own this session's launch? (audit P0-2 — guards every async-phase write.)
+   *  A newer start() or a stop() bumps the session's token, so a superseded launch reads `false`. */
+  private owns(sessionId: string, token: number): boolean {
+    return this.launchToken.get(sessionId) === token
+  }
+
+  async start(sessionId: string, dir: string, type: AppType, opts: StartOpts = {}): Promise<PreviewEntry> {
+    await this.stop(sessionId) // replace any prior preview for this session (also bumps the token)
+    // Mint THIS launch's ownership token. Every later write to shared state (this.entries /
+    // this.procs) checks owns(token); a superseded launch stands down without clobbering (P0-2).
+    const token = ++this.launchSeq
+    this.launchToken.set(sessionId, token)
+
     // Static apps need no install or process: serve the materialized files directly
     // through the proxy. Instant + the smallest attack surface (no agent code runs).
     if (type === 'static') {
-      return this.set({ sessionId, status: 'ready', dir, type, url: `/preview/${sessionId}/` })
+      return this.set({ sessionId, status: 'ready', dir, type, url: `/preview/${sessionId}/`, ...(opts.digest ? { digest: opts.digest } : {}) })
     }
     const spec = startSpec(type, 0, sessionId)
-    if (!spec) { await teardown(dir).catch(() => {}); return this.set({ sessionId, status: 'unsupported', dir, type, reason: `app type '${type}' not previewable` }) }
+    if (!spec) {
+      await teardown(dir).catch(() => {})
+      if (!this.owns(sessionId, token)) return this.standDownEntry(sessionId)
+      return this.set({ sessionId, status: 'unsupported', dir, type, reason: `app type '${type}' not previewable` })
+    }
 
-    // CAP enforcement for an EXPLICIT heavy start: evict the OLDEST heavy preview(s) to make
-    // room (the user asked for THIS one; the evicted one re-boots on its next Run). Verify boots
+    // CAP enforcement for a heavy start. An EXPLICIT start (evict:'allow', the default — the user
+    // asked for THIS one) evicts the OLDEST heavy preview(s) to make room. A BACKGROUND start
+    // (evict:'never' — a done-tap restart or prewarm) NEVER evicts: a warm-up is not worth killing
+    // someone's live preview, so at capacity it DECLINES (honest 'stopped'+reason). Verify boots
     // bypass the cap entirely — the green gate must never queue behind preview pressure.
     if (!sessionId.includes(VERIFY_SESSION_SUFFIX)) {
-      while (this.atCapacity()) {
-        const oldest = [...this.entries.values()].find(e => this.countsTowardCap(e))
-        if (!oldest) break
-        await this.stop(oldest.sessionId)
+      if (opts.evict === 'never') {
+        if (this.atCapacity()) {
+          await teardown(dir).catch(() => {})
+          if (!this.owns(sessionId, token)) return this.standDownEntry(sessionId)
+          // Decline without touching ANY other session: leave the prior entry honest. If this very
+          // session had a prior entry it was already stop()'d above (its slot freed), so reaching
+          // here means OTHER sessions hold the cap — declining protects their live previews.
+          return this.set({ sessionId, status: 'stopped', dir, reason: 'preview at capacity — background start declined (a warm-up never evicts a live preview)' })
+        }
+      } else {
+        while (this.atCapacity()) {
+          const oldest = [...this.entries.values()].find(e => this.countsTowardCap(e))
+          if (!oldest) break
+          await this.stop(oldest.sessionId)
+        }
       }
     }
+    // A newer launch (or a stop) for THIS session may have landed during the eviction awaits above —
+    // don't clobber its 'starting'/'ready' with our stale frame. (P0-2: guard every write.)
+    if (!this.owns(sessionId, token)) return this.standDownEntry(sessionId)
     this.set({ sessionId, status: 'starting', dir })
     const install = installSpec()
     // Install preflight: a missing pnpm yields a bare "code null" — give an actionable hint.
     if (!(await this.commandOnPath(install.cmd))) {
       await teardown(dir).catch(() => {})
+      // owns-guard: a launch superseded mid-preflight stands down silently (no clobber).
+      if (!this.owns(sessionId, token)) return this.standDownEntry(sessionId)
       return this.set({ sessionId, status: 'failed', dir, reason: `${install.cmd} not found — enable corepack (corepack enable)` })
     }
     const res = await this.deps.sandbox.run(install.cmd, install.args, { cwd: dir, timeoutMs: this.deps.installTimeoutMs ?? 120_000 })
     if (res.code !== 0) {
       await teardown(dir).catch(() => {})
+      if (!this.owns(sessionId, token)) return this.standDownEntry(sessionId)
       // Surface the captured install stderr tail (previously captured then discarded).
       return this.set({ sessionId, status: 'failed', dir, reason: `install failed (code ${res.code})${tailForReason(res.stderr)}` })
     }
 
     const port = await allocatePort()
+    // A launch superseded during install must NOT register its proc under the session key (it would
+    // untrack/overwrite the newer launch's proc). Stand down: don't launch, release the port, tear
+    // down our own dir. (P0-2: only our OWN half-made resources.)
+    if (!this.owns(sessionId, token)) { releasePort(port); await teardown(dir).catch(() => {}); return this.standDownEntry(sessionId) }
     const proc = this.launch(startSpec(type, port, sessionId)!, dir)
     this.procs.set(sessionId, proc)
 
@@ -232,37 +298,71 @@ export class PreviewRegistry {
     const started = Date.now()
     let delay = interval
     for (;;) {
+      // SUPERSEDED mid-probe (a newer start() or a stop() took the token): stand down. Kill OUR
+      // OWN proc + release OUR port + tear OUR dir — but never touch this.procs/this.entries (the
+      // newer launch owns those now). (P0-2 core.)
+      if (!this.owns(sessionId, token)) {
+        proc.kill(); releasePort(port); await teardown(dir).catch(() => {})
+        return this.standDownEntry(sessionId)
+      }
       if (earlyExit) {
-        releasePort(port); this.procs.delete(sessionId)
+        releasePort(port)
         await teardown(dir).catch(() => {})
+        // Re-check ownership AFTER the teardown await (mirrors the timeout branch): a stop()/newer
+        // start() landing in this window must NOT be clobbered back to 'failed', and we must not
+        // untrack a newer launch's proc. Stand down if superseded. (P0-2.)
+        if (!this.owns(sessionId, token)) return this.standDownEntry(sessionId)
+        this.procs.delete(sessionId)
         return this.set({ sessionId, status: 'failed', dir, port, reason: `preview process exited early (code ${earlyExit.code})${tailForReason(proc.stderrTail?.())}` })
       }
       if (await this.probe(port)) {
+        // Re-check ownership AFTER the await: a stop()/newer start() may have landed while probing.
+        if (!this.owns(sessionId, token)) {
+          proc.kill(); releasePort(port); await teardown(dir).catch(() => {})
+          return this.standDownEntry(sessionId)
+        }
         // POST-READY crash watch (caught LIVE): a generated server that crashes on a later
         // request used to leave a STALE 'ready' entry — the proxy answered 502 "preview
         // unavailable" with no reason and no recovery hint. Flip the entry to 'failed' with
         // the exit code + stderr tail (the preview_status event reaches the UI), release the
-        // port and tear the workspace down. Guard: only if the entry is STILL this run's
-        // 'ready' (a stop()/restart in between must not be overwritten).
+        // port and tear the workspace down. Guard: only if THIS launch still owns the session
+        // AND its entry is still this run's 'ready' (a stop()/restart in between must not be
+        // overwritten). The token check subsumes the old status+port check but we keep both
+        // (defense in depth: the entry could have been re-set to ready by a same-port future run).
         proc.onExit?.(code => {
+          if (!this.owns(sessionId, token)) return
           const cur = this.entries.get(sessionId)
           if (cur?.status !== 'ready' || cur.port !== port) return
           releasePort(port); this.procs.delete(sessionId)
           void teardown(dir).catch(() => {})
           this.set({ sessionId, status: 'failed', dir, port, reason: `preview crashed after start (code ${code})${tailForReason(proc.stderrTail?.())}` })
         })
-        return this.set({ sessionId, status: 'ready', dir, port, url: `/preview/${sessionId}/` })
+        return this.set({ sessionId, status: 'ready', dir, port, url: `/preview/${sessionId}/`, ...(opts.digest ? { digest: opts.digest } : {}) })
       }
       if (Date.now() - started >= budgetMs) break
       await new Promise(r => setTimeout(r, Math.min(delay, budgetMs - (Date.now() - started))))
       delay = Math.min(delay * 1.5, interval * 4)
     }
-    proc.kill(); releasePort(port); this.procs.delete(sessionId)
+    proc.kill(); releasePort(port)
     await teardown(dir).catch(() => {})
+    // Probe-timeout: a superseded launch stands down (its kill+release above already cleaned up its
+    // own proc/port); only the owner writes the 'failed' entry + untracks its proc.
+    if (!this.owns(sessionId, token)) return this.standDownEntry(sessionId)
+    this.procs.delete(sessionId)
     return this.set({ sessionId, status: 'failed', dir, port, reason: `readiness probe timed out${tailForReason(proc.stderrTail?.())}` })
   }
 
+  /** A superseded launch's return value: the CURRENT (newer) entry for the session, untouched. The
+   *  superseded launch has already torn down its OWN resources; it returns whatever the owner set
+   *  (or a benign 'stopped' shell if there is none yet) WITHOUT writing to the maps. (P0-2.) */
+  private standDownEntry(sessionId: string): PreviewEntry {
+    return this.entries.get(sessionId) ?? { sessionId, status: 'stopped', dir: '', reason: 'superseded by a newer preview start' }
+  }
+
   async stop(sessionId: string): Promise<void> {
+    // Bump the token so any in-flight launch for this session is SUPERSEDED and stands down — a
+    // stop() must win against a concurrent start()'s late writes (P0-2: a Stop is authoritative).
+    this.launchToken.set(sessionId, ++this.launchSeq)
     const proc = this.procs.get(sessionId)
     if (proc) { proc.kill(); this.procs.delete(sessionId) }
     const e = this.entries.get(sessionId)
