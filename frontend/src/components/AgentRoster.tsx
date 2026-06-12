@@ -44,9 +44,14 @@ export function presenceOf(view: SessionView, role: Role): AgentPresence {
   // block read "Kod incelemesi · Onaylandı". The verdict IS the proof Critic ran, so derive presence
   // from `view.codeReview` (a pure last-wins projection of the same event the bubble renders →
   // deterministic + replay/reopen-safe, no backend change). A `critical` verdict (the run parks for
-  // a human recovery decision) reads 'failed' to mirror the bubble's rose tone; any other verdict
-  // (approved / non-critical findings) reads 'done' — Critic finished its pass either way.
-  if (role === 'critic' && view.codeReview) return view.codeReview.critical ? 'failed' : 'done'
+  // a human recovery decision) reads 'failed' to mirror the bubble's rose tone — but ONLY while the
+  // park is still awaiting: `codeReview` is a last-wins projection and a human Proceed emits NO new
+  // code_review (resolveCritic goes straight to verify), so without the recovery guard a shipped run
+  // would carry a permanently red Critic dot (reviewer MED). Once `recovery.critic` flips 'resolved',
+  // the verdict reads 'done' — Critic finished its pass and the human accepted its finding.
+  if (role === 'critic' && view.codeReview) {
+    return view.codeReview.critical && view.recovery?.critic === 'awaiting' ? 'failed' : 'done'
+  }
   return 'idle'
 }
 

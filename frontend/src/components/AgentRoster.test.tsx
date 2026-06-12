@@ -77,9 +77,17 @@ describe('presenceOf — Critic falls back to done/failed on a code_review verdi
     expect(presenceOf(view, 'critic')).toBe('done')
   })
 
-  it('returns "failed" for critic on a CRITICAL verdict (mirrors the rose-tone bubble / parked run)', () => {
-    const view = { ...emptyView('s1'), codeReview: { approved: false, findings: 5, critical: true, iteration: 1 } }
+  it('returns "failed" for critic on a CRITICAL verdict while the park is AWAITING (rose-tone bubble / parked run)', () => {
+    // A critical verdict always arrives WITH the recovery park (the orchestrator parks the run).
+    const view = { ...emptyView('s1'), codeReview: { approved: false, findings: 5, critical: true, iteration: 1 }, recovery: { critic: 'awaiting' as const } }
     expect(presenceOf(view, 'critic')).toBe('failed')
+  })
+
+  it('recovers to "done" after a human Proceed (recovery resolved) — a shipped run must not keep a red Critic dot (reviewer MED)', () => {
+    // resolveCritic's proceed path emits recovery:resolved but NO new code_review — the last-wins
+    // critical verdict would otherwise pin the lane 'failed' forever on a successfully shipped run.
+    const view = { ...emptyView('s1'), codeReview: { approved: false, findings: 5, critical: true, iteration: 1 }, recovery: { critic: 'resolved' as const } }
+    expect(presenceOf(view, 'critic')).toBe('done')
   })
 
   it('still returns "idle" for critic when no code_review has happened', () => {
