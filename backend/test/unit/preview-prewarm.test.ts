@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { EventBus } from '../../src/events/bus.js'
 import { wirePreviewPrewarm, startPreviewForSession } from '../../src/api/preview.routes.js'
 import { nextTs } from '../../src/events/clock.js'
+import { digestFiles } from '../../src/verify/digest.js'
 import type { PreviewRegistry, PreviewEntry } from '../../src/preview/PreviewRegistry.js'
 import type { SessionStore } from '../../src/store/SessionStore.js'
 
@@ -198,6 +199,40 @@ describe('wirePreviewPrewarm (ship-time boot, task #50 perceived latency)', () =
     bus.emit(done('s1'))
     await settle()
     expect(start).not.toHaveBeenCalled()
+  })
+
+  // ── review 3399732516 (MED) — IDENTICAL-BYTES restart skip (the A3.3 stale-bytes guarantee
+  //    must NOT regress: a DIFFERING digest still restarts, an IDENTICAL one no-ops) ──
+
+  it("a done for a 'ready' preview whose bytes are UNCHANGED is a NO-OP (no restart, no re-install)", async () => {
+    const bus = new EventBus()
+    const sameDigest = digestFiles([...FILES])
+    // The running entry already carries the digest of the SAME files the store will hand back.
+    const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'ready', dir: '/x', digest: sameDigest } })
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
+    await settle()
+    expect(start).not.toHaveBeenCalled() // identical bytes → the live preview is left running
+  })
+
+  it("a done for a 'ready' preview whose bytes DIFFER still RESTARTS (A3.3 stale-bytes guarantee)", async () => {
+    const bus = new EventBus()
+    // The running entry carries an OLD digest; the store hands back NEW files → restart must fire.
+    const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'ready', dir: '/x', digest: 'OLD-DIGEST' } })
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
+    await until(() => start.mock.calls.length > 0)
+    expect(start).toHaveBeenCalledTimes(1) // bytes changed → the rebuild's new bytes get served
+  })
+
+  it("a 'ready' preview with NO recorded digest still restarts (back-compat: pre-digest entries)", async () => {
+    const bus = new EventBus()
+    // An entry minted before the digest existed has no `digest` — a done must conservatively restart.
+    const { registry, store, start } = fakes({ existing: { sessionId: 's1', status: 'ready', dir: '/x' } })
+    wirePreviewPrewarm(bus, store, registry)
+    bus.emit(done('s1'))
+    await until(() => start.mock.calls.length > 0)
+    expect(start).toHaveBeenCalledTimes(1)
   })
 })
 
