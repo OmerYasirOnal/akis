@@ -39,6 +39,21 @@ describe('CONTRACT: AkisEvent union shape (frozen)', () => {
     expect(demo.demo).toBe(true)
   })
 
+  it('P0-3a: verify carries ADDITIVE optional honest-failure fields (testsRun/passed shape unchanged)', () => {
+    // The gate truth above is unchanged: all four new fields are OPTIONAL, so a legacy verify event
+    // (no breakdown) still satisfies the type. These guards trip if any is ever made REQUIRED (a
+    // freeze break) or retyped (e.g. failingScenarios losing its {name,reason} shape).
+    expectTypeOf<KindOf<'verify'>['passedCount']>().toEqualTypeOf<number | undefined>()
+    expectTypeOf<KindOf<'verify'>['failedCount']>().toEqualTypeOf<number | undefined>()
+    expectTypeOf<KindOf<'verify'>['unmeasuredCount']>().toEqualTypeOf<number | undefined>()
+    expectTypeOf<KindOf<'verify'>['failingScenarios']>().toEqualTypeOf<Array<{ name: string; reason: string }> | undefined>()
+    // A verify event WITHOUT the breakdown is still valid (additive ⇒ backward compatible).
+    const bare: KindOf<'verify'> = { kind: 'verify', testsRun: 0, passed: false, agent: 'trace', laneId: 'main', sessionId: 's1', ts: 1 }
+    expect(bare.passedCount).toBeUndefined()
+    const rich: KindOf<'verify'> = { ...bare, testsRun: 8, passedCount: 7, failedCount: 1, unmeasuredCount: 3, failingScenarios: [{ name: 'x', reason: 'missing literal' }] }
+    expect(rich.failedCount).toBe(1)
+  })
+
   it('the code_review event is structured-only (no free-form text field)', () => {
     const e: KindOf<'code_review'> = {
       kind: 'code_review', approved: false, findings: 2, critical: false, iteration: 1,

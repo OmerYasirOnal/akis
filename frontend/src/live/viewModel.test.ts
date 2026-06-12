@@ -91,6 +91,22 @@ describe('foldSessionView (pure live view-model)', () => {
     expect(demo.tests.demo).toBe(true)
   })
 
+  // P0-3a — on a FAILED verify the stats strip must show the REAL executed count (no longer forced
+  // to 0), and the additive breakdown folds into tests so the strip can show the honest split.
+  it('folds the REAL testsRun + honest breakdown on a FAILED verify (never 0 test)', () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'verify', testsRun: 11, passed: false, passedCount: 7, failedCount: 1, unmeasuredCount: 3, agent: 'trace', laneId: 'verify' }),
+    ])
+    expect(v.tests).toMatchObject({ testsRun: 11, passed: false, ran: true, passedCount: 7, failedCount: 1, unmeasuredCount: 3 })
+  })
+
+  it('an old/evidence-less FAILED verify event folds byte-identically (no breakdown fields)', () => {
+    const v = foldSessionView('s1', [ev({ kind: 'verify', testsRun: 0, passed: false, agent: 'trace', laneId: 'verify' })])
+    expect(v.tests.passedCount).toBeUndefined()
+    expect(v.tests.failedCount).toBeUndefined()
+    expect(v.tests.unmeasuredCount).toBeUndefined()
+  })
+
   it('folds the preview_status demo flag into preview.demo, and it sticks across lifecycle frames', () => {
     const live = foldSessionView('s1', [ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' })])
     expect(live.preview.demo).toBeUndefined()

@@ -99,6 +99,34 @@ describe('parseCucumberScenarios (ADDITIVE per-scenario detail)', () => {
     expect(scs[0]!.passed).toBe(true)
     expect(typeof scs[0]!.name).toBe('string')
   })
+  // P0-3a (review LOW) — a finished-but-all-SKIPPED scenario is UNMEASURED, not a hard failure. It
+  // must carry the bounded reason 'skipped' (the SAME label the e2e/boot-smoke half uses) so the
+  // shared summarizer counts it as unmeasured on the full-cucumber path. Without the stamp it had no
+  // reason and was mis-reported as a hard failure.
+  it('marks an all-SKIPPED scenario as UNMEASURED with reason "skipped" (not a hard failure)', () => {
+    const nd = [
+      env({ pickle: { id: 'p1', name: 'auth-gated route' } }),
+      env({ testCase: { id: 'c1', pickleId: 'p1' } }),
+      env({ testCaseStarted: { id: 'tc1', testCaseId: 'c1' } }),
+      env({ testStepFinished: { testCaseStartedId: 'tc1', testStepResult: { status: 'SKIPPED' } } }),
+      env({ testStepFinished: { testCaseStartedId: 'tc1', testStepResult: { status: 'SKIPPED' } } }),
+      env({ testCaseFinished: { testCaseStartedId: 'tc1' } }),
+    ].join('\n')
+    const scs = parseCucumberScenarios(nd)
+    expect(scs).toEqual([{ name: 'auth-gated route', passed: false, failedStatus: 'skipped', failedStep: 'all steps skipped' }])
+  })
+  it('a FAILED step still wins over a SKIPPED one (a partial-skip scenario is a hard failure, not unmeasured)', () => {
+    const nd = [
+      env({ pickle: { id: 'p1', name: 'mixed' } }),
+      env({ testCase: { id: 'c1', pickleId: 'p1' } }),
+      env({ testCaseStarted: { id: 'tc1', testCaseId: 'c1' } }),
+      env({ testStepFinished: { testCaseStartedId: 'tc1', testStepResult: { status: 'FAILED' } } }),
+      env({ testStepFinished: { testCaseStartedId: 'tc1', testStepResult: { status: 'SKIPPED' } } }),
+      env({ testCaseFinished: { testCaseStartedId: 'tc1' } }),
+    ].join('\n')
+    const scs = parseCucumberScenarios(nd)
+    expect(scs).toEqual([{ name: 'mixed', passed: false, failedStatus: 'FAILED', failedStep: 'step reported FAILED' }])
+  })
 })
 
 describe('parsePlaywrightScenarios (ADDITIVE per-spec detail)', () => {

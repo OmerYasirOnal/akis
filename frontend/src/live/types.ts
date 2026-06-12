@@ -50,6 +50,13 @@ export interface TestStats {
   scenariosBuilt?: number
   scenariosRunning?: number
   p95Ms?: number
+  // P0-3a — additive honest-failure breakdown mirrored from the `verify` event (observability
+  // only; `passed` above stays token-driven). Present when the verifier reported evidence on a
+  // run; absent on an old/evidence-less event. Lets the strip/cards show the REAL pass/fail/skip
+  // split instead of "0 test" on a failed run.
+  passedCount?: number
+  failedCount?: number
+  unmeasuredCount?: number
 }
 
 export interface PreviewState {

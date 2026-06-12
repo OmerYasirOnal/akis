@@ -25,8 +25,11 @@ export const STRINGS = {
     'recovery.critic.hint': 'The automatic critic review is unresolved. Proceed to continue the build (real verification + push confirmation still apply) or abandon to cancel.',
     'recovery.critic.proceed': 'Proceed',
     'recovery.critic.abandon': 'Abandon',
-    'recovery.verify.hint': 'No real passing test was produced, so the run is not verified. Retry to re-run the real tests — push stays blocked until a genuine pass.',
+    'recovery.verify.hint': 'Verification did not pass, so the run is not verified — push stays blocked until a genuine pass. Two honest options: Retry re-runs the SAME tests (use it only if the failure looked transient), or describe a change in the chat below to alter the code and try again.',
     'recovery.verify.retry': 'Retry tests',
+    // P0-3a — HONEST failed-verify reporting. `{run}/{passed}/{failed}/{unmeasured}` are filled with
+    // the verifier's REAL evidence at the call site so a failed run never reads as "0 test".
+    'recovery.verify.summary': '{run} checks ran · {passed} passed · {failed} failed · {unmeasured} could not be measured',
     // push_failed: a VERIFIED run whose push failed (network/adapter). The retry re-runs the
     // GATED push (Gate 4 still mints from the VerifyToken) — a retry affordance, not a bypass.
     'recovery.push.hint': 'The build is verified, but pushing it failed. Retry the push — it still requires the verified push approval (the push gate is never bypassed).',
@@ -101,6 +104,9 @@ export const STRINGS = {
     'chat.verified': 'Verified',
     'chat.aria.responded': 'AKIS responded.',
     'chat.notVerified': 'Not verified',
+    // P0-3a — appended to the FAILED verify bubble after the real test count, so it never reads as a
+    // bare "✗ Not verified · 0 test". Filled with the verifier's real evidence at the call site.
+    'chat.verify.breakdown': '({passed} passed, {failed} failed, {unmeasured} unmeasured)',
     // Singular/plural variants — EN pluralizes the verify-bubble count ("1 test" vs "3 tests").
     'chat.test': 'test',
     'chat.tests': 'tests',
@@ -839,8 +845,11 @@ export const STRINGS = {
     'recovery.critic.hint': 'Otomatik eleştirmen incelemesi çözülmedi. İnşaya devam etmek için ilerle (gerçek doğrulama + push onayı yine de geçerlidir) ya da iptal etmek için vazgeç.',
     'recovery.critic.proceed': 'İlerle',
     'recovery.critic.abandon': 'Vazgeç',
-    'recovery.verify.hint': 'Gerçek geçen bir test üretilmedi, bu yüzden çalışma doğrulanmadı. Gerçek testleri yeniden çalıştırmak için yeniden dene — gerçek bir geçiş olana dek push engelli kalır.',
+    'recovery.verify.hint': 'Doğrulama geçmedi, bu yüzden çalışma doğrulanmadı — gerçek bir geçiş olana dek push engelli kalır. İki dürüst seçenek var: Yeniden dene AYNI testleri tekrar çalıştırır (yalnızca hata geçici görünüyorsa kullan), ya da kodu değiştirmek için aşağıdaki sohbette bir değişiklik tarif edip tekrar dene.',
     'recovery.verify.retry': 'Testleri yeniden dene',
+    // P0-3a — DÜRÜST başarısız-doğrulama raporu. `{run}/{passed}/{failed}/{unmeasured}` çağrı yerinde
+    // doğrulayıcının GERÇEK kanıtıyla doldurulur, böylece başarısız çalışma asla "0 test" gibi okunmaz.
+    'recovery.verify.summary': '{run} kontrol çalıştı · {passed} geçti · {failed} başarısız · {unmeasured} ölçülemedi',
     // push_failed: DOĞRULANMIŞ bir çalışmanın push'u başarısız oldu (ağ/adaptör). Yeniden deneme
     // KAPILI push'u yeniden çalıştırır (Gate 4 yine VerifyToken'dan üretir) — atlatma değil.
     'recovery.push.hint': 'İnşa doğrulandı, ancak push başarısız oldu. Push\'u yeniden dene — yine doğrulanmış push onayını gerektirir (push kapısı asla atlanmaz).',
@@ -903,6 +912,9 @@ export const STRINGS = {
     'chat.verified': 'Doğrulandı',
     'chat.aria.responded': 'AKIS yanıtladı.',
     'chat.notVerified': 'Doğrulanmadı',
+    // P0-3a — başarısız doğrulama balonunda gerçek test sayısının ardına eklenir, böylece asla çıplak
+    // "✗ Doğrulanmadı · 0 test" gibi okunmaz. Çağrı yerinde gerçek kanıtla doldurulur.
+    'chat.verify.breakdown': '({passed} geçti, {failed} başarısız, {unmeasured} ölçülemedi)',
     // Turkish does not pluralize a noun after a numeral, so singular == plural ("1 test", "3 test").
     'chat.test': 'test',
     'chat.tests': 'test',
