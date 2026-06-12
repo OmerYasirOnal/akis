@@ -8,6 +8,7 @@ import type { PreviewRegistry, PreviewEntry } from '../preview/PreviewRegistry.j
 import { detectAppType } from '../preview/AppDetector.js'
 import { materialize } from '../preview/Workspace.js'
 import { serveStatic } from '../preview/serveStatic.js'
+import { digestFiles } from '../verify/digest.js'
 
 export interface PreviewDeps {
   registry: PreviewRegistry
@@ -57,17 +58,35 @@ function sanitizeResponseHeaders(headers: http.IncomingHttpHeaders, id: string, 
  *  the entry, or undefined when there is nothing to preview. NOT called directly — it runs ONLY
  *  inside the per-session serializer (see PreviewStartCoordinator) so two concurrent boots for one
  *  session can never interleave (caller B's start() would tear down caller A's materialized dir,
- *  and A's failure path would clobber B's ready entry — PreviewRegistry.ts unconditional set/delete). */
+ *  and A's failure path would clobber B's ready entry — PreviewRegistry.ts unconditional set/delete).
+ *
+ *  `evict` (review 3399732530): an EXPLICIT user start (the POST route / FE auto-run) passes 'allow'
+ *  (the registry may evict the oldest heavy preview at capacity — the user asked for THIS one); a
+ *  BACKGROUND start (the done-tap restart / prewarm) passes 'never' so a warm-up declines at capacity
+ *  rather than killing another session's live preview. The materialized RepoFiles' digest is recorded
+ *  on the ready entry (review 3399732516) so a later done can skip a restart for identical bytes. */
 async function materializeAndStart(
   store: PreviewDeps['store'],
   registry: PreviewDeps['registry'],
   id: string,
+  evict: 'allow' | 'never' = 'allow',
 ): Promise<PreviewEntry | undefined> {
   const session = await store.get(id)
   const files = session?.code?.files ?? []
   if (files.length === 0) return undefined
+  const digest = digestFiles(files)
   const dir = await materialize(id, files)
-  return registry.start(id, dir, detectAppType(files))
+  return registry.start(id, dir, detectAppType(files), { digest, evict })
+}
+
+/** The digest of a session's CURRENT produced code (the bytes a restart WOULD serve), or undefined
+ *  when there is nothing to preview. Used by the done-tap to skip a restart when the live entry's
+ *  recorded digest already matches — identical bytes (review 3399732516). */
+async function currentCodeDigest(store: PreviewDeps['store'], id: string): Promise<string | undefined> {
+  const session = await store.get(id)
+  const files = session?.code?.files ?? []
+  if (files.length === 0) return undefined
+  return digestFiles(files)
 }
 
 /**
@@ -106,18 +125,33 @@ class PreviewStartCoordinator {
     // CAP (audit bigger-bet): a warm-up is never worth evicting a live preview or OOMing the box — at
     // capacity the prewarm silently skips; the user's explicit Run still works (it evicts).
     if (this.registry.atCapacity()) return
-    void this.serialize(id, () => materializeAndStart(this.store, this.registry, id)).catch(() => {})
+    // A first-time prewarm (no live entry) is a BACKGROUND start → evict:'never' (a warm-up never
+    // evicts a live preview, even though the atCapacity() check above already declines most cases —
+    // belt and suspenders against a TOCTOU between the check and the registry's own cap).
+    void this.serialize(id, () => materializeAndStart(this.store, this.registry, id, 'never')).catch(() => {})
   }
 
-  /** A3.3 RESTART (done-with-ready): re-boot the live preview to serve a rebuild's NEW bytes. The
-   *  liveness precondition (c) re-reads the entry inside the serialized section — a Stop/eviction in
-   *  the async window means there is nothing live to restart, so it's skipped. Bypasses the capacity
-   *  gate: this session already holds its slot and registry.start() stops it before re-booting. */
+  /** A3.3 RESTART (done-with-ready): re-boot the live preview to serve a rebuild's NEW bytes. Two
+   *  preconditions are re-checked INSIDE the serialized section (consistent with F1's coalescing):
+   *   (c) LIVENESS — the entry must still be 'ready'; a Stop/eviction in the async window means there
+   *       is nothing live to restart, so it's skipped (a teardown is not immediately undone).
+   *   (digest, review 3399732516) IDENTICAL-BYTES — if the live entry's recorded digest equals the
+   *       session's CURRENT code digest, the rebuild produced the SAME bytes (e.g. confirmPush emits
+   *       `done` for unchanged code): SKIP, so we don't kill an app the user is inspecting nor re-pay
+   *       npm install for identical code. A DIFFERING (or absent) digest still restarts — the A3.3
+   *       stale-bytes guarantee. Background start ⇒ evict:'never' (this session already holds its slot;
+   *       registry.start() stops its prior entry first, so it reuses the slot and evicts no one). */
   private restart(id: string): Promise<PreviewEntry | undefined> {
-    return this.serialize(id, () => {
+    return this.serialize(id, async () => {
       const cur = this.registry.get(id)
-      if (!cur || cur.status !== 'ready') return Promise.resolve(undefined) // (c) Stop/evicted → skip
-      return materializeAndStart(this.store, this.registry, id)
+      if (!cur || cur.status !== 'ready') return undefined // (c) Stop/evicted → skip
+      // Identical-bytes skip: only when the live entry HAS a recorded digest (a pre-digest entry has
+      // none → conservatively restart) and it matches the session's current code digest.
+      if (cur.digest !== undefined) {
+        const now = await currentCodeDigest(this.store, id)
+        if (now !== undefined && now === cur.digest) return cur // unchanged bytes → leave it running
+      }
+      return materializeAndStart(this.store, this.registry, id, 'never')
     }).catch(() => undefined) // best-effort: a failed re-warm leaves the next Run to pay the boot
   }
 
