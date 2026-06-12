@@ -136,6 +136,50 @@ describe('useLiveChat — SSE-drop reconnecting overlay', () => {
   })
 })
 
+// ── F10 — a LIVE tab surviving a backend restart auto-reconnects via Last-Event-ID; replaySince
+//    returns ONLY post-cursor frames, so a preview_status BEFORE the cursor is never replayed and the
+//    replay-time liveness projection has no frame to correct — a dead 'ready' iframe persists. On a
+//    RE-open (an open after a prior successful open) the hook re-fetches the FULL /log (which DOES run
+//    through the backend projection), folding in the projected 'stopped' truth. ──
+describe('useLiveChat — F10 resumed-live-tab re-open re-syncs the projected /log', () => {
+  it('a RE-open re-fetches /log so a backend-projected stopped preview folds in (dead ready corrected)', async () => {
+    let es: FakeEventSource | undefined
+    const makeClient = (): EventStreamClient => new EventStreamClient(url => (es = new FakeEventSource(url)))
+    // The /log GET returns the BACKEND-PROJECTED truth: the post-restart registry can't back the
+    // earlier 'ready', so the projection rewrote seq 1 to 'stopped' (url stripped). Same seq → it
+    // overlays the stale live-tapped 'ready' in the hook's by-seq map.
+    const projectedLog = { events: [{ seq: 1, event: E('preview_status', { status: 'stopped' }) }], head: 1 }
+    const fetchFn = vi.fn(async (path: string) =>
+      ({ ok: true, status: 200, json: async () => (path.endsWith('/log') ? projectedLog : {}), text: async () => '' }) as unknown as Response)
+    const api = new ApiClient('', fetchFn)
+    const hook = renderHook(() => useLiveChat('s1', 'todo app', api, '', makeClient))
+
+    // The live tab learns a 'ready' preview (the iframe embeds /preview/s1/).
+    act(() => { es!.open() }) // initial open (opened := true, no re-sync)
+    act(() => { es!.msg(E('preview_status', { status: 'ready', url: '/preview/s1/' }), 1) })
+    await waitFor(() => expect(hook.result.current.view.preview.ready).toBe(true))
+
+    // Backend restarts: the EventSource auto-reconnects → a SECOND open. F10: this re-opens triggers
+    // the /log re-fetch; the projected 'stopped' frame overlays seq 1 and the dead 'ready' is corrected.
+    act(() => { es!.open() })
+    await waitFor(() => expect(hook.result.current.view.preview.ready).toBe(false))
+    expect(hook.result.current.view.preview.stopped).toBe(true)
+    expect(hook.result.current.view.preview.url).toBeUndefined() // no dead iframe url
+    expect(fetchFn.mock.calls.some(c => String(c[0]).endsWith('/sessions/s1/log'))).toBe(true)
+  })
+
+  it('the FIRST open does NOT re-fetch /log (initial connect already folds; events stream normally)', async () => {
+    let es: FakeEventSource | undefined
+    const makeClient = (): EventStreamClient => new EventStreamClient(url => (es = new FakeEventSource(url)))
+    const fetchFn = vi.fn(async (_path: string) => ({ ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response))
+    const api = new ApiClient('', fetchFn)
+    renderHook(() => useLiveChat('s1', 'todo app', api, '', makeClient))
+    act(() => { es!.open() }) // the ONLY open → must NOT trigger a /log re-fetch
+    await Promise.resolve()
+    expect(fetchFn.mock.calls.some(c => String(c[0]).endsWith('/sessions/s1/log'))).toBe(false)
+  })
+})
+
 describe('useLiveChat — rAF coalescer (perf invariant #50)', () => {
   it('coalesces N events delivered in one frame into a SINGLE refold (not one per event)', () => {
     vi.useFakeTimers()

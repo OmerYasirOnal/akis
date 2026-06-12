@@ -76,7 +76,8 @@ describe('foldSessionView (pure live view-model)', () => {
       ev({ kind: 'test_stats', built: 4, running: 4, passed: 4, failed: 0, durationMs: 1200 }),
       ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
     ])
-    expect(v.preview).toEqual({ ready: true, starting: false, stopped: false, url: '/preview/s1/' })
+    // epoch: 1 — the A3.3 remount counter bumps on the (single) ready fold (additive field).
+    expect(v.preview).toEqual({ ready: true, starting: false, stopped: false, url: '/preview/s1/', epoch: 1 })
     expect(v.tests.ran).toBe(true)
     expect(v.tests.scenariosBuilt).toBe(4)
     expect(v.tests.scenariosRunning).toBe(4)
@@ -152,6 +153,34 @@ describe('foldSessionView (pure live view-model)', () => {
     ])
     expect(v.preview.url).toBeUndefined()
     expect(v.preview.starting).toBe(true)
+  })
+
+  // A3.3 — `epoch` is the FE-only remount counter: it bumps on EVERY folded 'ready' frame so
+  // PreviewPanel can key the iframe and remount it on a rebuild's fresh ready — including
+  // consecutive ready→ready frames at the SAME (stable) /preview/:id/ url, where `key={url}`
+  // alone is a no-op. Non-ready frames neither bump nor clear it.
+  it('bumps preview.epoch on every ready fold and keeps it stable otherwise', () => {
+    const ready = ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' })
+    const starting = ev({ kind: 'preview_status', status: 'starting' })
+    expect(foldSessionView('s1', [ready]).preview.epoch).toBe(1)
+    expect(foldSessionView('s1', [ready, ready]).preview.epoch).toBe(2) // consecutive readys both count
+    expect(foldSessionView('s1', [ready, starting]).preview.epoch).toBe(1) // a non-ready frame is neutral
+    expect(foldSessionView('s1', [ready, starting, ready]).preview.epoch).toBe(2)
+    expect(foldSessionView('s1', [starting]).preview.epoch).toBeUndefined() // no ready yet → absent
+  })
+
+  // A3.2/A3.4 — the backend's replay-time projection rewrites a dead liveness claim to a
+  // terminal 'stopped' frame (url stripped). Folding that projected replay must land on the
+  // recoverable PAUSE state (Run affordance), never a dead iframe or ghost spinner.
+  it("folds a projected replay ending in 'stopped' to ready=false, url=undefined, stopped=true", () => {
+    const v = foldSessionView('s1', [
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }), // an earlier genuine frame
+      ev({ kind: 'preview_status', status: 'stopped' }),                    // the projected last frame
+    ])
+    expect(v.preview.ready).toBe(false)
+    expect(v.preview.url).toBeUndefined()
+    expect(v.preview.stopped).toBe(true)
+    expect(v.preview.starting).toBe(false)
   })
 
   it('folds the structured code_review verdict (last wins) as a read-only card', () => {

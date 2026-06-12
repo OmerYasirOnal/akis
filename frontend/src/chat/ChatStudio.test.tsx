@@ -6,11 +6,11 @@ import { ChatStudio } from './ChatStudio.js'
 import { RunPipeline } from './RunPipeline.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { RouterProvider } from '../router/router.js'
-import { ApiClient } from '../api/client.js'
+import { ApiClient, ApiError } from '../api/client.js'
 import { EventStreamClient } from '../live/EventStreamClient.js'
 import { emptyView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
-import type { AkisEvent } from '@akis/shared'
+import type { AkisEvent, SessionState } from '@akis/shared'
 
 // ChatStudio renders ExternalWriteCard (which links to /settings via the SPA Link) on a done build,
 // so the studio tree needs the router context the app always provides in production.
@@ -230,6 +230,13 @@ describe('ChatStudio — preview ungated from verification (Run keys on code pre
     await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
   })
 
+  // A3.1 belt-and-suspenders: push_failed is the remaining parked-terminal state with code —
+  // the VERIFIED-but-unshipped park. Seeing/running the app must never hinge on the push.
+  it('offers ▶ Run for a push_failed session WITH code', async () => {
+    const drawer = await renderDeepLink('spf', { id: 'spf', status: 'push_failed', verified: true, version: 3, code: CODE })
+    await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
+  })
+
   it('offers ▶ Run for a cancelled session WITH code', async () => {
     const drawer = await renderDeepLink('scan', { id: 'scan', status: 'cancelled', verified: false, version: 1, code: CODE })
     await waitFor(() => expect(runButtons(drawer).length).toBe(2)) // BOTH surfaces: header pill + empty-state CTA
@@ -280,6 +287,151 @@ describe('ChatStudio — preview ungated from verification (Run keys on code pre
     await new Promise(r => setTimeout(r, 0))
     expect(within(drawer).queryByText('unverified')).toBeNull()
     expect(within(drawer).queryByText('verified')).toBeNull()
+  })
+})
+
+// ── A3.2/A3.4 — REOPEN AFTER THE BACKEND'S REPLAY PROJECTION: a replay whose last preview_status
+//    frame was rewritten to 'stopped' (the registry couldn't back the persisted liveness claim after
+//    a restart/eviction) must land the user on the recoverable PAUSE state — a working ▶ Run —
+//    never a dead /preview/ iframe (proxy 502) and never a ghost spinner. ──
+describe('ChatStudio — reopened replay projected to stopped offers Run, no dead iframe (A3.2/A3.4)', () => {
+  beforeEach(() => { localStorage.clear() })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  class EmitStream {
+    static created: EmitStream[] = []
+    connectedUrl?: string
+    private onEvent?: (e: AkisEvent, seq: number) => void
+    constructor() { EmitStream.created.push(this) }
+    connect(url: string, h: { onEvent: (e: AkisEvent, seq: number) => void }): void { this.connectedUrl = url; this.onEvent = h.onEvent }
+    close(): void {}
+    emit(e: AkisEvent, seq: number): void { this.onEvent?.(e, seq) }
+  }
+  const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
+    ({ agent: 'orchestrator', laneId: 'main', sessionId: 'sstop', ts: 0, ...(e as object) }) as AkisEvent
+
+  it("renders the Run affordance and NO /preview/ iframe when the replay ends in 'stopped'", async () => {
+    EmitStream.created = []
+    window.history.replaceState({}, '', '/?s=sstop')
+    const CODE = { files: [{ filePath: 'index.html', content: '<html/>' }] }
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'sstop', idea: 'an app', status: 'done', verified: true }]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sstop/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/sstop')) return { ok: true, status: 200, json: async () => ({ id: 'sstop', status: 'done', version: 2, code: CODE }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/sstop/events')!)
+
+    // What the server now replays: an earlier genuine 'ready' frame + the LAST frame projected
+    // to 'stopped' (url stripped) because the registry could not back the liveness claim.
+    live.emit(ev({ kind: 'preview_status', status: 'ready', url: '/preview/sstop/' }), 1)
+    live.emit(ev({ kind: 'preview_status', status: 'stopped' }), 2)
+
+    // The recoverable PAUSE state: ▶ Run is offered (the closed drawer is aria-hidden → hidden:true)…
+    await waitFor(() =>
+      expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
+    // …and NO iframe embeds the dead /preview/ url (it would 502 with no affordance).
+    expect(drawer.querySelector('iframe[src*="/preview/"]')).toBeNull()
+  })
+})
+
+// ── Live-verify LOW (2026-06-11): a change-request rebuild that parks at push_failed left the
+//    drawer at "Run the app to see it live here" with NO ▶ Run until a page reload. The park is
+//    signaled only by a `recovery` event (v.status untouched), so the snapshot effect never
+//    re-fetched and backendStatus stayed at the mid-build value ('building' — not previewable).
+//    The park fold (pushFailed/verifyFailed) must re-trigger the snapshot read so canRun flips live. ──
+describe('ChatStudio — a recovery park refreshes the durable snapshot (Run appears without reload)', () => {
+  beforeEach(() => { localStorage.clear() })
+  afterEach(() => { window.history.replaceState({}, '', '/') })
+
+  class EmitStream {
+    static created: EmitStream[] = []
+    connectedUrl?: string
+    private onEvent?: (e: AkisEvent, seq: number) => void
+    constructor() { EmitStream.created.push(this) }
+    connect(url: string, h: { onEvent: (e: AkisEvent, seq: number) => void }): void { this.connectedUrl = url; this.onEvent = h.onEvent }
+    close(): void {}
+    emit(e: AkisEvent, seq: number): void { this.onEvent?.(e, seq) }
+  }
+  const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
+    ({ agent: 'orchestrator', laneId: 'main', sessionId: 'spark', ts: 0, ...(e as object) }) as AkisEvent
+
+  it('push_failed recovery re-fetches the snapshot → ▶ Run surfaces live', async () => {
+    EmitStream.created = []
+    window.history.replaceState({}, '', '/?s=spark')
+    const CODE = { files: [{ filePath: 'index.html', content: '<html/>' }] }
+    let getCalls = 0
+    let parked = false // the durable truth flips when the BE parks — right before the recovery emit
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'spark', idea: 'an app', status: 'building', verified: false }]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark')) {
+        getCalls++
+        // Mid-rebuild snapshot (building → NOT previewable) until the park lands.
+        return { ok: true, status: 200, json: async () => ({ id: 'spark', status: parked ? 'push_failed' : 'building', version: 3, code: CODE }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')!)
+    await waitFor(() => expect(getCalls).toBeGreaterThan(0)) // the mid-build snapshot landed
+
+    // No Run yet: building is not previewable (and that's correct — code is mid-write).
+    expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBe(0)
+    const readsBeforePark = getCalls
+
+    // The push parks — only a recovery event arrives (v.status untouched, the bug's exact shape).
+    parked = true
+    live.emit(ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }), 1)
+
+    // The park must re-trigger the snapshot read; the fresh push_failed (+ code) flips canRun.
+    await waitFor(() => expect(getCalls).toBeGreaterThan(readsBeforePark))
+    await waitFor(() =>
+      expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
+  })
+
+  // F6 — the CRITIC park has the SAME signal shape as push_failed/verify_failed (a store write of
+  // 'awaiting_critic_resolution' + ONLY a recovery event, v.status untouched). It was omitted from the
+  // snapshot-refresh deps, so a reopened/mid-build critic park never re-read the durable status and
+  // ▶ Run stayed hidden until a reload. Adding activeView.recovery?.critic re-fetches on the park.
+  it('critic recovery re-fetches the snapshot → ▶ Run surfaces live', async () => {
+    EmitStream.created = []
+    window.history.replaceState({}, '', '/?s=spark')
+    const CODE = { files: [{ filePath: 'index.html', content: '<html/>' }] }
+    let getCalls = 0
+    let parked = false // the durable truth flips to a previewable park right before the recovery emit
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'spark', idea: 'an app', status: 'building', verified: false }]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark')) {
+        getCalls++
+        return { ok: true, status: 200, json: async () => ({ id: 'spark', status: parked ? 'awaiting_critic_resolution' : 'building', version: 3, code: CODE }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')!)
+    await waitFor(() => expect(getCalls).toBeGreaterThan(0))
+
+    // No Run yet: building is not previewable (code mid-write).
+    expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBe(0)
+    const readsBeforePark = getCalls
+
+    // The critic parks — only a recovery event arrives (v.status untouched, the bug's exact shape).
+    parked = true
+    live.emit(ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' }), 1)
+
+    // The park must re-trigger the snapshot read; the fresh awaiting_critic_resolution (+ code) flips canRun.
+    await waitFor(() => expect(getCalls).toBeGreaterThan(readsBeforePark))
+    await waitFor(() =>
+      expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
   })
 })
 
@@ -369,22 +521,62 @@ describe('ChatStudio — P0-1 single spec approval (chat-approved spec seed)', (
     expect(body.chat!.some(t => t.content.includes('I’m AKIS'))).toBe(false) // greeting excluded
   })
 
-  it("P1-6: 'New build' on a NON-TERMINAL run cancels it (api.cancel) before clearing", async () => {
-    const captured: { body?: unknown } = {}
-    const api = new ApiClient('', vi.fn(studioFetch(captured)))
-    const cancelRun = vi.spyOn(api, 'cancelRun').mockResolvedValue({} as never)
+  // ── A4 / F9 — 'New build' must NEVER destroy a parked RETRYABLE run, and must STOP a live one.
+  //    Parked states (push_failed/verify_failed) are signaled only via `recovery` events — the FE
+  //    snapshot can lag the pre-park status — so the FE no longer re-reads-then-decides client-side
+  //    (the triplicated pattern that re-opened the orphaned-run hole on a fetch error). It fires the
+  //    cancel UNCONDITIONALLY and the BACKEND'S CANCEL_IMMUNE guard is the single authority: it 409s a
+  //    retryable park / terminal run (the FE swallows it → the park survives, proven server-side in
+  //    orchestrator-cancel.test.ts) and cancels a genuinely live run. These FE tests pin: the cancel
+  //    IS fired (no fragile pre-read gate), a 409 from a parked run is harmless (newChat still resets),
+  //    and a live run's cancel targets the right session. ──
+  /** A studio fetch whose POST creates `snew`; getSession always resolves a non-terminal building
+   *  snapshot (the FE no longer branches on it). cancelRun is spied on by the caller. */
+  function newBuildFetch(): (path: string, init?: RequestInit) => Promise<Response> {
+    const reply = "Here's a spec 👇\n```akis-spec\n# TODO App\nA list.\n```"
+    return async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => [], text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat/stream')) return { ok: false, status: 404, json: async () => ({}), text: async () => '' } as unknown as Response
+      if (path.endsWith('/api/chat')) return { ok: true, status: 200, json: async () => ({ reply }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions') && init?.method === 'POST') {
+        return { ok: true, status: 201, json: async () => ({ id: 'snew', status: 'building', idea: '# TODO App\nA list.', version: 1 }), text: async () => '' } as unknown as Response
+      }
+      if (path.endsWith('/sessions/snew/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/snew')) return { ok: true, status: 200, json: async () => ({ id: 'snew', status: 'building', code: { files: [{ filePath: 'index.html', content: '<html/>' }] }, version: 1 }), text: async () => '' } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    }
+  }
+
+  /** Render, start a build (→ active run snew), then click 'New build'. `cancelImpl` simulates the
+   *  BACKEND's response to the cancel: a parked run rejects 409 (the guard refused) while a live run
+   *  resolves. The test asserts behavior survives BOTH. */
+  async function startThenNewBuild(cancelImpl: () => Promise<never> | Promise<unknown>) {
+    const api = new ApiClient('', vi.fn(newBuildFetch()))
+    const cancelRun = vi.spyOn(api, 'cancelRun').mockImplementation(() => cancelImpl() as Promise<SessionState>)
     const fake = new FakeStream()
     render(wrap(<ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} />))
-
     await userEvent.type(screen.getByLabelText(/Ask AKIS/i), 'todo app')
     await userEvent.click(screen.getByRole('button', { name: 'Ask' }))
     await userEvent.click(await screen.findByRole('button', { name: 'Approve & Build' }))
-    // The build started → a non-terminal (building) session. getSession resolves backendStatus.
-    await waitFor(() => expect(captured.body).toBeDefined())
+    await waitFor(() => expect(screen.getByRole('button', { name: 'New build' })).toBeInTheDocument())
+    await userEvent.click(screen.getByRole('button', { name: 'New build' }))
+    return { cancelRun }
+  }
 
-    // 'New build' must STOP the running pipeline (not orphan it) before resetting.
-    await userEvent.click(await screen.findByRole('button', { name: 'New build' }))
+  it("F9: 'New build' fires the cancel UNCONDITIONALLY (the BE 409 protects a park, not a FE pre-read)", async () => {
+    // A parked run: the BE CANCEL_IMMUNE guard 409s. The FE still FIRES the cancel (no client-side
+    // skip that could orphan the run) and the 409 is swallowed — newChat resets regardless.
+    const reject409 = () => Promise.reject(new ApiError(409, 'wrong status', 'WrongStatus'))
+    const { cancelRun } = await startThenNewBuild(reject409)
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('snew'))
+    // The 409 was harmless — newChat completed its reset (the ?s= deep-link was dropped).
+    await waitFor(() => expect(window.location.search).toBe(''))
+  })
+
+  it("P1-6 / F9 control: a genuinely LIVE run IS cancelled by 'New build' (cancel resolves)", async () => {
+    const { cancelRun } = await startThenNewBuild(() => Promise.resolve({} as never))
+    await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('snew'))
+    await waitFor(() => expect(window.location.search).toBe(''))
   })
 })
 
@@ -503,6 +695,11 @@ describe('ChatStudio — anchored multi-run transcript', () => {
     // TWO run-blocks now live in the SAME scroll (run A is terminal, run B is active) — two ledgers.
     await waitFor(() => expect(screen.getAllByLabelText('Trust ledger').length).toBe(2))
 
+    // F9: starting build B already fired an UNCONDITIONAL cancel at the prior run (sA) — the BE 409s
+    // it because sA is terminal/done, so the older run is never disturbed (proven server-side). Clear
+    // the spy here so the Stop assertion below isolates exactly what the STOP CLICK targets.
+    cancelRun.mockClear()
+
     // Stop targets the LATEST (active) run: the active EmitStream is the last connected one (sB).
     const live = EmitStream.created[EmitStream.created.length - 1]!
     expect(live.connectedUrl).toBe('/sessions/sB/events')
@@ -510,7 +707,7 @@ describe('ChatStudio — anchored multi-run transcript', () => {
     const stop = await screen.findByRole('button', { name: 'Stop run' })
     await userEvent.click(stop)
     await waitFor(() => expect(cancelRun).toHaveBeenCalledWith('sB'))
-    // Exactly the latest — never the older terminal run.
+    // Exactly the latest — the Stop click never cancels the older terminal run.
     expect(cancelRun).not.toHaveBeenCalledWith('sA')
   })
 

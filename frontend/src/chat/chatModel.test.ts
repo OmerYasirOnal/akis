@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { foldRunBubbles, type AgentMsg, type GateMsg, type CodeReviewMsg } from './chatModel.js'
+import { foldRunBubbles, type AgentMsg, type GateMsg, type CodeReviewMsg, type RecoveryMsg } from './chatModel.js'
 import type { AkisEvent } from '@akis/shared'
 
 const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
@@ -79,6 +79,102 @@ describe('foldRunBubbles', () => {
     expect(gateCards[0]!.delivery).toEqual({ owner: 'ada', repo: 'todo-app' })
   })
 
+  // ── A3.5 — a PARKED push (recovery push_failed 'awaiting') contradicts a still-'awaiting'
+  //    push_confirm gate row: the backend NEVER emits a gate event on a push failure (gates are
+  //    sacred — only the success path moves the gate), so the inline GateBubble kept showing
+  //    "Confirm push" right above the push_failed Retry card — two actionable rows for ONE action.
+  //    The fold (presentation layer ONLY) drops the awaiting push_confirm GateMsg in that case;
+  //    the RecoveryBubble's retry drives the SAME gated confirm path, so exactly one row remains. ──
+  it('A3.5: gate(push_confirm awaiting) then recovery(push_failed awaiting) folds with NO awaiting gate card', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+    ])
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
+    expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(true)
+  })
+
+  it('A3.5: the ORDER-REVERSED sequence (recovery first, gate after) folds the same way (post-pass)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+    ])
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
+    expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(true)
+  })
+
+  // F5 — dropping the awaiting push_confirm gate also drops the only renderer of the push DESTINATION
+  // (delivery). The post-pass COPIES it onto the surviving push_failed recovery so the retry card can
+  // still show "→ github.com/owner/repo".
+  it('F5: the dropped gate\'s delivery is carried onto the surviving push_failed recovery card', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting', delivery: { owner: 'ada', repo: 'todo-app' } }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+    ])
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
+    const rec = msgs.find(m => m.kind === 'recovery' && m.recovery === 'push_failed') as RecoveryMsg
+    expect(rec.state).toBe('awaiting')
+    expect(rec.delivery).toEqual({ owner: 'ada', repo: 'todo-app' })
+  })
+
+  it('F5: a gate without delivery (anonymous/keyless) leaves the recovery delivery-less (no-op)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+    ])
+    const rec = msgs.find(m => m.kind === 'recovery' && m.recovery === 'push_failed') as RecoveryMsg
+    expect(rec.delivery).toBeUndefined()
+  })
+
+  // F7 — on a successful retry the orchestrator emits recovery 'resolved' BEFORE gate 'satisfied', so
+  // for ONE frame the gate is still 'awaiting' while the recovery is already 'resolved'. The
+  // resurrection window: the old awaiting-only suppression let the Confirm-push card reappear (click →
+  // AlreadyPushed 409). Suppress on resolved-too closes it; once gate 'satisfied' lands, it folds normally.
+  it('F7: gate(awaiting) → recovery(awaiting) → recovery(resolved) [no gate satisfied yet] → NO actionable gate card', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'resolved' }), // retry succeeded; gate satisfied not emitted yet
+    ])
+    // The one-frame resurrection is closed: no awaiting push_confirm gate card survives.
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(0)
+    // The recovery is resolved (its bubble renders nothing) — exactly zero actionable rows for the push.
+    expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(false)
+  })
+
+  it('F7: then the gate satisfied event folds normally (the satisfied singleton card is back)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'resolved' }),
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'satisfied' }),
+      ev({ kind: 'done', verified: true, provider: 'mock' }),
+    ])
+    const gateCards = msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm') as GateMsg[]
+    expect(gateCards).toHaveLength(1)
+    expect(gateCards[0]!.state).toBe('satisfied') // not awaiting → GateBubble renders nothing; no resurrection
+  })
+
+  it('A3.5: a retry SUCCESS continuation (gate satisfied + recovery resolved) keeps the satisfied gate card', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'awaiting' }),
+      ev({ kind: 'recovery', recovery: 'push_failed', state: 'resolved' }), // the retry succeeded
+      ev({ kind: 'gate', gate: 'push_confirm', state: 'satisfied' }),
+      ev({ kind: 'done', verified: true, provider: 'mock' }),
+    ])
+    const gateCards = msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm') as GateMsg[]
+    expect(gateCards).toHaveLength(1) // normal gate behavior resumed — the singleton card is back
+    expect(gateCards[0]!.state).toBe('satisfied')
+    // No contradictory card: the recovery is resolved (the bubble renders nothing when resolved).
+    expect(msgs.some(m => m.kind === 'recovery' && m.recovery === 'push_failed' && m.state === 'awaiting')).toBe(false)
+  })
+
+  it('A3.5: an awaiting push_confirm gate WITHOUT a push failure is untouched (the normal gate moment)', () => {
+    const msgs = foldRunBubbles([ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' })])
+    expect(msgs.filter(m => m.kind === 'gate' && m.gate === 'push_confirm' && m.state === 'awaiting')).toHaveLength(1)
+  })
+
   it('folds a recovery into a singleton card that flips awaiting → resolved in place', () => {
     const msgs = foldRunBubbles([
       ev({ kind: 'recovery', recovery: 'critic_resolution', state: 'awaiting' }),
@@ -125,6 +221,48 @@ describe('foldRunBubbles', () => {
     ])
     const preview = msgs.find(m => m.kind === 'preview')
     expect(preview).toMatchObject({ kind: 'preview', ready: false, error: { status: 'failed', reason: 'port in use' } })
+  })
+
+  // F3 — a projected replay ending in 'stopped' (the registry couldn't back the prior 'ready' after a
+  // restart, so the url was stripped) must CLEAR the singleton's earlier dead url and mark it stopped,
+  // never retain a clickable dead link rendered as "starting…".
+  it('a [ready(url) → stopped] fold CLEARS the url and marks the preview stopped (no dead link)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'stopped' }), // url already stripped by the backend projection
+    ])
+    const preview = msgs.find(m => m.kind === 'preview')
+    expect(preview).toMatchObject({ kind: 'preview', ready: false, stopped: true })
+    expect((preview as { url?: string }).url).toBeUndefined() // the earlier dead url did NOT linger
+  })
+
+  it('a stopped frame that STILL carries a url (belt-and-suspenders) drops it', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'stopped', url: '/preview/s1/' }),
+    ])
+    expect((msgs.find(m => m.kind === 'preview') as { url?: string }).url).toBeUndefined()
+  })
+
+  it("a 'failed' frame after a 'ready' clears the url too (the dead link must not render)", () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'failed', reason: 'crashed' }),
+    ])
+    const preview = msgs.find(m => m.kind === 'preview')
+    expect(preview).toMatchObject({ kind: 'preview', ready: false, error: { status: 'failed', reason: 'crashed' } })
+    expect((preview as { url?: string }).url).toBeUndefined()
+  })
+
+  it("a 'ready' AFTER a 'stopped' re-adds the url and clears the stopped flag (a re-run supersedes)", () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+      ev({ kind: 'preview_status', status: 'stopped' }),
+      ev({ kind: 'preview_status', status: 'ready', url: '/preview/s1/' }),
+    ])
+    const preview = msgs.find(m => m.kind === 'preview')
+    expect(preview).toMatchObject({ kind: 'preview', ready: true, url: '/preview/s1/' })
+    expect((preview as { stopped?: boolean }).stopped).toBeUndefined()
   })
 
   it('appends an error row', () => {

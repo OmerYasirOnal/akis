@@ -172,4 +172,22 @@ describe('CONTRACT: recovery routes', () => {
     const { app } = makeApp()
     expect((await app.inject({ method: 'POST', url: '/sessions/nope/cancel' })).statusCode).toBe(404)
   })
+
+  it('A4: POST /sessions/:id/cancel on a push_failed park → 409 (the retryable park is cancel-immune)', async () => {
+    const { app, services } = makeApp()
+    services.github = {
+      createRepo: async () => 'https://github.com/me/gone',
+      read: () => [],
+      pushFiles: async () => { throw new GitHubDeliveryError('github: request to /git/blobs failed (HTTP 404)', 404) },
+    }
+    const s = (await app.inject({ method: 'POST', url: '/sessions', payload: { idea: 'todo' } })).json()
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/approve` })
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/run` }) // → awaiting_push_confirm
+    await app.inject({ method: 'POST', url: `/sessions/${s.id}/confirm` }) // delivery fails → push_failed
+    expect((await app.inject({ method: 'GET', url: `/sessions/${s.id}` })).json().status).toBe('push_failed')
+    const res = await app.inject({ method: 'POST', url: `/sessions/${s.id}/cancel` })
+    expect(res.statusCode).toBe(409) // WrongStatusError → CONFLICT_ERRORS mapping, like terminal
+    // The park is intact — a later (post-fix) retry can still confirm through the gate.
+    expect((await app.inject({ method: 'GET', url: `/sessions/${s.id}` })).json().status).toBe('push_failed')
+  })
 })

@@ -56,6 +56,34 @@ describe('RunPipeline (slim run header)', () => {
     expect(screen.queryByRole('button', { name: 'Stop run' })).not.toBeInTheDocument()
   })
 
+  // F2 — a run PARKED awaiting a human recovery is signaled ONLY by a `recovery` event, so
+  // view.status stays 'running'. CANCEL_IMMUNE now 409s a cancel of push_failed/verify_failed, so a
+  // Stop here would be a silent no-op (a dead button); the inline RecoveryBubble is the actionable
+  // surface. Stop must be HIDDEN for each awaiting recovery kind.
+  it('F2: hides Stop while a run is parked at an AWAITING push_failed recovery (status still running)', () => {
+    const parked = viewWith({ status: 'running', pushFailed: { retry: 'awaiting' } })
+    render(wrap(<RunPipeline view={parked} api={new ApiClient()} />))
+    expect(screen.queryByRole('button', { name: 'Stop run' })).not.toBeInTheDocument()
+  })
+
+  it('F2: hides Stop while a run is parked at an AWAITING verify_failed recovery (status still running)', () => {
+    const parked = viewWith({ status: 'running', verifyFailed: { retry: 'awaiting' } })
+    render(wrap(<RunPipeline view={parked} api={new ApiClient()} />))
+    expect(screen.queryByRole('button', { name: 'Stop run' })).not.toBeInTheDocument()
+  })
+
+  it('F2: hides Stop while a run is parked at an AWAITING critic recovery (status still running)', () => {
+    const parked = viewWith({ status: 'running', recovery: { critic: 'awaiting' } })
+    render(wrap(<RunPipeline view={parked} api={new ApiClient()} />))
+    expect(screen.queryByRole('button', { name: 'Stop run' })).not.toBeInTheDocument()
+  })
+
+  it('F2: a RESOLVED recovery (the retry is back in flight) restores Stop — the run is live again', () => {
+    const resumed = viewWith({ status: 'running', pushFailed: { retry: 'resolved' } })
+    render(wrap(<RunPipeline view={resumed} api={new ApiClient()} />))
+    expect(screen.getByRole('button', { name: 'Stop run' })).toBeInTheDocument()
+  })
+
   it('is HEADER-ONLY: the 5-stage strip, gate buttons and recovery buttons are NOT rendered here (they are inline bubbles)', () => {
     // A run parked at a gate + a critic recovery — none of the strip/action surfaces appear in the header.
     const view = viewWith({

@@ -76,9 +76,20 @@ export const RunPipeline = memo(function RunPipeline({ view, api, sessionGone = 
     setCancelling(true)
     void Promise.resolve(client.cancelRun(id)).catch(() => { /* the SSE stream reflects the outcome */ }).finally(() => setCancelling(false))
   }
-  // Stop is shown only while the run is NON-terminal (in-flight) — once done/failed/cancelled there
-  // is nothing to stop.
-  const inFlight = !!view.sessionId && (view.status === 'running' || view.status === 'started')
+  // F2 — a run PARKED awaiting a human recovery (push_failed / verify_failed / a stuck critic) is
+  // signaled ONLY by a `recovery` event, so view.status stays 'running' even though the run is no
+  // longer in-flight. CANCEL_IMMUNE now 409s a cancel of push_failed/verify_failed, so a Stop here
+  // would be a silent no-op (a dead button); the inline RecoveryBubble is the actionable surface.
+  // Treat an AWAITING recovery as NOT in-flight → hide Stop. (A critic park IS cancellable server-
+  // side, but its actionable surface is the proceed/abandon RecoveryBubble — a parallel Stop is
+  // redundant and confusing, so it's hidden here too.)
+  const awaitingRecovery =
+    view.pushFailed?.retry === 'awaiting' ||
+    view.verifyFailed?.retry === 'awaiting' ||
+    view.recovery?.critic === 'awaiting'
+  // Stop is shown only while the run is NON-terminal (in-flight) AND not parked — once done/failed/
+  // cancelled or parked-for-recovery there is nothing (live) to stop.
+  const inFlight = !!view.sessionId && (view.status === 'running' || view.status === 'started') && !awaitingRecovery
 
   return (
     <div className={`flex flex-col ${compact ? 'gap-2' : 'gap-3'}`}>

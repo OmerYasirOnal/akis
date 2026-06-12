@@ -124,6 +124,10 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
           starting: e.status === 'starting',
           stopped: e.status === 'stopped', // recomputed each frame → a re-run's starting/ready clears it
           ...(e.status === 'ready' && e.url !== undefined ? { url: e.url } : {}),
+          // A3.3 — bump the FE-only remount counter on EVERY ready fold (non-ready frames keep it,
+          // via the prevPreview spread): the iframe key includes it, so a rebuild's fresh ready —
+          // even a coalesced ready→ready at the SAME stable /preview/:id/ url — remounts the iframe.
+          ...(e.status === 'ready' ? { epoch: (prevPreview.epoch ?? 0) + 1 } : {}),
           ...(e.demo ? { demo: true } : {}),
           ...(failed ? { error: { status: e.status as 'failed' | 'unsupported', ...(e.reason ? { reason: e.reason } : {}) } } : {}),
         }

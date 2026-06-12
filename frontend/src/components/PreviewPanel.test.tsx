@@ -10,7 +10,9 @@ import { vi } from 'vitest'
 import type { ReactElement } from 'react'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { PreviewPanel } from './PreviewPanel.js'
+import { foldSessionView } from '../live/viewModel.js'
 import type { SessionView } from '../live/types.js'
+import type { AkisEvent } from '@akis/shared'
 
 const renderI18n = (ui: ReactElement) => render(<I18nProvider>{ui}</I18nProvider>)
 
@@ -146,4 +148,56 @@ test('withholds ▶ Run when !canRun (studio gates the boot affordance, not the 
     <PreviewPanel view={viewWith(undefined, false)} device="responsive" onDevice={() => {}} onRun={() => {}} canRun={false} />,
   )
   expect(screen.queryByRole('button', { name: /Run app|Uygulamayı çalıştır/i })).toBeNull()
+})
+
+// ── A3.3 — STALE APP AFTER A REBUILD: the preview url is ALWAYS /preview/:id/ (stable across
+//    rebuilds), so keying the iframe by url/reloadNonce alone never remounts it when a change
+//    request's restart emits a fresh 'ready'. The folded `preview.epoch` (bumped per ready fold)
+//    now joins the key, so EVERY fresh ready remounts the iframe and re-fetches the NEW bytes. ──
+const pvEv = (status: 'starting' | 'ready' | 'stopped', url?: string): AkisEvent =>
+  ({ kind: 'preview_status', status, ...(url !== undefined ? { url } : {}), agent: 'orchestrator', laneId: 'main', sessionId: 's1', ts: 0 }) as AkisEvent
+
+const panelFor = (view: SessionView): ReactElement =>
+  <PreviewPanel view={view} device="responsive" onDevice={() => {}} onRun={() => {}} canRun />
+
+test('A3.3: two CONSECUTIVE ready folds at the SAME url remount the iframe (epoch bump, no intervening frame)', () => {
+  const URLP = '/preview/s1/'
+  const v1 = foldSessionView('s1', [pvEv('ready', URLP)])
+  const { container, rerender } = renderI18n(panelFor(v1))
+  const iframe1 = container.querySelector('iframe')!
+  expect(iframe1).not.toBeNull()
+  fireEvent.load(iframe1) // the old document painted — skeleton gone
+  expect(iframe1.className).toMatch(/opacity-100/)
+
+  // A rebuild's restart emits a SECOND ready at the SAME url (coalescing may hide any
+  // intermediate frame) — the fold bumps epoch, the panel must remount (new bytes).
+  const v2 = foldSessionView('s1', [pvEv('ready', URLP), pvEv('ready', URLP)])
+  rerender(<I18nProvider>{panelFor(v2)}</I18nProvider>)
+  const iframe2 = container.querySelector('iframe')!
+  expect(iframe2).not.toBe(iframe1) // a NEW node — the document re-fetches
+  expect(iframe2.getAttribute('src')).toBe(URLP) // same src/sandbox — no path/security change
+  expect(iframe2.className).toMatch(/opacity-0/) // the loading skeleton re-armed
+  expect(screen.getByText(/rendering|çiziliyor/i)).toBeInTheDocument()
+})
+
+test('A3.3: ready → non-ready → ready at the SAME url yields a NEW iframe node and re-arms the skeleton', () => {
+  const URLP = '/preview/s1/'
+  const v1 = foldSessionView('s1', [pvEv('ready', URLP)])
+  const { container, rerender } = renderI18n(panelFor(v1))
+  const iframe1 = container.querySelector('iframe')!
+  fireEvent.load(iframe1)
+
+  // The restart's 'starting' frame drops the url → the iframe unmounts (spinner branch).
+  const v2 = foldSessionView('s1', [pvEv('ready', URLP), pvEv('starting')])
+  rerender(<I18nProvider>{panelFor(v2)}</I18nProvider>)
+  expect(container.querySelector('iframe')).toBeNull()
+
+  // The fresh 'ready' at the SAME url: a NEW iframe node, skeleton up until it paints.
+  const v3 = foldSessionView('s1', [pvEv('ready', URLP), pvEv('starting'), pvEv('ready', URLP)])
+  rerender(<I18nProvider>{panelFor(v3)}</I18nProvider>)
+  const iframe3 = container.querySelector('iframe')!
+  expect(iframe3).not.toBeNull()
+  expect(iframe3).not.toBe(iframe1)
+  expect(iframe3.className).toMatch(/opacity-0/)
+  expect(screen.getByText(/rendering|çiziliyor/i)).toBeInTheDocument()
 })

@@ -82,6 +82,22 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
       if (cancelled || rafId !== undefined) return
       rafId = requestAnimationFrame(() => { rafId = undefined; refold() })
     }
+    // Re-sync from GET /sessions/:id/log, MERGING by seq (overlays any replay-projected frame onto a
+    // stale live-tapped one at the same seq — e.g. a dead 'ready' preview projected to 'stopped'). The
+    // re-sync must not fail SILENTLY (audit gap): one retry after 2s; if that fails too, surface the
+    // transient banner so the partial thread stays honest. Reused by onReset AND the F10 re-open path.
+    const resyncFromLog = (retry: boolean): void => {
+      void api.getSessionLog(sessionId).then(log => { if (cancelled) return; for (const { seq, event } of log) bySeq.current.set(seq, event); refold() })
+        .catch(() => { if (cancelled) return; if (retry) { timer = setTimeout(() => resyncFromLog(false), 2000) } else { lostRef.current = true; refold() } })
+    }
+    // F10 — a LIVE tab that survives a backend restart auto-reconnects via Last-Event-ID, so the
+    // server's replaySince returns ONLY post-cursor frames — a preview_status BEFORE the cursor is
+    // never replayed, the replay-time liveness projection has no frame to correct, and a dead 'ready'
+    // iframe persists (proxy 502, no Run affordance). On a RE-open (an open AFTER a prior successful
+    // open) we re-fetch the FULL /log, which DOES run through the backend projection (the same door
+    // GET /log uses), so the dead 'ready' folds in as the projected 'stopped' truth. The FIRST open is
+    // skipped (initial connect already folds the empty view; events stream in normally).
+    let opened = false
     const connect = (): void => {
       client = (makeClient ?? (() => new EventStreamClient()))()
       client.connect(`${baseUrl}/sessions/${sessionId}/events`, {
@@ -91,16 +107,16 @@ export function useLiveChat(sessionId: string | undefined, idea: string, api: Ap
         // A successful (re)connect clears the reconnecting banner even when NO event/reset follows —
         // the quiescent-gate case: a build parked awaiting approval emits nothing after the resume,
         // so without this the "reconnecting…" banner pulsed forever despite a healthy stream.
-        onOpen: () => { attempts = 0; if (lostRef.current || goneRef.current) { lostRef.current = false; goneRef.current = false; refold() } },
+        // F10: on a RE-open, also re-fetch /log so a projected (post-restart) preview truth folds in.
+        onOpen: () => {
+          attempts = 0
+          if (lostRef.current || goneRef.current) { lostRef.current = false; goneRef.current = false; refold() }
+          if (opened) resyncFromLog(true)
+          opened = true
+        },
         onReset: () => {
           lostRef.current = false; bySeq.current = new Map()
-          // The /log re-sync must not fail SILENTLY (audit gap): one retry after 2s; if that
-          // fails too, surface the transient banner so the partial thread is honest.
-          const sync = (retry: boolean): void => {
-            void api.getSessionLog(sessionId).then(log => { if (cancelled) return; for (const { seq, event } of log) bySeq.current.set(seq, event); refold() })
-              .catch(() => { if (cancelled) return; if (retry) { timer = setTimeout(() => sync(false), 2000) } else { lostRef.current = true; refold() } })
-          }
-          sync(true)
+          resyncFromLog(true)
         },
         // SSE dropped: mark reconnecting (subtle banner). A CONNECTING source the browser auto-
         // resumes via Last-Event-ID (the next onEvent clears the flag). A CLOSED source will NOT

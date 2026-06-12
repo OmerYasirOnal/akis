@@ -63,7 +63,10 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
   // identical sandboxed src). It feeds the iframe's React `key` (force-remount) and re-arms `loaded`
   // below so the dark skeleton shows during reload instead of a white flash.
   const [reloadNonce, setReloadNonce] = useState(0)
-  useEffect(() => { setLoaded(false) }, [url, reloadNonce]) // re-arm on (re)run / new session / manual refresh
+  // A3.3 — the folded remount counter: bumped per 'ready' frame, so a rebuild's fresh ready
+  // (the url is ALWAYS the stable /preview/:id/) remounts the iframe and fetches the NEW bytes.
+  const epoch = view.preview.epoch ?? 0
+  useEffect(() => { setLoaded(false) }, [url, reloadNonce, epoch]) // re-arm on (re)run / new session / manual refresh / rebuild
   // DeviceFrame's Desktop preset caps at the pane's real inner width (min(1280, paneWidth)) so the
   // user sees the full width with horizontal scroll only when narrower. Measure it read-only via a
   // ResizeObserver on the panel root — NO scaling, no per-frame React storm (one setState per resize).
@@ -235,9 +238,11 @@ export function PreviewPanel({ view, onRun, busy, canRun, files, testEvidence, a
                   The iframe element below is wrapped VERBATIM: same src/sandbox/allow/onLoad and the
                   loaded-opacity transition; DeviceFrame only sets the WIDTH of its container. */}
               <DeviceFrame device={device} onDevice={onDevice} paneWidth={paneWidth} tab={activeTab}>
-                {/* `key` includes reloadNonce so a Refresh click REMOUNTS the iframe (re-fetches the
-                    SAME src) — sandbox/allow/src path are untouched (no security/path change). */}
-                <iframe key={reloadNonce} title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
+                {/* `key` is COMPOSITE (A3.3): reloadNonce remounts on a manual Refresh; `epoch`
+                    (bumped per folded 'ready' frame) remounts on a rebuild's fresh ready — the url
+                    alone is a no-op key, it is ALWAYS the stable /preview/:id/. Sandbox/allow/src
+                    path are untouched (no security/path change). */}
+                <iframe key={`${url}-${reloadNonce}-${epoch}`} title={t('preview.iframeTitle')} src={url} onLoad={() => setLoaded(true)}
                   className={`block h-full w-full bg-white transition-opacity duration-300 ${loaded ? 'opacity-100' : 'opacity-0'}`}
                   sandbox="allow-scripts allow-forms allow-popups" allow="clipboard-write" />
               </DeviceFrame>

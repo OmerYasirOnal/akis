@@ -22,19 +22,16 @@ import { Link } from '../router/router.js'
 import { emptyView } from '../live/viewModel.js'
 import type { EventStreamClient } from '../live/EventStreamClient.js'
 import type { SessionView } from '../live/types.js'
-import { isVerified } from '@akis/shared'
+import { isVerified, CANCEL_IMMUNE_STATUSES } from '@akis/shared'
 import type { CodeArtifact, TestEvidence, SessionStatus, PublishRecord, SessionState } from '@akis/shared'
 
 /** The TERMINAL backend statuses — a run here is over but VIEWABLE + ITERABLE (P1-4/P1-5):
  *  done/failed/cancelled are final, and verify_failed/push_failed are parked-but-finished
  *  (the user can iterate with a follow-up message rather than be stuck). Any OTHER status is a
- *  live, in-flight run → the live cockpit. */
-const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = new Set<SessionStatus>([
-  'done', 'failed', 'cancelled', 'verify_failed', 'push_failed',
-])
-function isTerminalStatus(s: SessionStatus | undefined): boolean {
-  return s !== undefined && TERMINAL_STATUSES.has(s)
-}
+ *  live, in-flight run → the live cockpit.
+ *  F8 — aliased to the SHARED CANCEL_IMMUNE_STATUSES so this terminal-vs-live decision and the
+ *  backend's cancel-refusal guard read the exact same membership and can never drift. */
+const TERMINAL_STATUSES: ReadonlySet<SessionStatus> = CANCEL_IMMUNE_STATUSES
 
 /** PREVIEW-UNGATED (owner 2026-06-11): "if Proto wrote code, the user must ALWAYS be able to
  *  preview it — Trace/Critic gate VERIFICATION and PUSH, never SEEING the app." A run is
@@ -195,6 +192,18 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     if (typeof window !== 'undefined') window.history.replaceState({}, '', `${window.location.pathname}?s=${id}`)
   }
 
+  /** F9 — switching away from a prior run (reopen / new build / approve-new-spec) must STOP it so it
+   *  isn't orphaned headless behind a frozen UI. Fire the cancel UNCONDITIONALLY and let the BACKEND
+   *  decide: this PR's own CANCEL_IMMUNE guard 409s a parked/terminal run (done/failed/cancelled/
+   *  push_failed/verify_failed) — swallowed here, so a retryable park is NEVER destroyed — while a
+   *  genuinely live run cancels. The BE is the single authority; the old triplicated FE fresh-read-
+   *  then-decide re-implemented that policy client-side AND re-opened the orphaned-run hole (P1-6)
+   *  whenever the pre-read fetch failed (it skipped the cancel). Cancel is gate-SAFE: it only sets
+   *  'cancelled', never mints. Fire-and-forget; any rejection (409 / transient) is swallowed. */
+  const cancelPriorIfLive = (priorId: string): void => {
+    void api.cancelRun(priorId).catch(() => { /* 409 from a parked/terminal run, or transient — no-op */ })
+  }
+
   /** Seed the spine with a clean greeting + a SINGLE run marker (+ the build's PERSISTED
    *  conversation when given), then remount AkisChat so it loads it. Used by BOTH History doors
    *  (HistoryMenu + the /?s= deep-link): a reopened build shows ITS OWN conversation (rehydrated
@@ -205,10 +214,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   const seedRun = (id: string, idea: string, chat?: SessionState['chat']): void => {
     // Reopening a build REPLACES the spine, so an in-flight active run would be orphaned (its
     // run-block unmounts; it keeps running headless server-side). Cancel it first — mirrors newChat /
-    // startBuild. Skip when reopening the SAME id, and on a terminal run (409s, caught = no-op).
-    if (activeSessionId && activeSessionId !== id && !isTerminalStatus(backendStatus)) {
-      void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient */ })
-    }
+    // startBuild. Skip when reopening the SAME id. F9: the unconditional cancel lets the BE's
+    // CANCEL_IMMUNE guard 409 a retryable park (swallowed) while a live run cancels — no stale-snapshot
+    // / fetch-failure hole.
+    if (activeSessionId && activeSessionId !== id) cancelPriorIfLive(activeSessionId)
     // PER-CONVERSATION KEY: the reopened build's spine lives under its OWN anchor key — never the
     // draft (and never another conversation's key), so reopening here can't clobber the chat the
     // user just left. MERGE — never overwrite. The local spine FOR THIS ANCHOR, when it already has
@@ -301,7 +310,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     return () => { cancelled = true }
     // activeView.connectionGone in the deps (Opus review M1): the LIVE frozen-tab case — a silent
     // server restart emits no status change, so the 404 probe must re-run when the stream gives up.
-  }, [activeSessionId, status, api, activeView.connectionGone])
+    // pushFailed/verifyFailed/critic recovery-state in the deps (live-verify LOW + F6): a park is
+    // signaled ONLY by a `recovery` event (v.status untouched), so without these the snapshot kept
+    // the mid-build status and ▶ Run stayed hidden until a reload. F6 — the CRITIC park has the
+    // SAME signal shape (a store write of 'awaiting_critic_resolution' + a recovery event, no status
+    // change on the wire), so it must re-trigger the snapshot read too. The park (and its resolution)
+    // re-reads the durable status so canRun flips live.
+  }, [activeSessionId, status, api, activeView.connectionGone, activeView.pushFailed?.retry, activeView.verifyFailed?.retry, activeView.recovery?.critic])
 
   // The single build path: the chat-authored spec becomes a session via the UNCHANGED startSession
   // → the same 4 structural gates + pipeline + History. The ONLY caller is the Chat-to-Build
@@ -318,10 +333,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // If a PRIOR build is still IN-FLIGHT, approving a new spec ABANDONS it (mirrors newChat):
       // cancel it server-side so the now-non-active older block (which folds its /log ONCE and
       // closes its stream) isn't left running headless behind a frozen UI. Gate-SAFE: cancel only
-      // sets 'cancelled', never mints. A terminal prior run 409s the cancel (caught) — a no-op.
-      if (activeSessionId && !isTerminalStatus(backendStatus)) {
-        void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient — nothing to stop */ })
-      }
+      // sets 'cancelled', never mints. F9: unconditional cancel — the BE's CANCEL_IMMUNE guard 409s a
+      // terminal/retryable-park prior (swallowed) so a park is never destroyed; a live run cancels.
+      if (activeSessionId) cancelPriorIfLive(activeSessionId)
       // Follow-up CHANGES edit the prior (ACTIVE) app (Phase B.5): when it PRODUCED CODE, the next
       // approved spec EDITS that app (baseSessionId → agents merge over its files). The condition
       // mirrors the backend's code-presence guard via the already-fetched codeFiles. The base is the
@@ -353,9 +367,9 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       // SYNCHRONOUS reset of the PRIOR run's snapshot-derived state (mirrors seedRun) — the new
       // active run's snapshot effect repopulates from getSession(s.id). Without this, the prior run's
       // backendStatus/codeFiles linger until that async fetch lands, and in that window a rapid 2nd
-      // approval (a) reads a stale terminal backendStatus and so does NOT cancel this in-flight run
-      // (orphaned, token-burning), and (b) base-merges onto the wrong run; the rail also bleeds the
-      // prior result onto this fresh build. Clearing here closes the cross-run race.
+      // approval base-merges onto the wrong run; the rail also bleeds the prior result onto this
+      // fresh build. (The cancel decision itself is A4-fresh — it re-reads getSession at click time,
+      // so it no longer depends on this snapshot.) Clearing here closes the cross-run race.
       setBackendStatus(undefined); setCodeFiles(undefined); setTestEvidence(undefined); setEditsBase(false); setPublishRecord(undefined)
       syncUrl(s.id)
       setRecent(prev => [{ id: s.id, idea, ts: Date.now() }, ...prev.filter(b => b.id !== s.id)].slice(0, RECENT_MAX))
@@ -364,7 +378,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     } catch (e) { setActionError(actionErrorText(e, t)); setStartingSpec(undefined); return undefined }
     finally { setBusy(false); startingRef.current = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [busy, activeSessionId, backendStatus, codeFiles, api, t])
+  }, [busy, activeSessionId, codeFiles, api, t])
 
   /** Re-open a past build (BOTH History doors route here). Seeds a one-run thread + clean greeting;
    *  the run-block replays /log + /events. useCallback-stable so HistoryMenu's onOpen + the studio's
@@ -372,7 +386,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
    *  deps listed (their captured state is mirrored here). */
   const openSession = useCallback((b: RecentBuild): void => { openWithChat(b.id, b.idea) },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [api, activeSessionId, backendStatus, t])
+    [api, activeSessionId, t])
 
   // Stable across renders, so the gate callbacks keep a stable identity.
   const act = useCallback(async (fn: () => Promise<unknown>): Promise<void> => {
@@ -409,11 +423,13 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [act, activeSessionId, api, t])
   const newChat = useCallback((): void => {
-    // P1-6: 'New build' on a NON-TERMINAL active run must STOP it, not orphan it. Cancel the backend
-    // pipeline (api.cancel → Orchestrator.cancel; only sets 'cancelled', NEVER mints) BEFORE clearing.
-    if (activeSessionId && !isTerminalStatus(backendStatus)) {
-      void api.cancelRun(activeSessionId).catch(() => { /* already terminal / transient — nothing to stop */ })
-    }
+    // P1-6: 'New build' on a NON-TERMINAL active run must STOP it, not orphan it. F9: fire the cancel
+    // UNCONDITIONALLY (api.cancel → Orchestrator.cancel; only sets 'cancelled', NEVER mints) and let
+    // the backend's CANCEL_IMMUNE guard be the single authority — it 409s a parked retryable state
+    // (push_failed/verify_failed, signaled only via `recovery` events so the snapshot can lag) and a
+    // terminal run (swallowed, the retry survives), and cancels a genuinely live run. The UI reset
+    // below stays synchronous.
+    if (activeSessionId) cancelPriorIfLive(activeSessionId)
     setSessionGone(false)
     setActiveSessionId(undefined); setActiveIdea(''); setActiveView(emptyView('')); setActionError(undefined); setStartingSpec(undefined); setBackendStatus(undefined)
     // Drop the CURRENT conversation's spine, reset to a FRESH draft key + remount AkisChat so it
@@ -423,7 +439,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // from a previously-abandoned conversation never bleeds into this fresh one.
     clearThread(threadStorageKey); clearThread(DRAFT_KEY); setThreadStorageKey(DRAFT_KEY); setThreadKey(k => k + 1)
     if (typeof window !== 'undefined' && window.location.search) window.history.replaceState({}, '', window.location.pathname)
-  }, [activeSessionId, backendStatus, api])
+  }, [activeSessionId, api])
 
   // Auto-run the local preview once a build ships, so the app appears live with no extra click.
   const autoRan = useRef<string | undefined>(undefined)

@@ -171,8 +171,18 @@ export function RecoveryBubble({ m, onProceed, onAbandon, onRetry, onConfirm, bu
             className="rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.verify.retry')}</button>
         )}
         {m.recovery === 'push_failed' && (
-          <button onClick={onConfirm} disabled={busy}
-            className="rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.push.retry')}</button>
+          <>
+            {/* F5 — the push DESTINATION, carried off the suppressed push_confirm gate (the A3.5 post-pass
+                drops that gate, which was the only renderer of `delivery`). Reuses the gate's own target
+                copy/i18n key so the retry card still shows where the push delivers. */}
+            {m.delivery && (
+              <div className="mb-2 truncate text-[11px] text-amber-200/80" title={`github.com/${m.delivery.owner}/${m.delivery.repo}`}>
+                {t('chat.gate.target')} · <span className="font-mono text-teal-300">→ github.com/{m.delivery.owner}/{m.delivery.repo}</span>
+              </div>
+            )}
+            <button onClick={onConfirm} disabled={busy}
+              className="rounded-md bg-gradient-to-r from-amber-400 to-[#07D1AF] px-3 py-1 text-sm font-semibold text-slate-900 disabled:opacity-40">{t('recovery.push.retry')}</button>
+          </>
         )}
       </div>
     </div>
@@ -219,7 +229,7 @@ export function PreviewBubble({ m }: { m: PreviewMsg }) {
   const { t } = useI18n()
   // A recoverable boot FAILURE shows as a rose card with its reason — never collapsed to
   // a misleading "starting…" (text-only, XSS-safe). Otherwise the usual ready/starting card.
-  return m.error ? (
+  if (m.error) return (
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
       <div className="rounded-2xl rounded-tl-sm border border-rose-500/30 bg-rose-500/10 px-4 py-2 text-sm text-rose-300">
@@ -227,7 +237,19 @@ export function PreviewBubble({ m }: { m: PreviewMsg }) {
         {m.error.reason ? <> · <span className="break-all text-rose-200/90">{m.error.reason}</span></> : null}
       </div>
     </div>
-  ) : (
+  )
+  // F3 — a STOPPED preview (a torn-down local run / a replay projected to 'stopped' the registry
+  // couldn't back) reads as an honest PAUSE, NOT a forever "starting…" with a dead link. The url is
+  // already cleared upstream, so no link renders here regardless.
+  if (m.stopped) return (
+    <div className="flex items-start gap-3">
+      <Avatar role="orchestrator" />
+      <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-400">
+        {t('chat.preview.stopped')}
+      </div>
+    </div>
+  )
+  return (
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
       <div className="rounded-2xl rounded-tl-sm border border-white/10 bg-white/[0.03] px-4 py-2 text-sm text-slate-200">

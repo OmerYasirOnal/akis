@@ -75,6 +75,12 @@ export interface PreviewState {
    *  ("Preview stopped · Run again") rather than the blank first-run empty state. Recomputed each
    *  frame, so a re-run's 'starting'/'ready' clears it. */
   stopped?: boolean
+  /** A3.3 — FE-ONLY remount counter: bumped on EVERY folded 'ready' frame (never cleared by
+   *  non-ready frames). The preview url is ALWAYS /preview/:id/ — stable across rebuilds — so
+   *  PreviewPanel keys the iframe with `${url}-${reloadNonce}-${epoch}` and a change-request
+   *  rebuild's fresh 'ready' (including a coalesced ready→ready at the same url) remounts the
+   *  iframe to fetch the NEW bytes. View-model state only — NOT part of the shared AkisEvent wire. */
+  epoch?: number
 }
 
 /** The critic's READ-ONLY code-review verdict (a status card, NOT a human gate).

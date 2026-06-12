@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { initialSession, isVerified, type SessionState, type SpecArtifact } from '@akis/shared'
+import { initialSession, isVerified, CANCEL_IMMUNE_STATUSES, type SessionState, type SpecArtifact } from '@akis/shared'
 import { languageFor } from '../validator/ValidatorTypes.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
@@ -95,8 +95,17 @@ const DEFAULT_MAX_ITERATE = 3
  *  before giving up (matches appendExternalWrite's MAX_RETRY + patchExternalWrite's budget). */
 const MAX_RESILIENT_WRITE_RETRY = 5
 
-/** The TERMINAL run states — a run here is over and cannot be cancelled/driven further. */
-const TERMINAL_STATUSES: ReadonlySet<string> = new Set(['done', 'failed', 'cancelled'])
+/** A4 — statuses cancel() REFUSES to overwrite: the terminal set (done/failed/cancelled) PLUS the
+ *  parked-but-RETRYABLE states. push_failed/verify_failed are not dead ends — confirmPush accepts a
+ *  push_failed retry and retryVerification re-runs a failed verify — so a blind cancel (e.g. the
+ *  FE's 'New build' firing against a stale status snapshot) must not destroy the retry by stamping
+ *  'cancelled' over the park. The live-gate parks (awaiting_push_confirm / awaiting_critic_resolution)
+ *  STAY cancellable — abandoning at a gate is a legitimate, user-requested stop.
+ *
+ *  F8 — this is the SHARED set (shared/src/session.ts CANCEL_IMMUNE_STATUSES); the frontend's
+ *  terminal-vs-live decision reads the SAME const, so the backend cancel-refusal (the authoritative
+ *  guard) and the FE's pre-cancel decision can never drift apart. */
+const CANCEL_IMMUNE: ReadonlySet<string> = CANCEL_IMMUNE_STATUSES
 
 /**
  * Conversational orchestrator. It decides the flow (no rigid FSM) and narrates,
@@ -322,7 +331,9 @@ export class Orchestrator {
   async cancel(id: string): Promise<SessionState> {
     const cur = await this.s.store.get(id)
     if (!cur) throw new Error(`session ${id} not found`)
-    if (TERMINAL_STATUSES.has(cur.status)) throw new WrongStatusError('cancel', cur.status)
+    // A4: terminal AND parked-retryable (push_failed/verify_failed) statuses refuse — see
+    // CANCEL_IMMUNE. Same WrongStatusError → 409 via CONFLICT_ERRORS at the route.
+    if (CANCEL_IMMUNE.has(cur.status)) throw new WrongStatusError('cancel', cur.status)
     const out = await this.s.store.update(id, { status: 'cancelled' }, cur.version)
     this.narrate(id, 'Run cancelled.')
     // Terminal `session/cancelled`: the live view stops driving the run and the ingestion

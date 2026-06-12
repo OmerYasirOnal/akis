@@ -500,6 +500,10 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // Opt-in: a public/shared deployment can require auth to START a build (no anonymous
     // public-by-UUID session). Default off → keyless-demo + existing behavior unchanged.
     requireAuthForBuilds: env.AKIS_REQUIRE_AUTH_FOR_BUILDS === '1',
+    // A3.2/A3.4 — the live registry backs the replay-time preview-liveness projection (the
+    // registry is constructed above, BEFORE routes register; hydrate ran even earlier, which
+    // is exactly why the projection lives at replay time, not hydrate time). Read-only seam.
+    previewRegistry,
   })
   registerPreviewRoutes(app, { registry: previewRegistry, store: services.store, bus: services.bus, userIdOf })
   // Ship-time preview PREWARM (perceived latency): boot the preview on the `done` event so
