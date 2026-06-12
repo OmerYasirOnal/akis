@@ -1,4 +1,5 @@
 import type { VerifyToken, TestEvidence, SpecArtifact } from '@akis/shared'
+import { summarizeVerifyEvidence } from '@akis/shared'
 import type { EventBus } from '../../events/bus.js'
 import type { RepoFile } from '../../di/MockGitHubAdapter.js'
 import type { Verifier } from '../../verify/verifier.js'
@@ -57,11 +58,37 @@ export class TraceAgent {
     const token = await this.deps.verifier.verify(sessionId, input.files, { onEvidence: e => { evidence = e }, ...(input.spec ? { spec: input.spec } : {}) })
 
     this.deps.bus.emit({ kind: 'tool_result', tool: 'run_tests', ok: token !== null, result: { testsRun: token?.testsRun ?? 0, passed: token !== null }, agent: 'trace', laneId, sessionId, ts: nextTs() })
-    // Stamp `demo:true` ONLY when this verifier runs the mock/injected runner (simulated
-    // verification). It is informational metadata about the runner, never about the outcome —
-    // the token above is the unchanged source of truth. Spread it so a live run emits a
-    // byte-identical verify event with NO `demo` field (never `demo:false` noise).
-    this.deps.bus.emit({ kind: 'verify', testsRun: token?.testsRun ?? 0, passed: token !== null, ...(this.deps.verifier.demo ? { demo: true } : {}), agent: 'trace', laneId, sessionId, ts: nextTs() })
+    // P0-3a — HONEST FAILURE REPORTING. The token is STILL the gate truth (`passed` below is
+    // `token !== null`, unchanged). But on the FAIL path the fail-closed brand forced the token's
+    // testsRun to 0 even though the verifier ACTUALLY ran checks — so the old `token?.testsRun ?? 0`
+    // made a real "11 checks, 1 hard failure" run read as "0 test". We now derive the REAL counts
+    // from the structured `evidence` the verifier just reported (observability-only; mint never
+    // reads it). `testsRun` prefers the token count on a pass, else the evidence's real executed
+    // count. The summary fields are ADDITIVE + OPTIONAL and ABSENT when no evidence exists, so a
+    // legacy/evidence-less verify event stays byte-identical.
+    const summary = summarizeVerifyEvidence(evidence)
+    const realTestsRun = token?.testsRun ?? evidence?.testsRun ?? 0
+    this.deps.bus.emit({
+      kind: 'verify',
+      testsRun: realTestsRun,
+      passed: token !== null,
+      // Stamp `demo:true` ONLY when this verifier runs the mock/injected runner (simulated
+      // verification). It is informational metadata about the runner, never about the outcome —
+      // the token above is the unchanged source of truth. Spread so a live run emits a
+      // byte-identical verify event with NO `demo` field (never `demo:false` noise).
+      ...(this.deps.verifier.demo ? { demo: true } : {}),
+      // Additive observability — the real pass/fail/unmeasured breakdown + named hard failures so
+      // the FE can render an honest failed-verify card instead of "0 test". Absent when no evidence.
+      ...(summary
+        ? {
+            passedCount: summary.passedCount,
+            failedCount: summary.failedCount,
+            unmeasuredCount: summary.unmeasuredCount,
+            ...(summary.failingScenarios.length > 0 ? { failingScenarios: summary.failingScenarios } : {}),
+          }
+        : {}),
+      agent: 'trace', laneId, sessionId, ts: nextTs(),
+    })
     // Trace makes NO LLM call → usage absent ("—" in the UI), but real durationMs + toolCalls.
     const metrics = buildAgentMetrics(undefined, startedAt, toolCalls)
     this.deps.bus.emit({ kind: 'agent_end', role: 'trace', ok: token !== null, metrics, agent: 'trace', laneId, sessionId, ts: nextTs() })

@@ -147,17 +147,48 @@ export function GateBubble({ m, onApprove, onConfirm, busy }: { m: GateMsg; onAp
  *  the pipeline strip (now retired). Shown only while AWAITING; once resolved it goes quiet (the
  *  next bubble — a re-run, a verify, a done — carries the outcome). GATE-SAFE: proceed/retry POST to
  *  the owner-scoped recovery routes; the server re-runs REAL verification and never bypasses a gate. */
+/** Local {placeholder} interpolation — the same one-liner convention ProviderKeys uses. Keeps the
+ *  count/scenario VALUES out of the catalog so the translatable string owns word order (TR vs EN). */
+const fillStr = (s: string, vars: Record<string, string | number>): string =>
+  s.replace(/\{(\w+)\}/g, (mm, k) => (vars[k] !== undefined ? String(vars[k]) : mm))
+
 export function RecoveryBubble({ m, onProceed, onAbandon, onRetry, onConfirm, busy }: {
   m: RecoveryMsg; onProceed: () => void; onAbandon: () => void; onRetry: () => void; onConfirm: () => void; busy?: boolean
 }) {
   const { t } = useI18n()
   if (m.state !== 'awaiting') return null
   const hint = m.recovery === 'critic_resolution' ? 'recovery.critic.hint' : m.recovery === 'verify_failed' ? 'recovery.verify.hint' : 'recovery.push.hint'
+  // P0-3a — the HONEST failed-verify evidence mirrored from the verify event (counts + named hard
+  // failures), so the card never sits next to a "0 test" verify card claiming nothing. Absent on an
+  // old/evidence-less run → the card degrades to its plain hint + Retry.
+  const ev = m.recovery === 'verify_failed' ? m.verifyEvidence : undefined
   return (
     <div className="flex items-start gap-3">
       <Avatar role="orchestrator" />
       <div className="w-fit max-w-md rounded-2xl rounded-tl-sm border border-amber-400/30 bg-amber-400/[0.06] px-3.5 py-2.5">
         <div className="mb-2 text-sm text-amber-200">{t(hint)}</div>
+        {/* P0-3a — REAL counts + up to 3 named failing scenarios on the verify_failed card (not "0 test"). */}
+        {ev && (
+          <div className="mb-2 space-y-1">
+            <div className="text-[12px] text-amber-100/90">
+              {fillStr(t('recovery.verify.summary'), {
+                run: ev.testsRun,
+                passed: ev.passedCount ?? 0,
+                failed: ev.failedCount ?? 0,
+                unmeasured: ev.unmeasuredCount ?? 0,
+              })}
+            </div>
+            {ev.failingScenarios && ev.failingScenarios.length > 0 && (
+              <ul className="space-y-0.5">
+                {ev.failingScenarios.map((s, i) => (
+                  <li key={i} className="truncate text-[11px] text-rose-200/90" title={`${s.name} — ${s.reason}`}>
+                    <span aria-hidden>✗</span> {s.name} <span className="text-rose-300/70">({s.reason})</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
         {m.recovery === 'critic_resolution' && (
           <div className="flex flex-wrap gap-1.5">
             <button onClick={onProceed} disabled={busy}
@@ -191,11 +222,20 @@ export function RecoveryBubble({ m, onProceed, onAbandon, onRetry, onConfirm, bu
 
 export function VerifyBubble({ m }: { m: VerifyMsg }) {
   const { t } = useI18n()
+  // P0-3a — on a FAIL, the `testsRun` is now the REAL executed count (no longer forced to 0), and
+  // when the evidence breakdown rode along we append "(M passed, K failed, J unmeasured)" so the
+  // card stops reading as a bare, dishonest "✗ Not verified · 0 test". Absent on an old/evidence-
+  // less run → just the count. `passed` stays token-driven (the gate truth is unchanged).
+  const showBreakdown = !m.passed && (m.passedCount !== undefined || m.failedCount !== undefined || m.unmeasuredCount !== undefined)
+  const breakdown = showBreakdown
+    ? fillStr(t('chat.verify.breakdown'), { passed: m.passedCount ?? 0, failed: m.failedCount ?? 0, unmeasured: m.unmeasuredCount ?? 0 })
+    : undefined
   return (
     <div className="flex items-start gap-3">
       <Avatar role="trace" />
       <div className={`rounded-2xl rounded-tl-sm border px-4 py-2 text-sm ${m.passed ? 'border-emerald-400/30 bg-emerald-400/[0.06] text-emerald-200' : 'border-rose-400/30 bg-rose-400/[0.06] text-rose-200'}`}>
         {m.passed ? `✓ ${t('chat.verified')}` : `✗ ${t('chat.notVerified')}`} · {m.testsRun} {t(m.testsRun === 1 ? 'chat.test' : 'chat.tests')}
+        {breakdown && <span className="ml-1 text-rose-200/80">{breakdown}</span>}
         {/* HONESTY: a simulated (demo/mock) pass must never read as a real verification — same marker the Trust Report + /health carry. */}
         {m.demo && <span className="ml-2 rounded bg-amber-400/20 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-200">{t('chat.chip.demo')}</span>}
       </div>
