@@ -62,3 +62,40 @@ describe('presenceOf — Scribe falls back to done on a chat-seeded build', () =
     expect(presenceOf(view, 'proto')).toBe('idle')
   })
 })
+
+describe('presenceOf — Critic falls back to done/failed on a code_review verdict', () => {
+  // The Critic emits a `code_review` verdict but NO agent_start/agent_end, so without this fallback
+  // the strip read 'idle'/"beklemede" for the whole build even after the run block said
+  // "Kod incelemesi · Onaylandı". The verdict in `view.codeReview` is the proof it ran.
+  it('returns "done" for critic on an APPROVED (non-critical) verdict', () => {
+    const view = { ...emptyView('s1'), codeReview: { approved: true, findings: 0, critical: false, iteration: 1 } }
+    expect(presenceOf(view, 'critic')).toBe('done')
+  })
+
+  it('returns "done" for critic on a non-critical rejected verdict (it still finished its pass)', () => {
+    const view = { ...emptyView('s1'), codeReview: { approved: false, findings: 3, critical: false, iteration: 2 } }
+    expect(presenceOf(view, 'critic')).toBe('done')
+  })
+
+  it('returns "failed" for critic on a CRITICAL verdict while the park is AWAITING (rose-tone bubble / parked run)', () => {
+    // A critical verdict always arrives WITH the recovery park (the orchestrator parks the run).
+    const view = { ...emptyView('s1'), codeReview: { approved: false, findings: 5, critical: true, iteration: 1 }, recovery: { critic: 'awaiting' as const } }
+    expect(presenceOf(view, 'critic')).toBe('failed')
+  })
+
+  it('recovers to "done" after a human Proceed (recovery resolved) — a shipped run must not keep a red Critic dot (reviewer MED)', () => {
+    // resolveCritic's proceed path emits recovery:resolved but NO new code_review — the last-wins
+    // critical verdict would otherwise pin the lane 'failed' forever on a successfully shipped run.
+    const view = { ...emptyView('s1'), codeReview: { approved: false, findings: 5, critical: true, iteration: 1 }, recovery: { critic: 'resolved' as const } }
+    expect(presenceOf(view, 'critic')).toBe('done')
+  })
+
+  it('still returns "idle" for critic when no code_review has happened', () => {
+    expect(presenceOf(emptyView('s1'), 'critic')).toBe('idle')
+  })
+
+  it('the code_review fallback is critic-only — another role stays idle on it', () => {
+    const view = { ...emptyView('s1'), codeReview: { approved: true, findings: 0, critical: false, iteration: 1 } }
+    expect(presenceOf(view, 'proto')).toBe('idle')
+  })
+})

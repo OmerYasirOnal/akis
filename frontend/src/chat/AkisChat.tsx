@@ -13,6 +13,7 @@ import { ModelChip, type Effort } from './ModelChip.js'
 import { ModelPicker, type ModelSelection } from './ModelPicker.js'
 import { loadModelPref, saveModelPref, type ModelPref } from './modelPref.js'
 import { loadThread, saveThread, historyForApi, isNearBottom, isMsg, isRun, DRAFT_KEY, type AkisMsg, type ThreadNode } from './akisThread.js'
+import { specChipStatus, type SpecChipStatus } from './specChipStatus.js'
 import { RunBlock } from './RunBlock.js'
 import { Avatar } from './ChatThread.js'
 import { AGENT_NAMES } from '../agents/names.js'
@@ -93,7 +94,7 @@ function AkAvatar(): ReactNode {
  * the FULL accumulated `content` (spec/suggestion detection must see the authoritative text);
  * only the visible reply text is animated, and only while it's the actively streaming message.
  */
-const AssistantMessage = memo(function AssistantMessage({ content, streaming, onBuild, building, isSpecStarted }: {
+const AssistantMessage = memo(function AssistantMessage({ content, streaming, onBuild, building, isSpecStarted, specRunStatus }: {
   content: string
   streaming: boolean
   // Explicit `| undefined` (not `?`) so the call site can forward AkisChat's own optional
@@ -104,6 +105,10 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
    *  on the run markers (not one global builtSpec) means an OLD spec card in the multi-run thread
    *  never mislabels — each card reflects whether ITS build was actually started. */
   isSpecStarted: (spec: string) => boolean
+  /** P1-4 — PER-SPEC run status (coarse bucket) for the collapsed chip subtitle: building/done/
+   *  parked, resolved from THIS spec's run. Stable callback (so the memo holds across streaming
+   *  frames); undefined for a not-yet-started spec → the chip keeps the legacy in-flight copy. */
+  specRunStatus: (spec: string) => SpecChipStatus | undefined
 }): ReactNode {
   const { t } = useI18n()
   // A build-ready spec is detected only when onBuild is wired (the studio flow). Detection
@@ -146,7 +151,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
           <div className="min-w-0 max-w-[46rem] flex-1 space-y-3">
             {/* Name the author so the build-ready spec reads as Scribe's work (matches the avatar). */}
             <div className="text-xs font-semibold text-sky-200">{AGENT_NAMES.scribe}</div>
-            <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} isSpecStarted={isSpecStarted} />
+            <SpecCard spec={detected.spec} onBuild={onBuild!} building={!!building && !started} started={started} isSpecStarted={isSpecStarted} {...(() => { const rs = specRunStatus(detected.spec); return rs ? { runStatus: rs } : {} })()} />
           </div>
         </div>
       </div>
@@ -182,7 +187,7 @@ const AssistantMessage = memo(function AssistantMessage({ content, streaming, on
 export function AkisChat({
   api, onBuild, building, buildStarting, starting,
   activeSessionId, buildContextSessionId, onApprove, onConfirm, onNewBuild, onActiveView, onReactivate, onActionError, onScribeActivity,
-  baseUrl = '', makeClient, storageKey,
+  baseUrl = '', makeClient, storageKey, runStatusFor,
 }: {
   api: ApiClient
   /** The localStorage key this conversation's spine persists under (per-conversation keying). The
@@ -227,6 +232,12 @@ export function AkisChat({
    *  spec card is present pre-build, 'idle' otherwise. Pre-build ONLY — once a build starts, the
    *  event-driven roster (the active run's SessionView) takes over and this override goes 'idle'. */
   onScribeActivity?: (presence: 'idle' | 'working' | 'done') => void
+  /** P1-4 — resolve a run's coarse backend status by session id (the active run's live status union,
+   *  else a settled run's persisted status). AkisChat maps a spec → its run's sessionId and feeds it
+   *  here, then buckets the result for the collapsed spec chip. STABLE (the studio useCallbacks it) so
+   *  the memoized AssistantMessage/RunBlock children hold across the active run's per-frame frames.
+   *  Absent for standalone callers/tests → the chip falls back to the legacy in-flight copy. */
+  runStatusFor?: (sessionId: string) => string | undefined
   baseUrl?: string
   makeClient?: () => EventStreamClient
 }) {
@@ -363,6 +374,26 @@ export function AkisChat({
   // the rAF coalescer is meant to avoid). The predicate matches a SpecCard's CURRENT (possibly
   // EDITED) text against the run markers — so an edited-then-built card correctly reads "started".
   const isSpecStarted = useCallback((spec: string): boolean => startedSpecs.has(spec.trim()), [startedSpecs])
+
+  // P1-4 — spec text → its run's sessionId (the latest run a given spec spawned, if it ran more than
+  // once). The collapsed chip resolves a per-spec run STATUS by going spec → sessionId (here) →
+  // coarse status (runStatusFor, owned by the studio) → bucket. Recomputed only when the spine's run
+  // markers change (NOT per streaming frame — run markers are append-only structure, stable mid-run).
+  const specRunIds = useMemo(() => {
+    const m = new Map<string, string>()
+    for (const n of nodes) if (isRun(n)) m.set(n.idea.trim(), n.sessionId)
+    return m
+  }, [nodes])
+  // STABLE resolver passed to the memoized AssistantMessage: a SpecCard's CURRENT text → its run's
+  // status bucket, or undefined for a not-yet-started spec (the chip then keeps the legacy in-flight
+  // copy). Deps are the spec→id map + the studio's stable `runStatusFor`, so a streaming build's
+  // per-frame node churn never re-creates it (the spine identity changes per render but specRunIds
+  // is memoized off run markers, which don't change mid-run).
+  const specRunStatus = useCallback((spec: string): SpecChipStatus | undefined => {
+    const id = specRunIds.get(spec.trim())
+    if (!id) return undefined
+    return specChipStatus(runStatusFor?.(id))
+  }, [specRunIds, runStatusFor])
 
   // F1(b) — CHAT-LEVEL Scribe presence (header-roster override), reported UP. PRE-BUILD ONLY: once a
   // build is active the event-driven roster (the active run's SessionView) owns Scribe, so we report
@@ -666,6 +697,7 @@ export function AkisChat({
               onBuild={onBuild ? handleBuild : undefined}
               building={buildStarting ?? building}
               isSpecStarted={isSpecStarted}
+              specRunStatus={specRunStatus}
             />
           )
         })}

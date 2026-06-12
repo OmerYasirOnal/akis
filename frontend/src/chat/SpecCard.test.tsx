@@ -122,6 +122,30 @@ describe('SpecCard', () => {
       expect(screen.queryByRole('heading', { name: 'TODO App' })).toBeNull()
       expect(screen.getByRole('button', { name: 'Show spec' })).toBeInTheDocument()
     })
+
+    // P1-4 — the collapsed chip subtitle is now RUN-STATUS aware: it must not read "building" forever
+    // on a finished / failed / cancelled build. `runStatus` drives the copy; absent → legacy in-flight.
+    it('a DONE run reads "build complete" (not "building")', () => {
+      renderI18n(<SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} started runStatus="done" />)
+      expect(screen.getByText('Spec approved — build complete')).toBeInTheDocument()
+      expect(screen.queryByText('Spec approved — building')).toBeNull()
+    })
+
+    it('a PARKED (failed/cancelled) run reads "build stopped"', () => {
+      renderI18n(<SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} started runStatus="parked" />)
+      expect(screen.getByText('Spec approved — build stopped')).toBeInTheDocument()
+      expect(screen.queryByText('Spec approved — building')).toBeNull()
+    })
+
+    it('an explicit BUILDING run keeps the in-flight copy', () => {
+      renderI18n(<SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} started runStatus="building" />)
+      expect(screen.getByText('Spec approved — building')).toBeInTheDocument()
+    })
+
+    it('NO runStatus prop falls back to the legacy in-flight copy (back-compat)', () => {
+      renderI18n(<SpecCard spec={'# TODO App\n\nA list.'} onBuild={() => {}} started />)
+      expect(screen.getByText('Spec approved — building')).toBeInTheDocument()
+    })
   })
 
   describe('Copy spec', () => {
