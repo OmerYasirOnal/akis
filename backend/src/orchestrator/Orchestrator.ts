@@ -756,7 +756,12 @@ export class Orchestrator {
     if (realMode && gh instanceof MockGitHubAdapter) {
       // No usable destination — but still PIN any derived `delivery` so a later (post-connect) retry
       // shows + reuses the same intended repo. Non-gate column; folded into the park write.
-      await this.s.store.update(id, { status: 'push_failed', ...deliveryPatch }, cur.version)
+      // P0-1: route through updateResilient — these are pure non-gate columns (status + delivery), and
+      // the stale `cur.version` captured at entry would otherwise conflict with any concurrent chat
+      // write that bumped the version after we read `cur`. (This park is pre-push, so the window is
+      // small, but the success/failure parks below share the SAME stale `cur.version`, so we keep all
+      // three terminal writes on the one resilient vehicle for consistency.)
+      await this.updateResilient(id, { status: 'push_failed', ...deliveryPatch })
       // NO raw-English `error` bus emit here (reviewer MED): confirmPush is an AWAITED route, so
       // the thrown 409 already reaches the clicking user as the LOCALIZED banner + Settings CTA
       // (actionErrorText maps NoGitHubDestinationError). An error event would render its message
@@ -774,7 +779,13 @@ export class Orchestrator {
       repoUrl = await gh.createRepo(id)
       await pushToGitHub(token, gh, files)
     } catch (err) {
-      await this.s.store.update(id, { status: 'push_failed', ...deliveryPatch }, cur.version)
+      // P0-1: a REAL push (createRepo + N blob/tree/commit/ref/PR round-trips) takes 5-15s — ample
+      // window for a concurrent chat turn (chatAppend) to bump the version, so the stale `cur.version`
+      // lock would throw `version conflict` here and the user would see a raw 500 AFTER GitHub already
+      // received the code (and a retry hits AlreadyPushedError confusion). updateResilient re-reads the
+      // fresh version; the patch is pure non-gate columns (status + delivery). Its concurrent-cancel
+      // refusal is desirable: if the user cancelled mid-push, do NOT resurrect the park over 'cancelled'.
+      await this.updateResilient(id, { status: 'push_failed', ...deliveryPatch })
       this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       // RECOVERABLE, not a dead-end: park retryable. The FE surfaces a "Push failed — retry"
@@ -788,7 +799,14 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'preview', url: repoUrl, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     // Fold any just-derived `delivery` into the terminal write so the persisted record carries the
     // real repo the push landed in (non-gate column; on replay the gate event already carried it too).
-    const session = await this.s.store.update(id, { status: 'done', ...deliveryPatch }, cur.version)
+    // P0-1: route through updateResilient — the push above just spent 5-15s, so any concurrent chat
+    // write bumped the version and the stale `cur.version` lock would throw `version conflict` AFTER
+    // GitHub already has the code, stranding the user at awaiting_push_confirm. updateResilient re-reads
+    // the fresh version (status + delivery are pure non-gate columns); `session` is the resiliently-
+    // written row, so the `isVerified(session)` read for the done event below sees the committed state.
+    // The cancel-refusal (RunCancelledError) is correct: a user who cancelled mid-push must not be
+    // resurrected to 'done' — it surfaces as a clean 409, never a fake success.
+    const session = await this.updateResilient(id, { status: 'done', ...deliveryPatch })
     // If this was a retry of a failed push, clear the recovery card (idempotent on replay).
     if (cur.status === 'push_failed') this.emitRecovery(id, 'push_failed', 'resolved')
     this.emitGate(id, 'push_confirm', 'satisfied')
