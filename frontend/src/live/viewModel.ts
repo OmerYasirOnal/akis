@@ -85,7 +85,16 @@ export function foldSessionView(sessionId: string, events: readonly AkisEvent[])
       case 'verify':
         // Carry the optional `demo` annotation (P1-CORE-1): true ⇔ the result came from the
         // mock/injected runner (simulated verification), so the UI marks it at the result.
-        v.tests = { ...v.tests, testsRun: e.testsRun, passed: e.passed, ran: true, ...(e.demo ? { demo: true } : {}) }
+        // P0-3a — `e.testsRun` is now the REAL executed count even on a fail (no longer forced to 0),
+        // and the optional breakdown fields ride along so the strip can show the honest pass/fail/skip
+        // split. All additive/optional; an old verify event omits them → byte-identical fold.
+        v.tests = {
+          ...v.tests, testsRun: e.testsRun, passed: e.passed, ran: true,
+          ...(e.demo ? { demo: true } : {}),
+          ...(e.passedCount !== undefined ? { passedCount: e.passedCount } : {}),
+          ...(e.failedCount !== undefined ? { failedCount: e.failedCount } : {}),
+          ...(e.unmeasuredCount !== undefined ? { unmeasuredCount: e.unmeasuredCount } : {}),
+        }
         break
       case 'code_review':
         // Critic's read-only verdict (last wins across iterations). Automatic, not a gate.

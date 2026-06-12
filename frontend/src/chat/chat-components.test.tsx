@@ -124,6 +124,67 @@ describe('RecoveryBubble', () => {
     expect(container).toBeEmptyDOMElement()
   })
 
+  // P0-3a — a verify_failed recovery card must render the HONEST counts + named hard failures (the
+  // demo's lie was "✗ Doğrulanmadı · 0 test"), and offer BOTH paths (Retry vs change the code in chat).
+  const verifyFailedMsg = () => ({
+    id: 'r', kind: 'recovery' as const, recovery: 'verify_failed' as const, state: 'awaiting' as const,
+    verifyEvidence: {
+      testsRun: 11, passedCount: 7, failedCount: 1, unmeasuredCount: 3,
+      failingScenarios: [{ name: 'the user clicks the delete (Sil) button', reason: 'missing literal' }],
+    },
+  })
+  it('verify_failed recovery card renders the REAL counts + the named failing scenario (EN)', () => {
+    render(wrap(<RecoveryBubble m={verifyFailedMsg()} onProceed={() => {}} onAbandon={() => {}} onRetry={() => {}} onConfirm={() => {}} />))
+    // Real breakdown — never "0 test".
+    expect(screen.getByText(/11 checks ran/)).toBeInTheDocument()
+    expect(screen.getByText(/7 passed/)).toBeInTheDocument()
+    expect(screen.getByText(/1 failed/)).toBeInTheDocument()
+    expect(screen.getByText(/3 could not be measured/)).toBeInTheDocument()
+    // Named hard failure + its reason class.
+    expect(screen.getByText(/the user clicks the delete \(Sil\) button/)).toBeInTheDocument()
+    expect(screen.getByText(/missing literal/)).toBeInTheDocument()
+    // BOTH honest paths offered (Retry re-runs same tests; describe a change in chat).
+    expect(screen.getByText(/describe a change in the chat/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Retry tests' })).toBeInTheDocument()
+  })
+  it('verify_failed recovery card renders the honest summary in Turkish (TR parity)', () => {
+    render(<RouterProvider><I18nProvider initial="tr"><RecoveryBubble m={verifyFailedMsg()} onProceed={() => {}} onAbandon={() => {}} onRetry={() => {}} onConfirm={() => {}} /></I18nProvider></RouterProvider>)
+    expect(screen.getByText(/11 kontrol çalıştı/)).toBeInTheDocument()
+    expect(screen.getByText(/7 geçti/)).toBeInTheDocument()
+    expect(screen.getByText(/3 ölçülemedi/)).toBeInTheDocument()
+    expect(screen.getByText(/the user clicks the delete \(Sil\) button/)).toBeInTheDocument()
+    expect(screen.getByText(/sohbette bir değişiklik tarif/i)).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Testleri yeniden dene' })).toBeInTheDocument()
+  })
+  it('a verify_failed card WITHOUT evidence (legacy run) degrades to the plain hint + Retry (no crash)', () => {
+    render(wrap(<RecoveryBubble m={{ id: 'r', kind: 'recovery', recovery: 'verify_failed', state: 'awaiting' }}
+      onProceed={() => {}} onAbandon={() => {}} onRetry={() => {}} onConfirm={() => {}} />))
+    expect(screen.getByRole('button', { name: 'Retry tests' })).toBeInTheDocument()
+    expect(screen.queryByText(/checks ran/)).toBeNull() // no fabricated counts
+  })
+
+  // P0-3a — the FOLD copies the verify event's evidence onto the verify_failed recovery card, AND
+  // a REOPENED session (snapshot-only: foldRunBubbles over the persisted /log) shows the SAME honest
+  // counts (the verify event replays from the durable log). Order-independent (verify before/after).
+  it('P0-3a: fold carries the verify evidence onto the verify_failed card; reopened log shows the same counts', async () => {
+    const { foldRunBubbles } = await import('./chatModel.js')
+    const evf = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
+      ({ agent: 'trace', laneId: 'verify', sessionId: 's1', ts: 0, ...(e as object) }) as AkisEvent
+    // The persisted log of a FAILED run: a verify event with the real breakdown + the recovery park.
+    const log = [
+      evf({ kind: 'verify', testsRun: 11, passed: false, passedCount: 7, failedCount: 1, unmeasuredCount: 3, failingScenarios: [{ name: 'clicks delete (Sil)', reason: 'missing literal' }] }),
+      evf({ kind: 'recovery', recovery: 'verify_failed', state: 'awaiting' }),
+    ]
+    const msgs = foldRunBubbles(log)
+    render(wrap(<ChatThread messages={msgs} onApprove={() => {}} onConfirm={() => {}} />))
+    // The verify bubble shows the REAL count (11), never 0; the recovery card shows the breakdown.
+    expect(screen.getByText(/11 checks ran/)).toBeInTheDocument()
+    expect(screen.getByText(/clicks delete \(Sil\)/)).toBeInTheDocument()
+    // The failed VerifyBubble itself shows the real testsRun (not "0 test") + the inline breakdown.
+    expect(screen.getByText(/✗ Not verified · 11 tests/)).toBeInTheDocument()
+    expect(screen.getByText(/7 passed, 1 failed, 3 unmeasured/)).toBeInTheDocument()
+  })
+
   // A3.5 — the push-failure event sequence must render exactly ONE actionable row: the push retry.
   // The backend deliberately emits NO gate event on a push failure (gates are sacred), so without
   // the fold-layer drop the still-awaiting "Confirm push" GateBubble sat right above the

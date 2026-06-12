@@ -136,6 +136,50 @@ describe('Recovery — verify-fail is retryable, never a silent dead-end', () =>
     expect(services.bus.recent(s.id).some(e => e.kind === 'recovery' && e.recovery === 'verify_failed' && e.state === 'awaiting')).toBe(true)
   })
 
+  // P0-3a — the verify_failed narration is built FROM the verifier's structured evidence: real
+  // counts + the FIRST named hard-failing scenario, NOT the old static "no real passing test was
+  // produced" lie. (The mock runner with passed:false synthesizes one failing BDD scenario per test.)
+  it('narrates the HONEST failure (real counts + the named failing scenario), not the static lie', async () => {
+    const { orch, services } = makeOrch({ testsRun: 3, passed: false })
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const texts = services.bus.recent(s.id).filter(e => e.kind === 'text').map(e => (e.kind === 'text' ? e.text : ''))
+    const failLine = texts.find(t => t.startsWith('⚠️ Not verified'))
+    expect(failLine).toBeDefined()
+    // It must report the REAL counts (3 checks ran, 0 passed, 3 hard-failed) and NAME a scenario.
+    expect(failLine).toContain('3 checks ran')
+    expect(failLine).toContain('0 passed')
+    expect(failLine).toContain('3 failed')
+    expect(failLine).toContain('mock scenario 1')
+    // It must offer the OTHER honest path (change the code in chat), not just a blind re-run.
+    expect(failLine).toContain('describe a change in chat')
+    // And it must NOT be the old static "no real passing test was produced" wording.
+    expect(failLine).not.toContain('no real passing test was produced')
+  })
+
+  // P0-3a — graceful fallback: an evidence-LESS failed verifier (no testEvidence persisted) keeps
+  // the original wording verbatim, so the legacy behavior is preserved when there is nothing honest
+  // to say. A custom verifier that returns null and NEVER reports evidence.
+  it('falls back to the legacy wording when the verifier reports NO evidence', async () => {
+    const store = new MockSessionStore()
+    const services = buildServices({
+      store, skillsDir, mockCriticScore: 90,
+      // A runner that fails AND reports zero scenarios / no evidence sink content.
+      testRunner: { run: async (files: { filePath: string; content: string }[]) => {
+        const real = await createMockTestRunner({ testsRun: 0, passed: false }).run(files)
+        return real
+      } },
+    })
+    const orch = new Orchestrator(services)
+    const s = await orch.start({ idea: 'todo' })
+    await orch.approve(s.id)
+    await orch.runToVerification(s.id)
+    const texts = services.bus.recent(s.id).filter(e => e.kind === 'text').map(e => (e.kind === 'text' ? e.text : ''))
+    // With 0 scenarios the summary has totalChecks:0 → the legacy wording is used verbatim.
+    expect(texts.some(t => t === '⚠️ Not verified — no real passing test was produced. Retry to re-run the tests.')).toBe(true)
+  })
+
   it('retryVerification re-runs REAL verification; a now-passing verifier reaches awaiting_push_confirm', async () => {
     const store = new MockSessionStore()
     let passing = false

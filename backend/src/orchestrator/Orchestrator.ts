@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { initialSession, isVerified, CANCEL_IMMUNE_STATUSES, type SessionState, type SpecArtifact } from '@akis/shared'
+import { initialSession, isVerified, CANCEL_IMMUNE_STATUSES, summarizeVerifyEvidence, type SessionState, type SpecArtifact, type TestEvidence } from '@akis/shared'
 import { languageFor } from '../validator/ValidatorTypes.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
@@ -138,6 +138,36 @@ export class Orchestrator {
    *  or a failed verify and never skips verify/push (see the `recovery` event doc). */
   private emitRecovery(sessionId: string, recovery: 'critic_resolution' | 'verify_failed' | 'push_failed', state: 'awaiting' | 'resolved'): void {
     this.s.bus.emit({ kind: 'recovery', recovery, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
+  }
+
+  /**
+   * P0-3a — HONEST verify-failure narration. Built FROM the verifier's structured evidence: the
+   * real counts + the FIRST named hard-failing scenario + its bounded reason class, so the run
+   * no longer LIES ("0 test / no real passing test was produced") on a run that actually ran 11
+   * checks with 1 hard failure. OBSERVABILITY-ONLY — it reports the already-decided fail-closed
+   * outcome (no token); it never affects minting or any gate.
+   *
+   * Degrades gracefully: with NO evidence (an evidence-less runner) it falls back to the original
+   * wording verbatim, so the legacy behavior is preserved exactly when there is nothing honest to
+   * say. The retry hint stays — and now also points at the OTHER honest path (change the code via
+   * chat), since a blind re-run of the SAME tests was the demo's 5×-retry trap.
+   */
+  private verifyFailedNarration(evidence: TestEvidence | undefined): string {
+    const summary = summarizeVerifyEvidence(evidence)
+    if (!summary || summary.totalChecks === 0) {
+      // No structured evidence to report → keep today's wording (graceful fallback).
+      return '⚠️ Not verified — no real passing test was produced. Retry to re-run the tests.'
+    }
+    const parts = [`${summary.totalChecks} ${summary.totalChecks === 1 ? 'check' : 'checks'} ran`, `${summary.passedCount} passed`]
+    const first = summary.failingScenarios[0]
+    if (summary.failedCount > 0) {
+      const failPart = first
+        ? `${summary.failedCount} failed: '${first.name}' (${first.reason})`
+        : `${summary.failedCount} failed`
+      parts.push(failPart)
+    }
+    if (summary.unmeasuredCount > 0) parts.push(`${summary.unmeasuredCount} could not be measured`)
+    return `⚠️ Not verified — ${parts.join(', ')}. Retry re-runs the same tests — describe a change in chat to alter the code.`
   }
 
   /** Surface the critic's READ-ONLY code-review verdict as a status card. It is
@@ -617,7 +647,9 @@ export class Orchestrator {
     // human can retry (re-runs REAL verification). The recovery signal drives the FE card.
     // A1: NON-GATE write (status + evidence) — resilient.
     const out = await this.updateResilient(id, { status: 'verify_failed', ...evidencePatch })
-    this.narrate(id, '⚠️ Not verified — no real passing test was produced. Retry to re-run the tests.')
+    // P0-3a — narrate the HONEST failure (real counts + first named hard failure) built from the
+    // SAME structured evidence persisted above; degrades to the legacy wording when absent.
+    this.narrate(id, this.verifyFailedNarration(evidence))
     this.emitRecovery(id, 'verify_failed', 'awaiting')
     return out
   }
