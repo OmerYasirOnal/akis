@@ -306,8 +306,13 @@ export class PreviewRegistry {
         return this.standDownEntry(sessionId)
       }
       if (earlyExit) {
-        releasePort(port); this.procs.delete(sessionId)
+        releasePort(port)
         await teardown(dir).catch(() => {})
+        // Re-check ownership AFTER the teardown await (mirrors the timeout branch): a stop()/newer
+        // start() landing in this window must NOT be clobbered back to 'failed', and we must not
+        // untrack a newer launch's proc. Stand down if superseded. (P0-2.)
+        if (!this.owns(sessionId, token)) return this.standDownEntry(sessionId)
+        this.procs.delete(sessionId)
         return this.set({ sessionId, status: 'failed', dir, port, reason: `preview process exited early (code ${earlyExit.code})${tailForReason(proc.stderrTail?.())}` })
       }
       if (await this.probe(port)) {
