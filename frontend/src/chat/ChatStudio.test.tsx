@@ -433,6 +433,56 @@ describe('ChatStudio — a recovery park refreshes the durable snapshot (Run app
     await waitFor(() =>
       expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
   })
+
+  // PR-1 (demo-sweep D1-1): the PUSH gate is the THIRD park with the same lagging-snapshot shape —
+  // the BE persists status:'awaiting_push_confirm' (+ code) but emits ONLY a `gate push_confirm
+  // awaiting` SSE event (no `session`/status frame), so the fold sets v.gates.pushConfirm.state
+  // WITHOUT touching v.status. Like the recovery parks above, the snapshot effect never re-fetched
+  // (the gate fold wasn't in its deps), so backendStatus stayed at the mid-build value ('building'
+  // — not previewable) AND codeFiles stayed at its pre-Proto snapshot (undefined). The result was
+  // the live bug: the push-gate card appears but NO ▶ Run anywhere until F5. Adding the gate fold
+  // to the deps re-reads the durable snapshot (fresh status + code), flipping canRun live.
+  it('push_confirm gate re-fetches the snapshot → ▶ Run surfaces live (no reload)', async () => {
+    EmitStream.created = []
+    window.history.replaceState({}, '', '/?s=spark')
+    const CODE = { files: [{ filePath: 'index.html', content: '<html/>' }] }
+    let getCalls = 0
+    // The durable truth flips to the previewable gate-park right before the gate emit — and ONLY
+    // then does code land (Proto persisted it during the build, after the first 'building' read).
+    let atGate = false
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/sessions/mine')) return { ok: true, status: 200, json: async () => ([{ id: 'spark', idea: 'an app', status: 'building', verified: false }]), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark/log')) return { ok: true, status: 200, json: async () => ({ events: [], head: 0 }), text: async () => '' } as unknown as Response
+      if (path.endsWith('/sessions/spark')) {
+        getCalls++
+        // Mid-build the snapshot is 'building' with NO code yet (Proto hasn't persisted); at the
+        // gate it is the durable 'awaiting_push_confirm' WITH code — exactly the live sequence.
+        return atGate
+          ? { ok: true, status: 200, json: async () => ({ id: 'spark', status: 'awaiting_push_confirm', version: 5, code: CODE }), text: async () => '' } as unknown as Response
+          : { ok: true, status: 200, json: async () => ({ id: 'spark', status: 'building', version: 3 }), text: async () => '' } as unknown as Response
+      }
+      return { ok: true, status: 200, json: async () => ({}), text: async () => '' } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
+    const drawer = await screen.findByTestId('preview-drawer')
+    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')!)
+    await waitFor(() => expect(getCalls).toBeGreaterThan(0)) // the mid-build snapshot landed (building, no code)
+
+    // No Run yet: building is not previewable AND there's no code — the correct mid-write state.
+    expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBe(0)
+    const readsBeforeGate = getCalls
+
+    // The run reaches the push gate — only a `gate` event arrives (v.status untouched, the bug's
+    // exact shape: the BE emits emitGate, never a session/status frame, when it parks here).
+    atGate = true
+    live.emit(ev({ kind: 'gate', gate: 'push_confirm', state: 'awaiting' }), 1)
+
+    // The gate fold must re-trigger the snapshot read; the fresh awaiting_push_confirm (+ code) flips canRun.
+    await waitFor(() => expect(getCalls).toBeGreaterThan(readsBeforeGate))
+    await waitFor(() =>
+      expect(within(drawer).queryAllByRole('button', { name: /Run app|Uygulamayı çalıştır/i, hidden: true }).length).toBeGreaterThan(0))
+  })
 })
 
 describe('RunPipeline sessionGone precedence', () => {
