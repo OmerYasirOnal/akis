@@ -1,6 +1,17 @@
 # AKIS Platform MVP — Handoff & Research Dossier
 
-> **Status:** design-direction set, NOT yet implemented. This folder is a **continuity handoff** so a fresh session can pick up exactly where the 2026-05-31 architecture session left off.
+> **⚠️ CURRENT STATUS (updated 2026-06-30): this file is a HISTORICAL design record.**
+> The MVP described below as "not yet implemented" has since been **fully built, tested,
+> and shipped** — the end-to-end agentic core (idea → spec → human approval → code → real
+> test → critic → human push-confirm), backend + frontend + live preview, all run today.
+> The 2026-05-31 plan's **FSM decision was consciously reversed to an agentic core**
+> (see `README.md` and `MEMORY.md`).
+> **For the actual built reality, read `README.md` first, then `MEMORY.md`.**
+> Everything below is preserved as the original 2026-05-31 architecture-session handoff.
+
+---
+
+> **Original status (2026-05-31):** design-direction set, NOT yet implemented. This folder is a **continuity handoff** so a fresh session can pick up exactly where the 2026-05-31 architecture session left off.
 > **Read order:** this file → `docs/v1-architecture-audit.md` (full evidence) → then start work via `KICKOFF-PROMPT.md`.
 
 ---

@@ -64,6 +64,18 @@ blob-report/
 tmp/
 .cache/
 
+# Personal / non-product working files (kept on disk, never published to the repo)
+docs/linkedin-post-*.md
+.superpowers/
+
+# Heavy screenshot/evidence research dumps (multi-MB binaries; keep locally, don't bloat the repo)
+docs/research/demo-sweep-2026-06-12/
+docs/research/integration-156-157-2026-06-12/
+docs/research/live-2026-06-11-a3a4/
+docs/research/tour-2026-06-10/
+docs/research/ux-screens-2026-06-07/
+docs/research/preview-drawer-polish-2026-06-11/
+
 # spawned-session live status (ephemeral)
 .akis/sessions/*.status.md
 .akis/sessions/registry.tsv
