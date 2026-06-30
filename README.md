@@ -1,25 +1,42 @@
-# akis-platform-mvp
+# AKIS — verifiable AI software development
 
-Clean rebuild of [AKIS](../akis-platform) — an AI agent orchestration engine whose thesis is **quality trust**: AI agents do the work, but nothing ships until it passes **3 structural safeguards** (two human-approval gates + sealed, fail-closed verification) with a human in the loop.
+[![CI](https://github.com/OmerYasirOnal/akis/actions/workflows/ci.yml/badge.svg)](https://github.com/OmerYasirOnal/akis/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
-> **Status: implemented (MVP, evolving).** The end-to-end agentic core runs today — idea → spec → human approval → code → real test → critic → human push-confirm — on a mock provider by default and on real LLMs (Claude/OpenAI/OpenRouter/Gemini) when a key is configured. Backend + frontend + live preview are built and tested. (`backend` + `frontend` + `shared` pnpm workspace; backend `pnpm test` is the gate.)
+> **AI agents do the work — but nothing ships until a human approves it and a *real* test proves it.**
 
-> 🔏 **See a real, verifiable build:** [`docs/showcase/`](docs/showcase/) holds an actual AKIS build's **signed Build Provenance Attestation** — verify its Ed25519 signature yourself with `node docs/showcase/verify-attestation.mjs` (zero deps, zero AKIS code). This is what a *provable* AI build looks like.
+AKIS is a multi-agent software-development engine built around one uncomfortable question:
 
-## One-line thesis
+> **AI can write code. So why should we trust it?**
 
-Not "more *agentic*" for its own sake — **agentic, but bounded and verifiable.** A main orchestrator agent ("AKIS") decides which sub-agents (Scribe / Proto / Trace / Critic) to dispatch, and the thesis is held by **3 inviolable structural safeguards** (which surface as the 4 properties below), not a rigid FSM:
+Most AI coding tools hand you an output and disappear — you can't see who checked it, what actually ran, or what "done" was based on. AKIS puts **verifiability** at the center instead of raw output. A team of role-separated agents does the work, and **four structural human-approval gates** sit above them: the AI literally cannot ship past a human, by design — not by a system prompt that asks it nicely.
+
+- 🤖 **Four agents, separated roles** — **Scribe** writes the spec · **Proto** writes the code + tests · **Critic** reviews it adversarially · **Trace** verifies it by *actually running a test*.
+- 🚧 **Four gates that can't be loosened by config** — ① a human approves the spec before any code is written · ② the producer can never be its own verifier · ③ `verified` latches only on a real test that executed and passed (**no false green**) · ④ a push to GitHub needs a token mintable only when verified **and** human-confirmed.
+- 🔏 **Provable, not just claimed** — every verified build exports an **offline-verifiable, Ed25519-signed provenance attestation** you can hand to a client and check yourself.
+
+> 🔏 **Want proof instead of a promise?** [`docs/showcase/`](docs/showcase/) holds a real AKIS build's signed Build Provenance Attestation — verify its signature yourself with `node docs/showcase/verify-attestation.mjs` (zero dependencies, zero AKIS code). That's what a *provable* AI build looks like.
+
+> ⚡ **Try it in one command (no local build):** `docker run -p 3000:3000 ghcr.io/omeryasironal/akis-platform-mvp:latest` → open `http://localhost:3000`. Runs on a deterministic mock out of the box; add an LLM key for real builds. (`linux/amd64`; on Apple Silicon / ARM, build locally — see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).)
+
+**Status — implemented MVP (evolving).** The end-to-end core runs today: idea → spec → human approval → code → real test → critic → human push-confirm. It runs on a deterministic mock provider by default and on real LLMs (Claude / OpenAI / OpenRouter / Gemini) when a key is configured. Backend + frontend + live preview are built, tested, and self-hostable. TypeScript pnpm monorepo (`backend` / `frontend` / `shared`); React 19 + Vite + Tailwind frontend. **Apache-2.0.**
+
+---
+
+## How the trust model works
+
+Not "more *agentic*" for its own sake — **agentic, but bounded and verifiable.** A main orchestrator agent ("AKIS") decides which sub-agents (Scribe / Proto / Trace / Critic) to dispatch, while the thesis is held by **inviolable structural safeguards**, not a rigid state machine and not the model's good intentions:
 
 1. **Spec-approval** — code-write is denied until a human approves the spec.
 2. **Producer ≠ verifier** — only the verifier role may run tests.
 3. **Verified = a real test** — `verified` latches only on a verifier run with ≥1 test that actually executed and passed (no false green).
 4. **Push gate** — a GitHub push needs a branded token, mintable only when verified **and** human-confirmed.
 
-Flexibility lives at the **edges** (agentic dispatch, a verified iterate loop, free ASK/CHAT); the gates are the spine and can never be loosened by config.
+Flexibility lives at the **edges** (agentic dispatch, a verified iterate loop, free ASK/CHAT); the gates are the spine and **can never be loosened by config**.
 
-> **Note on the pivot:** the original `HANDOFF.md` locked an explicit FSM + transition table. Sub-project #1 **consciously reversed that** to an agentic core whose invariant is the structural safeguards (see `docs/superpowers/specs/2026-06-01-agentic-core-gates-design.md §0`). This README reflects the agentic-core reality that is actually built; `HANDOFF.md` is kept as the historical design record.
+> **Note on the pivot:** the original `HANDOFF.md` locked an explicit FSM + transition table; the build consciously reversed that to an agentic core whose invariant is the structural safeguards (see `docs/superpowers/specs/2026-06-01-agentic-core-gates-design.md §0`). This README reflects the agentic-core reality that is actually built; `HANDOFF.md` is kept as the historical design record.
 
-## What's built (sub-projects 1–10, merged)
+## What's built
 
 | Area | What |
 |---|---|
