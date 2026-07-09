@@ -43,16 +43,23 @@ doküman maddesini yeniden "yapmak" yok.
 | P0-2.3 eviction-yarımı | ✅ GEMİDE | launch-token sahiplik şeması her await sınırında (`PreviewRegistry.ts:167-175`) |
 | B1 sticky bar | ➖ FİİLEN KAPALI | Birebir bar hiç merge edilmedi ama asıl şikâyet auto-scroll-to-run ile çözüldü (`AkisChat.tsx:430-437`); bar artık opsiyonel cila |
 | B7 yeni-sohbet UX | ➖ KARAR (i) GEÇERLİ | Aktif sohbet korunur + teal "Yeni geliştirme"; karşılama ekranı (ii) istenirse Faz 4 |
-| B5 shared-key dürüstlüğü | 🔴 AÇIK | `ProviderKeys.tsx:59-61` `keySource`'u hiç okumuyor; dürüst kalıp ModelPicker'da hazır (`ModelPicker.tsx:115-117`) — taşı + `settings.keys.shared*` TR/EN anahtarları |
-| B4 analytics | 🔴 AÇIK | (a) verified-ama-cancelled ne `done` ne `verifiedRuns`'a giriyor ama `verify` istatistiklerine giriyor (`StatsCollector.ts:37-64`); (b) `AnalyticsPage.tsx:100` ham markdown başlık basıyor — mevcut `ideaTitle()` (`recentBuilds.ts:17`) çağrılmıyor |
-| B9 koşulsuz poll | 🔴 AÇIK | 4 sn sabit `setInterval` (`AgentWriteProposals.tsx:341-345`), MCP durumu/SSE'den bağımsız |
+| B5 shared-key dürüstlüğü | ✅ KAPANDI (`ca57103`) | `ProviderKeys` artık `keySource:'shared'`'da dürüst "Paylaşımlı sunucu anahtarı — kendi anahtarını eklersen o kullanılır" kopyasını basıyor (TR/EN `settings.keys.sharedKey`) |
+| B4b analytics ham başlık | ✅ KAPANDI (`ca57103`) | `AnalyticsPage` per-run satırları History'nin `ideaTitle()` çözücüsünü kullanıyor; tooltip ham fikri koruyor |
+| B4a analytics bucketing | 🔴 AÇIK (owner kararı ister) | verified-ama-cancelled ne `done` ne `verifiedRuns`'a giriyor ama `verify` istatistiklerine giriyor (`StatsCollector.ts:37-64`); karar: ayrı sayaç mı, `verifiedRuns`'a dahil mi? + `StatsCollector` testi (bugün yok) |
+| B9 koşulsuz poll | ✅ KAPANDI (`ca57103`) | Poll yalnız canlı build'de (`specChipStatus==='building'`) veya GÖRÜNÜR kart varken; mount + live-kenar yüklemeleri reopen/park penceresini kapatıyor. Review LOW'u da kapandı: gate ham `writes` listesine değil görünür kart kümesine bakıyor |
 | B6 i18n süpürmesi | 🔴 AÇIK (yapısal) | İki sızıntı sınıfı: (a) her sayfadaki ham `"${code}: ${message}"` fallback'i — en kötüsü auth sayfaları (`Login.tsx:43`, `Signup.tsx:28`, parola akışları); (b) `kind:'error'` SSE → `ErrorBubble` yolunda SIFIR i18n eşlemesi (push/critic/pipeline canlı hataları hep İngilizce; `chatModel.ts:174` → `ChatThread.tsx:306`). BE locale bilmiyor → çözüm kod→katalog eşlemesi (recovery.* kalıbı örnek) |
 
-**Açık kalanların kapanış sırası (öneri, küçük PR'lar):**
-1. **PR-a (ucuz ikili):** B5 (keySource kopyası) + B4b (`ideaTitle()`'ı AnalyticsPage'e uygula) — salt FE, mevcut kalıpları taşıma.
-2. **PR-b:** B9 — poll'u duruma bağla (MCP bağlantısı yok + hiç proposal görülmemişse durdur; ideali SSE `external_write` olayına bağlamak).
-3. **PR-c:** B4a — analytics bucketing kararı: "verified-ama-cancelled" ayrı sayaç mı, `verifiedRuns`'a mı dahil? (küçük owner kararı ister) + `StatsCollector` testi (bugün hiç yok).
-4. **PR-d (en büyük):** B6 — iki sızıntı sınıfına yapısal çözüm: (i) auth sayfaları + genel `ApiError` fallback'i için kod→katalog eşlemesi, (ii) `error` SSE olayına `recovery.*` benzeri eşleme katmanı. TR/EN parity testleriyle.
+**Açık kalanların kapanış sırası:**
+1. ~~PR-a: B5 + B4b~~ ✅ + ~~PR-b: B9~~ ✅ — tek pakette gemiye alındı (`ca57103`,
+   branch `claude/session-planning-dcbl56`): fail-first testler (5 yeni), typecheck 3/3,
+   BE 1728/5-skip, FE 751/751 (TR/EN parity dahil). Adversarial review: gate-keeper 0 bulgu;
+   reviewer'ın 1 doğrulanmış LOW'u (poll gate'inin ham listeye bakması) aynı pakette kapatıldı,
+   1 bulgusu skeptik tarafından çürütüldü.
+2. **PR-c:** B4a — analytics bucketing kararı: "verified-ama-cancelled" ayrı sayaç mı,
+   `verifiedRuns`'a mı dahil? (küçük owner kararı ister) + `StatsCollector` testi (bugün hiç yok).
+3. **PR-d (en büyük):** B6 — iki sızıntı sınıfına yapısal çözüm: (i) auth sayfaları + genel
+   `ApiError` fallback'i için kod→katalog eşlemesi, (ii) `error` SSE olayına `recovery.*` benzeri
+   eşleme katmanı. TR/EN parity testleriyle.
 
 ## Faz 2 — Çok-kullanıcılı sertleştirme (ürünleştirmenin bel kemiği)
 
@@ -106,5 +113,8 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   `claude/session-planning-dcbl56`.
 - **2026-07-09 (devam):** Faz 1 ground-truth taraması TAMAMLANDI (5 paralel scout;
   sonuç tablosu yukarıda). Issue #4 kanıtla güncellenip kapatıldı; artıklar #168'de.
-  `docs/roadmap.md` agent-output abartısı düzeltildi. Sıradaki iş: Faz 1 kapanış
-  sırası PR-a'dan başlayarak (B5 + B4b).
+  `docs/roadmap.md` agent-output abartısı düzeltildi.
+- **2026-07-09 (devam 2):** B5 + B4b + B9 gemiye alındı (`ca57103`, owner merge'i bekliyor,
+  branch `claude/session-planning-dcbl56`). Fail-first 5 test; typecheck 3/3 + BE 1728/5-skip +
+  FE 751/751 yeşil; gate-keeper PASS (0) + reviewer'ın doğrulanmış tek LOW'u pakette kapatıldı.
+  Faz 1'de kalanlar: B4a (owner bucketing kararı bekliyor) + B6 (yapısal i18n, sıradaki büyük iş).
