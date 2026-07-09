@@ -378,6 +378,15 @@ export const STRINGS = {
     'auth.reset.subtitle': 'Enter a new password for your account.',
     'auth.reset.cta': 'Set new password',
     'auth.reset.noToken': 'This reset link is missing or invalid. Request a new one.',
+    // ── Auth API errors (B6-i) — keyed by the backend's stable machine codes; the raw English
+    // transport string never renders (authError.ts maps code → key, unknown → generic). ──
+    'auth.err.badCredentials': 'Invalid email or password.',
+    'auth.err.badRequest': 'Check the form fields and try again.',
+    'auth.err.emailTaken': 'This email is already registered — sign in instead.',
+    'auth.err.badToken': 'This reset link is invalid or has expired. Request a new one.',
+    'auth.err.unauthorized': 'Your session has expired — sign in again.',
+    'auth.err.rateLimited': 'Too many attempts — wait a bit and try again.',
+    'auth.err.generic': 'Something went wrong. Please try again.',
     'auth.or': 'or',
     'auth.oauth.github': 'Continue with GitHub',
     'auth.oauth.google': 'Continue with Google',
@@ -1196,6 +1205,15 @@ export const STRINGS = {
     'auth.reset.subtitle': 'Hesabın için yeni bir parola gir.',
     'auth.reset.cta': 'Yeni parolayı kaydet',
     'auth.reset.noToken': 'Bu sıfırlama bağlantısı eksik veya geçersiz. Yenisini iste.',
+    // ── Auth API hataları (B6-i) — backend'in sabit makine kodlarıyla eşlenir; ham İngilizce
+    // transport metni asla render edilmez (authError.ts kod → anahtar, bilinmeyen → generic). ──
+    'auth.err.badCredentials': 'E-posta veya şifre hatalı.',
+    'auth.err.badRequest': 'Form alanlarını kontrol edip tekrar dene.',
+    'auth.err.emailTaken': 'Bu e-posta zaten kayıtlı — giriş yapmayı dene.',
+    'auth.err.badToken': 'Bu sıfırlama bağlantısı geçersiz ya da süresi dolmuş. Yenisini iste.',
+    'auth.err.unauthorized': 'Oturumunun süresi doldu — tekrar giriş yap.',
+    'auth.err.rateLimited': 'Çok fazla deneme — biraz bekleyip tekrar dene.',
+    'auth.err.generic': 'Bir şeyler ters gitti. Lütfen tekrar dene.',
     'auth.or': 'veya',
     'auth.oauth.github': 'GitHub ile devam et',
     'auth.oauth.google': 'Google ile devam et',

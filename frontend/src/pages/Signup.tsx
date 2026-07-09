@@ -1,12 +1,13 @@
 import { useState, type FormEvent } from 'react'
 import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
-import { ApiClient, ApiError } from '../api/client.js'
+import { ApiClient } from '../api/client.js'
 import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
 import { PasswordInput } from '../ui/PasswordInput.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
 import { OAuthButtons } from './OAuthButtons.js'
+import { authErrorKey } from './authError.js'
 
 export function Signup({ api }: { api: ApiClient }) {
   const { signup } = useAuth()
@@ -25,7 +26,7 @@ export function Signup({ api }: { api: ApiClient }) {
     try { await signup(name, email, password); navigate('/') }
     // A 403 is the intentional signup block (this is a single-user instance — the edge/code both
     // 403 /auth/signup). Show a clear, localized message instead of the raw "HTTP 403".
-    catch (e) { setErr(ApiError.is(e) && e.status === 403 ? t('auth.signup.disabled') : ApiError.is(e) ? e.message : String(e)) }
+    catch (e) { setErr(t(authErrorKey(e))) } // B6-i: SignupDisabled still maps to auth.signup.disabled; others get honest catalog copy
     finally { setBusy(false) }
   }
 

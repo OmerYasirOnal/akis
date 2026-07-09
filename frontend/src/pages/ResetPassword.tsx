@@ -1,11 +1,12 @@
 import { useState, type FormEvent } from 'react'
-import { ApiClient, ApiError } from '../api/client.js'
+import { ApiClient } from '../api/client.js'
 import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
 import { Button, Field, ErrorNote } from '../ui/kit.js'
 import { PasswordInput } from '../ui/PasswordInput.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
+import { authErrorKey } from './authError.js'
 
 export function ResetPassword({ api }: { api: ApiClient }) {
   const { t } = useI18n()
@@ -24,7 +25,7 @@ export function ResetPassword({ api }: { api: ApiClient }) {
       await api.resetPassword(token, password)
       await refresh()      // reset sets a fresh session cookie → reflect it in the SPA
       navigate('/')
-    } catch (e) { setErr(ApiError.is(e) ? e.message : String(e)) }
+    } catch (e) { setErr(t(authErrorKey(e))) } // B6-i
     finally { setBusy(false) }
   }
 
