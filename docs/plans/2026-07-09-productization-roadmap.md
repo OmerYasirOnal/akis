@@ -55,11 +55,23 @@ doküman maddesini yeniden "yapmak" yok.
    BE 1728/5-skip, FE 751/751 (TR/EN parity dahil). Adversarial review: gate-keeper 0 bulgu;
    reviewer'ın 1 doğrulanmış LOW'u (poll gate'inin ham listeye bakması) aynı pakette kapatıldı,
    1 bulgusu skeptik tarafından çürütüldü.
-2. **PR-c:** B4a — analytics bucketing kararı: "verified-ama-cancelled" ayrı sayaç mı,
-   `verifiedRuns`'a mı dahil? (küçük owner kararı ister) + `StatsCollector` testi (bugün hiç yok).
-3. **PR-d (en büyük):** B6 — iki sızıntı sınıfına yapısal çözüm: (i) auth sayfaları + genel
-   `ApiError` fallback'i için kod→katalog eşlemesi, (ii) `error` SSE olayına `recovery.*` benzeri
-   eşleme katmanı. TR/EN parity testleriyle.
+2. ~~PR-c: B4a~~ ✅ (`ce5ad50`) — `verifiedRuns` artık passed `verify` olayında sayılıyor
+   ("doğrulama gerçekten geçti"; `done` = "ship edildi" olarak kalır). Owner kararı cevapsız
+   kaldığı için önerilen varsayılan uygulandı — merge'de tersine çevrilebilir (tek satır +
+   testler). Not: scout'un "StatsCollector testi yok" iddiası yanlıştı; mevcut test korunup
+   4 yeni fail-first test eklendi. BE 1732/5-skip yeşil.
+3. **B6 iki alt pakete bölündü:**
+   - ~~B6-i (auth yüzeyleri)~~ ✅ (`eec2c99`) — backend auth hataları ZATEN sabit makine kodu
+     taşıyormuş (BadCredentials/WeakPassword/EmailTaken/BadToken/…); salt-FE `authErrorKey()`
+     eşleyicisi (OAUTH_ERROR_KEYS kalıbı) 5 auth sayfasına uygulandı, `auth.err.*` TR/EN
+     anahtarları eklendi, bilinmeyen kod → generic (ham İngilizce asla render edilmez).
+     FE 754/754 yeşil.
+   - **B6-ii (SIRADAKİ):** `kind:'error'` SSE → ErrorBubble yolu (push/critic/pipeline canlı
+     hataları; `Orchestrator.ts:201/331/513/821` emit'leri) + auth-dışı genel
+     `"${code}: ${message}"` fallback'leri (`AkisChat.tsx:484`, `actionError.ts:30`,
+     ExternalWriteCard/AgentWriteProposals). Error olayına ADDITIVE opsiyonel `code` alanı
+     gerekir (orchestrator emisyonu = yalnız additive; gate-keeper şart) + FE'de `recovery.*`
+     benzeri kod→katalog katmanı.
 
 ## Faz 2 — Çok-kullanıcılı sertleştirme (ürünleştirmenin bel kemiği)
 
@@ -117,4 +129,7 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
 - **2026-07-09 (devam 2):** B5 + B4b + B9 gemiye alındı (`ca57103`, owner merge'i bekliyor,
   branch `claude/session-planning-dcbl56`). Fail-first 5 test; typecheck 3/3 + BE 1728/5-skip +
   FE 751/751 yeşil; gate-keeper PASS (0) + reviewer'ın doğrulanmış tek LOW'u pakette kapatıldı.
-  Faz 1'de kalanlar: B4a (owner bucketing kararı bekliyor) + B6 (yapısal i18n, sıradaki büyük iş).
+- **2026-07-09 (devam 3):** B4a (`ce5ad50`) + B6-i (`eec2c99`) gemiye alındı; ikisinin diff'i
+  üzerinde gate-keeper+reviewer turu başlatıldı (sonuç bu doküman güncellenerek işlenecek).
+  Faz 1'de kalan tek iş: **B6-ii** (error-SSE lokalizasyonu — additive event kodu + FE katmanı).
+  Sonrası: Faz 2 (çok-kullanıcılı sertleştirme) veya #168 (RAG artıkları).
