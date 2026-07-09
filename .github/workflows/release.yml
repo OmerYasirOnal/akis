@@ -184,6 +184,7 @@ jobs:
 
             ```bash
             docker run --rm -p 3000:3000 \
+              -e AUTH_JWT_SECRET="$(openssl rand -hex 32)" \
               -e AKIS_ALLOW_MOCK=1 -e AKIS_ALLOW_DEMO_IN_PROD=1 \
               ${{ env.IMAGE }}:${{ steps.version.outputs.version }}
             ```

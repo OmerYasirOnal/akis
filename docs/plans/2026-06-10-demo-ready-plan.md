@@ -6,6 +6,14 @@
 > bulgu D1-1: push-gate'te "▶ Uygulamayı çalıştır" canlı sayfada çıkmıyor (codeFiles snapshot'ı
 > gate olayında tazelenmiyor; F5 workaround) — demo-öncesi en öncelikli küçük fix.
 
+> **2026-07-09 — RELEASE TRAIN MERGED LOCALLY:** `codex/release-train-claude-like-preview`
+> branch'i `integration/p0-rehearsal` fix setini aldı: D1-1 run-at-push-gate, demo UI polish
+> trio, verify-fail honest reporting, confirmPush resilient terminal writes ve PreviewRegistry
+> internals. Doğrulama: shared/backend/frontend typecheck PASS; backend vitest 1728/5-skip PASS;
+> frontend vitest 745 PASS; frontend production build PASS; Playwright chromium smoke PASS;
+> Docker image build PASS; Docker `/health` smoke PASS with
+> `AUTH_JWT_SECRET + AKIS_ALLOW_MOCK=1 + AKIS_ALLOW_DEMO_IN_PROD=1`.
+
 > Hedef (owner): branch'e dönmeden, main üzerine 1-2 çekirdek fonksiyon ekleyerek ürünü uçtan uca
 > demo edilebilir yapmak. Kanıt tabanı: canlı tarayıcı turu (temiz kullanıcı `demo-tour@akis.dev`,
 > gerçek build `85a8e929`, screenshot'lar `docs/research/tour-2026-06-10/`), `~/.akis/dev-events.json`
