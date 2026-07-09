@@ -16,6 +16,12 @@
 > `AUTH_JWT_SECRET + AKIS_ALLOW_MOCK=1 + AKIS_ALLOW_DEMO_IN_PROD=1`; release workflow PASS ve
 > `ghcr.io/omeryasironal/akis-platform-mvp:v0.1.0` digest'i `latest` ile aynı doğrulandı.
 
+> **2026-07-09 — v1.0.0 FULL SELF-HOST RELEASE PUBLISHED:** PR #165 release prep'i `main`'e aldı,
+> `v1.0.0` tag'i GHCR/GitHub Release workflow'unu çalıştırdı ve release workflow PASS oldu:
+> Docker image build PASS, keyless `/health` boot-smoke PASS, `v1.0.0` + `latest` GHCR push PASS.
+> Image digest: `sha256:bdf59219fc77f9f662e579d45b07885e5722ab0278311fd62545762820b412cd`.
+> PR #166 test-only deep-link flake fix'i merge edildi; son `main` CI PASS.
+
 > Hedef (owner): branch'e dönmeden, main üzerine 1-2 çekirdek fonksiyon ekleyerek ürünü uçtan uca
 > demo edilebilir yapmak. Kanıt tabanı: canlı tarayıcı turu (temiz kullanıcı `demo-tour@akis.dev`,
 > gerçek build `85a8e929`, screenshot'lar `docs/research/tour-2026-06-10/`), `~/.akis/dev-events.json`
