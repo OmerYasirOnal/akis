@@ -66,12 +66,24 @@ doküman maddesini yeniden "yapmak" yok.
      eşleyicisi (OAUTH_ERROR_KEYS kalıbı) 5 auth sayfasına uygulandı, `auth.err.*` TR/EN
      anahtarları eklendi, bilinmeyen kod → generic (ham İngilizce asla render edilmez).
      FE 754/754 yeşil.
-   - **B6-ii (SIRADAKİ):** `kind:'error'` SSE → ErrorBubble yolu (push/critic/pipeline canlı
-     hataları; `Orchestrator.ts:201/331/513/821` emit'leri) + auth-dışı genel
-     `"${code}: ${message}"` fallback'leri (`AkisChat.tsx:484`, `actionError.ts:30`,
-     ExternalWriteCard/AgentWriteProposals). Error olayına ADDITIVE opsiyonel `code` alanı
-     gerekir (orchestrator emisyonu = yalnız additive; gate-keeper şart) + FE'de `recovery.*`
-     benzeri kod→katalog katmanı.
+   - ~~B6-ii (error-SSE lokalizasyonu)~~ ✅ (`9eed9a1`) — `error` olayında `code?` ZATEN
+     vardı ve 4 emit'in 3'ü kod taşıyordu; yalnız push emit'ine ADDITIVE `code:'PushFailed'`
+     eklendi (mesaj byte-identical). FE: `runError.ts` kod→başlık eşleyicisi
+     (PushFailed/RunFailed/CRITIC_*), ErrorBubble lokalize başlık + ham teknik ayrıntı;
+     kodsuz/eski olaylar birebir eski görünümde. Gate-keeper **0 bulgu** (tüm error-tüketici
+     yüzeyleri izlendi); reviewer temiz + 1 PRE-EXISTING LOW notu (aşağıda).
+     BE 1733/5-skip + FE 760/760 yeşil.
+
+**Faz 1 KAPANDI.** Not düşülen (fix'lenmemiş) gözlemler:
+- *verifiedRuns > done* artık tasarım gereği mümkün (B4a semantiği) — dashboard'da kafa
+  karıştırırsa etiket açıklaması eklenebilir.
+- *Critic çifte balonu (pre-existing LOW):* code-review critic hatasında hem `CRITIC_*` hem
+  sarmalayıcı `RunFailed` olayı yayılıyor → 2 balon (B6-ii öncesi de 2 ham balondu). Önerilen
+  fix `kickRun` catch'inde `CriticFailedError`'da RunFailed emit'ini atlamak — ama bu bir
+  emisyonu KALDIRIR (additive-only invariantı) → owner onayı ister.
+- *Auth-dışı `"${code}: ${message}"` fallback'leri* (`AkisChat.tsx:484`, `actionError.ts:30`,
+  ExternalWriteCard/AgentWriteProposals): bilinen kodlar zaten eşli; fallback yalnız
+  BİLİNMEYEN kodlarda ham kalıyor — kabul edilebilir güvenlik ağı, ayrıca iş açılmadı.
 
 ## Faz 2 — Çok-kullanıcılı sertleştirme (ürünleştirmenin bel kemiği)
 
@@ -138,3 +150,7 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   altına küçük açıklama eklenebilir.
   Faz 1'de kalan tek iş: **B6-ii** (error-SSE lokalizasyonu — additive event kodu + FE katmanı).
   Sonrası: Faz 2 (çok-kullanıcılı sertleştirme) veya #168 (RAG artıkları).
+- **2026-07-09 (devam 4):** B6-ii gemiye alındı (`9eed9a1`) — **FAZ 1 KAPANDI.** Gate-keeper
+  0 bulgu, reviewer temiz (1 pre-existing LOW yukarıda not düşüldü). Süitler: typecheck 3/3,
+  BE 1733/5-skip, FE 760/760. Sıradaki karar: **Faz 2 (kota/rate-limit sertleştirmesi)** mi,
+  **#168 (RAG artıkları)** mı — owner önceliğine göre.
