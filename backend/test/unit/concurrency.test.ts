@@ -1,9 +1,9 @@
 import { describe, it, expect, vi } from 'vitest'
 import { checkConcurrency, resolveConcurrencyPolicy, ACTIVE_RUN_STATUSES } from '../../src/usage/concurrency.js'
-import type { SessionState } from '@akis/shared'
+import type { SessionSummary } from '../../src/store/SessionStore.js'
 
-const sessions = (...statuses: string[]): SessionState[] => statuses.map((status, i) => ({ id: `s${i}`, status }) as SessionState)
-const storeWith = (list: SessionState[]) => ({ listByOwner: vi.fn(async () => list) })
+const sessions = (...statuses: string[]): SessionSummary[] => statuses.map((status, i) => ({ id: `s${i}`, idea: 'x', status, verified: false }) as SessionSummary)
+const storeWith = (list: SessionSummary[]) => ({ listSummariesByOwner: vi.fn(async () => list) })
 
 describe('resolveConcurrencyPolicy (env)', () => {
   it('0/unset/NaN ⇒ unlimited (the single-operator dev default, byte-unchanged)', () => {
@@ -23,14 +23,14 @@ describe('checkConcurrency (per-user active-run cap, start-only fail-closed)', (
     const store = storeWith(sessions('building', 'building'))
     const d = await checkConcurrency(store, { maxActiveRuns: 0 }, 'u1')
     expect(d.allowed).toBe(true)
-    expect(store.listByOwner).not.toHaveBeenCalled()
+    expect(store.listSummariesByOwner).not.toHaveBeenCalled()
   })
 
   it('anonymous (no ownerId) is exempt — governed by requireAuthForBuilds + the anon token quota instead', async () => {
     const store = storeWith(sessions('building'))
     const d = await checkConcurrency(store, { maxActiveRuns: 1 }, undefined)
     expect(d.allowed).toBe(true)
-    expect(store.listByOwner).not.toHaveBeenCalled()
+    expect(store.listSummariesByOwner).not.toHaveBeenCalled()
   })
 
   it('counts ONLY pipeline-running statuses (composing/building) — parked/awaiting/terminal are free', async () => {

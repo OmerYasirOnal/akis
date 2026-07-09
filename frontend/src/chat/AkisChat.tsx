@@ -469,6 +469,9 @@ export function AkisChat({
       ? t('akis.error.unauthorized')
       // Active-run cap (ConcurrencyLimited): checked BEFORE the generic-429 quota branch below,
       // or a concurrency refusal (also a 429) would misread as "token quota exceeded".
+      // DEFENSIVE-ONLY today (review LOW): the chat-completion paths that reach errorText never
+      // return this code (start/approve surface via ChatStudio → actionErrorText); kept so a
+      // future chat-triggered start can't silently render the wrong quota copy.
       : ApiError.is(err) && err.code === 'ConcurrencyLimited'
         ? t('akis.error.concurrency')
       // Quota exceeded (429): a localized, honest "you hit your token quota" sentence — never a

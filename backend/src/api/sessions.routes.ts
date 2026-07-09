@@ -501,6 +501,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   // per-user active-run cap guards it too — otherwise N pre-created awaiting_spec_approval
   // sessions could all be approved at once, bypassing the POST /sessions cap. Same SACRED
   // start-only pre-check; absent/0 ⇒ the plain action, byte-identical.
+  // CONSCIOUS CHOICE (review LOW): the pre-check fires BEFORE accessibleSession, so an owner
+  // AT the cap gets 429 for any id (even bogus → old 404). Not a leak — the 429 is a pure
+  // function of the caller's OWN count — and it spares a store read on the refuse path.
   const approveAction = action(id => orchestratorFor(id).approve(id))
   app.post<{ Params: { id: string } }>('/sessions/:id/approve', async (req, reply) => {
     if (deps.concurrency) {

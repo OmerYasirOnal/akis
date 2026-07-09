@@ -14,16 +14,16 @@ import { Orchestrator } from '../../src/orchestrator/Orchestrator.js'
 import { MockSessionStore } from '../../src/store/MockSessionStore.js'
 import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 import { createMockTestRunner } from '../../src/verify/TestRunner.js'
-import type { SessionState } from '@akis/shared'
+import type { SessionSummary } from '../../src/store/SessionStore.js'
 
 const skillsDir = resolve(dirname(fileURLToPath(import.meta.url)), '../../src/skills/library')
 
 function app(opts: { user?: string; maxActiveRuns?: number; ownedStatuses?: string[] } = {}) {
   const services = buildServices({ store: new MockSessionStore(), skillsDir, provider: new MockProvider(), mockCriticScore: 90, testRunner: createMockTestRunner({ testsRun: 2, passed: true }) })
-  // Deterministic active-run picture: the pre-check reads listByOwner; stub it instead of racing
-  // real fire-and-forget runs through their statuses.
+  // Deterministic active-run picture: the pre-check reads the SUMMARY projection; stub it
+  // instead of racing real fire-and-forget runs through their statuses.
   if (opts.ownedStatuses) {
-    services.store.listByOwner = async () => (opts.ownedStatuses ?? []).map((status, i) => ({ id: `pre${i}`, status }) as SessionState)
+    services.store.listSummariesByOwner = async () => (opts.ownedStatuses ?? []).map((status, i) => ({ id: `pre${i}`, idea: 'x', status, verified: false }) as SessionSummary)
   }
   const f = Fastify({ logger: false })
   registerSessionRoutes(f, {

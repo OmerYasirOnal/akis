@@ -6,14 +6,20 @@ import type { SessionStore } from '../store/SessionStore.js'
  * SACRED, same contract as quota: it can only REFUSE to START work (fail-closed); it NEVER
  * weakens a gate, never touches mint/verify/push, and never reads/aborts an in-flight run.
  *
- * Why it exists: the token quota bounds SPEND per window, but not simultaneous load — a
- * within-budget user could still start N parallel builds and eat the box (LLM calls, real
- * verification boots, preview slots). This caps simultaneous pipeline-running sessions.
+ * HONEST SCOPE (review MED): this bounds NEW-BUILD STARTS (POST /sessions + approve), not all
+ * load. Recovery/push actions run compute in statuses this set deliberately does NOT count:
+ * retryVerification re-runs the verifier while status stays `verify_failed`, a critic
+ * 'proceed' does so under `awaiting_critic_resolution`, and confirmPush spends 5-15s of
+ * network under `awaiting_push_confirm` — none are enforcement points (gating them risks
+ * blocking recovery on healthy parked work; a product decision, not taken here). And like
+ * checkQuota, the read-then-start window makes the cap BEST-EFFORT under simultaneous
+ * starts (TOCTOU: two concurrent POSTs can both see cap-1 and both pass).
  */
 
-/** Pipeline-RUNNING statuses (compute in flight: Scribe drafting / the build pipeline).
- *  Parked (push_failed/verify_failed), awaiting-gate, and terminal sessions hold no compute
- *  and never count against the cap. */
+/** The statuses a session occupies from a gated start until it parks/finishes: `composing`
+ *  (creation + Scribe drafting — counted so a rapid burst of starts can't slip under the cap
+ *  while Scribe still runs; NOTE a clarify-parked session also sits here, an accepted
+ *  over-count) and `building` (the pipeline). Parked/awaiting-gate/terminal never count. */
 export const ACTIVE_RUN_STATUSES: ReadonlySet<string> = new Set(['composing', 'building'])
 
 export interface ConcurrencyPolicy {
@@ -37,13 +43,15 @@ export interface ConcurrencyDecision { allowed: boolean; activeRuns: number; lim
  *   token quota instead.
  */
 export async function checkConcurrency(
-  store: Pick<SessionStore, 'listByOwner'>,
+  // The SUMMARY projection, not listByOwner — this count needs only `status`, and the full
+  // listByOwner SELECT * ships the entire generated app (code/spec jsonb) per row (review MED).
+  store: Pick<SessionStore, 'listSummariesByOwner'>,
   policy: ConcurrencyPolicy,
   ownerId: string | undefined,
 ): Promise<ConcurrencyDecision> {
   if (policy.maxActiveRuns <= 0 || ownerId === undefined) {
     return { allowed: true, activeRuns: 0, limit: policy.maxActiveRuns }
   }
-  const activeRuns = (await store.listByOwner(ownerId)).filter(s => ACTIVE_RUN_STATUSES.has(s.status)).length
+  const activeRuns = (await store.listSummariesByOwner(ownerId)).filter(s => ACTIVE_RUN_STATUSES.has(s.status)).length
   return { allowed: activeRuns < policy.maxActiveRuns, activeRuns, limit: policy.maxActiveRuns }
 }
