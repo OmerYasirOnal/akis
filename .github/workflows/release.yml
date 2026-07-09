@@ -18,7 +18,7 @@
 name: Release
 
 on:
-  # Cut a release by pushing a semver tag, e.g. `git tag v0.1.0 && git push --tags`.
+  # Cut a release by pushing a semver tag, e.g. `git tag v1.0.0 && git push --tags`.
   push:
     tags:
       - 'v*'
@@ -26,7 +26,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version tag to publish (e.g. v0.1.0). Used for the image tag and the GitHub Release.'
+        description: 'Version tag to publish (e.g. v1.0.0). Used for the image tag and the GitHub Release.'
         required: true
         type: string
 
@@ -51,7 +51,7 @@ jobs:
         uses: actions/checkout@v4
 
       # Resolve the version ONCE from whichever trigger fired:
-      #   • tag push   → strip refs/tags/ (e.g. v0.1.0)
+      #   • tag push   → strip refs/tags/ (e.g. v1.0.0)
       #   • dispatch   → the required `version` input
       # Everything downstream (image tags, Release tag/name) reads steps.version.
       - name: Resolve release version

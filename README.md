@@ -19,7 +19,7 @@ Most AI coding tools hand you an output and disappear — you can't see who chec
 
 > ⚡ **Try it in one command (no local build):** `docker run -p 3000:3000 -e AUTH_JWT_SECRET="$(openssl rand -hex 32)" -e AKIS_ALLOW_MOCK=1 -e AKIS_ALLOW_DEMO_IN_PROD=1 ghcr.io/omeryasironal/akis-platform-mvp:latest` → open `http://localhost:3000`. Runs on a deterministic mock out of the box; add an LLM key for real builds. (`linux/amd64`; on Apple Silicon / ARM, build locally — see [`docs/SELF_HOSTING.md`](docs/SELF_HOSTING.md).)
 
-**Status — implemented MVP (evolving).** The end-to-end core runs today: idea → spec → human approval → code → real test → critic → human push-confirm. It runs on a deterministic mock provider by default and on real LLMs (Claude / OpenAI / OpenRouter / Gemini) when a key is configured. Backend + frontend + live preview are built, tested, and self-hostable. TypeScript pnpm monorepo (`backend` / `frontend` / `shared`); React 19 + Vite + Tailwind frontend. **Apache-2.0.**
+**Status — v1.0.0 self-host release.** The end-to-end core runs today: idea → spec → human approval → code → real test → critic → human push-confirm. It runs on a deterministic mock provider by default and on real LLMs (Claude / OpenAI / OpenRouter / Gemini) when a key is configured. Backend + frontend + live preview are built, tested, and self-hostable. TypeScript pnpm monorepo (`backend` / `frontend` / `shared`); React 19 + Vite + Tailwind frontend. **Apache-2.0.**
 
 ---
 

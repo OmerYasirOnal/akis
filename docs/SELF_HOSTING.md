@@ -103,7 +103,7 @@ docker run --rm -p 3000:3000 \
 ```
 
 Pin a specific version instead of `latest` for a reproducible deploy, e.g.
-`ghcr.io/OmerYasirOnal/akis-platform-mvp:v0.1.0`. Every published image has already
+`ghcr.io/OmerYasirOnal/akis-platform-mvp:v1.0.0`. Every published image has already
 passed a keyless `/health` boot-smoke in the release pipeline — a tag that exists is
 a tag that boots.
 
@@ -575,12 +575,12 @@ accident:
 
 ```bash
 # tag the commit you want to release and push the tag
-git tag v0.1.0
-git push origin v0.1.0
+git tag v1.0.0
+git push origin v1.0.0
 ```
 
 …or fire it manually: **Actions → Release → Run workflow**, and enter the version
-(e.g. `v0.1.0`) in the prompt.
+(e.g. `v1.0.0`) in the prompt.
 
 Either trigger runs the same pipeline: build the `Dockerfile` → **keyless `/health`
 boot-smoke the freshly built image** → and only if that smoke passes, push the image
