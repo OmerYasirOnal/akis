@@ -1,5 +1,12 @@
 # Main'i TAM DEMO EDİLEBİLİR ürüne taşıma planı (2026-06-10)
 
+> **🎓 2026-07-09 — BU PLAN KAPANDI.** Amaç gerçekleşti: savunma yapıldı, bitirme raporu
+> **93/100 (ders notu AA)** ile teslim edildi, `v1.0.0` self-host release yayında. Bu doküman
+> artık savunma/demo döneminin tarihsel kaydıdır — güncel iş kuyruğu:
+> **`docs/plans/2026-07-09-productization-roadmap.md`** (ürünleştirme yol haritası).
+> Not: buradaki bazı "açık" görünen kalemler (ör. A2.1 proje-başına repo + token-only connect)
+> sonradan gemiye alındı; güncel durum yeni yol haritasında, koddan doğrulanmış olarak tutulur.
+
 > **2026-06-12 — DEMO BETİĞİ HAZIR:** `docs/research/demo-sweep-2026-06-12/demo-plan.html`
 > (canlı Playwright taraması main `9c9a3e1`'de uçtan uca PASS; 2 alternatifli 3-4 dk betik +
 > prova checklist + risk/kurtarma + öncelikli küçük-iş listesi + 20 ekran kanıtı). YENİ canlı

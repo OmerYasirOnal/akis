@@ -15,37 +15,24 @@ AKIS, behind 4 structural human-approval gates). For the app itself, start from:
 
 App commands: `pnpm -r build`, `pnpm test`, `pnpm -r typecheck`.
 
-## Report / document tooling (bitirme raporu)
+## Report / document tooling (bitirme raporu) — DELIVERED
 
-We also maintain the graduation report (**bitirme raporu**) as a Word document
-(`.docx`) with generated charts. The tools below are the ones we rely on for
-that work and are **installed automatically every session** by the SessionStart
-hook (`.claude/hooks/session-start.sh`) because the Claude Code on the web
-container is ephemeral and rebuilt from the repo each time.
+The graduation report (**bitirme raporu**) was **submitted and graded in
+2026-07 (93/100, course grade AA)** — it is no longer an active work item; the
+project has pivoted to productization (see
+`docs/plans/2026-07-09-productization-roadmap.md`).
 
-Installed tooling:
+The report tooling (python-docx, matplotlib, openpyxl, pandas, Pillow, lxml,
+poppler-utils, pandoc) is therefore **no longer installed automatically** — the
+SessionStart hook (`.claude/hooks/session-start.sh`) skips it by default. To
+re-enable (e.g. to rework the report into a paper), set `AKIS_REPORT_TOOLING=1`
+in the environment, or install manually:
+`pip install -r .claude/report-requirements.txt` plus
+`apt-get install -y poppler-utils pandoc`.
 
-| Tool | Purpose |
-| --- | --- |
-| `python-docx` | Read/edit the `.docx` report (captions, tables, lists, styles) |
-| `matplotlib` + `numpy` | Generate the report's charts/figures (PNG) |
-| `openpyxl` | Read/write the linked Excel (`.xlsx`) data tables |
-| `pandas` | Tabular data handling for the charts |
-| `Pillow` | Image handling/embedding |
-| `lxml` | Low-level OOXML (docx XML) manipulation |
-| `poppler-utils` | `pdftotext` / `pdftoppm` — extract & render the PDF export |
-| `pandoc` | Convert between `.docx` / Markdown / etc. |
-
-- Python deps live in `.claude/report-requirements.txt` — add new ones there and
-  the hook will pick them up next session.
-- To install manually (e.g. locally): run
-  `CLAUDE_CODE_REMOTE=true ./.claude/hooks/session-start.sh`, or
-  `pip install -r .claude/report-requirements.txt` plus
-  `apt-get install -y poppler-utils pandoc`.
-
-When editing the report, keep citation numbers `[n]` consistent and in order
-with the REFERENCES list, and keep every Table/Figure caption sequential and
-reflected in the List of Tables / List of Figures.
+If the report is ever edited again, keep citation numbers `[n]` consistent and
+in order with the REFERENCES list, and keep every Table/Figure caption
+sequential and reflected in the List of Tables / List of Figures.
 
 ## Working method (owner-approved discipline — applies to EVERY session)
 
@@ -77,6 +64,8 @@ all shipped via this loop). Follow it for every substantive change:
 7. **While the owner manually tests,** keep a background log watcher on the dev
    server output + `~/.akis/dev-events.json` error events; report alerts with a
    root cause, not raw logs.
-8. **After each package:** update `docs/plans/2026-06-10-demo-ready-plan.md`
-   (or its successor) + the session memory, so any new session can resume from
-   the docs alone. Current queue lives in that plan doc.
+8. **After each package:** update the current plan doc
+   (`docs/plans/2026-07-09-productization-roadmap.md`) + the session memory, so
+   any new session can resume from the docs alone. Current queue lives in that
+   plan doc. (`docs/plans/2026-06-10-demo-ready-plan.md` is the closed
+   demo/defense-era record.)
