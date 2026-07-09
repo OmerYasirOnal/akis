@@ -467,6 +467,10 @@ export function AkisChat({
   const errorText = (err: unknown): string =>
     ApiError.is(err) && err.status === 401
       ? t('akis.error.unauthorized')
+      // Active-run cap (ConcurrencyLimited): checked BEFORE the generic-429 quota branch below,
+      // or a concurrency refusal (also a 429) would misread as "token quota exceeded".
+      : ApiError.is(err) && err.code === 'ConcurrencyLimited'
+        ? t('akis.error.concurrency')
       // Quota exceeded (429): a localized, honest "you hit your token quota" sentence — never a
       // faked reply. Append the reset date when known (from the fetched usage state) so the user
       // knows when it frees up. The server fail-closed BEFORE the model; this is the surfacing.

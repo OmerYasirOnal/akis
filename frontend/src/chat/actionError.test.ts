@@ -33,6 +33,13 @@ describe('actionErrorText — localized GitHub delivery failure surfacing', () =
     expect(actionErrorText(e, tr)).toBe(STRINGS.tr['recovery.push.notConnected'])
   })
 
+  it('maps ConcurrencyLimited (the per-user active-run cap, a 429) to the localized wait-and-retry copy — never the quota copy or the raw line', () => {
+    const e = new ApiError(429, 'too many active builds — wait for one to finish', 'ConcurrencyLimited')
+    expect(actionErrorText(e, en)).toBe(STRINGS.en['akis.error.concurrency'])
+    expect(actionErrorText(e, tr)).toBe(STRINGS.tr['akis.error.concurrency'])
+    expect(actionErrorText(e, en)).not.toContain('quota')
+  })
+
   it('falls back to "code: message" for any other ApiError (unchanged behavior)', () => {
     const e = new ApiError(409, 'Session already pushed', 'AlreadyPushedError')
     expect(actionErrorText(e, en)).toBe('AlreadyPushedError: Session already pushed')

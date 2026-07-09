@@ -176,6 +176,8 @@ export const STRINGS = {
     'akis.error.noKey': 'The selected provider has no API key configured. Add one in Settings → Providers, or switch the model from the chip below.',
     // ── Per-user token quota (multi-tenant safety) ──
     'akis.error.quota': 'You’ve reached your token quota for this period.',
+    // Per-user active-run cap (429 ConcurrencyLimited) — distinct from the token quota.
+    'akis.error.concurrency': 'Too many builds running at once — wait for one to finish, then try again.',
     'usage.label': 'Tokens',
     'usage.remaining': 'left',
     'usage.resets': 'Resets',
@@ -1010,6 +1012,8 @@ export const STRINGS = {
     'akis.error.noKey': 'Seçili sağlayıcının API anahtarı yapılandırılmamış. Ayarlar → Sağlayıcılar’dan ekleyin ya da aşağıdaki çipten modeli değiştirin.',
     // ── Kullanıcı başına token kotası (çok kiracılı güvenlik) ──
     'akis.error.quota': 'Bu dönem için token kotana ulaştın.',
+    // Kullanıcı başına aktif-build sınırı (429 ConcurrencyLimited) — token kotasından ayrıdır.
+    'akis.error.concurrency': 'Aynı anda çok fazla build çalışıyor — biri bitince yeniden dene.',
     'usage.label': 'Token',
     'usage.remaining': 'kaldı',
     'usage.resets': 'Sıfırlanma',

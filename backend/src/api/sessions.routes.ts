@@ -18,6 +18,7 @@ import { buildAttestation, attestationMarkdown } from '../verify/attestation.js'
 import { buildTrustReport, renderTrustReportMarkdown } from '../report/trustReport.js'
 import type { UsageStorePort } from '../usage/UsageStore.js'
 import { checkQuota, type QuotaPolicy } from '../usage/quota.js'
+import { checkConcurrency, type ConcurrencyPolicy } from '../usage/concurrency.js'
 
 /** The publish seam the route calls — a function producing a PublishRecord from a session's files
  *  + the owner's decrypted profile. Real OpenSshTransport-backed in prod (wired in server.ts);
@@ -50,6 +51,10 @@ export interface SessionsDeps {
   quota?: QuotaPolicy
   /** TIER-AWARE quota (paid tier): per-owner policy (free vs pro). Precedence over `quota`; absent ⇒ `quota`. */
   quotaFor?: (ownerId: string | undefined) => Promise<QuotaPolicy>
+  /** Per-user ACTIVE-RUN cap (concurrency sibling of the quota; usage/concurrency.ts). Present
+   *  with maxActiveRuns > 0 ⇒ POST /sessions AND approve refuse (429 ConcurrencyLimited) while
+   *  the owner already has that many pipeline-running sessions. Absent/0 ⇒ byte-identical. */
+  concurrency?: ConcurrencyPolicy
   /** Per-user publish destination store (the encrypted SSH key + host/dir/port). Present ⇒ the
    *  POST /sessions/:id/publish action is enabled. Absent ⇒ publish is 409 NoPublishProfile. */
   publishProfiles?: PublishProfileStore
@@ -247,6 +252,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       if (deps.usage && quotaPolicy) {
         const decision = await checkQuota(deps.usage, quotaPolicy, ownerId)
         if (!decision.allowed) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt })
+      }
+      // Per-user ACTIVE-RUN cap (same SACRED start-only pattern as the quota above): refuse to
+      // START while the owner already has maxActiveRuns pipeline-running sessions. Never reads
+      // or aborts an in-flight run; absent/0 ⇒ no check (byte-identical).
+      if (deps.concurrency) {
+        const c = await checkConcurrency(services.store, deps.concurrency, ownerId)
+        if (!c.allowed) return reply.code(429).send({ error: 'too many active builds — wait for one to finish', code: 'ConcurrencyLimited', activeRuns: c.activeRuns, limit: c.limit })
       }
       // Thread the validated pre-build conversation into the CREATION state (version 0) — NOT a
       // post-start patch. A post-start store.update(id,{chat},version) would run CONCURRENTLY with the
@@ -485,7 +497,19 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       } catch (err) { return sendError(reply, err) }
     }
 
-  app.post<{ Params: { id: string } }>('/sessions/:id/approve', action(id => orchestratorFor(id).approve(id)))
+  // Approving a parked spec STARTS compute (the build pipeline runs from here), so the
+  // per-user active-run cap guards it too — otherwise N pre-created awaiting_spec_approval
+  // sessions could all be approved at once, bypassing the POST /sessions cap. Same SACRED
+  // start-only pre-check; absent/0 ⇒ the plain action, byte-identical.
+  const approveAction = action(id => orchestratorFor(id).approve(id))
+  app.post<{ Params: { id: string } }>('/sessions/:id/approve', async (req, reply) => {
+    if (deps.concurrency) {
+      const ownerId = await deps.userIdOf?.(req)
+      const c = await checkConcurrency(services.store, deps.concurrency, ownerId)
+      if (!c.allowed) return reply.code(429).send({ error: 'too many active builds — wait for one to finish', code: 'ConcurrencyLimited', activeRuns: c.activeRuns, limit: c.limit })
+    }
+    return approveAction(req, reply)
+  })
   app.post<{ Params: { id: string } }>('/sessions/:id/run', action(id => orchestratorFor(id).runToVerification(id)))
   // PUSH is the one NON-idempotent gate action (it can create a repo / open a PR). confirmPush
   // already rejects a SEQUENTIAL re-confirm (status→done→AlreadyPushedError), but two CONCURRENT
