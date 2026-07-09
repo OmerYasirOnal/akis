@@ -129,7 +129,12 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
 - **2026-07-09 (devam 2):** B5 + B4b + B9 gemiye alındı (`ca57103`, owner merge'i bekliyor,
   branch `claude/session-planning-dcbl56`). Fail-first 5 test; typecheck 3/3 + BE 1728/5-skip +
   FE 751/751 yeşil; gate-keeper PASS (0) + reviewer'ın doğrulanmış tek LOW'u pakette kapatıldı.
-- **2026-07-09 (devam 3):** B4a (`ce5ad50`) + B6-i (`eec2c99`) gemiye alındı; ikisinin diff'i
-  üzerinde gate-keeper+reviewer turu başlatıldı (sonuç bu doküman güncellenerek işlenecek).
+- **2026-07-09 (devam 3):** B4a (`ce5ad50`) + B6-i (`eec2c99`) gemiye alındı. Adversarial
+  review turu: gate-keeper PASS (0); skeptik panel 1 MED + 1 LOW doğruladı, ikisi de
+  `3cc95e4`'te kapatıldı (yanlış MEVCUT şifrede login kopyası regresyonu →
+  `settings.password.currentWrong` özel-durumu; JSON'suz edge-403'te Signup "kayıt kapalı"
+  status fallback'i geri geldi). FE 756/756 yeşil. Reviewer'ın not düşen (fix'siz) gözlemi:
+  `verifiedRuns > done` artık tasarım gereği mümkün — dashboard'da kafa karıştırırsa etiket
+  altına küçük açıklama eklenebilir.
   Faz 1'de kalan tek iş: **B6-ii** (error-SSE lokalizasyonu — additive event kodu + FE katmanı).
   Sonrası: Faz 2 (çok-kullanıcılı sertleştirme) veya #168 (RAG artıkları).
