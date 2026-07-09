@@ -89,8 +89,17 @@ doküman maddesini yeniden "yapmak" yok.
 
 akisflow.com bugün 2 kullanıcı + kapalı signup ile duruyor. Gerçek kullanıcı almak için:
 
-1. **Kota/limit katmanı:** kullanıcı başına eşzamanlı build, günlük build, LLM token bütçesi;
-   shared-key modunda özellikle kritik. (Şu an bir kullanıcı sunucunun tüm kaynağını yiyebilir.)
+1. **Kota/limit katmanı:** ~~büyük ölçüde GEMİDEYMİŞ + kalan boşluk kapatıldı.~~
+   Ground-truth (2026-07-09): per-user **token kotası** zaten vardı (`usage/quota.ts`,
+   tier-aware free/pro, chat + build-start'ta 429 QuotaExceeded) — dokümanlar yine koddan
+   geriydi. Gerçek boşluk **eşzamanlılık** idi: bütçesi yeten kullanıcı N paralel build
+   açabiliyordu. Eklendi (`37d5f58` + review follow-up `48e7903`): `AKIS_MAX_ACTIVE_RUNS`
+   per-user aktif-run kapı — start-only fail-closed pre-check (POST /sessions + approve),
+   429 ConcurrencyLimited, FE TR/EN kopyası; anonim muaf (requireAuthForBuilds + anon kota
+   yönetir); 0/unset = sınırsız (dev byte-identical). Gate-keeper 0 bulgu; reviewer'ın
+   2 MED'i kapatıldı (dürüst kapsam dokümanı + summary-projection sayımı). BİLİNEN kapsam
+   sınırı (bilinçli): retry/proceed/confirmPush park statülerinde compute koşturur ve kapıya
+   dahil değil — airtight sınır istenirse ayrı ürün kararı.
 2. **Rate limiting + abuse yüzeyi:** auth uçları, build tetikleme, MCP/external-write önerileri.
 3. **Gözlemlenebilirlik:** yapısal log + temel metrikler (aktif build, kuyruk, hata oranı,
    provider gecikmesi); audit ledger zaten var — üstüne operasyonel görünürlük.
@@ -154,3 +163,7 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   0 bulgu, reviewer temiz (1 pre-existing LOW yukarıda not düşüldü). Süitler: typecheck 3/3,
   BE 1733/5-skip, FE 760/760. Sıradaki karar: **Faz 2 (kota/rate-limit sertleştirmesi)** mi,
   **#168 (RAG artıkları)** mı — owner önceliğine göre.
+- **2026-07-09 (devam 5):** FAZ 2 BAŞLADI — kota/limit kalemi kapandı (`37d5f58`+`48e7903`,
+  ayrıntı yukarıda Faz 2 §1). Süitler: typecheck 3/3, BE 1746/5-skip, FE 761/761.
+  Faz 2'de sıradaki adaylar: §2 rate-limiting genişletmesi (auth'ta zaten var — build/MCP
+  uçları ground-truth ister), §3 gözlemlenebilirlik, §5 kademeli signup.
