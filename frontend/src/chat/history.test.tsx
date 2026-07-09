@@ -150,6 +150,6 @@ describe('ChatStudio ?s= deep-link', () => {
     render(<I18nProvider><RouterProvider><ChatStudio api={api} makeClient={() => fake as unknown as EventStreamClient} /></RouterProvider></I18nProvider>)
     // The deep-linked session loads: its idea bubble appears and the live stream connects.
     await waitFor(() => expect(screen.getByText('deep linked app')).toBeInTheDocument())
-    expect(fake.connectedUrl).toBe('/sessions/s1/events')
+    await waitFor(() => expect(fake.connectedUrl).toBe('/sessions/s1/events'))
   })
 })
