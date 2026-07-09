@@ -97,6 +97,7 @@ GitHub Container Registry, so you can `docker run` it directly — Ollama-style:
 ```bash
 # keyless mock demo (no provider key, in-memory state) → http://localhost:3000
 docker run --rm -p 3000:3000 \
+  -e AUTH_JWT_SECRET="$(openssl rand -hex 32)" \
   -e AKIS_ALLOW_MOCK=1 -e AKIS_ALLOW_DEMO_IN_PROD=1 \
   ghcr.io/OmerYasirOnal/akis-platform-mvp:latest
 ```

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { initialSession, isVerified, CANCEL_IMMUNE_STATUSES, type SessionState, type SpecArtifact } from '@akis/shared'
+import { initialSession, isVerified, CANCEL_IMMUNE_STATUSES, summarizeVerifyEvidence, type SessionState, type SpecArtifact, type TestEvidence } from '@akis/shared'
 import { languageFor } from '../validator/ValidatorTypes.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../gates/specGate.js'
 import { mintApprovedPush, pushToGitHub } from '../gates/pushGate.js'
@@ -138,6 +138,36 @@ export class Orchestrator {
    *  or a failed verify and never skips verify/push (see the `recovery` event doc). */
   private emitRecovery(sessionId: string, recovery: 'critic_resolution' | 'verify_failed' | 'push_failed', state: 'awaiting' | 'resolved'): void {
     this.s.bus.emit({ kind: 'recovery', recovery, state, agent: 'orchestrator', laneId: 'main', sessionId, ts: nextTs() })
+  }
+
+  /**
+   * P0-3a — HONEST verify-failure narration. Built FROM the verifier's structured evidence: the
+   * real counts + the FIRST named hard-failing scenario + its bounded reason class, so the run
+   * no longer LIES ("0 test / no real passing test was produced") on a run that actually ran 11
+   * checks with 1 hard failure. OBSERVABILITY-ONLY — it reports the already-decided fail-closed
+   * outcome (no token); it never affects minting or any gate.
+   *
+   * Degrades gracefully: with NO evidence (an evidence-less runner) it falls back to the original
+   * wording verbatim, so the legacy behavior is preserved exactly when there is nothing honest to
+   * say. The retry hint stays — and now also points at the OTHER honest path (change the code via
+   * chat), since a blind re-run of the SAME tests was the demo's 5×-retry trap.
+   */
+  private verifyFailedNarration(evidence: TestEvidence | undefined): string {
+    const summary = summarizeVerifyEvidence(evidence)
+    if (!summary || summary.totalChecks === 0) {
+      // No structured evidence to report → keep today's wording (graceful fallback).
+      return '⚠️ Not verified — no real passing test was produced. Retry to re-run the tests.'
+    }
+    const parts = [`${summary.totalChecks} ${summary.totalChecks === 1 ? 'check' : 'checks'} ran`, `${summary.passedCount} passed`]
+    const first = summary.failingScenarios[0]
+    if (summary.failedCount > 0) {
+      const failPart = first
+        ? `${summary.failedCount} failed: '${first.name}' (${first.reason})`
+        : `${summary.failedCount} failed`
+      parts.push(failPart)
+    }
+    if (summary.unmeasuredCount > 0) parts.push(`${summary.unmeasuredCount} could not be measured`)
+    return `⚠️ Not verified — ${parts.join(', ')}. Retry re-runs the same tests — describe a change in chat to alter the code.`
   }
 
   /** Surface the critic's READ-ONLY code-review verdict as a status card. It is
@@ -617,7 +647,9 @@ export class Orchestrator {
     // human can retry (re-runs REAL verification). The recovery signal drives the FE card.
     // A1: NON-GATE write (status + evidence) — resilient.
     const out = await this.updateResilient(id, { status: 'verify_failed', ...evidencePatch })
-    this.narrate(id, '⚠️ Not verified — no real passing test was produced. Retry to re-run the tests.')
+    // P0-3a — narrate the HONEST failure (real counts + first named hard failure) built from the
+    // SAME structured evidence persisted above; degrades to the legacy wording when absent.
+    this.narrate(id, this.verifyFailedNarration(evidence))
     this.emitRecovery(id, 'verify_failed', 'awaiting')
     return out
   }
@@ -756,7 +788,12 @@ export class Orchestrator {
     if (realMode && gh instanceof MockGitHubAdapter) {
       // No usable destination — but still PIN any derived `delivery` so a later (post-connect) retry
       // shows + reuses the same intended repo. Non-gate column; folded into the park write.
-      await this.s.store.update(id, { status: 'push_failed', ...deliveryPatch }, cur.version)
+      // P0-1: route through updateResilient — these are pure non-gate columns (status + delivery), and
+      // the stale `cur.version` captured at entry would otherwise conflict with any concurrent chat
+      // write that bumped the version after we read `cur`. (This park is pre-push, so the window is
+      // small, but the success/failure parks below share the SAME stale `cur.version`, so we keep all
+      // three terminal writes on the one resilient vehicle for consistency.)
+      await this.updateResilient(id, { status: 'push_failed', ...deliveryPatch })
       // NO raw-English `error` bus emit here (reviewer MED): confirmPush is an AWAITED route, so
       // the thrown 409 already reaches the clicking user as the LOCALIZED banner + Settings CTA
       // (actionErrorText maps NoGitHubDestinationError). An error event would render its message
@@ -774,12 +811,24 @@ export class Orchestrator {
       repoUrl = await gh.createRepo(id)
       await pushToGitHub(token, gh, files)
     } catch (err) {
-      await this.s.store.update(id, { status: 'push_failed', ...deliveryPatch }, cur.version)
+      // RECOVERABLE, not a dead-end: surface the failure + park-retryable recovery FIRST, then persist.
+      // The FE surfaces a "Push failed — retry" action that re-runs the GATED confirmPush (Gate 4 still
+      // mints from the VerifyToken). These emits precede the store write deliberately (reviewer LOW): the
+      // park write below can itself throw — 5-conflict exhaustion or a genuine concurrent cancel
+      // (RunCancelledError) — and if it did, an emit ordered AFTER it would be skipped, so the user would
+      // never see the recovery card AND the original push `err` would be masked by the write's throw.
       this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
-      // RECOVERABLE, not a dead-end: park retryable. The FE surfaces a "Push failed — retry"
-      // action that re-runs the GATED confirmPush (Gate 4 still mints from the VerifyToken).
       this.emitRecovery(id, 'push_failed', 'awaiting')
+      // P0-1: a REAL push (createRepo + N blob/tree/commit/ref/PR round-trips) takes 5-15s — ample
+      // window for a concurrent chat turn (chatAppend) to bump the version, so the stale `cur.version`
+      // lock would throw `version conflict` here and the user would see a raw 500 AFTER GitHub already
+      // received the code (and a retry hits AlreadyPushedError confusion). updateResilient re-reads the
+      // fresh version; the patch is pure non-gate columns (status + delivery). The try/catch keeps the
+      // ORIGINAL push error authoritative: a park-write failure (cancel-refusal — the user cancelled
+      // mid-push, so DON'T resurrect a park over 'cancelled' — or retry exhaustion) must never mask `err`.
+      try { await this.updateResilient(id, { status: 'push_failed', ...deliveryPatch }) }
+      catch { /* swallow: the original push `err` below is the authoritative failure the caller sees */ }
       throw err
     }
     this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: true, result: { url: repoUrl }, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
@@ -788,7 +837,14 @@ export class Orchestrator {
     this.s.bus.emit({ kind: 'preview', url: repoUrl, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
     // Fold any just-derived `delivery` into the terminal write so the persisted record carries the
     // real repo the push landed in (non-gate column; on replay the gate event already carried it too).
-    const session = await this.s.store.update(id, { status: 'done', ...deliveryPatch }, cur.version)
+    // P0-1: route through updateResilient — the push above just spent 5-15s, so any concurrent chat
+    // write bumped the version and the stale `cur.version` lock would throw `version conflict` AFTER
+    // GitHub already has the code, stranding the user at awaiting_push_confirm. updateResilient re-reads
+    // the fresh version (status + delivery are pure non-gate columns); `session` is the resiliently-
+    // written row, so the `isVerified(session)` read for the done event below sees the committed state.
+    // The cancel-refusal (RunCancelledError) is correct: a user who cancelled mid-push must not be
+    // resurrected to 'done' — it surfaces as a clean 409, never a fake success.
+    const session = await this.updateResilient(id, { status: 'done', ...deliveryPatch })
     // If this was a retry of a failed push, clear the recovery card (idempotent on replay).
     if (cur.status === 'push_failed') this.emitRecovery(id, 'push_failed', 'resolved')
     this.emitGate(id, 'push_confirm', 'satisfied')

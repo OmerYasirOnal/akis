@@ -10,7 +10,14 @@ export interface AgentMsg { id: string; kind: 'agent'; agent: Role; tools: ToolL
 // per-project destination ("→ github.com/<owner>/<repo>") before the user confirms. Optional —
 // an old gate event / the spec gate has none.
 export interface GateMsg { id: string; kind: 'gate'; gate: 'spec_approval' | 'push_confirm'; state: GateState; delivery?: { owner: string; repo: string } }
-export interface VerifyMsg { id: string; kind: 'verify'; testsRun: number; passed: boolean; demo?: boolean }
+// P0-3a — additive HONEST FAILURE fields mirrored from the `verify` event so a FAILED-verify card
+// can render the REAL breakdown ("11 ran, 7 passed, 1 failed, 3 unmeasured") + the first named hard
+// failures, instead of "0 test". All OPTIONAL — an old/evidence-less verify event omits them.
+export interface VerifyMsg {
+  id: string; kind: 'verify'; testsRun: number; passed: boolean; demo?: boolean
+  passedCount?: number; failedCount?: number; unmeasuredCount?: number
+  failingScenarios?: Array<{ name: string; reason: string }>
+}
 /** Read-only critic code-review verdict card (automatic, NOT a human gate). Structured only. */
 export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: boolean; findings: number; critical: boolean; iteration: number }
 /** A parked run awaiting a HUMAN recovery decision — the inline actionable card (proceed/abandon a
@@ -19,7 +26,13 @@ export interface CodeReviewMsg { id: string; kind: 'code_review'; approved: bool
  *  F5 — `delivery` is COPIED off the suppressed push_confirm gate (the post-pass below) onto the
  *  surviving push_failed recovery so the retry card can still SHOW the push destination
  *  ("→ github.com/owner/repo") — the gate was the only renderer of it before. Optional/additive. */
-export interface RecoveryMsg { id: string; kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed' | 'push_failed'; state: 'awaiting' | 'resolved'; delivery?: { owner: string; repo: string } }
+// P0-3a — `verifyEvidence` is COPIED off the run's `verify` event onto the verify_failed recovery
+// card so the actionable card itself can show the honest counts + named hard failures (the card is
+// what the user reads when deciding to Retry vs change the code). Optional/additive — absent on a
+// non-verify recovery or an evidence-less verify event. It carries NO gate authority (it is
+// observability mirrored from the verify event, whose `passed` stays token-driven).
+export interface VerifyEvidenceView { testsRun: number; passedCount?: number; failedCount?: number; unmeasuredCount?: number; failingScenarios?: Array<{ name: string; reason: string }> }
+export interface RecoveryMsg { id: string; kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed' | 'push_failed'; state: 'awaiting' | 'resolved'; delivery?: { owner: string; repo: string }; verifyEvidence?: VerifyEvidenceView }
 // F3 — `stopped` marks a TERMINAL non-live preview (the local run was torn down / a replay's last
 // frame projected to 'stopped'): the bubble reads as a recoverable PAUSE, NOT a forever "starting…".
 // `url` is CLEARED on any terminal non-live frame (stopped/failed/unsupported) so a dead /preview/
@@ -99,8 +112,16 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
         break
       }
       case 'verify': {
-        if (verifyMsg) { verifyMsg.testsRun = e.testsRun; verifyMsg.passed = e.passed; if (e.demo) verifyMsg.demo = true }
-        else { verifyMsg = { id, kind: 'verify', testsRun: e.testsRun, passed: e.passed, ...(e.demo ? { demo: true } : {}) }; items.push(verifyMsg) }
+        // P0-3a — capture the additive honest-failure fields (real counts + named hard failures).
+        // OPTIONAL on the wire: an old/evidence-less verify event omits them, so they stay undefined.
+        const extra = {
+          ...(e.passedCount !== undefined ? { passedCount: e.passedCount } : {}),
+          ...(e.failedCount !== undefined ? { failedCount: e.failedCount } : {}),
+          ...(e.unmeasuredCount !== undefined ? { unmeasuredCount: e.unmeasuredCount } : {}),
+          ...(e.failingScenarios !== undefined ? { failingScenarios: e.failingScenarios } : {}),
+        }
+        if (verifyMsg) { verifyMsg.testsRun = e.testsRun; verifyMsg.passed = e.passed; if (e.demo) verifyMsg.demo = true; Object.assign(verifyMsg, extra) }
+        else { verifyMsg = { id, kind: 'verify', testsRun: e.testsRun, passed: e.passed, ...(e.demo ? { demo: true } : {}), ...extra }; items.push(verifyMsg) }
         break
       }
       case 'code_review': {
@@ -153,6 +174,23 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
       case 'error': items.push({ id, kind: 'error', text: e.message }); break
       case 'done': items.push({ id, kind: 'done', verified: e.verified, provider: e.provider }); break
       default: break
+    }
+  }
+  // P0-3a — POST-PASS: copy the run's verify EVIDENCE onto the verify_failed recovery card, so the
+  // actionable card itself renders the honest counts + named hard failures (real testsRun, M passed,
+  // K failed, J unmeasured) instead of letting the card claim nothing while the separate verify card
+  // claims "0 test". Order-independent (the verify event may arrive before OR after the recovery) and
+  // OBSERVABILITY-ONLY: it mirrors the verify event's fields (whose `passed` stays token-driven); it
+  // never bypasses verify (retry still re-runs REAL verification). No-op when the verify event had no
+  // evidence fields (an old/evidence-less run) — the card degrades to its plain copy.
+  const verifyFailedRecovery = recoveries.get('verify_failed')
+  if (verifyFailedRecovery && verifyMsg && !verifyMsg.passed) {
+    verifyFailedRecovery.verifyEvidence = {
+      testsRun: verifyMsg.testsRun,
+      ...(verifyMsg.passedCount !== undefined ? { passedCount: verifyMsg.passedCount } : {}),
+      ...(verifyMsg.failedCount !== undefined ? { failedCount: verifyMsg.failedCount } : {}),
+      ...(verifyMsg.unmeasuredCount !== undefined ? { unmeasuredCount: verifyMsg.unmeasuredCount } : {}),
+      ...(verifyMsg.failingScenarios !== undefined ? { failingScenarios: verifyMsg.failingScenarios } : {}),
     }
   }
   // A3.5 — POST-PASS over the singleton maps (so event arrival order can't matter): a PARKED push

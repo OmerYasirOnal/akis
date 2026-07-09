@@ -71,12 +71,39 @@ export type AkisEvent =
   // `state` is the lifecycle: `awaiting` (action needed) → `resolved` (the human chose) so a
   // resumed/replayed stream shows whether the card is still actionable. STRUCTURED ONLY.
   | (BaseEvent & { kind: 'recovery'; recovery: 'critic_resolution' | 'verify_failed' | 'push_failed'; state: 'awaiting' | 'resolved' })
-  // verifier-only — FROZEN (gate source of truth). `demo` is an ADDITIVE, optional, PURELY
-  // INFORMATIONAL annotation: true ⇔ the result was produced by the mock/injected test runner
-  // (simulated verification), so the UI can mark it as not-a-real-pass AT THE RESULT. It never
-  // affects minting, the VerifyToken, or any gate semantics, and it is ABSENT (undefined) on a
-  // live run — a real verify event stays byte-identical to before this field existed.
-  | (BaseEvent & { kind: 'verify'; testsRun: number; passed: boolean; demo?: boolean })
+  // verifier-only — FROZEN (gate source of truth). `passed` is TOKEN-DRIVEN (true ⇔ a real
+  // VerifyToken was minted) and is the ONLY gate-bearing field; nothing below relaxes it.
+  // `demo` is an ADDITIVE, optional, PURELY INFORMATIONAL annotation: true ⇔ the result was
+  // produced by the mock/injected test runner (simulated verification), so the UI can mark it
+  // as not-a-real-pass AT THE RESULT. It never affects minting, the VerifyToken, or any gate
+  // semantics, and it is ABSENT (undefined) on a live run — a real verify event stays
+  // byte-identical to before this field existed.
+  //
+  // P0-3a — HONEST FAILURE REPORTING (additive, observability-only). On the FAIL path the
+  // fail-closed brand forces the token (and so the gate `testsRun`) to 0; but the verifier still
+  // returns full structured evidence (N checks ran, M passed, K skipped, 1 hard failure). These
+  // OPTIONAL fields carry that real evidence onto the wire event so the UI can stop claiming
+  // "0 test" on a run that actually executed checks. They are PURE OBSERVABILITY — never a gate
+  // input, never consulted by minting — and ABSENT on an old event / when the runner reported no
+  // evidence, so a legacy verify event folds byte-identically.
+  //   - `passedCount`     : scenarios that PASSED (real measured success count).
+  //   - `failedCount`     : HARD failures (a measured scenario that did not pass), excluding skips.
+  //   - `unmeasuredCount` : scenarios that could not be measured (skipped/interactive/auth).
+  //   - `failingScenarios`: up to ~3 named HARD-failing scenarios with a bounded reason class,
+  //                         so the FE/narration can name the first failure. STRUCTURED ONLY
+  //                         (names + bounded labels, never free-form prose, never a secret).
+  // NOTE: `testsRun` here is the REAL executed count (token count on a pass; evidence count on a
+  // fail), so it is no longer forced to 0 just because the brand was. `passed` is UNCHANGED.
+  | (BaseEvent & {
+      kind: 'verify'
+      testsRun: number
+      passed: boolean
+      demo?: boolean
+      passedCount?: number
+      failedCount?: number
+      unmeasuredCount?: number
+      failingScenarios?: Array<{ name: string; reason: string }>
+    })
   // Critic's READ-ONLY code-review verdict (Orchestrator.reviewCode). It is automatic
   // (NOT a human gate) and surfaced as a status card. STRUCTURED ONLY — booleans +
   // bounded counts, never free-form LLM prose — so it can never become trusted RAG

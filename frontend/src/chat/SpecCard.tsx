@@ -2,6 +2,16 @@ import { useEffect, useState } from 'react'
 import { Markdown } from '../components/Markdown.js'
 import { CopyButton } from '../components/CopyButton.js'
 import { useI18n } from '../i18n/I18nContext.js'
+import type { StringKey } from '../i18n/catalog.js'
+import type { SpecChipStatus } from './specChipStatus.js'
+
+/** Status-aware copy for the COLLAPSED chip subtitle (P1-4): a settled run must not read
+ *  "building" forever. Falls back to the in-flight label for the default/unknown bucket. */
+const COLLAPSED_KEY: Record<SpecChipStatus, StringKey> = {
+  building: 'spec.collapsed',
+  done: 'spec.collapsed.done',
+  parked: 'spec.collapsed.parked',
+}
 
 /**
  * A read-only preview of an AKIS-authored, build-ready spec (detected via the `akis-spec`
@@ -10,7 +20,7 @@ import { useI18n } from '../i18n/I18nContext.js'
  * hands the spec to `onBuild`. The spec then flows through the UNCHANGED `startSession`
  * path → the same 4 structural gates + pipeline; this card holds no build authority.
  */
-export function SpecCard({ spec, onBuild, building, started, startedSpec, isSpecStarted }: { spec: string; onBuild: (spec: string) => void; building?: boolean; started?: boolean; startedSpec?: string | undefined; isSpecStarted?: ((spec: string) => boolean) | undefined }) {
+export function SpecCard({ spec, onBuild, building, started, startedSpec, isSpecStarted, runStatus }: { spec: string; onBuild: (spec: string) => void; building?: boolean; started?: boolean; startedSpec?: string | undefined; isSpecStarted?: ((spec: string) => boolean) | undefined; runStatus?: SpecChipStatus | undefined }) {
   const { t } = useI18n()
   const [committedSpec, setCommittedSpec] = useState(spec)
   const [draft, setDraft] = useState(spec)
@@ -85,7 +95,10 @@ export function SpecCard({ spec, onBuild, building, started, startedSpec, isSpec
         <div className="flex items-center justify-between gap-3 rounded-xl border border-white/10 bg-slate-950/40 px-4 py-2.5">
           <div className="min-w-0">
             <div className="truncate text-sm text-slate-200" title={specTitle}>{specTitle}</div>
-            <div className="text-xs text-emerald-300/80">{t('spec.collapsed')}</div>
+            {/* P1-4 — RUN-STATUS aware: a verified/finished build reads "build complete", a failed/
+                cancelled/parked one "build stopped" (amber), only an in-flight one keeps "building".
+                Default (no runStatus passed — standalone callers/tests) is the legacy in-flight copy. */}
+            <div className={`text-xs ${runStatus === 'parked' ? 'text-amber-300/80' : 'text-emerald-300/80'}`}>{t(COLLAPSED_KEY[runStatus ?? 'building'])}</div>
           </div>
           <button type="button" onClick={() => setExpanded(true)}
             className="shrink-0 rounded-lg border border-white/15 bg-white/[0.04] px-3 py-1.5 text-xs font-medium text-slate-200 hover:border-white/30">

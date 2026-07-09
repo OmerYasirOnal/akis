@@ -312,3 +312,139 @@ describe('PreviewRegistry concurrency cap (audit bigger-bet: heavy previews OOM 
     expect(reg.get('s-user')?.status).toBe('ready')     // and it evicted NOTHING
   })
 })
+
+// ── audit P0-2 core — RUN-TOKEN / OWNERSHIP GUARDS for start()'s async phases ──
+// Every state write in start()'s async phases (the early-exit branch, the probe-timeout branch,
+// and the ready branch) used to mutate SHARED state UNCONDITIONALLY — `this.procs.delete(id)`,
+// `this.set({status:'failed'})`, `this.set({status:'ready'})`. A SUPERSEDED launch (a newer
+// start() for the same id minted a new entry/proc while the old one was still in its async phase)
+// could therefore clobber the newer launch's entry or untrack its proc. Each launch now carries a
+// monotonic token; every async-phase write verifies the token still owns the session before
+// touching shared state, and a superseded launch tears down ONLY its OWN half-made resources.
+describe('PreviewRegistry run-token ownership guards (audit P0-2)', () => {
+  it('a SUPERSEDED launch reaching ready cannot clobber the NEWER ready entry, nor untrack its proc', async () => {
+    // Two launches for the SAME id. Launch A stalls on probe (its port stays NOT-ready); while it
+    // stalls, launch B becomes ready and owns the entry. Then A's port is flipped ready — A finally
+    // probes ready but must STAND DOWN (the token moved to B), leaving B's entry + proc intact.
+    const procA = fakeProc(); const procB = fakeProc()
+    let n = 0
+    const launch: Launch = () => (n++ === 0 ? procA : procB)
+    // Track which port belongs to A: it is the FIRST port the registry allocates+probes. We hold A's
+    // port not-ready until `aReady` is flipped; every other port (B's) is ready immediately.
+    let aPort: number | undefined
+    let aReady = false
+    const probe: Probe = async port => {
+      if (aPort === undefined) aPort = port // the first probed port is A's
+      if (port === aPort) return aReady      // A: stalled until we flip it
+      return true                            // B: ready at once
+    }
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch, probe, probeAttempts: 500, probeIntervalMs: 1 })
+    const aPromise = reg.start('s1', '/ws/a', 'vite')   // A — will stall on probe
+    await new Promise(r => setTimeout(r, 5))            // let A allocate its port + probe once
+    const bEntry = await reg.start('s1', '/ws/b', 'vite') // B — supersedes A (bumps the token), ready
+    expect(bEntry.status).toBe('ready')
+    expect(reg.portFor('s1')).toBe(bEntry.port)
+    aReady = true // now A finally sees ready — it must STAND DOWN, not clobber B
+    await aPromise
+    // B's entry survives unchanged; A did not overwrite it to its own port/url, nor untrack its proc.
+    expect(reg.get('s1')?.port).toBe(bEntry.port)
+    expect(reg.get('s1')?.status).toBe('ready')
+    expect(reg.portFor('s1')).toBe(bEntry.port)
+    expect(aPort).not.toBe(bEntry.port) // sanity: A and B really had distinct ports
+    // A tore down its OWN proc when it stood down (it must not leak a live process).
+    expect(procA.killed).toBe(true)
+    expect(procB.killed).toBe(false)
+  })
+
+  it('a SUPERSEDED launch hitting its probe TIMEOUT stands down — it does not flip the newer entry to failed', async () => {
+    const procA = fakeProc(); const procB = fakeProc()
+    let n = 0
+    const launch: Launch = () => (n++ === 0 ? procA : procB)
+    // A (the first allocated port) NEVER probes ready → times out; B (any later port) is ready.
+    let aPort: number | undefined
+    const probe: Probe = async port => { if (aPort === undefined) aPort = port; return port !== aPort }
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch, probe, probeAttempts: 6, probeIntervalMs: 2 })
+    const aPromise = reg.start('s1', '/ws/a', 'vite') // A — will TIME OUT
+    await new Promise(r => setTimeout(r, 2))           // let A allocate its port + probe once
+    const bEntry = await reg.start('s1', '/ws/b', 'vite') // B supersedes (bumps token), ready
+    expect(bEntry.status).toBe('ready')
+    await aPromise // A's timeout branch fires — must NOT clobber B
+    expect(reg.get('s1')?.status).toBe('ready')          // B's ready entry survives
+    expect(reg.get('s1')?.port).toBe(bEntry.port)
+    expect(procA.killed).toBe(true)                      // A killed its own dead proc
+  })
+
+  it('a SUPERSEDED launch whose child EXITS EARLY stands down — it does not flip the newer entry to failed', async () => {
+    const procB = fakeProc()
+    let n = 0
+    // A exits early (code 1); B is a healthy proc.
+    const launch: Launch = () => (n++ === 0 ? exitingProc(1, 'early death') : procB)
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch, probe: async () => n >= 2, probeAttempts: 200, probeIntervalMs: 1 })
+    const aPromise = reg.start('s1', '/ws/a', 'vite') // A — child exits early after 1ms
+    await new Promise(r => setTimeout(r, 2))
+    const bEntry = await reg.start('s1', '/ws/b', 'vite') // B supersedes, ready
+    expect(bEntry.status).toBe('ready')
+    await aPromise // A's early-exit branch fires — must NOT clobber B's ready entry
+    expect(reg.get('s1')?.status).toBe('ready')
+    expect(reg.get('s1')?.port).toBe(bEntry.port)
+  })
+})
+
+// ── review 3399732516 (MED) — IDENTICAL-BYTES restart skip + digest recording (registry half) ──
+describe('PreviewRegistry code digest (additive entry field, recorded at start)', () => {
+  it('records the supplied digest on the ready entry (so a restart can compare bytes)', async () => {
+    const reg = new PreviewRegistry({ sandbox: okSandbox, commandOnPath: async () => true, launch: () => fakeProc(), probe: async () => true })
+    const e = await reg.start('s1', '/ws/s1', 'vite', { digest: 'abc123' })
+    expect(e.status).toBe('ready')
+    expect(e.digest).toBe('abc123')
+    expect(reg.get('s1')?.digest).toBe('abc123')
+  })
+
+  it('records the digest on a STATIC ready entry too (statics rebuild on a digest change as well)', async () => {
+    const reg = new PreviewRegistry({ sandbox: okSandbox, launch: () => fakeProc(), probe: async () => true })
+    const e = await reg.start('s1', '/ws/s1', 'static', { digest: 'static-digest' })
+    expect(e.status).toBe('ready')
+    expect(e.type).toBe('static')
+    expect(e.digest).toBe('static-digest')
+  })
+})
+
+// ── review 3399732530 (LOW) + the cap half of 3399732533 — NON-EVICTING background starts ──
+// start()'s at-capacity eviction loop used to run for BACKGROUND restarts/prewarms too: a
+// static→node rebuild restart could evict ANOTHER session's LIVE preview. An additive
+// `evict:'never'` opt makes a background start DECLINE at capacity instead of evicting.
+describe('PreviewRegistry evict opt (a warm-up never evicts a live preview)', () => {
+  const heavyReg = (max: number) => new PreviewRegistry({
+    sandbox: okSandbox, commandOnPath: async () => true,
+    launch: () => fakeProc(), probe: async () => true, maxConcurrent: max,
+  })
+
+  it("evict:'never' DECLINES at capacity — it does NOT evict another session's live preview", async () => {
+    const reg = heavyReg(1)
+    const live = await reg.start('s-live', '/tmp/a', 'vite') // fills the only heavy slot
+    expect(live.status).toBe('ready')
+    // A background restart of a DIFFERENT session at capacity must NOT evict s-live.
+    const bg = await reg.start('s-bg', '/tmp/b', 'vite', { evict: 'never' })
+    expect(bg.status).not.toBe('ready')                 // declined (no slot, no eviction)
+    expect(reg.get('s-live')?.status).toBe('ready')     // the live preview is UNTOUCHED
+    expect(bg.reason).toMatch(/capacity/i)              // honest: declined for capacity
+  })
+
+  it("evict:'allow' (the default, an EXPLICIT user start) STILL evicts the oldest at capacity", async () => {
+    const reg = heavyReg(1)
+    await reg.start('s-old', '/tmp/a', 'vite')
+    const explicit = await reg.start('s-new', '/tmp/b', 'vite', { evict: 'allow' })
+    expect(explicit.status).toBe('ready')
+    expect(reg.get('s-old')?.status).toBe('stopped')    // user intent still evicts
+  })
+
+  it("evict:'never' for the SAME session at capacity still restarts (it reuses its own slot, evicts no one)", async () => {
+    const reg = heavyReg(1)
+    const first = await reg.start('s1', '/tmp/a', 'vite')
+    expect(first.status).toBe('ready')
+    // Re-starting the SAME id frees its own slot first (start() stops the prior entry), so a
+    // background restart is NOT at capacity for itself — it boots without evicting anyone.
+    const restart = await reg.start('s1', '/tmp/b', 'vite', { evict: 'never' })
+    expect(restart.status).toBe('ready')
+  })
+})

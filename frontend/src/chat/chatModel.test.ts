@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { foldRunBubbles, type AgentMsg, type GateMsg, type CodeReviewMsg, type RecoveryMsg } from './chatModel.js'
+import { foldRunBubbles, type AgentMsg, type GateMsg, type CodeReviewMsg, type RecoveryMsg, type VerifyMsg } from './chatModel.js'
 import type { AkisEvent } from '@akis/shared'
 
 const ev = (e: Partial<AkisEvent> & { kind: AkisEvent['kind'] }): AkisEvent =>
@@ -183,6 +183,61 @@ describe('foldRunBubbles', () => {
     const recs = msgs.filter(m => m.kind === 'recovery')
     expect(recs).toHaveLength(1)
     expect(recs[0]).toMatchObject({ kind: 'recovery', recovery: 'critic_resolution', state: 'resolved' })
+  })
+
+  // P0-3a — the verify event's honest-failure breakdown folds onto the VerifyMsg (real testsRun even
+  // on a fail) AND is COPIED onto the verify_failed recovery card (the actionable surface the user
+  // reads). Both must reflect the REAL counts, never "0 test".
+  it('P0-3a: a FAILED verify event folds the real counts onto the verify bubble (not 0 test)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'verify', testsRun: 11, passed: false, passedCount: 7, failedCount: 1, unmeasuredCount: 3, failingScenarios: [{ name: 'delete (Sil)', reason: 'missing literal' }], agent: 'trace', laneId: 'verify' }),
+    ])
+    const v = msgs.find(m => m.kind === 'verify') as VerifyMsg
+    expect(v.testsRun).toBe(11) // the REAL executed count, not 0
+    expect(v.passed).toBe(false)
+    expect(v).toMatchObject({ passedCount: 7, failedCount: 1, unmeasuredCount: 3 })
+    expect(v.failingScenarios).toEqual([{ name: 'delete (Sil)', reason: 'missing literal' }])
+  })
+
+  it('P0-3a: the verify evidence is COPIED onto the verify_failed recovery card (verify BEFORE recovery)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'verify', testsRun: 11, passed: false, passedCount: 7, failedCount: 1, unmeasuredCount: 3, failingScenarios: [{ name: 'delete (Sil)', reason: 'missing literal' }], agent: 'trace', laneId: 'verify' }),
+      ev({ kind: 'recovery', recovery: 'verify_failed', state: 'awaiting' }),
+    ])
+    const rec = msgs.find(m => m.kind === 'recovery' && m.recovery === 'verify_failed') as RecoveryMsg
+    expect(rec.verifyEvidence).toMatchObject({ testsRun: 11, passedCount: 7, failedCount: 1, unmeasuredCount: 3 })
+    expect(rec.verifyEvidence?.failingScenarios).toEqual([{ name: 'delete (Sil)', reason: 'missing literal' }])
+  })
+
+  it('P0-3a: the copy is ORDER-INDEPENDENT (recovery BEFORE verify still gets the evidence)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'recovery', recovery: 'verify_failed', state: 'awaiting' }),
+      ev({ kind: 'verify', testsRun: 8, passed: false, passedCount: 5, failedCount: 2, unmeasuredCount: 1, agent: 'trace', laneId: 'verify' }),
+    ])
+    const rec = msgs.find(m => m.kind === 'recovery' && m.recovery === 'verify_failed') as RecoveryMsg
+    expect(rec.verifyEvidence).toMatchObject({ testsRun: 8, passedCount: 5, failedCount: 2, unmeasuredCount: 1 })
+  })
+
+  it('P0-3a: a PASSING verify never decorates a verify_failed card (no false failure evidence)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'verify', testsRun: 3, passed: true, agent: 'trace', laneId: 'verify' }),
+      // (a verify_failed recovery would never fire on a pass, but prove the guard if it somehow did)
+      ev({ kind: 'recovery', recovery: 'verify_failed', state: 'awaiting' }),
+    ])
+    const rec = msgs.find(m => m.kind === 'recovery' && m.recovery === 'verify_failed') as RecoveryMsg
+    expect(rec.verifyEvidence).toBeUndefined() // guarded by !verifyMsg.passed
+  })
+
+  it('P0-3a: an evidence-less FAILED verify leaves the card without fabricated counts (graceful)', () => {
+    const msgs = foldRunBubbles([
+      ev({ kind: 'verify', testsRun: 0, passed: false, agent: 'trace', laneId: 'verify' }),
+      ev({ kind: 'recovery', recovery: 'verify_failed', state: 'awaiting' }),
+    ])
+    const rec = msgs.find(m => m.kind === 'recovery' && m.recovery === 'verify_failed') as RecoveryMsg
+    // verifyEvidence is still set (carries the real testsRun:0) but has NO invented breakdown.
+    expect(rec.verifyEvidence?.testsRun).toBe(0)
+    expect(rec.verifyEvidence?.passedCount).toBeUndefined()
+    expect(rec.verifyEvidence?.failingScenarios).toBeUndefined()
   })
 
   it('carries the per-agent metrics from agent_end onto the agent bubble (honest cost transparency)', () => {
