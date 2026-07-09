@@ -317,9 +317,11 @@ function ProposalCard({ w, sessionId, api, onConfirmed, onResolved }: { w: Exter
 /**
  * Lists the build's `status:'proposed'` GitHub agent writes and renders a confirm card for each. Polls
  * the list on an interval so a proposal surfaces LIVE as the agent emits the `propose_github_write`
- * tool_call during a build. Dismiss is an FE-only hide (the proposal stays on the server until confirmed).
+ * tool_call during a build — but only while `live` (a run that can still propose) or while a card is
+ * visible (B9); an idle session loads once on mount and stays quiet. Dismiss is an FE-only hide (the
+ * proposal stays on the server until confirmed).
  */
-export function AgentWriteProposals({ sessionId, api, pollMs = 4000 }: { sessionId: string; api: ApiClient; pollMs?: number }) {
+export function AgentWriteProposals({ sessionId, api, pollMs = 4000, live = true }: { sessionId: string; api: ApiClient; pollMs?: number; live?: boolean }) {
   const { t } = useI18n()
   const [writes, setWrites] = useState<ExternalWriteSummary[]>([])
   const [dismissed, setDismissed] = useState<Set<string>>(() => new Set())
@@ -338,11 +340,22 @@ export function AgentWriteProposals({ sessionId, api, pollMs = 4000 }: { session
       .catch(() => {})
   }, [api, sessionId])
 
+  // B9 poll gating: the interval runs only while new proposals can still appear (a live build)
+  // or while a card is on screen (server-side status flips must keep refreshing it). An idle
+  // parked/done session with no cards stops polling entirely — it used to fire a GET every 4s
+  // for as long as the page stayed open. The effect re-runs (and re-loads once) on every `live`
+  // edge, so a proposal emitted just before a park is still fetched by the trailing-edge load;
+  // the mount load likewise keeps surfacing leftovers on reopen.
+  // NOTE: keyed off the VISIBLE card set (github + proposed + undismissed, or a pinned outcome),
+  // NOT the raw `writes` list — the server list also carries executed/failed history and
+  // other-provider records, which render nothing here and must not keep the interval alive.
+  const hasCards = resolved.size > 0 || writes.some(w => w.provider === 'github' && w.status === 'proposed' && !dismissed.has(w.id))
   useEffect(() => {
     load()
+    if (!live && !hasCards) return
     const id = setInterval(load, pollMs)
     return () => clearInterval(id)
-  }, [load, pollMs])
+  }, [load, pollMs, live, hasCards])
 
   // Drop a pinned card (and its grace-timer) — used by both Dismiss and the grace-period expiry.
   const drop = useCallback((id: string): void => {

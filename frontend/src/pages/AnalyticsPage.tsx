@@ -7,6 +7,7 @@ import { foldSessionView } from '../live/viewModel.js'
 import { aggregateRunMetrics, type RunMetrics } from './runMetrics.js'
 import { fmtTokens, fmtDuration, fmtUsd } from '../chat/metricsFormat.js'
 import { statusSignal } from '../chat/statusLabel.js'
+import { ideaTitle } from '../chat/recentBuilds.js'
 
 const pct = (n: number): string => `${Math.round(n * 100)}%`
 
@@ -97,7 +98,10 @@ export function AnalyticsPage({ api }: { api: ApiClient }) {
                 {runs.map(({ summary, metrics }) => (
                   <div key={summary.id} className="flex flex-col gap-1.5 py-3 first:pt-0 last:pb-0">
                     <div className="flex items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-200" title={summary.idea}>{summary.idea}</span>
+                      {/* B4b: a chat-authored idea is whole spec markdown — render the stripped
+                          first-line title (the SAME resolver History uses); the tooltip keeps the
+                          raw idea for context. */}
+                      <span className="min-w-0 flex-1 truncate text-sm font-medium text-slate-200" title={summary.idea}>{ideaTitle(summary.idea) || t('history.untitled')}</span>
                       {/* P1-7: localized human label + meaningful tone (the SAME resolver History uses) —
                           never the raw enum. A verified run keeps its emerald "shipped" intent; otherwise
                           the status's own tone (amber/teal/rose/neutral) carries the signal. */}

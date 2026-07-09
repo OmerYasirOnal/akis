@@ -78,6 +78,20 @@ describe('AnalyticsPage', () => {
     expect(screen.queryByText('done')).toBeNull()
   })
 
+  it('renders a CLEAN per-run title for a chat-authored run whose idea is spec markdown — no raw "#" noise (B4b)', async () => {
+    // A chat-authored build's `idea` is the whole spec markdown; the row must show the stripped
+    // first-line title (same `ideaTitle()` resolver History uses), never the raw "#"/"##" heading.
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/api/analytics')) return resp(ANALYTICS)
+      if (path.endsWith('/sessions/mine')) return resp([{ id: 'md', idea: '# Minimal Todo App\n## Scope\n- add items', status: 'done', verified: true }] as SessionSummary[])
+      if (/\/sessions\/[^/]+\/log$/.test(path)) return resp({ events: [], head: 0 })
+      return resp({})
+    })
+    render(<I18nProvider><AnalyticsPage api={new ApiClient('', fetchFn)} /></I18nProvider>)
+    await waitFor(() => expect(screen.getByText('Minimal Todo App')).toBeInTheDocument())
+    expect(screen.queryByText(/# Minimal Todo App/)).toBeNull()
+  })
+
   it('localizes an awaiting_* status (the exact bug) — never the raw "awaiting_push_confirm"', async () => {
     const fetchFn = vi.fn(async (path: string) => {
       if (path.endsWith('/api/analytics')) return resp(ANALYTICS)

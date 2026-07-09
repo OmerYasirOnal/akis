@@ -414,6 +414,9 @@ export const STRINGS = {
     'settings.keys.title': 'Provider keys',
     'settings.keys.sub': 'Connect your own AI provider keys (stored encrypted on the server, never echoed).',
     'settings.keys.connected': 'Connected',
+    // B5 honesty: shown instead of "Connected" when the working key is the server's shared env
+    // key (keySource:'shared') — the user connected nothing; their own key would take over.
+    'settings.keys.sharedKey': 'Shared server key — add yours to override',
     'settings.keys.notConnected': 'Not connected',
     'settings.keys.save': 'Save',
     'settings.keys.remove': 'Remove',
@@ -1229,6 +1232,9 @@ export const STRINGS = {
     'settings.keys.title': 'Sağlayıcı anahtarları',
     'settings.keys.sub': 'Kendi AI sağlayıcı anahtarlarını bağla (sunucuda şifreli saklanır, asla geri gösterilmez).',
     'settings.keys.connected': 'Bağlı',
+    // B5 dürüstlüğü: çalışan anahtar sunucunun paylaşımlı env anahtarıysa (keySource:'shared')
+    // "Bağlı" yerine bu gösterilir — kullanıcı bir şey bağlamadı; kendi anahtarı öncelik alır.
+    'settings.keys.sharedKey': 'Paylaşımlı sunucu anahtarı — kendi anahtarını eklersen o kullanılır',
     'settings.keys.notConnected': 'Bağlı değil',
     'settings.keys.save': 'Kaydet',
     'settings.keys.remove': 'Kaldır',
