@@ -571,6 +571,10 @@ export const STRINGS = {
     'settings.password.new': 'New password',
     'settings.password.change': 'Update password',
     'settings.password.changed': 'Password updated ✓',
+    // Review MED: the backend reuses code BadCredentials for a wrong CURRENT password here —
+    // the login copy ("Invalid email or password.") would reference an email field this form
+    // doesn't have, so the change-password catch special-cases it to this accurate copy.
+    'settings.password.currentWrong': 'Current password is incorrect.',
     'docs.gates.body': 'Structural gates guard the pipeline: spec approval, real-test verification, push confirmation, and critic resolution — verification can never be bypassed.',
     // ── Docs page (comprehensive rebuild) — docs.v2.* namespace ──
     'docs.v2.badge': 'Documentation',
@@ -1392,6 +1396,10 @@ export const STRINGS = {
     'settings.password.new': 'Yeni parola',
     'settings.password.change': 'Parolayı güncelle',
     'settings.password.changed': 'Parola güncellendi ✓',
+    // Review MED: backend yanlış MEVCUT şifrede de BadCredentials kodu döndürüyor — login
+    // kopyası ("E-posta veya şifre hatalı.") bu formda olmayan bir e-posta alanına işaret
+    // ederdi; şifre değiştirme catch'i bu doğru kopyaya özel-durumlanır.
+    'settings.password.currentWrong': 'Mevcut şifre hatalı.',
     'docs.gates.body': 'Yapısal kapılar hattı korur: spec onayı, gerçek test doğrulaması, push onayı ve critic çözümü — doğrulama asla atlanamaz.',
     // ── Dökümantasyon sayfası (kapsamlı yeniden inşa) — docs.v2.* ad alanı ──
     'docs.v2.badge': 'Dökümantasyon',

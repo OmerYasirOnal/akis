@@ -4,6 +4,7 @@ import userEvent from '@testing-library/user-event'
 import { ApiClient, ApiError } from '../api/client.js'
 import { authErrorKey } from './authError.js'
 import { Login } from './Login.js'
+import { Signup } from './Signup.js'
 import { AuthProvider } from '../auth/AuthContext.js'
 import { I18nProvider } from '../i18n/I18nContext.js'
 import { RouterProvider } from '../router/router.js'
@@ -40,6 +41,23 @@ const wrap = (ui: React.ReactElement, api: ApiClient) =>
   render(<I18nProvider><RouterProvider><AuthProvider api={api}>{ui}</AuthProvider></RouterProvider></I18nProvider>)
 
 beforeEach(() => { window.history.pushState({}, '', '/') })
+
+describe('Signup — a bare edge/proxy 403 without a JSON code still reads as "signups closed" (review LOW)', () => {
+  it('falls back on the 403 status when the body carries no code (HTML edge block)', async () => {
+    const fetchFn = vi.fn(async (path: string) => {
+      if (path.endsWith('/auth/me')) return { ok: true, status: 200, json: async () => ({ user: null }) } as unknown as Response
+      if (path.endsWith('/auth/signup')) return { ok: false, status: 403, json: async () => { throw new Error('html, not json') } } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    wrap(<Signup api={api} />, api)
+    await userEvent.type(screen.getByLabelText('Name'), 'Ada')
+    await userEvent.type(screen.getByLabelText('Email'), 'ada@akis.dev')
+    await userEvent.type(screen.getByLabelText('Password'), 'longenough9')
+    await userEvent.click(screen.getByRole('button', { name: /Create account/i }))
+    await waitFor(() => expect(screen.getByText(/Signups are closed/)).toBeInTheDocument())
+  })
+})
 
 describe('Login — localized API errors (B6-i)', () => {
   it('a failed sign-in renders the catalog copy, never the backend’s raw English transport string', async () => {

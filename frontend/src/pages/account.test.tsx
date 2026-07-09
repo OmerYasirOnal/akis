@@ -31,6 +31,24 @@ describe('AccountSettings', () => {
     expect(saved).toHaveAttribute('role', 'status')
   })
 
+  it('a wrong CURRENT password shows the specific copy, never the login "invalid email or password" (review MED)', async () => {
+    // The backend reuses code:'BadCredentials' for this path (auth.routes.ts change-password);
+    // the generic mapper would render the login copy, which names an email field this form
+    // doesn't have — the catch must special-case it to the accurate current-password copy.
+    const fetchFn = vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith('/auth/me') && (init?.method ?? 'GET') === 'GET') return { ok: true, status: 200, json: async () => ({ user: { id: '1', name: 'Ada', email: 'a@b.com' } }) } as unknown as Response
+      if (path.endsWith('/auth/change-password')) return { ok: false, status: 400, json: async () => ({ error: 'current password is incorrect', code: 'BadCredentials' }) } as unknown as Response
+      return { ok: true, status: 200, json: async () => ({}) } as unknown as Response
+    })
+    const api = new ApiClient('', fetchFn)
+    wrap(api)
+    await userEvent.type(screen.getByLabelText('Current password'), 'wrong-old-pw1')
+    await userEvent.type(screen.getByLabelText('New password'), 'newpassword9')
+    await userEvent.click(screen.getByRole('button', { name: /Update password/i }))
+    await waitFor(() => expect(screen.getByText('Current password is incorrect.')).toBeInTheDocument())
+    expect(screen.queryByText('Invalid email or password.')).toBeNull()
+  })
+
   it('changes the password', async () => {
     const { api, fetchFn } = fakeApi({ '/auth/me': () => ({ user: { id: '1', name: 'Ada', email: 'a@b.com' } }), '/auth/change-password': () => ({ ok: true }) })
     wrap(api)
