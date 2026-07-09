@@ -8,7 +8,7 @@ import { createMockTestRunner } from '../../src/verify/TestRunner.js'
 import { mintApprovedSpec, SpecNotApprovedError } from '../../src/gates/specGate.js'
 import { EventBus } from '../../src/events/bus.js'
 import { initialSession } from '@akis/shared'
-import type { AkisEvent, KnowledgeChunk, AgentMetrics } from '@akis/shared'
+import type { AkisEvent, KnowledgeChunk, AgentMetrics, TestEvidence } from '@akis/shared'
 import { approveSpec } from '../helpers/tokens.js'
 import { MockProvider } from '../../src/agent/providers/mock/MockProvider.js'
 import type { KnowledgePort, RetrieveQuery } from '../../src/knowledge/KnowledgePort.js'
@@ -352,6 +352,87 @@ describe('TraceAgent (verifier)', () => {
     expect(resolveVerifier({ kind: 'mock', cfg: { testsRun: 1, passed: true } }).demo).toBe(true)
     expect(resolveVerifier({ kind: 'runner', runner: createMockTestRunner({ testsRun: 1, passed: true }) }).demo).toBe(true)
     expect(resolveVerifier({ kind: 'real', sandbox: {} as never }).demo).toBe(false)
+  })
+
+  // P0-3a — HONEST FAILURE REPORTING. A verifier that ran real checks (some passed, one HARD failed,
+  // some skipped) but minted NO token must NOT make the verify event read as "0 test". The event now
+  // carries the REAL executed count + the structured breakdown + the named hard failure(s), while
+  // `passed` stays token-driven (null token ⇒ passed:false). The mint path is UNTOUCHED.
+  // A fake verifier that drives the onEvidence sink with hand-crafted MIXED evidence and returns
+  // null (the realistic boot-smoke fail: 11 checks, 7 passed, 1 hard fail "missing literal", 3 skipped).
+  const mixedFailEvidence: TestEvidence = {
+    testsRun: 8, // 7 passed + 1 hard-failed actually executed; 3 skipped never "ran"
+    passed: false,
+    durationMs: 120,
+    bdd: { built: 0, run: 0, passed: 0, failed: 0, skipped: 0, durationMs: 0 },
+    e2e: { testsRun: 8, passed: false, expected: 7, unexpected: 1, flaky: 0, skipped: 3, durationMs: 120 },
+    scenarios: [
+      ...Array.from({ length: 7 }, (_, i) => ({ name: `passing check ${i + 1}`, suite: 'e2e' as const, passed: true })),
+      { name: 'the user clicks the delete (Sil) button', suite: 'e2e' as const, passed: false, reason: 'missing literal' },
+      ...Array.from({ length: 3 }, (_, i) => ({ name: `interactive criterion ${i + 1}`, suite: 'e2e' as const, passed: false, reason: 'skipped' })),
+    ],
+    failure: { failedCount: 4, scenarios: [] },
+  }
+  const fakeMixedFailVerifier = {
+    demo: false,
+    verify: async (_s: string, _f: unknown, opts?: { onEvidence?: (e: TestEvidence) => void }): Promise<null> => {
+      opts?.onEvidence?.(mixedFailEvidence)
+      return null // fail-closed: no token
+    },
+  }
+
+  it('verify event on a FAILED run carries the REAL counts + failingScenarios (not 0 test)', async () => {
+    const bus = new EventBus()
+    const seen: AkisEvent[] = []
+    bus.subscribe('s1', e => seen.push(e))
+    const trace = new TraceAgent({ bus, verifier: fakeMixedFailVerifier as never })
+    const { token } = await trace.run({ sessionId: 's1', laneId: 'verify', files: [{ filePath: 'a.ts', content: 'x' }] })
+    // token-absent ⇒ passed:false unchanged (gate truth untouched).
+    expect(token).toBeNull()
+    const v = seen.find(e => e.kind === 'verify')
+    expect(v && v.kind === 'verify').toBe(true)
+    if (!v || v.kind !== 'verify') throw new Error('no verify event')
+    expect(v.passed).toBe(false)
+    // testsRun is the REAL executed count from the evidence, NOT forced to 0.
+    expect(v.testsRun).toBe(8)
+    expect(v.passedCount).toBe(7)
+    expect(v.failedCount).toBe(1) // the 3 skipped are NOT counted as hard failures
+    expect(v.unmeasuredCount).toBe(3)
+    expect(v.failingScenarios).toEqual([{ name: 'the user clicks the delete (Sil) button', reason: 'missing literal' }])
+  })
+
+  it('failingScenarios is capped at 3 named hard failures', async () => {
+    const manyFail: TestEvidence = {
+      testsRun: 5, passed: false, durationMs: 0,
+      bdd: { built: 0, run: 0, passed: 0, failed: 0, skipped: 0, durationMs: 0 },
+      e2e: { testsRun: 5, passed: false, expected: 0, unexpected: 5, flaky: 0, skipped: 0, durationMs: 0 },
+      scenarios: Array.from({ length: 5 }, (_, i) => ({ name: `fail ${i + 1}`, suite: 'e2e' as const, passed: false, reason: `status ${500 + i}` })),
+      failure: { failedCount: 5, scenarios: [] },
+    }
+    const seen: AkisEvent[] = []
+    const bus = new EventBus(); bus.subscribe('s1', e => seen.push(e))
+    const trace = new TraceAgent({ bus, verifier: { demo: false, verify: async (_s: string, _f: unknown, opts?: { onEvidence?: (e: TestEvidence) => void }) => { opts?.onEvidence?.(manyFail); return null } } as never })
+    await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
+    const v = seen.find(e => e.kind === 'verify')
+    if (!v || v.kind !== 'verify') throw new Error('no verify event')
+    expect(v.failedCount).toBe(5)
+    expect(v.failingScenarios).toHaveLength(3) // capped
+  })
+
+  it('an evidence-less FAILED verifier emits a byte-identical legacy verify event (no breakdown fields)', async () => {
+    const seen: AkisEvent[] = []
+    const bus = new EventBus(); bus.subscribe('s1', e => seen.push(e))
+    // demo:false + verify returns null + NEVER calls onEvidence → no evidence captured.
+    const trace = new TraceAgent({ bus, verifier: { demo: false, verify: async () => null } })
+    await trace.run({ sessionId: 's1', laneId: 'verify', files: [] })
+    const v = seen.find(e => e.kind === 'verify')
+    if (!v || v.kind !== 'verify') throw new Error('no verify event')
+    expect(v.passed).toBe(false)
+    expect(v.testsRun).toBe(0)
+    expect(v.passedCount).toBeUndefined()
+    expect(v.failedCount).toBeUndefined()
+    expect(v.unmeasuredCount).toBeUndefined()
+    expect(v.failingScenarios).toBeUndefined()
   })
 })
 

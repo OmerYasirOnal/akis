@@ -9,6 +9,7 @@ import { clearThread, saveThread, loadThread, mergeSpine, historyForApi, renameT
 import { loadRecentBuilds, recordRecentBuild, RECENT_MAX, type RecentBuild } from './recentBuilds.js'
 import { HistoryMenu } from './HistoryMenu.js'
 import { sessionIdFromSearch } from './sessionParam.js'
+import { specChipStatus } from './specChipStatus.js'
 import { useResizable, clampRatio } from './useResizable.js'
 import { PreviewPanel } from '../components/PreviewPanel.js'
 import { PreviewDrawer } from '../components/PreviewDrawer.js'
@@ -316,7 +317,15 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
     // SAME signal shape (a store write of 'awaiting_critic_resolution' + a recovery event, no status
     // change on the wire), so it must re-trigger the snapshot read too. The park (and its resolution)
     // re-reads the durable status so canRun flips live.
-  }, [activeSessionId, status, api, activeView.connectionGone, activeView.pushFailed?.retry, activeView.verifyFailed?.retry, activeView.recovery?.critic])
+    // gates.pushConfirm?.state in the deps (PR-1 / demo-sweep D1-1): the PUSH gate is the THIRD park
+    // with that exact lagging-snapshot shape — the BE persists status:'awaiting_push_confirm' (+ the
+    // code) but emits ONLY a `gate push_confirm awaiting` event (emitGate; NO session/status frame),
+    // so the fold sets gates.pushConfirm.state WITHOUT touching v.status. Without this dep the snapshot
+    // stayed at the mid-build value ('building' — not previewable) AND at its pre-Proto codeFiles
+    // (undefined), so the push-gate card appeared with NO ▶ Run until F5. Re-reading on the gate fold
+    // lands the fresh status + code → canRun flips live. The gate's SATISFIED transition re-reads too
+    // (state changes awaiting→satisfied), harmlessly refreshing the now-done snapshot.
+  }, [activeSessionId, status, api, activeView.connectionGone, activeView.pushFailed?.retry, activeView.verifyFailed?.retry, activeView.recovery?.critic, activeView.gates.pushConfirm?.state])
 
   // The single build path: the chat-authored spec becomes a session via the UNCHANGED startSession
   // → the same 4 structural gates + pipeline + History. The ONLY caller is the Chat-to-Build
@@ -504,6 +513,28 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
   // present). SEPARATE from chat-only overrides; never reaches a build.
   const buildContextSessionId = activeSessionId || undefined
 
+  // P1-4 — resolve a run's coarse backend status by session id, for the collapsed spec chip
+  // (status-aware subtitle: building / done / parked). The ACTIVE run combines the SSE-derived
+  // `status` with the durable `backendStatus`, preferring whichever is SETTLED — because a
+  // PARK (push_failed / verify_failed / awaiting_critic) is signaled ONLY by a `recovery` event
+  // and a DONE may land on either source first: the live `status` stays at 'running'/'building'
+  // for a park (the wire never carries the park status), while the snapshot effect refreshes
+  // `backendStatus` to the real park/terminal (it re-reads on pushFailed/verifyFailed/critic —
+  // the SAME signal `canRun` keys on). So a stale live 'building' must not mask a settled durable
+  // status. Mirrors the `isDone` union's spirit, generalized to the parked bucket. Any OTHER run
+  // (older, settled) falls back to its persisted history status from `recent`. STABLE deps so the
+  // AkisChat-side memoized children hold across the active run's per-frame frames.
+  const runStatusFor = useCallback((id: string): string | undefined => {
+    if (id !== activeSessionId) return recent.find(b => b.id === id)?.status
+    const live = status !== 'unknown' ? status : undefined
+    // A SETTLED durable status (done/parked bucket) wins over a still-'building' live status; a
+    // live settled status likewise wins over an absent/lagging snapshot. specChipStatus buckets
+    // both; 'building' is the only non-settled bucket, so prefer the source that is NOT 'building'.
+    if (backendStatus && specChipStatus(backendStatus) !== 'building') return backendStatus
+    if (live && specChipStatus(live) !== 'building') return live
+    return live ?? backendStatus
+  }, [activeSessionId, status, backendStatus, recent])
+
   const startingWorkflowCard = startingSpec ? (
     <section role="status" className="rounded-2xl border border-teal-400/25 bg-teal-400/[0.06] p-3 text-sm text-slate-200 shadow-[0_0_30px_rgba(7,209,175,0.1)]">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -561,6 +592,7 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
       onReactivate={reactivateRun}
       onActionError={setActionError}
       onScribeActivity={setScribePresence}
+      runStatusFor={runStatusFor}
       starting={startingWorkflowCard}
     />
   )
