@@ -52,11 +52,17 @@ export class StatsCollector {
         break
       }
       case 'verify':
-        this.verifyTotal++; if (e.passed) this.verifyPassed++
+        // B4a: verifiedRuns counts here — "verification genuinely passed" — NOT at 'done'.
+        // A run verified then cancelled at the push gate used to land in passRate/testsRun but
+        // in neither done nor verifiedRuns; shipping stays the separate `done` counter. Safe
+        // without per-session state: TraceAgent is the single verify emit site and the retry
+        // path (retryVerification) is only reachable from verify_failed, so a session emits at
+        // most ONE passed verify — no double count.
+        this.verifyTotal++; if (e.passed) { this.verifyPassed++; this.verifiedRuns++ }
         this.testsRun += e.testsRun
         break
       case 'done':
-        this.done++; if (e.verified) this.verifiedRuns++
+        this.done++
         if (e.provider) this.provider = e.provider
         break
       default: break
