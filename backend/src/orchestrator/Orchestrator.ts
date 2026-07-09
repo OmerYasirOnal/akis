@@ -818,7 +818,9 @@ export class Orchestrator {
       // (RunCancelledError) — and if it did, an emit ordered AFTER it would be skipped, so the user would
       // never see the recovery card AND the original push `err` would be masked by the write's throw.
       this.s.bus.emit({ kind: 'tool_result', tool: 'push_to_github', ok: false, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
-      this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
+      // B6-ii: `code` is ADDITIVE observability (the FE localizes the bubble headline by code);
+      // the message stays byte-identical and the push gate/park behavior is untouched.
+      this.s.bus.emit({ kind: 'error', message: `push failed: ${err instanceof Error ? err.message : String(err)}`, code: 'PushFailed', agent: 'orchestrator', laneId: 'main', sessionId: id, ts: nextTs() })
       this.emitRecovery(id, 'push_failed', 'awaiting')
       // P0-1: a REAL push (createRepo + N blob/tree/commit/ref/PR round-trips) takes 5-15s — ample
       // window for a concurrent chat turn (chatAppend) to bump the version, so the stale `cur.version`

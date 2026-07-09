@@ -115,6 +115,11 @@ export const STRINGS = {
     'chat.tool.run_tests': 'Running tests',
     'chat.tool.retrieve_knowledge': 'Retrieving knowledge',
     'chat.tool.propose_github_write': 'Proposing a GitHub write (needs your confirm)',
+    // ── Run error-bubble headlines (B6-ii) — localized by the error event's machine code
+    // (runError.ts); the raw backend message stays visible as secondary technical detail. ──
+    'run.error.pushFailed': 'The push to GitHub failed — you can retry it from the recovery card below.',
+    'run.error.runFailed': 'The build run failed.',
+    'run.error.critic': 'The automated review step hit an error.',
     'chat.codeReview.label': 'Code review',
     'chat.codeReview.approved': 'Approved',
     'chat.codeReview.rejected': 'Changes requested',
@@ -944,6 +949,11 @@ export const STRINGS = {
     'chat.tool.run_tests': 'Testler çalışıyor',
     'chat.tool.retrieve_knowledge': 'Bilgi getiriliyor',
     'chat.tool.propose_github_write': 'GitHub yazımı öneriliyor (onayın gerekir)',
+    // ── Run hata-balonu başlıkları (B6-ii) — hata olayının makine kodundan lokalize edilir
+    // (runError.ts); ham backend mesajı ikincil teknik ayrıntı olarak görünür kalır. ──
+    'run.error.pushFailed': 'GitHub’a push başarısız oldu — aşağıdaki kurtarma kartından yeniden deneyebilirsin.',
+    'run.error.runFailed': 'Build çalışması başarısız oldu.',
+    'run.error.critic': 'Otomatik inceleme adımında hata oluştu.',
     'chat.codeReview.label': 'Kod incelemesi',
     'chat.codeReview.approved': 'Onaylandı',
     'chat.codeReview.rejected': 'Değişiklik istendi',

@@ -3,6 +3,7 @@ import { useI18n } from '../i18n/I18nContext.js'
 import type { StringKey } from '../i18n/catalog.js'
 import { metricsBadge } from './metricsFormat.js'
 import { providerLabel } from './providerLabel.js'
+import { runErrorKey } from './runError.js'
 
 /** Friendly, localized labels for the raw agent tool names — so the activity reads as clean
  *  steps ("Kod yazılıyor…") instead of dev slugs ("dispatch_proto"). Unknown tools fall back
@@ -304,7 +305,18 @@ export function PreviewBubble({ m }: { m: PreviewMsg }) {
 }
 
 export function ErrorBubble({ m }: { m: ErrorMsg }) {
-  return <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{m.text}</div>
+  // B6-ii: a coded error gets a localized headline; the raw message stays visible as
+  // secondary technical detail (honesty — nothing hidden). Unknown/absent code renders
+  // exactly as before, so a legacy replayed log never regresses.
+  const { t } = useI18n()
+  const key = runErrorKey(m.code)
+  if (!key) return <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">{m.text}</div>
+  return (
+    <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 px-3 py-2 text-xs text-rose-300">
+      <div>{t(key)}</div>
+      <div className="mt-0.5 text-[10.5px] text-rose-300/60">{m.text}</div>
+    </div>
+  )
 }
 
 export function DoneBubble({ m }: { m: DoneMsg }) {
