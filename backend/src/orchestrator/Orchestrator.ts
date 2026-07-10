@@ -393,6 +393,16 @@ export class Orchestrator {
     const approving = await this.s.store.recordApproval(id, this.s.approvalAuthority.approve(spec), expectedVersion)
     const session = await this.s.store.update(id, { status: 'building' }, approving.version)
     this.emitGate(id, 'spec_approval', 'satisfied')
+    // Issue #168: auto-ingest the just-APPROVED spec as trusted RAG grounding — the human just
+    // approved it, so it is eligible grounding (unlike free-form narration). PURELY ADDITIVE,
+    // OFF the gate path: it runs AFTER the satisfied gate is emitted and the session is persisted
+    // 'building'; SpecSource.ingest is synchronous + enqueue-only (never awaits the agent run),
+    // and try/catch-wrapped so a thrown ingest can NEVER fail approval or touch a gate. No-op when
+    // RAG/specSource is absent (RAG-off default is byte-for-byte unchanged).
+    if (this.s.specSource) {
+      const userId = this.s.ragUserIdFor?.(id) ?? id
+      try { this.s.specSource.ingest({ sessionId: id, userId, spec }) } catch { /* additive grounding — never breaks approval */ }
+    }
     return session
   }
 

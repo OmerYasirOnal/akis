@@ -30,6 +30,7 @@ import type { RagService } from '../knowledge/RagService.js'
 import type { IngestQueue } from '../knowledge/ingest/IngestQueue.js'
 import type { UploadSource } from '../knowledge/ingest/UploadSource.js'
 import type { RepoSource } from '../knowledge/ingest/RepoSource.js'
+import type { SpecSource } from '../knowledge/ingest/SpecSource.js'
 import { AgentRegistry } from '../agent/dynamic/AgentRegistry.js'
 import { LlmAdvisoryAgent } from '../agent/dynamic/AdvisoryAgent.js'
 import { isCoreRole, type AgentConfig, type Role } from '@akis/shared'
@@ -98,6 +99,9 @@ export interface OrchestratorServices {
   /** Repo ingestion source (issue #7 AC1) — surfaced ONLY when RAG is on; the repo
    *  trigger route calls it. Reads the same shared `github` adapter. Undefined when off. */
   repoSource?: RepoSource
+  /** Agent-output ingestion source (issue #168) — the orchestrator ingests the APPROVED spec
+   *  as trusted grounding at the spec-approval boundary. Surfaced ONLY when RAG is on. */
+  specSource?: SpecSource
   /** The tenancy resolver the RAG port retrieves with — the knowledge routes stamp
    *  ingestion with it so a write is retrievable. Surfaced ONLY when RAG is on. */
   ragUserIdFor?: (sessionId: string) => string
@@ -533,6 +537,7 @@ interface KnowledgeWiring {
   ragQueue?: IngestQueue
   uploadSource?: UploadSource
   repoSource?: RepoSource
+  specSource?: SpecSource
   ragUserIdFor?: (sessionId: string) => string
 }
 
@@ -567,6 +572,7 @@ function resolveKnowledge(opts: BuildServicesOptions, bus: EventBus, github: Moc
       ragQueue: stack.queue,
       uploadSource: stack.uploadSource,
       repoSource: stack.repoSource,
+      specSource: stack.specSource,
       ragUserIdFor: stack.userIdFor,
     }
   }

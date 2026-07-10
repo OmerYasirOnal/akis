@@ -10,6 +10,7 @@ import { RagKnowledgePort } from './RagKnowledgePort.js'
 import { IngestionSink } from './IngestionSink.js'
 import { LocalReranker, NoopReranker } from './retrieve/Reranker.js'
 import { RepoSource } from './ingest/RepoSource.js'
+import { SpecSource } from './ingest/SpecSource.js'
 import { MockRepoReader, type RepoReader } from './ingest/RepoReader.js'
 import { RealGitHubRepoReader } from './ingest/RealGitHubRepoReader.js'
 import { UploadSource } from './ingest/UploadSource.js'
@@ -67,6 +68,8 @@ export interface RagStack {
   repoSource: RepoSource
   /** Upload ingestion source (issue #7 AC2) — parse + structure-chunk + ingest. */
   uploadSource: UploadSource
+  /** Agent-output ingestion source (issue #168) — the approved spec as trusted grounding. */
+  specSource: SpecSource
   /** The tenancy resolver the port retrieves with — the upload/repo routes MUST stamp
    *  ingestion with this exact resolver so a write is retrievable through the port. */
   userIdFor: (sessionId: string) => string
@@ -123,7 +126,8 @@ export function buildRag(opts: BuildRagOpts): RagStack {
     new MockRepoReader(opts.github ?? new MockGitHubAdapter())
   const repoSource = new RepoSource({ rag: service, queue, reader })
   const uploadSource = new UploadSource({ rag: service, queue })
-  return { service, port, sink, queue, repoSource, uploadSource, userIdFor, repoReader: reader }
+  const specSource = new SpecSource({ rag: service })
+  return { service, port, sink, queue, repoSource, uploadSource, specSource, userIdFor, repoReader: reader }
 }
 
 /**
