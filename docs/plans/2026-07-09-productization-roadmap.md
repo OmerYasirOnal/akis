@@ -113,13 +113,14 @@ akisflow.com bugün 2 kullanıcı + kapalı signup ile duruyor. Gerçek kullanı
 
 **Ground-truth (2026-07-09, 5-scout sweep) — kalan Faz 2 kalemlerinin gerçek durumu:**
 
-3. **Gözlemlenebilirlik (PARTIAL):** GEMİDE — OpsBlock (`/health` + authed `/api/ops`:
-   uptime/memory/activeSessions/livePreviews/db), `audit_events` durable ledger
-   (`GET /sessions/:id/audit`), StatsCollector (`/api/analytics`), RagService.getMetrics +
-   UsageCollector sayaçları. GERÇEK boşluklar (temiz-otonom): (a) HTTP error-rate / 4xx-5xx-429
-   sayacı (onResponse hook) — S; (b) RagService.getMetrics HTTP'ye açık değil — S. Owner-kararı:
-   Prometheus `/metrics` (M — stack'e bağlı), pino yapısal request log (M). CLAUDE.md düzeltmesi:
-   `~/.akis/dev-events.json` "error feed" değil tam bus-snapshot + prod'da da yazıyor.
+3. **Gözlemlenebilirlik (PARTIAL → temiz-otonom kısmı KAPANDI):** GEMİDE (önceki) — OpsBlock,
+   `audit_events` ledger, StatsCollector, sayaçlar. ✅ Eklendi (`7a3779b`): `HttpMetrics`
+   (2xx/3xx/4xx/5xx + errorRate + ayrı 429 sayacı) tek global onResponse hook'la (yalnız
+   statusCode okur), authed `/api/ops`'a `http` + (RAG açıksa) `rag` alanları; `/health` minimal
+   kaldı. Gate-keeper 0 bulgu. **NOT (gate-keeper):** `/api/ops` `hasSession` ile korunuyor
+   (admin rolü değil) — pre-existing; admin-rolü işi gelince ops view admin-only yapılmalı.
+   OWNER-KARARI kalanlar: Prometheus `/metrics` (M — stack'e bağlı), pino yapısal request log (M).
+   CLAUDE.md düzeltmesi (ayrı): `~/.akis/dev-events.json` "error feed" değil tam bus-snapshot.
 4. **Yedekleme/anahtar (PARTIAL):** GEMİDE — `keys/crypto.ts` AES-256-GCM + scoped AAD (4 secret
    store), `pg.ts` idempotent MIGRATIONS, SELF_HOSTING pg_dump/restore, RAG right-to-forget.
    GERÇEK boşluklar (çoğu OWNER/hukuk kararı): anahtar rotasyonu (M — `keyVersion` yazılıyor ama
@@ -137,8 +138,11 @@ akisflow.com bugün 2 kullanıcı + kapalı signup ile duruyor. Gerçek kullanı
    - ✅ (b) chat 502 ham provider-hata sızıntısı — 4 sink server-side loglanıp generic mesaja
      çevrildi, FE `ProviderError`'ı `akis.error.provider`'a lokalize eder; ham metin DOM'a hiç
      ulaşmaz (`ed50c41`). Gate-keeper 0; reviewer 1 LOW (stream sink test boşluğu) pakette kapandı.
-   - 🔴 (c) CSRF Origin-hook PUBLIC_BASE_URL yoksa/Origin header'sız no-op (S — nüanslı, deploy
-     uyumu; kalan tek temiz-otonom güvenlik kalemi ama cookie SameSite'ı önce doğrulanmalı).
+   - ✅ (c) CSRF — cookie **default SameSite=Lax** asıl korumayı sağlıyor (cross-site state-change'de
+     cookie gönderilmez); Origin-hook defense-in-depth. "No-op" durumu default/makul config'de
+     GERÇEK açık DEĞİL. Tek zayıf kombinasyon `SameSite=None + PUBLIC_BASE_URL yok` için
+     `csrfPostureWarning()` + boot uyarısı eklendi (`12b87d3`) — request davranışı değişmedi
+     (deploy kırma riski yok), operatör bilgilendirildi.
    NOT: MCP SSRF premisi yanlışmış — REMOTE_MCP_PROVIDERS hardcoded 2 girdi (bugün SSRF yüzeyi yok).
 
 **Faz 2 sıralaması (öneri):** temiz-otonom kalanlar önce — güvenlik S-üçlüsü (Dependabot+CI audit,
@@ -204,8 +208,11 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   ayrıntı yukarıda Faz 2 §1). Süitler: typecheck 3/3, BE 1746/5-skip, FE 761/761.
 - **2026-07-09 (devam 6):** Faz 2 §2 rate-limiting KAPANDI (`8393927`+`a2b64c5`) ve §6 güvenliğin
   2/3'ü KAPANDI (`ed50c41`: CI dep-audit + provider-hata scrub). 5-scout ground-truth Faz 2'nin
-  tamamını haritaladı (yukarı işlendi). **Kalan Faz 2 — temiz-otonom:** §3 observability S-ikilisi
-  (error-rate sayacı + RAG metrics HTTP), §6c CSRF sertleştirme (nüanslı). **Kalan Faz 2 — OWNER
-  KARARI (otonom YAPILMAYACAK):** admin/owner rolü, davet-kodu/allowlist, e-posta doğrulama, hesap
-  silme/GDPR, anahtar rotasyonu, Prometheus /metrics, pino yapısal log. Süitler: BE 1764/5-skip,
-  FE 762/762. Branch main'in 18 commit önünde — **owner merge'i bekliyor.**
+  tamamını haritaladı (yukarı işlendi).
+- **2026-07-09 (devam 7):** Faz 2'nin TÜM temiz-otonom kalemleri KAPANDI — §3 observability
+  (`7a3779b`: HttpMetrics error-rate + RAG health /api/ops'ta; gate-keeper 0) ve §6c CSRF
+  (`12b87d3`: zayıf-kombinasyon boot uyarısı). Süitler: BE 1774/5-skip, FE 762/762; typecheck 3/3.
+  **Faz 2'de kalan HER ŞEY OWNER KARARI gerektiriyor** (otonom YAPILMAYACAK): insan admin/owner
+  rolü (+ ops view'ı admin-only yapma), davet-kodu/allowlist, e-posta doğrulama, hesap silme/GDPR,
+  anahtar rotasyonu, Prometheus /metrics, pino yapısal log, config-volume yedek otomasyonu.
+  Branch main'in **21 commit** önünde — **owner merge'i + owner-karar kalemleri için yön bekliyor.**
