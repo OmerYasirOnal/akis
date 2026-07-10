@@ -5,6 +5,7 @@ import { AKIS_PERSONA, registerChatRoutes, resolvePerRequestProvider, mapEffortT
 import type { LlmProvider, ChatRequest, ChatResult } from '../../src/agent/LlmProvider.js'
 import type { SessionState } from '@akis/shared'
 import { JsonFileKeyStore } from '../../src/keys/KeyStore.js'
+import { resolveRouteRateLimits } from '../../src/usage/rateLimit.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -723,5 +724,39 @@ describe('POST /api/chat/stream — REAL Scribe handoff', () => {
     const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'build it' } })
     expect(parseSse(res.body).some(fr => fr.event === 'scribe')).toBe(false)
     await f.close()
+  })
+})
+
+// ── chatPreflight: request-RATE limit + quota, BEFORE the model (Faz 2) ──
+describe('POST /api/chat — chatPreflight rate limit (chat bucket)', () => {
+  it('throttles the chat bucket: the 2nd rapid turn → 429 RateLimited and the provider is NOT called', async () => {
+    const { provider, calls } = spyProvider()
+    const f = Fastify({ logger: false })
+    // cap 1: the first turn passes, the second is over the window.
+    const rateLimits = resolveRouteRateLimits({ AKIS_RATE_LIMIT: '1', AKIS_RATE_LIMIT_CHAT_MAX: '1' })!
+    registerChatRoutes(f, { provider, rateLimits })
+    expect((await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'hi' } })).statusCode).toBe(200)
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'hi again' } })
+    expect(res.statusCode).toBe(429)
+    expect(res.json().code).toBe('RateLimited')
+    expect(calls.length).toBe(1) // SACRED: the blocked turn never reached the model
+  })
+
+  it('the stream route is rate-limited too (pre-hijack 429, not an SSE frame)', async () => {
+    const { provider } = spyProvider()
+    const f = Fastify({ logger: false })
+    const rateLimits = resolveRouteRateLimits({ AKIS_RATE_LIMIT: '1', AKIS_RATE_LIMIT_CHAT_MAX: '1' })!
+    registerChatRoutes(f, { provider, rateLimits })
+    expect((await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'a' } })).statusCode).toBe(200)
+    const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'b' } })
+    expect(res.statusCode).toBe(429)
+    expect(res.json().code).toBe('RateLimited') // a clean JSON 429, not a hijacked SSE stream
+  })
+
+  it('DEFAULT (no rateLimits dep): unchanged — many rapid turns all 200', async () => {
+    const { provider } = spyProvider()
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider })
+    for (let i = 0; i < 5; i++) expect((await f.inject({ method: 'POST', url: '/api/chat', payload: { message: `m${i}` } })).statusCode).toBe(200)
   })
 })
