@@ -467,6 +467,10 @@ export function AkisChat({
   const errorText = (err: unknown): string =>
     ApiError.is(err) && err.status === 401
       ? t('akis.error.unauthorized')
+      // Request-RATE limit (RateLimited): a chat turn CAN return this (the chat bucket), so it
+      // must precede the generic-429 quota branch — a rate refusal is not a spend refusal.
+      : ApiError.is(err) && err.code === 'RateLimited'
+        ? t('akis.error.rateLimited')
       // Active-run cap (ConcurrencyLimited): checked BEFORE the generic-429 quota branch below,
       // or a concurrency refusal (also a 429) would misread as "token quota exceeded".
       // DEFENSIVE-ONLY today (review LOW): the chat-completion paths that reach errorText never

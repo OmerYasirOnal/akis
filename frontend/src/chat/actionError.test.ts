@@ -40,6 +40,13 @@ describe('actionErrorText — localized GitHub delivery failure surfacing', () =
     expect(actionErrorText(e, en)).not.toContain('quota')
   })
 
+  it('maps RateLimited (the per-caller request-rate limit, a 429) to the localized slow-down copy', () => {
+    const e = new ApiError(429, 'rate limit exceeded — slow down and try again', 'RateLimited')
+    expect(actionErrorText(e, en)).toBe(STRINGS.en['akis.error.rateLimited'])
+    expect(actionErrorText(e, tr)).toBe(STRINGS.tr['akis.error.rateLimited'])
+    expect(actionErrorText(e, en)).not.toContain('quota')
+  })
+
   it('falls back to "code: message" for any other ApiError (unchanged behavior)', () => {
     const e = new ApiError(409, 'Session already pushed', 'AlreadyPushedError')
     expect(actionErrorText(e, en)).toBe('AlreadyPushedError: Session already pushed')

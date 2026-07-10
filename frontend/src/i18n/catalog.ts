@@ -178,6 +178,8 @@ export const STRINGS = {
     'akis.error.quota': 'You’ve reached your token quota for this period.',
     // Per-user active-run cap (429 ConcurrencyLimited) — distinct from the token quota.
     'akis.error.concurrency': 'Too many builds running at once — wait for one to finish, then try again.',
+    // Per-caller request-rate limit (429 RateLimited) — you're sending requests too fast.
+    'akis.error.rateLimited': 'You’re going a bit fast — wait a few seconds and try again.',
     'usage.label': 'Tokens',
     'usage.remaining': 'left',
     'usage.resets': 'Resets',
@@ -1014,6 +1016,8 @@ export const STRINGS = {
     'akis.error.quota': 'Bu dönem için token kotana ulaştın.',
     // Kullanıcı başına aktif-build sınırı (429 ConcurrencyLimited) — token kotasından ayrıdır.
     'akis.error.concurrency': 'Aynı anda çok fazla build çalışıyor — biri bitince yeniden dene.',
+    // Kullanıcı başına istek-hız sınırı (429 RateLimited) — çok hızlı istek gönderiyorsun.
+    'akis.error.rateLimited': 'Biraz hızlısın — birkaç saniye bekleyip tekrar dene.',
     'usage.label': 'Token',
     'usage.remaining': 'kaldı',
     'usage.resets': 'Sıfırlanma',

@@ -32,6 +32,10 @@ export function actionErrorText(e: unknown, t: (k: StringKey) => string): string
     if (e.code === 'ConcurrencyLimited') {
       return t('akis.error.concurrency')
     }
+    // Per-caller request-rate limit refused the action (build-start / approve / external-write).
+    if (e.code === 'RateLimited') {
+      return t('akis.error.rateLimited')
+    }
     return `${e.code ?? 'error'}: ${e.message}`
   }
   return String(e)

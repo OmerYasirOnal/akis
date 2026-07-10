@@ -38,6 +38,7 @@ import { createPgUsageStoreWithClient } from '../usage/PgUsageStore.js'
 import { UsageCollector } from '../usage/UsageCollector.js'
 import { resolveQuotaPolicy } from '../usage/quota.js'
 import { resolveConcurrencyPolicy } from '../usage/concurrency.js'
+import { resolveRouteRateLimits } from '../usage/rateLimit.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { registerGitHubConnectRoutes } from './githubConnect.routes.js'
@@ -444,6 +445,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const quota = resolveQuotaPolicy(env)
   // Per-user ACTIVE-RUN cap (AKIS_MAX_ACTIVE_RUNS) — the quota's concurrency sibling.
   const concurrencyPolicy = resolveConcurrencyPolicy(env)
+  // Per-caller request-RATE limits (AKIS_RATE_LIMIT) — the abuse-guard sibling of quota/
+  // concurrency; undefined (opt-out) unless enabled, so routes omit the dep (byte-identical).
+  const routeRateLimits = resolveRouteRateLimits(env)
   // TIER-AWARE quota (paid tier): resolve the per-owner policy from the user's tier (pro ⇒
   // AKIS_PRO_TOKEN_BUDGET, else free). Only when a userStore is present; an anon/unknown owner ⇒ free.
   // Routes fall back to the fixed `quota` when this is absent (byte-unchanged for a userStore-less setup).
@@ -496,6 +500,8 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // default path is byte-identical). Concurrency sibling of the quota — bounds simultaneous
     // load where the quota bounds windowed spend.
     ...(concurrencyPolicy.maxActiveRuns > 0 ? { concurrency: concurrencyPolicy } : {}),
+    // Per-caller request-RATE limits (AKIS_RATE_LIMIT; undefined ⇒ dep omitted, byte-identical).
+    ...(routeRateLimits ? { rateLimits: routeRateLimits } : {}),
     // Publish (POST-`done`, optional, NON-GATING): the action is enabled only when BOTH the
     // profile store AND the publish seam are wired. Absent ⇒ POST /sessions/:id/publish 409s.
     publishProfiles,
@@ -594,7 +600,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // pushes NOTHING — the human SpecCard click stays the sole approve path (the chat route still holds
   // NO orchestrator handle). A provider error propagates so the route surfaces an honest chat error.
   const draftSpec: ChatDeps['draftSpec'] = (input) => services.scribe.draftSpec(input)
-  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), ownerOf: userIdOf, sessionRead, chatAppend, draftSpec })
+  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), ...(routeRateLimits ? { rateLimits: routeRateLimits } : {}), ownerOf: userIdOf, sessionRead, chatAppend, draftSpec })
   // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
   // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
   // them the route is never registered (404) and there is no behavior change when RAG off.
