@@ -28,6 +28,7 @@ import { selectMailer } from '../mail/selectMailer.js'
 import type { Mailer } from '../mail/Mailer.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
+import { HttpMetrics } from '../analytics/HttpMetrics.js'
 import { registerChatRoutes, type ChatDeps } from './chat.routes.js'
 import { registerUsageRoutes } from './usage.routes.js'
 import { registerBillingRoutes } from './billing.routes.js'
@@ -436,6 +437,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // Aggregate run analytics via a single global bus tap (observability only).
   const stats = new StatsCollector()
   stats.attach(services.bus)
+  // Cumulative HTTP response counters (error rate, 429 spikes) fed by a single onResponse hook —
+  // operator visibility the build-lifecycle StatsCollector didn't cover. Observability only; the
+  // hook reads ONLY the status code (no bodies/paths/headers), surfaced on the authed /api/ops.
+  const httpMetrics = new HttpMetrics()
+  app.addHook('onResponse', async (_req, reply) => { httpMetrics.observe(reply.statusCode) })
 
   // Per-user token QUOTA (multi-tenant safety). The policy is env-driven; budget 0 (default)
   // ⇒ unlimited, so single-operator dev is BYTE-UNCHANGED (checkQuota returns allowed with NO
@@ -560,7 +566,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerUsageRoutes(app, { usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), requireOwner: userIdOf })
   // Operator ops view (GET /api/ops; authenticated via hasSession) — the richer StatsCollector
   // snapshot + the operational block (uptime/memory/activeSessions/livePreviews/db).
-  registerOpsRoutes(app, { stats, previewRegistry, requireAuth: hasSession, ...(deps.dbPing ? { dbPing: deps.dbPing } : {}) })
+  registerOpsRoutes(app, {
+    stats, previewRegistry, requireAuth: hasSession, httpMetrics,
+    ...(deps.dbPing ? { dbPing: deps.dbPing } : {}),
+    // RAG ingest/corpus health when RAG is on — a thunk so ops.routes stays decoupled from
+    // knowledge internals (getMetrics returns ingest counters + corpusSize).
+    ...(services.ragService ? { ragMetrics: () => services.ragService?.getMetrics() as Record<string, unknown> | undefined } : {}),
+  })
   // Thread env + keyStore so the chat route can resolve a DIFFERENT provider/model PER
   // REQUEST (the model picker), fail-closed like createProvider. Absent any override every
   // chat turn uses services.provider unchanged. CHAT-ONLY: builds keep their workflow bindings.
