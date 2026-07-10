@@ -1,7 +1,12 @@
-# AKIS — Bitirme Raporu (Graduation Report)
+# AKIS — Bitirme Raporu (Graduation Report) · DELIVERED & ARCHIVED
+
+> **This folder is a closed archive.** The report was submitted, graded
+> (93/100, course AA), and the degree awarded — AKIS is now a product, not a
+> graduation project (see `../CLAUDE.md`). Everything below documents the
+> delivered artifacts as a historical record; it is not an active work item.
 
 Graduation report for the AKIS platform, prepared to the **FSMVÜ Mühendislik
-Fakültesi — Lisans Bitirme Projesi Yazım Kılavuzu (Ek-3)** format. The report is
+Fakültesi — Lisans Bitirme Projesi Yazım Kılavuzu (Ek-3)** format. The report was
 delivered in **two complete versions** — one fully Turkish, one fully English —
 with identical structure, figures, tables, and numbering. Each version keeps the
 standard bilingual abstract pair (Türkçe **ÖZET** + English **ABSTRACT**).

@@ -6,19 +6,27 @@
 
 ---
 
-## 🎓 PROJECT PHASE PIVOT (2026-07-09) — read this first
+## 🚀 THIS IS A PRODUCT NOW (2026-07) — read this first
 
-- **The graduation project is DONE:** defense delivered, report graded **93/100**,
-  course grade **AA**. `v1.0.0` full self-host release is published on GHCR
-  (see `docs/plans/2026-06-10-demo-ready-plan.md` head notes); main CI green.
-- **The repo's purpose is now PRODUCTIZATION**, not the defense/demo. All
-  demo/defense-era framing ("demo-blocker", savunma tarihleri, bitirme raporu
-  upkeep) is historical.
+- **The graduation chapter is CLOSED — the owner graduated.** The university
+  project was delivered, graded (report 93/100, course AA), and the degree
+  awarded. **AKIS is no longer a graduation project; treat it as a real
+  software product.** No defense, no report, no thesis deadline shapes the work.
+- **`v1.0.0` full self-host release is published** on GHCR; main CI green.
+- **The repo's purpose is PRODUCTIZATION.** All demo/defense-era framing
+  ("demo-blocker", savunma tarihleri, bitirme raporu upkeep) is HISTORICAL —
+  the dated `docs/plans/2026-06-*` / `docs/research/*` docs are archival
+  snapshots, not current guidance.
 - **Current queue** lives in `docs/plans/2026-07-09-productization-roadmap.md`.
 - Report tooling is no longer auto-installed each session — opt back in with
-  `AKIS_REPORT_TOOLING=1` (see `CLAUDE.md`).
+  `AKIS_REPORT_TOOLING=1` (see `CLAUDE.md`) only if the archived report is
+  ever revisited.
 - The working-method discipline (worktrees, adversarial review, gates sacred,
   owner merges) is unchanged.
+
+> Note: "thesis" elsewhere in these docs means the PRODUCT's core argument
+> (quality-trust: a `verified` build really was verified) — not an academic
+> thesis. That framing stays; it's the product's value proposition.
 
 ## ⚠️ ARCHITECTURE PIVOT (2026-06-01) — read this first
 The original handoff's **FSM / transition table** decision was **consciously reversed** by the product owner. The MVP being built is **agentic**, not an FSM. Source of truth = `docs/superpowers/specs/2026-06-01-agentic-core-gates-design.md §0`.
