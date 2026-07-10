@@ -155,12 +155,19 @@ rotasyonu) ayrı ayrı sunulacak — bunlar ürün/hukuk yüzeyi değiştirdiği
 Ground-truth (2026-07-09): repo+upload ingest, `LocalReranker`, semantic embeddings
 (OpenAI `text-embedding-3-small` + offline fallback) ve `vector(N)` kalıcılığı GEMİDE.
 Gerçek artıklar:
-1. **Agent-output ingest kaynağı:** üretilen spec/kod içeriği grounding olarak hiç ingest
-   edilmiyor (`IngestionSink.toIngest` yalnız narration `text` map'liyor); typed session
-   artifact'lerinden beslenen ayrı bir kaynak eklenecek — read-only, gate-cap'siz, additive.
-2. **ANN ranking yolu:** `vector(N)` kalıcı ama sıralama hâlâ JS brute-force cosine (ivfflat
-   bilinçli söküldü). Korpus büyüyünce SQL `<=>` + ivfflat/HNSW'ye geçir; JS yolu keyless/pg'siz
-   fallback kalır; iki yol arasında golden-eval parity testi.
+1. ~~**Agent-output ingest kaynağı**~~ ✅ KAPANDI (`88e8871`+`4f946d3`) — `SpecSource`: onaylanmış
+   spec, `mintSpecApproval` (insan onay sınırı) noktasında `source:'agent-spec'` ile ingest ediliyor.
+   Mevcut chunk/exclude/tenancy makinesi yeniden kullanıldı; additive + off-gate-path + RAG-off
+   byte-identical. Gate-keeper 4 iddiada 0; reviewer temiz + 3 LOW (title-dedup, excluded metriği,
+   yutulan-hata log'u) pakette kapandı. **KAPSAM NOTU:** üretilen KOD bilinçli olarak burada ingest
+   EDİLMİYOR — zaten `confirmPush`'ta RepoSource `source:'repo'` ile ingest ediyor; 'agent-code'
+   duplikat olurdu (RagService source+sourceId'ye göre dedup). Spec, başka türlü hiç ingest
+   edilmeyen tek agent artifact'iydi.
+2. **ANN ranking yolu (KALAN temiz-otonom, DÜŞÜK öncelik):** `vector(N)` kalıcı ama sıralama hâlâ
+   JS brute-force cosine (ivfflat bilinçli söküldü). Korpus büyüyünce SQL `<=>` + ivfflat/HNSW'ye
+   geçir; JS yolu keyless/pg'siz fallback kalır; iki yol arasında golden-eval parity testi.
+   Yalnız korpus-ölçeğinde gerekli — küçük korpusta JS yolu yeterli; Postgres ranking değişikliği
+   olduğu için owner-farkındalığıyla yapılması iyi olur.
 3. **Scribe-dışı tüketiciler (değerlendirme):** `retrieve_knowledge` bugün Scribe tool-loop'u +
    config'le yetkilendirilmiş advisory ajanlarda; standalone Ask-AKIS chat'i ve Proto/Critic
    tool-loop'u kapsam dışı (Proto SharedContext'ten pasif alıyor). Genişletme değer/risk
@@ -216,3 +223,8 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   rolü (+ ops view'ı admin-only yapma), davet-kodu/allowlist, e-posta doğrulama, hesap silme/GDPR,
   anahtar rotasyonu, Prometheus /metrics, pino yapısal log, config-volume yedek otomasyonu.
   Branch main'in **21 commit** önünde — **owner merge'i + owner-karar kalemleri için yön bekliyor.**
+- **2026-07-09 (devam 8):** Faz 3 / #168 kalem-1 **agent-output ingest KAPANDI** (`88e8871` +
+  review-fold `4f946d3`): `SpecSource` onaylanmış spec'i RAG grounding'i olarak ingest ediyor.
+  Gate-keeper 0, reviewer temiz + 3 LOW kapatıldı. BE 1783/5-skip, FE 762/762, typecheck 3/3.
+  **Kalan temiz-otonom tek iş:** #168 kalem-2 ANN ranking (düşük öncelik, korpus-ölçeği). Branch
+  main'in **25 commit** önünde — merge birikimi arttı; owner merge'i güçlü öneri.
