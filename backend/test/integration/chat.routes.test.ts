@@ -614,6 +614,17 @@ describe('POST /api/chat — REAL Scribe handoff (akis-spec-request → akis-spe
     expect(res.json().code).toBe('ScribeError')
   })
 
+  it('SECURITY: the ScribeError 502 does NOT echo the raw upstream provider message to the client', async () => {
+    const { provider } = fixedReplyProvider(REQUEST_REPLY)
+    const { fn } = draftSpecSpy({ title: 'x', body: 'x' }, { throws: true }) // throws 'scribe provider down'
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'build it' } })
+    expect(res.statusCode).toBe(502)
+    expect(res.json().code).toBe('ScribeError')
+    expect(res.body).not.toContain('scribe provider down') // raw provider text must not leak to the client
+  })
+
   it('Scribe returns an UNPARSEABLE draft → honest error, no fake spec', async () => {
     const { provider } = fixedReplyProvider(REQUEST_REPLY)
     const { fn } = draftSpecSpy({ title: 'Spec for: x', body: 'x' }, { parsed: false })
@@ -688,6 +699,7 @@ describe('POST /api/chat/stream — REAL Scribe handoff', () => {
     expect(res.statusCode).toBe(200) // SSE already hijacked — failure rides as an error frame
     expect(res.body).toContain('event: error')
     expect(res.body).toContain('ScribeError')
+    expect(res.body).not.toContain('scribe provider down') // SECURITY: raw provider text must not leak in the frame
   })
 
   // F1(b) — LIVE DRAFTING SIGNAL: when the REAL Scribe call actually starts the route emits an

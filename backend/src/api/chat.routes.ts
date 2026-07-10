@@ -333,8 +333,12 @@ async function expandSpecRequest(
   try {
     drafted = await draftSpec({ brief: request.brief.slice(0, SCRIBE_BRIEF_MAX_CHARS), conversation: bounded })
   } catch (err) {
-    // Provider error → honest error row; NEVER fall back to a persona-authored spec.
-    throw new ChatRequestError(502, 'ScribeError', err instanceof Error ? err.message : 'Scribe failed to draft the spec')
+    // Provider error → honest error row; NEVER fall back to a persona-authored spec. SECURITY:
+    // the raw upstream provider message can carry provider-internal detail (request ids, org
+    // hints, echoed fragments) — log it server-side, but hand the client only a generic message
+    // (the FE localizes ScribeError by code, so this string is a safe non-UI fallback).
+    console.error('[chat] Scribe draft failed:', err instanceof Error ? err.message : String(err))
+    throw new ChatRequestError(502, 'ScribeError', 'the AI provider failed to draft the spec')
   }
   // A non-parsed draft is a DEGRADED result (the model didn't return a real spec) — surface it as an
   // honest error rather than rendering the fallback `Spec for: …` text as if it were a real spec.
@@ -441,8 +445,12 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       return reply.send({ reply: replyText })
     } catch (err) {
       // ScribeError (502) is honest + localized on the FE; other provider errors stay ProviderError.
+      // ChatRequestError carries an already-safe message (4xx config messages are intentional; the
+      // 502 ScribeError message was scrubbed at the throw). A bare provider failure here is a raw
+      // upstream error — log it server-side and return a generic message (SECURITY: never echo it).
       if (err instanceof ChatRequestError) return reply.code(err.status).send({ error: err.message, code: err.code })
-      return reply.code(502).send({ error: err instanceof Error ? err.message : 'chat failed', code: 'ProviderError' })
+      console.error('[chat] provider failure:', err instanceof Error ? err.message : String(err))
+      return reply.code(502).send({ error: 'the AI provider failed to respond', code: 'ProviderError' })
     }
   })
 
@@ -540,9 +548,13 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       // so persistence never delays the UI; errors swallowed (best-effort, never breaks the turn).
       if (sessionId && deps.chatAppend) await deps.chatAppend(req, sessionId, turnPair(message, finalReply)).catch(() => {})
     } catch (err) {
-      // ScribeError carries its own code so the FE localizes it honestly; other failures → ProviderError.
+      // ScribeError carries its own (already-scrubbed) code+message so the FE localizes it honestly;
+      // other failures → ProviderError with a generic message. SECURITY: a bare provider failure's
+      // raw message is logged server-side, never written into the client-facing error frame.
       const code = err instanceof ChatRequestError ? err.code : 'ProviderError'
-      safeWrite(sseControl('error', { message: err instanceof Error ? err.message : 'chat failed', code }))
+      const message = err instanceof ChatRequestError ? err.message : 'the AI provider failed to respond'
+      if (!(err instanceof ChatRequestError)) console.error('[chat] provider failure (stream):', err instanceof Error ? err.message : String(err))
+      safeWrite(sseControl('error', { message, code }))
     } finally {
       if (!aborted) { try { raw.end() } catch { /* socket already gone */ } }
     }

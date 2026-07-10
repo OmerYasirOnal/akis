@@ -491,9 +491,13 @@ export function AkisChat({
           // An HONEST, localized row (never a persona-authored spec fallback) — the user retries.
           : ApiError.is(err) && err.code === 'ScribeError'
             ? t('akis.error.scribe')
-            : ApiError.is(err)
-              ? `(${err.code ?? 'error'}) ${err.message}`
-              : t('akis.error.network')
+            // Upstream provider failure (502) — a localized "the AI provider failed" row instead of
+            // the raw upstream string (which the backend now scrubs anyway; this also localizes it).
+            : ApiError.is(err) && err.code === 'ProviderError'
+              ? t('akis.error.provider')
+              : ApiError.is(err)
+                ? `(${err.code ?? 'error'}) ${err.message}`
+                : t('akis.error.network')
 
   // The quota row: the localized sentence + the reset date when the usage state knows it.
   const quotaErrorText = (): string => {

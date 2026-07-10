@@ -115,9 +115,11 @@ describe('AkisChat', () => {
 
   // ── Resilience: distinct error rows + retry + history exclusion ──
 
-  it('renders a provider 502 as a DISTINCT error row (role=alert), not a faked AK reply', async () => {
+  it('renders a provider 502 as a DISTINCT error row (role=alert) with LOCALIZED copy, never the raw upstream string', async () => {
     const fetchFn = vi.fn(async (path: string) => {
-      if (path.endsWith('/api/chat')) return { ok: false, status: 502, json: async () => ({ error: 'upstream down', code: 'ProviderError' }) } as unknown as Response
+      // The backend now scrubs the raw upstream text server-side, but a malicious/legacy backend
+      // could still send one — the FE must localize by code and never render the raw `error` string.
+      if (path.endsWith('/api/chat')) return { ok: false, status: 502, json: async () => ({ error: 'upstream down: secret-detail', code: 'ProviderError' }) } as unknown as Response
       return { ok: false, status: 404, json: async () => ({}) } as unknown as Response
     })
     const api = new ApiClient('', fetchFn)
@@ -127,10 +129,12 @@ describe('AkisChat', () => {
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Message failed')
-    expect(alert).toHaveTextContent(/ProviderError/)
+    // The localized ProviderError copy (akis.error.provider) — NOT the raw code or upstream string.
+    expect(alert).toHaveTextContent(/The AI provider failed to respond/)
+    expect(alert).not.toHaveTextContent(/ProviderError/)
     expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument()
-    // The error must NOT masquerade as an AK chat bubble.
-    expect(screen.queryByText(/upstream down/)?.closest('[role="alert"]')).not.toBeNull()
+    // SECURITY: the raw upstream message must NEVER reach the DOM (defence in depth atop the backend scrub).
+    expect(screen.queryByText(/upstream down/)).toBeNull()
   })
 
   it('renders a network failure as an error row with a friendly message', async () => {

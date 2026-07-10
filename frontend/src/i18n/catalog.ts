@@ -180,6 +180,8 @@ export const STRINGS = {
     'akis.error.concurrency': 'Too many builds running at once — wait for one to finish, then try again.',
     // Per-caller request-rate limit (429 RateLimited) — you're sending requests too fast.
     'akis.error.rateLimited': 'You’re going a bit fast — wait a few seconds and try again.',
+    // Upstream LLM-provider failure (502 ProviderError) — the raw upstream text is scrubbed server-side.
+    'akis.error.provider': 'The AI provider failed to respond. Please try again in a moment.',
     'usage.label': 'Tokens',
     'usage.remaining': 'left',
     'usage.resets': 'Resets',
@@ -1018,6 +1020,8 @@ export const STRINGS = {
     'akis.error.concurrency': 'Aynı anda çok fazla build çalışıyor — biri bitince yeniden dene.',
     // Kullanıcı başına istek-hız sınırı (429 RateLimited) — çok hızlı istek gönderiyorsun.
     'akis.error.rateLimited': 'Biraz hızlısın — birkaç saniye bekleyip tekrar dene.',
+    // Upstream LLM-sağlayıcı hatası (502 ProviderError) — ham upstream metni server-side temizlenir.
+    'akis.error.provider': 'AI sağlayıcı yanıt veremedi. Birazdan tekrar dene.',
     'usage.label': 'Token',
     'usage.remaining': 'kaldı',
     'usage.resets': 'Sıfırlanma',
