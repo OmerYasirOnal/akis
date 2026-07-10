@@ -24,6 +24,7 @@ import { Bm25Index } from '../knowledge/store/Bm25Index.js'
 import { activeEmbeddingDim } from '../knowledge/embedding/ApiEmbeddingProvider.js'
 import type { VectorStore } from '../knowledge/store/VectorStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
+import { csrfPostureWarning } from './csrfPosture.js'
 import { selectMailer } from '../mail/selectMailer.js'
 import type { Mailer } from '../mail/Mailer.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
@@ -471,6 +472,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   if (deps.auditStore) attachAuditLog(services.bus, deps.auditStore)
 
   const cookie = cookieConfigFromEnv(env)
+  // CSRF posture: SameSite=Lax/Strict already blocks the CSRF vector; the Origin hook above is
+  // defence-in-depth (effective only with PUBLIC_BASE_URL). Warn the operator about the ONE
+  // unprotected combo (SameSite=None + no PUBLIC_BASE_URL) without changing request behavior.
+  const csrfWarn = csrfPostureWarning(cookie.sameSite, trustedOrigin)
+  if (csrfWarn) console.warn(`[boot] ${csrfWarn}`)
   // A valid-session guard reused to protect provider-key writes.
   // ASYNC since token revocation: userIdFromRequest now compares the JWT's tv claim to the
   // user record, so every consumer awaits (a revoked token reads as unauthenticated).
