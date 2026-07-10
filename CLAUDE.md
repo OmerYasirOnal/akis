@@ -4,9 +4,13 @@ Guidance for Claude Code when working in this repository.
 
 ## What this repo is
 
-AKIS (Adaptive Knowledge Integrity System) — an AI-powered, multi-agent
-software-development platform (Scribe / Proto / Critic / Trace orchestrated by
-AKIS, behind 4 structural human-approval gates). For the app itself, start from:
+AKIS (Adaptive Knowledge Integrity System) is a **product** — an AI-powered,
+multi-agent software-development platform (Scribe / Proto / Critic / Trace
+orchestrated by AKIS, behind 4 structural human-approval gates), self-hostable
+and released (`v1.0.0`). It began as a university project, but that chapter is
+closed: **treat this as a real software product, not a graduation project.**
+The current work track is productization — see
+`docs/plans/2026-07-09-productization-roadmap.md`. For the app itself, start from:
 
 - `ARCHITECTURE.md` — system architecture and the gate model
 - `MEMORY.md` / `HANDOFF.md` — current state, decisions, and context
@@ -15,24 +19,19 @@ AKIS, behind 4 structural human-approval gates). For the app itself, start from:
 
 App commands: `pnpm -r build`, `pnpm test`, `pnpm -r typecheck`.
 
-## Report / document tooling (bitirme raporu) — DELIVERED
+## Historical note: the graduation report (archived)
 
-The graduation report (**bitirme raporu**) was **submitted and graded in
-2026-07 (93/100, course grade AA)** — it is no longer an active work item; the
-project has pivoted to productization (see
-`docs/plans/2026-07-09-productization-roadmap.md`).
+AKIS was originally a university graduation project. The report was **submitted,
+graded, and the degree awarded (2026)** — it is **done and archived**, not an
+active work item, and future work is product work, never "for the report."
 
-The report tooling (python-docx, matplotlib, openpyxl, pandas, Pillow, lxml,
-poppler-utils, pandoc) is therefore **no longer installed automatically** — the
-SessionStart hook (`.claude/hooks/session-start.sh`) skips it by default. To
-re-enable (e.g. to rework the report into a paper), set `AKIS_REPORT_TOOLING=1`
-in the environment, or install manually:
-`pip install -r .claude/report-requirements.txt` plus
-`apt-get install -y poppler-utils pandoc`.
-
-If the report is ever edited again, keep citation numbers `[n]` consistent and
-in order with the REFERENCES list, and keep every Table/Figure caption
-sequential and reflected in the List of Tables / List of Figures.
+The report tooling (python-docx, matplotlib, etc.) is therefore **not installed
+automatically** — the SessionStart hook skips it by default. In the unlikely
+event the archived report is ever revisited (e.g. reworked into a paper), set
+`AKIS_REPORT_TOOLING=1` or install manually
+(`pip install -r .claude/report-requirements.txt` + `apt-get install -y
+poppler-utils pandoc`), and keep citation numbers `[n]` and Table/Figure
+captions sequential and consistent with their lists.
 
 ## Working method (owner-approved discipline — applies to EVERY session)
 
