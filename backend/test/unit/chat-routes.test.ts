@@ -59,6 +59,15 @@ describe('POST /api/chat', () => {
     await a.close()
   })
 
+  it('SECURITY: the 502 ProviderError does NOT echo the raw upstream provider message to the client', async () => {
+    const a = await app(provider(() => { throw new Error('upstream boom: internal-detail-xyz') }))
+    const res = await a.inject({ method: 'POST', url: '/api/chat', payload: { message: 'hi' } })
+    expect(res.statusCode).toBe(502)
+    expect(res.json().code).toBe('ProviderError')
+    expect(res.body).not.toContain('upstream boom') // raw provider text stays server-side, never in the response
+    await a.close()
+  })
+
   it('drops non-user/assistant roles even within the kept window (sanitize, NOT just the cap)', async () => {
     const p = provider(() => ({ text: 'ok' }))
     const a = await app(p)

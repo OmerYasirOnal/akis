@@ -1,4 +1,4 @@
-import type { FastifyInstance, FastifyRequest } from 'fastify'
+import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import type { SessionState, ChatTurn } from '@akis/shared'
 import { isVerified } from '@akis/shared'
 import type { LlmProvider } from '../agent/LlmProvider.js'
@@ -7,6 +7,7 @@ import { CATALOG, type ProviderId } from '../agent/providers/catalog.js'
 import { createProvider, ProviderConfigError, type KeyLookup } from '../agent/providers/createProvider.js'
 import type { UsageStorePort } from '../usage/UsageStore.js'
 import { checkQuota, ANON_OWNER, type QuotaPolicy } from '../usage/quota.js'
+import { overRouteLimit, rateLimitKey, type RouteRateLimits } from '../usage/rateLimit.js'
 import { extractSpecRequest, stripSpecRequest } from './specRequest.js'
 
 /**
@@ -124,6 +125,10 @@ export interface ChatDeps {
    *  takes precedence over the fixed `quota`; absent ⇒ the fixed `quota` (byte-unchanged). */
   quotaFor?: (ownerId: string | undefined) => Promise<QuotaPolicy>
   ownerOf?: (req: FastifyRequest) => Promise<string | undefined>
+  /** Per-caller request-RATE limit (usage/rateLimit.ts). Present ⇒ each chat turn is throttled by
+   *  the `chat` bucket (429 RateLimited) BEFORE the quota check + provider call. Absent ⇒ no check
+   *  (byte-identical). Opt-in via AKIS_RATE_LIMIT. */
+  rateLimits?: RouteRateLimits
   /** BUILD-AWARE CHAT (read-only, owner-scoped). Resolves a session the CALLER may access — the
    *  SAME accessibleSession semantics as the gated routes (an owned session is returned only to
    *  its owner; a foreign/unknown id resolves to undefined → the route silently falls back to a
@@ -328,8 +333,12 @@ async function expandSpecRequest(
   try {
     drafted = await draftSpec({ brief: request.brief.slice(0, SCRIBE_BRIEF_MAX_CHARS), conversation: bounded })
   } catch (err) {
-    // Provider error → honest error row; NEVER fall back to a persona-authored spec.
-    throw new ChatRequestError(502, 'ScribeError', err instanceof Error ? err.message : 'Scribe failed to draft the spec')
+    // Provider error → honest error row; NEVER fall back to a persona-authored spec. SECURITY:
+    // the raw upstream provider message can carry provider-internal detail (request ids, org
+    // hints, echoed fragments) — log it server-side, but hand the client only a generic message
+    // (the FE localizes ScribeError by code, so this string is a safe non-UI fallback).
+    console.error('[chat] Scribe draft failed:', err instanceof Error ? err.message : String(err))
+    throw new ChatRequestError(502, 'ScribeError', 'the AI provider failed to draft the spec')
   }
   // A non-parsed draft is a DEGRADED result (the model didn't return a real spec) — surface it as an
   // honest error rather than rendering the fallback `Spec for: …` text as if it were a real spec.
@@ -347,15 +356,18 @@ async function expandSpecRequest(
  * uses the stream and falls back to /api/chat on any stream error / unsupported provider.
  */
 export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
-  // Per-turn quota PRE-CHECK shared by both routes. Returns the owner key to charge AFTER a
-  // successful turn (so the caller accumulates the real spend), or a {blocked} signal carrying
-  // the 429 resetAt. When usage/quota are not injected, it never blocks and never charges.
-  const quotaGate = async (req: FastifyRequest): Promise<{ blocked: true; resetAt: string } | { blocked: false; ownerKey: string }> => {
+  // Per-turn PRE-CHECK shared by both routes. Resolves the owner ONCE, then applies (in order,
+  // cheapest first) the request-RATE limit and the token QUOTA — each writing its own 429 shape
+  // and returning {blocked:true} (the caller just `return`s). On pass it returns the owner key to
+  // charge AFTER a successful turn. When a guard's deps aren't injected it's a no-op (byte-
+  // identical). SACRED: a blocked turn never reaches the model.
+  const chatPreflight = async (req: FastifyRequest, reply: FastifyReply): Promise<{ blocked: true } | { blocked: false; ownerKey: string }> => {
     const ownerId = deps.ownerOf ? await deps.ownerOf(req) : undefined
+    if (deps.rateLimits && overRouteLimit(deps.rateLimits.chat, rateLimitKey(req, ownerId), reply)) return { blocked: true }
     const policy = deps.quotaFor ? await deps.quotaFor(ownerId) : deps.quota
     if (deps.usage && policy) {
       const decision = await checkQuota(deps.usage, policy, ownerId)
-      if (!decision.allowed) return { blocked: true, resetAt: decision.resetAt }
+      if (!decision.allowed) { void reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt }); return { blocked: true } }
     }
     return { blocked: false, ownerKey: ownerId ?? ANON_OWNER }
   }
@@ -397,10 +409,10 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
     const effort = isStr(req.body?.effort) ? req.body.effort.trim() || undefined : undefined
     const sessionId = isStr(req.body?.sessionId) ? req.body.sessionId.trim() || undefined : undefined
     const messages = assembleMessages(message, req.body?.history)
-    // Per-user token-quota PRE-CHECK — BEFORE resolving/calling any provider (SACRED: a blocked
-    // turn never reaches the model). No-op when usage/quota aren't injected (byte-identical).
-    const gate = await quotaGate(req)
-    if (gate.blocked) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: gate.resetAt })
+    // Rate-limit + token-quota PRE-CHECK — BEFORE resolving/calling any provider (SACRED: a
+    // blocked turn never reaches the model). No-op when the guards' deps aren't injected.
+    const gate = await chatPreflight(req, reply)
+    if (gate.blocked) return
     // Resolve the per-request provider FIRST so a bad provider/model/key is a clean 4xx (400
     // BadRequest / 400 NoKey) — never a 502. Absent overrides → deps.provider, byte-identical.
     let resolved: LlmProvider
@@ -433,8 +445,12 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       return reply.send({ reply: replyText })
     } catch (err) {
       // ScribeError (502) is honest + localized on the FE; other provider errors stay ProviderError.
+      // ChatRequestError carries an already-safe message (4xx config messages are intentional; the
+      // 502 ScribeError message was scrubbed at the throw). A bare provider failure here is a raw
+      // upstream error — log it server-side and return a generic message (SECURITY: never echo it).
       if (err instanceof ChatRequestError) return reply.code(err.status).send({ error: err.message, code: err.code })
-      return reply.code(502).send({ error: err instanceof Error ? err.message : 'chat failed', code: 'ProviderError' })
+      console.error('[chat] provider failure:', err instanceof Error ? err.message : String(err))
+      return reply.code(502).send({ error: 'the AI provider failed to respond', code: 'ProviderError' })
     }
   })
 
@@ -449,12 +465,12 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
     const effort = isStr(req.body?.effort) ? req.body.effort.trim() || undefined : undefined
     const sessionId = isStr(req.body?.sessionId) ? req.body.sessionId.trim() || undefined : undefined
     const messages = assembleMessages(message, req.body?.history)
-    // Per-user token-quota PRE-CHECK — BEFORE reply.hijack() (after hijack only SSE frames can be
-    // written, so a 429 would be impossible). Mirrors the existing pre-hijack 4xx for a bad
+    // Rate-limit + token-quota PRE-CHECK — BEFORE reply.hijack() (after hijack only SSE frames can
+    // be written, so a 429 would be impossible). Mirrors the existing pre-hijack 4xx for a bad
     // provider/model below: a blocked turn returns a clean JSON 429 (the FE renders it directly,
-    // no redundant non-stream fallback). No-op when usage/quota aren't injected (byte-identical).
-    const gate = await quotaGate(req)
-    if (gate.blocked) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: gate.resetAt })
+    // no redundant non-stream fallback). No-op when the guards' deps aren't injected.
+    const gate = await chatPreflight(req, reply)
+    if (gate.blocked) return
     // Resolve the per-request provider BEFORE hijacking the socket — a bad provider/model/key
     // must surface as a clean JSON 4xx (the FE then falls back to /api/chat); after reply.hijack()
     // only SSE frames can be written, so a 400 here would be impossible.
@@ -532,9 +548,13 @@ export function registerChatRoutes(app: FastifyInstance, deps: ChatDeps): void {
       // so persistence never delays the UI; errors swallowed (best-effort, never breaks the turn).
       if (sessionId && deps.chatAppend) await deps.chatAppend(req, sessionId, turnPair(message, finalReply)).catch(() => {})
     } catch (err) {
-      // ScribeError carries its own code so the FE localizes it honestly; other failures → ProviderError.
+      // ScribeError carries its own (already-scrubbed) code+message so the FE localizes it honestly;
+      // other failures → ProviderError with a generic message. SECURITY: a bare provider failure's
+      // raw message is logged server-side, never written into the client-facing error frame.
       const code = err instanceof ChatRequestError ? err.code : 'ProviderError'
-      safeWrite(sseControl('error', { message: err instanceof Error ? err.message : 'chat failed', code }))
+      const message = err instanceof ChatRequestError ? err.message : 'the AI provider failed to respond'
+      if (!(err instanceof ChatRequestError)) console.error('[chat] provider failure (stream):', err instanceof Error ? err.message : String(err))
+      safeWrite(sseControl('error', { message, code }))
     } finally {
       if (!aborted) { try { raw.end() } catch { /* socket already gone */ } }
     }

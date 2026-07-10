@@ -467,6 +467,17 @@ export function AkisChat({
   const errorText = (err: unknown): string =>
     ApiError.is(err) && err.status === 401
       ? t('akis.error.unauthorized')
+      // Request-RATE limit (RateLimited): a chat turn CAN return this (the chat bucket), so it
+      // must precede the generic-429 quota branch — a rate refusal is not a spend refusal.
+      : ApiError.is(err) && err.code === 'RateLimited'
+        ? t('akis.error.rateLimited')
+      // Active-run cap (ConcurrencyLimited): checked BEFORE the generic-429 quota branch below,
+      // or a concurrency refusal (also a 429) would misread as "token quota exceeded".
+      // DEFENSIVE-ONLY today (review LOW): the chat-completion paths that reach errorText never
+      // return this code (start/approve surface via ChatStudio → actionErrorText); kept so a
+      // future chat-triggered start can't silently render the wrong quota copy.
+      : ApiError.is(err) && err.code === 'ConcurrencyLimited'
+        ? t('akis.error.concurrency')
       // Quota exceeded (429): a localized, honest "you hit your token quota" sentence — never a
       // faked reply. Append the reset date when known (from the fetched usage state) so the user
       // knows when it frees up. The server fail-closed BEFORE the model; this is the surfacing.
@@ -480,9 +491,13 @@ export function AkisChat({
           // An HONEST, localized row (never a persona-authored spec fallback) — the user retries.
           : ApiError.is(err) && err.code === 'ScribeError'
             ? t('akis.error.scribe')
-            : ApiError.is(err)
-              ? `(${err.code ?? 'error'}) ${err.message}`
-              : t('akis.error.network')
+            // Upstream provider failure (502) — a localized "the AI provider failed" row instead of
+            // the raw upstream string (which the backend now scrubs anyway; this also localizes it).
+            : ApiError.is(err) && err.code === 'ProviderError'
+              ? t('akis.error.provider')
+              : ApiError.is(err)
+                ? `(${err.code ?? 'error'}) ${err.message}`
+                : t('akis.error.network')
 
   // The quota row: the localized sentence + the reset date when the usage state knows it.
   const quotaErrorText = (): string => {

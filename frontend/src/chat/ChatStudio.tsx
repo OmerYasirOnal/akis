@@ -655,7 +655,10 @@ export function ChatStudio({ api, baseUrl = '', makeClient }: { api: ApiClient; 
           recorded via propose_github_write. NOT gated on isDone: a proposal surfaces LIVE
           during the build (it arrives as a propose_github_write tool_call); the human reads
           the exact bound bytes and confirms. AKIS only proposes — never autonomous. */}
-      {activeSessionId && !sessionGone && <AgentWriteProposals sessionId={activeSessionId} api={api} />}
+      {/* B9: `live` gates the proposal poll to runs that can still emit one — the coarse
+          'building' bucket (in-flight + awaiting gates). A parked/done session loads once and
+          stops polling; a visible card keeps its own poll alive inside the component. */}
+      {activeSessionId && !sessionGone && <AgentWriteProposals sessionId={activeSessionId} api={api} live={specChipStatus(runStatusFor(activeSessionId)) === 'building'} />}
       {/* Publish docs/issue to Jira/Confluence via MCP — propose → human-confirm → execute. */}
       {activeSessionId && !sessionGone && isDone && <ExternalWriteCard sessionId={activeSessionId} idea={activeIdea} files={codeFiles} api={api} />}
     </>

@@ -1,9 +1,10 @@
 import { useState, type FormEvent } from 'react'
-import { ApiClient, ApiError } from '../api/client.js'
+import { ApiClient } from '../api/client.js'
 import { useRouter, Link } from '../router/router.js'
 import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
+import { authErrorKey } from './authError.js'
 
 export function ForgotPassword({ api }: { api: ApiClient }) {
   const { t } = useI18n()
@@ -21,7 +22,7 @@ export function ForgotPassword({ api }: { api: ApiClient }) {
       const r = await api.forgotPassword(email)
       setSent(true)
       if (r.resetUrl) setDevUrl(r.resetUrl) // dev-only echo (no email service)
-    } catch (e) { setErr(ApiError.is(e) ? e.message : String(e)) }
+    } catch (e) { setErr(t(authErrorKey(e))) } // B6-i
     finally { setBusy(false) }
   }
 

@@ -46,3 +46,52 @@ describe('StatsCollector', () => {
     expect(() => bus.emit(ev({ kind: 'session', status: 'started' }))).not.toThrow()
   })
 })
+
+describe('StatsCollector — verified-but-cancelled bucketing (B4a)', () => {
+  it('a run whose verify PASSED then got cancelled at the push gate counts as a verified run (and stays out of done)', () => {
+    // The exact B4a inconsistency: this run used to land in passRate/testsRun (via 'verify')
+    // but in NEITHER done NOR verifiedRuns (no 'done' ever fires after a cancel) — counted
+    // "both and neither". verifiedRuns = "verification genuinely passed"; shipping stays `done`.
+    const c = new StatsCollector()
+    c.observe(ev({ kind: 'session', status: 'started' }))
+    c.observe(ev({ kind: 'verify', passed: true, testsRun: 3, agent: 'trace', laneId: 'verify' }))
+    c.observe(ev({ kind: 'session', status: 'cancelled' }))
+    const s = c.snapshot()
+    expect(s.verifiedRuns).toBe(1)
+    expect(s.done).toBe(0)
+    expect(s.testsRun).toBe(3)
+    expect(s.passRate).toBe(1)
+    expect(s.running).toBe(0)
+  })
+
+  it('a verified run that ships counts ONCE (verify then done) — no double count', () => {
+    const c = new StatsCollector()
+    c.observe(ev({ kind: 'session', status: 'started' }))
+    c.observe(ev({ kind: 'verify', passed: true, testsRun: 2, agent: 'trace', laneId: 'verify' }))
+    c.observe(ev({ kind: 'done', verified: true, provider: 'anthropic' }))
+    const s = c.snapshot()
+    expect(s.verifiedRuns).toBe(1)
+    expect(s.done).toBe(1)
+    expect(s.provider).toBe('anthropic')
+  })
+
+  it('a failed verify never counts; the retry that passes counts once (retryVerification is only reachable from verify_failed)', () => {
+    const c = new StatsCollector()
+    c.observe(ev({ kind: 'session', status: 'started' }))
+    c.observe(ev({ kind: 'verify', passed: false, testsRun: 1, agent: 'trace', laneId: 'verify' }))
+    c.observe(ev({ kind: 'verify', passed: true, testsRun: 1, agent: 'trace', laneId: 'verify' }))
+    const s = c.snapshot()
+    expect(s.verifiedRuns).toBe(1)
+    expect(s.passRate).toBeCloseTo(0.5)
+    expect(s.testsRun).toBe(2)
+  })
+
+  it('an unverified done still counts done but never verifiedRuns', () => {
+    const c = new StatsCollector()
+    c.observe(ev({ kind: 'session', status: 'started' }))
+    c.observe(ev({ kind: 'done', verified: false, provider: 'mock' }))
+    const s = c.snapshot()
+    expect(s.done).toBe(1)
+    expect(s.verifiedRuns).toBe(0)
+  })
+})

@@ -151,6 +151,9 @@ describe('POST /api/chat/stream', () => {
     const res = await a.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'hi' } })
     const frames = parseSse(res.body)
     expect(frames.some(f => f.event === 'error')).toBe(true)
+    // SECURITY: the stream bare-provider scrub — the raw upstream text must NOT ride in the error
+    // frame (this is the 4th scrub sink; the other three are content-locked elsewhere).
+    expect(res.body).not.toContain('upstream boom')
     await a.close()
   })
 })

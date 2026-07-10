@@ -115,6 +115,11 @@ export const STRINGS = {
     'chat.tool.run_tests': 'Running tests',
     'chat.tool.retrieve_knowledge': 'Retrieving knowledge',
     'chat.tool.propose_github_write': 'Proposing a GitHub write (needs your confirm)',
+    // ── Run error-bubble headlines (B6-ii) — localized by the error event's machine code
+    // (runError.ts); the raw backend message stays visible as secondary technical detail. ──
+    'run.error.pushFailed': 'The push to GitHub failed — you can retry it from the recovery card below.',
+    'run.error.runFailed': 'The build run failed.',
+    'run.error.critic': 'The automated review step hit an error.',
     'chat.codeReview.label': 'Code review',
     'chat.codeReview.approved': 'Approved',
     'chat.codeReview.rejected': 'Changes requested',
@@ -171,6 +176,12 @@ export const STRINGS = {
     'akis.error.noKey': 'The selected provider has no API key configured. Add one in Settings → Providers, or switch the model from the chip below.',
     // ── Per-user token quota (multi-tenant safety) ──
     'akis.error.quota': 'You’ve reached your token quota for this period.',
+    // Per-user active-run cap (429 ConcurrencyLimited) — distinct from the token quota.
+    'akis.error.concurrency': 'Too many builds running at once — wait for one to finish, then try again.',
+    // Per-caller request-rate limit (429 RateLimited) — you're sending requests too fast.
+    'akis.error.rateLimited': 'You’re going a bit fast — wait a few seconds and try again.',
+    // Upstream LLM-provider failure (502 ProviderError) — the raw upstream text is scrubbed server-side.
+    'akis.error.provider': 'The AI provider failed to respond. Please try again in a moment.',
     'usage.label': 'Tokens',
     'usage.remaining': 'left',
     'usage.resets': 'Resets',
@@ -378,6 +389,15 @@ export const STRINGS = {
     'auth.reset.subtitle': 'Enter a new password for your account.',
     'auth.reset.cta': 'Set new password',
     'auth.reset.noToken': 'This reset link is missing or invalid. Request a new one.',
+    // ── Auth API errors (B6-i) — keyed by the backend's stable machine codes; the raw English
+    // transport string never renders (authError.ts maps code → key, unknown → generic). ──
+    'auth.err.badCredentials': 'Invalid email or password.',
+    'auth.err.badRequest': 'Check the form fields and try again.',
+    'auth.err.emailTaken': 'This email is already registered — sign in instead.',
+    'auth.err.badToken': 'This reset link is invalid or has expired. Request a new one.',
+    'auth.err.unauthorized': 'Your session has expired — sign in again.',
+    'auth.err.rateLimited': 'Too many attempts — wait a bit and try again.',
+    'auth.err.generic': 'Something went wrong. Please try again.',
     'auth.or': 'or',
     'auth.oauth.github': 'Continue with GitHub',
     'auth.oauth.google': 'Continue with Google',
@@ -414,6 +434,9 @@ export const STRINGS = {
     'settings.keys.title': 'Provider keys',
     'settings.keys.sub': 'Connect your own AI provider keys (stored encrypted on the server, never echoed).',
     'settings.keys.connected': 'Connected',
+    // B5 honesty: shown instead of "Connected" when the working key is the server's shared env
+    // key (keySource:'shared') — the user connected nothing; their own key would take over.
+    'settings.keys.sharedKey': 'Shared server key — add yours to override',
     'settings.keys.notConnected': 'Not connected',
     'settings.keys.save': 'Save',
     'settings.keys.remove': 'Remove',
@@ -559,6 +582,10 @@ export const STRINGS = {
     'settings.password.new': 'New password',
     'settings.password.change': 'Update password',
     'settings.password.changed': 'Password updated ✓',
+    // Review MED: the backend reuses code BadCredentials for a wrong CURRENT password here —
+    // the login copy ("Invalid email or password.") would reference an email field this form
+    // doesn't have, so the change-password catch special-cases it to this accurate copy.
+    'settings.password.currentWrong': 'Current password is incorrect.',
     'docs.gates.body': 'Structural gates guard the pipeline: spec approval, real-test verification, push confirmation, and critic resolution — verification can never be bypassed.',
     // ── Docs page (comprehensive rebuild) — docs.v2.* namespace ──
     'docs.v2.badge': 'Documentation',
@@ -928,6 +955,11 @@ export const STRINGS = {
     'chat.tool.run_tests': 'Testler çalışıyor',
     'chat.tool.retrieve_knowledge': 'Bilgi getiriliyor',
     'chat.tool.propose_github_write': 'GitHub yazımı öneriliyor (onayın gerekir)',
+    // ── Run hata-balonu başlıkları (B6-ii) — hata olayının makine kodundan lokalize edilir
+    // (runError.ts); ham backend mesajı ikincil teknik ayrıntı olarak görünür kalır. ──
+    'run.error.pushFailed': 'GitHub’a push başarısız oldu — aşağıdaki kurtarma kartından yeniden deneyebilirsin.',
+    'run.error.runFailed': 'Build çalışması başarısız oldu.',
+    'run.error.critic': 'Otomatik inceleme adımında hata oluştu.',
     'chat.codeReview.label': 'Kod incelemesi',
     'chat.codeReview.approved': 'Onaylandı',
     'chat.codeReview.rejected': 'Değişiklik istendi',
@@ -984,6 +1016,12 @@ export const STRINGS = {
     'akis.error.noKey': 'Seçili sağlayıcının API anahtarı yapılandırılmamış. Ayarlar → Sağlayıcılar’dan ekleyin ya da aşağıdaki çipten modeli değiştirin.',
     // ── Kullanıcı başına token kotası (çok kiracılı güvenlik) ──
     'akis.error.quota': 'Bu dönem için token kotana ulaştın.',
+    // Kullanıcı başına aktif-build sınırı (429 ConcurrencyLimited) — token kotasından ayrıdır.
+    'akis.error.concurrency': 'Aynı anda çok fazla build çalışıyor — biri bitince yeniden dene.',
+    // Kullanıcı başına istek-hız sınırı (429 RateLimited) — çok hızlı istek gönderiyorsun.
+    'akis.error.rateLimited': 'Biraz hızlısın — birkaç saniye bekleyip tekrar dene.',
+    // Upstream LLM-sağlayıcı hatası (502 ProviderError) — ham upstream metni server-side temizlenir.
+    'akis.error.provider': 'AI sağlayıcı yanıt veremedi. Birazdan tekrar dene.',
     'usage.label': 'Token',
     'usage.remaining': 'kaldı',
     'usage.resets': 'Sıfırlanma',
@@ -1193,6 +1231,15 @@ export const STRINGS = {
     'auth.reset.subtitle': 'Hesabın için yeni bir parola gir.',
     'auth.reset.cta': 'Yeni parolayı kaydet',
     'auth.reset.noToken': 'Bu sıfırlama bağlantısı eksik veya geçersiz. Yenisini iste.',
+    // ── Auth API hataları (B6-i) — backend'in sabit makine kodlarıyla eşlenir; ham İngilizce
+    // transport metni asla render edilmez (authError.ts kod → anahtar, bilinmeyen → generic). ──
+    'auth.err.badCredentials': 'E-posta veya şifre hatalı.',
+    'auth.err.badRequest': 'Form alanlarını kontrol edip tekrar dene.',
+    'auth.err.emailTaken': 'Bu e-posta zaten kayıtlı — giriş yapmayı dene.',
+    'auth.err.badToken': 'Bu sıfırlama bağlantısı geçersiz ya da süresi dolmuş. Yenisini iste.',
+    'auth.err.unauthorized': 'Oturumunun süresi doldu — tekrar giriş yap.',
+    'auth.err.rateLimited': 'Çok fazla deneme — biraz bekleyip tekrar dene.',
+    'auth.err.generic': 'Bir şeyler ters gitti. Lütfen tekrar dene.',
     'auth.or': 'veya',
     'auth.oauth.github': 'GitHub ile devam et',
     'auth.oauth.google': 'Google ile devam et',
@@ -1229,6 +1276,9 @@ export const STRINGS = {
     'settings.keys.title': 'Sağlayıcı anahtarları',
     'settings.keys.sub': 'Kendi AI sağlayıcı anahtarlarını bağla (sunucuda şifreli saklanır, asla geri gösterilmez).',
     'settings.keys.connected': 'Bağlı',
+    // B5 dürüstlüğü: çalışan anahtar sunucunun paylaşımlı env anahtarıysa (keySource:'shared')
+    // "Bağlı" yerine bu gösterilir — kullanıcı bir şey bağlamadı; kendi anahtarı öncelik alır.
+    'settings.keys.sharedKey': 'Paylaşımlı sunucu anahtarı — kendi anahtarını eklersen o kullanılır',
     'settings.keys.notConnected': 'Bağlı değil',
     'settings.keys.save': 'Kaydet',
     'settings.keys.remove': 'Kaldır',
@@ -1368,6 +1418,10 @@ export const STRINGS = {
     'settings.password.new': 'Yeni parola',
     'settings.password.change': 'Parolayı güncelle',
     'settings.password.changed': 'Parola güncellendi ✓',
+    // Review MED: backend yanlış MEVCUT şifrede de BadCredentials kodu döndürüyor — login
+    // kopyası ("E-posta veya şifre hatalı.") bu formda olmayan bir e-posta alanına işaret
+    // ederdi; şifre değiştirme catch'i bu doğru kopyaya özel-durumlanır.
+    'settings.password.currentWrong': 'Mevcut şifre hatalı.',
     'docs.gates.body': 'Yapısal kapılar hattı korur: spec onayı, gerçek test doğrulaması, push onayı ve critic çözümü — doğrulama asla atlanamaz.',
     // ── Dökümantasyon sayfası (kapsamlı yeniden inşa) — docs.v2.* ad alanı ──
     'docs.v2.badge': 'Dökümantasyon',

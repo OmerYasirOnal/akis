@@ -23,7 +23,7 @@ export interface AuthDeps {
    *  When unset the link stays a relative path (today's dev-echo shape). */
   publicBaseUrl?: string
   /** Injectable per-route limiters (tests). Defaults are created inside registerAuthRoutes. */
-  rateLimits?: { login?: RateLimiter; signup?: RateLimiter; forgot?: RateLimiter }
+  rateLimits?: { login?: RateLimiter; signup?: RateLimiter; forgot?: RateLimiter; reset?: RateLimiter; changePw?: RateLimiter }
   /** FAIL-CLOSED registration: when true, POST /auth/signup is refused (403) at the CODE level.
    *  AKIS runs generated code on the host with NO isolation boundary (see THREAT-MODEL), so an
    *  open-registration instance is RCE-for-anyone. The hosted box blocked signup only at the
@@ -71,6 +71,11 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     login: deps.rateLimits?.login ?? createRateLimiter({ max: 10, windowMs: 5 * 60_000 }),
     signup: deps.rateLimits?.signup ?? createRateLimiter({ max: 5, windowMs: 10 * 60_000 }),
     forgot: deps.rateLimits?.forgot ?? createRateLimiter({ max: 5, windowMs: 15 * 60_000 }),
+    // reset-password consumes a link token from an untrusted source — throttle verify attempts
+    // per-IP so the 15-min signed token can't be brute-forced at network speed (defence in depth
+    // atop token unguessability). change-password is auth-gated so lower-risk, but still capped.
+    reset: deps.rateLimits?.reset ?? createRateLimiter({ max: 10, windowMs: 15 * 60_000 }),
+    changePw: deps.rateLimits?.changePw ?? createRateLimiter({ max: 10, windowMs: 5 * 60_000 }),
   }
   const overLimit = (limiter: RateLimiter, req: FastifyRequest, reply: FastifyReply): boolean => {
     const retry = limiter.hit(req.ip || 'unknown')
@@ -134,6 +139,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
   })
 
   app.post<{ Body: { currentPassword?: unknown; newPassword?: unknown } }>('/auth/change-password', async (req, reply) => {
+    if (overLimit(limits.changePw, req, reply)) return
     let id: string
     try { id = await userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
     const current = isStr(req.body?.currentPassword) ? req.body.currentPassword : ''
@@ -198,6 +204,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
   })
 
   app.post<{ Body: { token?: unknown; password?: unknown } }>('/auth/reset-password', async (req, reply) => {
+    if (overLimit(limits.reset, req, reply)) return
     const token = isStr(req.body?.token) ? req.body.token : ''
     const password = isStr(req.body?.password) ? req.body.password : ''
     if (password.length < 8) return reply.code(400).send({ error: 'password must be at least 8 characters', code: 'WeakPassword' })

@@ -18,6 +18,8 @@ import { buildAttestation, attestationMarkdown } from '../verify/attestation.js'
 import { buildTrustReport, renderTrustReportMarkdown } from '../report/trustReport.js'
 import type { UsageStorePort } from '../usage/UsageStore.js'
 import { checkQuota, type QuotaPolicy } from '../usage/quota.js'
+import { checkConcurrency, type ConcurrencyPolicy } from '../usage/concurrency.js'
+import { overRouteLimit, rateLimitKey, type RouteRateLimits } from '../usage/rateLimit.js'
 
 /** The publish seam the route calls — a function producing a PublishRecord from a session's files
  *  + the owner's decrypted profile. Real OpenSshTransport-backed in prod (wired in server.ts);
@@ -50,6 +52,14 @@ export interface SessionsDeps {
   quota?: QuotaPolicy
   /** TIER-AWARE quota (paid tier): per-owner policy (free vs pro). Precedence over `quota`; absent ⇒ `quota`. */
   quotaFor?: (ownerId: string | undefined) => Promise<QuotaPolicy>
+  /** Per-user ACTIVE-RUN cap (concurrency sibling of the quota; usage/concurrency.ts). Present
+   *  with maxActiveRuns > 0 ⇒ POST /sessions AND approve refuse (429 ConcurrencyLimited) while
+   *  the owner already has that many pipeline-running sessions. Absent/0 ⇒ byte-identical. */
+  concurrency?: ConcurrencyPolicy
+  /** Per-caller request-RATE limits (usage/rateLimit.ts). Present ⇒ build-start/approve +
+   *  external-write propose/confirm refuse (429 RateLimited) over the per-window cap. Absent ⇒
+   *  no check (byte-identical). Opt-in via AKIS_RATE_LIMIT. */
+  rateLimits?: RouteRateLimits
   /** Per-user publish destination store (the encrypted SSH key + host/dir/port). Present ⇒ the
    *  POST /sessions/:id/publish action is enabled. Absent ⇒ publish is 409 NoPublishProfile. */
   publishProfiles?: PublishProfileStore
@@ -239,6 +249,11 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       // Locked-down deployments require every build to be OWNED — refuse an anonymous (public-by-UUID)
       // build. Default off so the keyless-demo + existing behavior is byte-identical. (Audit #29.)
       if (deps.requireAuthForBuilds && !ownerId) return reply.code(401).send({ error: 'sign in to start a build', code: 'Unauthorized' })
+      // Per-caller request-RATE limit — cheapest guard (in-memory, no store read), so it sheds a
+      // flood BEFORE the quota/concurrency store reads and BEFORE any orchestrator work. Keyed by
+      // owner (per-account) or IP (per-anon) — this is the primary anon-flood guard since the
+      // concurrency cap exempts anonymous. Absent dep ⇒ no check (byte-identical).
+      if (deps.rateLimits && overRouteLimit(deps.rateLimits.build, rateLimitKey(req, ownerId), reply)) return
       // Per-user token-quota PRE-CHECK (SACRED: start-only, fail-closed, never touches a gate or
       // an in-flight run). Only when BOTH usage + quota are injected; budget 0 ⇒ unlimited via
       // checkQuota's fast-path (no store read, byte-identical default). A blocked owner gets a
@@ -247,6 +262,13 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       if (deps.usage && quotaPolicy) {
         const decision = await checkQuota(deps.usage, quotaPolicy, ownerId)
         if (!decision.allowed) return reply.code(429).send({ error: 'token quota exceeded', code: 'QuotaExceeded', resetAt: decision.resetAt })
+      }
+      // Per-user ACTIVE-RUN cap (same SACRED start-only pattern as the quota above): refuse to
+      // START while the owner already has maxActiveRuns pipeline-running sessions. Never reads
+      // or aborts an in-flight run; absent/0 ⇒ no check (byte-identical).
+      if (deps.concurrency) {
+        const c = await checkConcurrency(services.store, deps.concurrency, ownerId)
+        if (!c.allowed) return reply.code(429).send({ error: 'too many active builds — wait for one to finish', code: 'ConcurrencyLimited', activeRuns: c.activeRuns, limit: c.limit })
       }
       // Thread the validated pre-build conversation into the CREATION state (version 0) — NOT a
       // post-start patch. A post-start store.update(id,{chat},version) would run CONCURRENTLY with the
@@ -349,6 +371,8 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   app.post<{ Params: { id: string }; Body: { provider?: string; action?: string; summary?: string; target?: Record<string, unknown>; payload?: Record<string, unknown> } }>('/sessions/:id/external-writes', async (req, reply) => {
     const s = await accessibleSession(req, req.params.id)
     if (!s) return notFound(reply, req.params.id)
+    // Per-caller rate limit on the outward-call surface (propose shares the bucket with confirm).
+    if (deps.rateLimits && overRouteLimit(deps.rateLimits.externalWrite, rateLimitKey(req, s.ownerId), reply)) return
     const b = req.body ?? {}
     // PROVIDER-AWARE allow-list: the action must be on the set for THIS proposal's provider (a github
     // tool is invalid under atlassian and vice-versa). `provider` defaults to 'atlassian' (back-compat
@@ -420,6 +444,9 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
   app.post<{ Params: { id: string; writeId: string }; Body: { digest?: string } }>('/sessions/:id/external-writes/:writeId/confirm', async (req, reply) => {
     const s = await accessibleSession(req, req.params.id)
     if (!s) return notFound(reply, req.params.id)
+    // Per-caller rate limit — each confirm triggers a real outward MCP/GitHub call. Placed BEFORE
+    // the in-flight/state checks so a hammering caller is shed cheaply.
+    if (deps.rateLimits && overRouteLimit(deps.rateLimits.externalWrite, rateLimitKey(req, s.ownerId), reply)) return
     const rec = (s.externalWrites ?? []).find(w => w.id === req.params.writeId)
     if (!rec) return reply.code(404).send({ error: 'no such external-write proposal', code: 'NoProposal' })
     if (rec.status !== 'proposed') return reply.code(409).send({ error: `proposal already ${rec.status}`, code: 'AlreadyResolved' })
@@ -485,7 +512,27 @@ export function registerSessionRoutes(app: FastifyInstance, deps: SessionsDeps):
       } catch (err) { return sendError(reply, err) }
     }
 
-  app.post<{ Params: { id: string } }>('/sessions/:id/approve', action(id => orchestratorFor(id).approve(id)))
+  // Approving a parked spec STARTS compute (the build pipeline runs from here), so the
+  // per-user active-run cap guards it too — otherwise N pre-created awaiting_spec_approval
+  // sessions could all be approved at once, bypassing the POST /sessions cap. Same SACRED
+  // start-only pre-check; absent/0 ⇒ the plain action, byte-identical.
+  // CONSCIOUS CHOICE (review LOW): the pre-check fires BEFORE accessibleSession, so an owner
+  // AT the cap gets 429 for any id (even bogus → old 404). Not a leak — the 429 is a pure
+  // function of the caller's OWN count — and it spares a store read on the refuse path.
+  const approveAction = action(id => orchestratorFor(id).approve(id))
+  app.post<{ Params: { id: string } }>('/sessions/:id/approve', async (req, reply) => {
+    if (deps.rateLimits || deps.concurrency) {
+      const ownerId = await deps.userIdOf?.(req)
+      // Rate limit first (cheapest), then the active-run cap — both start-only pre-checks that
+      // only refuse; the original gated action runs unchanged when allowed.
+      if (deps.rateLimits && overRouteLimit(deps.rateLimits.build, rateLimitKey(req, ownerId), reply)) return
+      if (deps.concurrency) {
+        const c = await checkConcurrency(services.store, deps.concurrency, ownerId)
+        if (!c.allowed) return reply.code(429).send({ error: 'too many active builds — wait for one to finish', code: 'ConcurrencyLimited', activeRuns: c.activeRuns, limit: c.limit })
+      }
+    }
+    return approveAction(req, reply)
+  })
   app.post<{ Params: { id: string } }>('/sessions/:id/run', action(id => orchestratorFor(id).runToVerification(id)))
   // PUSH is the one NON-idempotent gate action (it can create a repo / open a PR). confirmPush
   // already rejects a SEQUENTIAL re-confirm (status→done→AlreadyPushedError), but two CONCURRENT

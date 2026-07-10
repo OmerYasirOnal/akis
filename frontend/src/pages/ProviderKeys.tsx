@@ -56,8 +56,15 @@ export function ProviderKeys({ api }: { api: ApiClient }) {
           <div key={p.id} className="grid grid-cols-1 gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-3 sm:grid-cols-[7rem_minmax(0,1fr)_auto] sm:items-center">
             <div>
               <div className="text-sm font-semibold text-slate-100">{p.label}</div>
-              <div className={`text-xs ${p.available ? 'text-[#07D1AF]' : 'text-slate-400'}`}>
-                {p.available ? `${t('settings.keys.connected')}${p.last4 ? ` · ••••${p.last4}` : ''}` : t('settings.keys.notConnected')}
+              {/* B5 honesty: a server-env shared key must not read as a personal "Connected" —
+                  the user never connected anything. Same keySource contract the ModelPicker's
+                  pill uses; absent keySource (older payloads) keeps the legacy label. */}
+              <div className={`text-xs ${p.available ? (p.keySource === 'shared' ? 'text-slate-300' : 'text-[#07D1AF]') : 'text-slate-400'}`}>
+                {p.available
+                  ? p.keySource === 'shared'
+                    ? t('settings.keys.sharedKey')
+                    : `${t('settings.keys.connected')}${p.last4 ? ` · ••••${p.last4}` : ''}`
+                  : t('settings.keys.notConnected')}
               </div>
             </div>
             <Input type="password" aria-label={fill(t('settings.keys.aria'), { provider: p.label })} value={drafts[p.id] ?? ''} placeholder={t('settings.keys.placeholder')}

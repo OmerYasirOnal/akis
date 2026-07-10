@@ -1,0 +1,28 @@
+# Dependabot — automated dependency-update PRs (the audit gap: the repo had a frozen
+# lockfile + --frozen-lockfile CI but no vulnerability-update mechanism). Weekly, grouped
+# so a burst of minor/patch bumps arrives as one reviewable PR rather than dozens.
+version: 2
+updates:
+  # The pnpm workspace (root manifest drives all three packages).
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 10
+    groups:
+      # Non-breaking bumps batched into a single PR to keep review load sane.
+      minor-and-patch:
+        update-types:
+          - minor
+          - patch
+    labels:
+      - dependencies
+
+  # The GitHub Actions used by the CI / release workflows (pinned action versions rot too).
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+      - ci

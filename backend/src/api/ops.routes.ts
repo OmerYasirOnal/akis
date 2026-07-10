@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify'
 import type { StatsCollector } from '../analytics/StatsCollector.js'
+import type { HttpMetrics } from '../analytics/HttpMetrics.js'
 import type { PreviewRegistry } from '../preview/PreviewRegistry.js'
 
 /** The operational health block (no secrets — only counts/uptime/memory). Shared by the
@@ -45,6 +46,11 @@ export interface OpsRoutesDeps {
   dbPing?: () => Promise<boolean>
   /** Auth guard (the same hasSession used for provider-key writes). */
   requireAuth: (req: FastifyRequest) => Promise<boolean>
+  /** Cumulative HTTP response counters (error rate, 429 spikes). Surfaced on /api/ops only. */
+  httpMetrics?: HttpMetrics
+  /** RAG ingest/corpus health (RagService.getMetrics) — present only when RAG is on. A thunk so
+   *  ops.routes never imports knowledge internals (the port stays decoupled). */
+  ragMetrics?: () => Record<string, unknown> | undefined
 }
 
 /**
@@ -56,6 +62,12 @@ export function registerOpsRoutes(app: FastifyInstance, deps: OpsRoutesDeps): vo
   app.get('/api/ops', async (req, reply) => {
     if (!(await deps.requireAuth(req))) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
     const ops = await buildOpsBlock(deps.stats, deps.previewRegistry, deps.dbPing)
-    return reply.send({ ...deps.stats.snapshot(), ops })
+    const rag = deps.ragMetrics?.()
+    return reply.send({
+      ...deps.stats.snapshot(),
+      ops,
+      ...(deps.httpMetrics ? { http: deps.httpMetrics.snapshot() } : {}),
+      ...(rag ? { rag } : {}),
+    })
   })
 }

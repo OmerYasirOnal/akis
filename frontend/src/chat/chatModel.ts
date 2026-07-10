@@ -38,7 +38,9 @@ export interface RecoveryMsg { id: string; kind: 'recovery'; recovery: 'critic_r
 // `url` is CLEARED on any terminal non-live frame (stopped/failed/unsupported) so a dead /preview/
 // link is never rendered (the projection's own contract: only a live ready may carry an embeddable url).
 export interface PreviewMsg { id: string; kind: 'preview'; url?: string; ready: boolean; stopped?: boolean; error?: { status: 'failed' | 'unsupported'; reason?: string } }
-export interface ErrorMsg { id: string; kind: 'error'; text: string }
+/** `code` is the backend error event's machine code (additive) — ErrorBubble localizes the
+ *  headline from it via runErrorKey; absent on legacy/unknown events → raw-only rendering. */
+export interface ErrorMsg { id: string; kind: 'error'; text: string; code?: string }
 export interface DoneMsg { id: string; kind: 'done'; verified: boolean; provider?: string }
 export type ChatMessage = UserMsg | NarrationMsg | AgentMsg | GateMsg | VerifyMsg | CodeReviewMsg | RecoveryMsg | PreviewMsg | ErrorMsg | DoneMsg
 
@@ -171,7 +173,7 @@ export function foldRunBubbles(events: readonly AkisEvent[]): ChatMessage[] {
         }
         break
       }
-      case 'error': items.push({ id, kind: 'error', text: e.message }); break
+      case 'error': items.push({ id, kind: 'error', text: e.message, ...(e.code !== undefined ? { code: e.code } : {}) }); break
       case 'done': items.push({ id, kind: 'done', verified: e.verified, provider: e.provider }); break
       default: break
     }

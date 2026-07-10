@@ -6,6 +6,20 @@
 
 ---
 
+## 🎓 PROJECT PHASE PIVOT (2026-07-09) — read this first
+
+- **The graduation project is DONE:** defense delivered, report graded **93/100**,
+  course grade **AA**. `v1.0.0` full self-host release is published on GHCR
+  (see `docs/plans/2026-06-10-demo-ready-plan.md` head notes); main CI green.
+- **The repo's purpose is now PRODUCTIZATION**, not the defense/demo. All
+  demo/defense-era framing ("demo-blocker", savunma tarihleri, bitirme raporu
+  upkeep) is historical.
+- **Current queue** lives in `docs/plans/2026-07-09-productization-roadmap.md`.
+- Report tooling is no longer auto-installed each session — opt back in with
+  `AKIS_REPORT_TOOLING=1` (see `CLAUDE.md`).
+- The working-method discipline (worktrees, adversarial review, gates sacred,
+  owner merges) is unchanged.
+
 ## ⚠️ ARCHITECTURE PIVOT (2026-06-01) — read this first
 The original handoff's **FSM / transition table** decision was **consciously reversed** by the product owner. The MVP being built is **agentic**, not an FSM. Source of truth = `docs/superpowers/specs/2026-06-01-agentic-core-gates-design.md §0`.
 - **Flow is agentic:** a single **main orchestrator agent ("AKIS", role `orchestrator`)** decides which sub-agents/skills to dispatch and when. **No `fsm/transitionTable.ts` exists.**

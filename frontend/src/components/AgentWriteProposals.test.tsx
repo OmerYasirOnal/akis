@@ -211,6 +211,63 @@ describe('AgentWriteProposals polling', () => {
   })
 })
 
+describe('AgentWriteProposals — poll gating (B9)', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+
+  it('live={false} + no cards → ONE initial load, then NO interval polling (idle sessions stop hammering the API)', async () => {
+    const api = makeApi([])
+    render(<I18nProvider><AgentWriteProposals sessionId="s1" api={api} pollMs={1000} live={false} /></I18nProvider>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    const initial = (api.listExternalWrites as ReturnType<typeof vi.fn>).mock.calls.length
+    expect(initial).toBeGreaterThanOrEqual(1) // the mount load still runs (reopen must surface leftovers)
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
+    expect((api.listExternalWrites as ReturnType<typeof vi.fn>).mock.calls.length).toBe(initial)
+  })
+
+  it('live={false} with a visible proposal card → polling CONTINUES (server-side status flips must keep surfacing)', async () => {
+    const writes = [proposal({ id: 'k1', action: 'add_issue_comment', summary: 'idle proposal', target: {}, payload: { body: 'x' } })]
+    const api = makeApi(writes)
+    render(<I18nProvider><AgentWriteProposals sessionId="s1" api={api} pollMs={1000} live={false} /></I18nProvider>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(screen.getByText(/idle proposal/)).toBeInTheDocument()
+    const afterLoad = (api.listExternalWrites as ReturnType<typeof vi.fn>).mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(3000) })
+    expect((api.listExternalWrites as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(afterLoad)
+  })
+
+  it('live={false} + only HISTORY records (executed github / atlassian) → renders null AND stays quiet (review LOW)', async () => {
+    // The server list carries history (executed/failed) and other-provider records with no filter;
+    // none of them is a visible card here. Gating on the raw list would poll such a session forever
+    // while rendering null — the gate must key off the VISIBLE card set instead.
+    const writes = [
+      proposal({ id: 'h1', action: 'add_issue_comment', summary: 'already executed', target: {}, payload: { body: 'x' }, status: 'executed', result: 'done' }),
+      proposal({ id: 'h2', provider: 'atlassian', action: 'create_jira_issue', summary: 'jira record', target: {}, payload: {} }),
+    ]
+    const api = makeApi(writes)
+    const { container } = render(<I18nProvider><AgentWriteProposals sessionId="s1" api={api} pollMs={1000} live={false} /></I18nProvider>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(container.firstChild).toBeNull()
+    const initial = (api.listExternalWrites as ReturnType<typeof vi.fn>).mock.calls.length
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000) })
+    expect((api.listExternalWrites as ReturnType<typeof vi.fn>).mock.calls.length).toBe(initial)
+  })
+
+  it('live true→false fires a trailing-edge load — a proposal emitted just before the park still surfaces', async () => {
+    let calls = 0
+    const lastMoment = [proposal({ id: 't1', action: 'add_issue_comment', summary: 'last-moment proposal', target: {}, payload: { body: 'x' } })]
+    const api = makeApi([], { listExternalWrites: vi.fn(() => { calls++; return Promise.resolve({ writes: calls >= 2 ? lastMoment : [] }) }) })
+    // Huge pollMs: NO interval tick fires in this test — only effect-driven loads.
+    const { rerender } = render(<I18nProvider><AgentWriteProposals sessionId="s1" api={api} pollMs={100000} live={true} /></I18nProvider>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(screen.queryByText(/last-moment proposal/)).not.toBeInTheDocument()
+    // The run parks (live flips false) BEFORE any poll tick — the flip itself must re-load once.
+    rerender(<I18nProvider><AgentWriteProposals sessionId="s1" api={api} pollMs={100000} live={false} /></I18nProvider>)
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(screen.getByText(/last-moment proposal/)).toBeInTheDocument()
+  })
+})
+
 /* ───────────────────────── REGRESSION GUARDS (verified-but-unguarded) ───────────────────────── */
 
 describe('AgentWriteProposals — resilient load (FR-confirm-cards-1 / NFR-4 / UC-6)', () => {

@@ -7,6 +7,7 @@ import { PasswordInput } from '../ui/PasswordInput.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
 import { OAuthButtons } from './OAuthButtons.js'
+import { authErrorKey } from './authError.js'
 
 export function Signup({ api }: { api: ApiClient }) {
   const { signup } = useAuth()
@@ -25,7 +26,9 @@ export function Signup({ api }: { api: ApiClient }) {
     try { await signup(name, email, password); navigate('/') }
     // A 403 is the intentional signup block (this is a single-user instance — the edge/code both
     // 403 /auth/signup). Show a clear, localized message instead of the raw "HTTP 403".
-    catch (e) { setErr(ApiError.is(e) && e.status === 403 ? t('auth.signup.disabled') : ApiError.is(e) ? e.message : String(e)) }
+    // Review LOW: a bare edge/proxy 403 (HTML body, no JSON code) must still read as "signups
+    // closed" — keep the status fallback alongside the coded SignupDisabled mapping.
+    catch (e) { setErr(ApiError.is(e) && e.status === 403 ? t('auth.signup.disabled') : t(authErrorKey(e))) }
     finally { setBusy(false) }
   }
 

@@ -24,10 +24,12 @@ import { Bm25Index } from '../knowledge/store/Bm25Index.js'
 import { activeEmbeddingDim } from '../knowledge/embedding/ApiEmbeddingProvider.js'
 import type { VectorStore } from '../knowledge/store/VectorStore.js'
 import { cookieConfigFromEnv } from '../auth/cookie.js'
+import { csrfPostureWarning } from './csrfPosture.js'
 import { selectMailer } from '../mail/selectMailer.js'
 import type { Mailer } from '../mail/Mailer.js'
 import { registerAnalyticsRoutes } from './analytics.routes.js'
 import { StatsCollector } from '../analytics/StatsCollector.js'
+import { HttpMetrics } from '../analytics/HttpMetrics.js'
 import { registerChatRoutes, type ChatDeps } from './chat.routes.js'
 import { registerUsageRoutes } from './usage.routes.js'
 import { registerBillingRoutes } from './billing.routes.js'
@@ -37,6 +39,8 @@ import { JsonFileUsageStore } from '../usage/JsonFileUsageStore.js'
 import { createPgUsageStoreWithClient } from '../usage/PgUsageStore.js'
 import { UsageCollector } from '../usage/UsageCollector.js'
 import { resolveQuotaPolicy } from '../usage/quota.js'
+import { resolveConcurrencyPolicy } from '../usage/concurrency.js'
+import { resolveRouteRateLimits } from '../usage/rateLimit.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
 import { registerGitHubConnectRoutes } from './githubConnect.routes.js'
@@ -434,6 +438,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // Aggregate run analytics via a single global bus tap (observability only).
   const stats = new StatsCollector()
   stats.attach(services.bus)
+  // Cumulative HTTP response counters (error rate, 429 spikes) fed by a single onResponse hook —
+  // operator visibility the build-lifecycle StatsCollector didn't cover. Observability only; the
+  // hook reads ONLY the status code (no bodies/paths/headers), surfaced on the authed /api/ops.
+  const httpMetrics = new HttpMetrics()
+  app.addHook('onResponse', async (_req, reply) => { httpMetrics.observe(reply.statusCode) })
 
   // Per-user token QUOTA (multi-tenant safety). The policy is env-driven; budget 0 (default)
   // ⇒ unlimited, so single-operator dev is BYTE-UNCHANGED (checkQuota returns allowed with NO
@@ -441,6 +450,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // the dev JSON file > pure in-memory (test). A single UsageCollector tap accumulates per-agent
   // token spend onto the owning user (chat usage is accounted off-bus by the chat route).
   const quota = resolveQuotaPolicy(env)
+  // Per-user ACTIVE-RUN cap (AKIS_MAX_ACTIVE_RUNS) — the quota's concurrency sibling.
+  const concurrencyPolicy = resolveConcurrencyPolicy(env)
+  // Per-caller request-RATE limits (AKIS_RATE_LIMIT) — the abuse-guard sibling of quota/
+  // concurrency; undefined (opt-out) unless enabled, so routes omit the dep (byte-identical).
+  const routeRateLimits = resolveRouteRateLimits(env)
   // TIER-AWARE quota (paid tier): resolve the per-owner policy from the user's tier (pro ⇒
   // AKIS_PRO_TOKEN_BUDGET, else free). Only when a userStore is present; an anon/unknown owner ⇒ free.
   // Routes fall back to the fixed `quota` when this is absent (byte-unchanged for a userStore-less setup).
@@ -458,6 +472,11 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   if (deps.auditStore) attachAuditLog(services.bus, deps.auditStore)
 
   const cookie = cookieConfigFromEnv(env)
+  // CSRF posture: SameSite=Lax/Strict already blocks the CSRF vector; the Origin hook above is
+  // defence-in-depth (effective only with PUBLIC_BASE_URL). Warn the operator about the ONE
+  // unprotected combo (SameSite=None + no PUBLIC_BASE_URL) without changing request behavior.
+  const csrfWarn = csrfPostureWarning(cookie.sameSite, trustedOrigin)
+  if (csrfWarn) console.warn(`[boot] ${csrfWarn}`)
   // A valid-session guard reused to protect provider-key writes.
   // ASYNC since token revocation: userIdFromRequest now compares the JWT's tv claim to the
   // user record, so every consumer awaits (a revoked token reads as unauthenticated).
@@ -489,6 +508,12 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
     // Per-user token QUOTA (multi-tenant): usage ledger + policy threaded so run-start
     // enforcement points fail-closed when over budget (byte-identical when budget 0).
     usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}),
+    // Per-user ACTIVE-RUN cap (AKIS_MAX_ACTIVE_RUNS; 0/unset ⇒ unlimited, dep omitted so the
+    // default path is byte-identical). Concurrency sibling of the quota — bounds simultaneous
+    // load where the quota bounds windowed spend.
+    ...(concurrencyPolicy.maxActiveRuns > 0 ? { concurrency: concurrencyPolicy } : {}),
+    // Per-caller request-RATE limits (AKIS_RATE_LIMIT; undefined ⇒ dep omitted, byte-identical).
+    ...(routeRateLimits ? { rateLimits: routeRateLimits } : {}),
     // Publish (POST-`done`, optional, NON-GATING): the action is enabled only when BOTH the
     // profile store AND the publish seam are wired. Absent ⇒ POST /sessions/:id/publish 409s.
     publishProfiles,
@@ -547,7 +572,13 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerUsageRoutes(app, { usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), requireOwner: userIdOf })
   // Operator ops view (GET /api/ops; authenticated via hasSession) — the richer StatsCollector
   // snapshot + the operational block (uptime/memory/activeSessions/livePreviews/db).
-  registerOpsRoutes(app, { stats, previewRegistry, requireAuth: hasSession, ...(deps.dbPing ? { dbPing: deps.dbPing } : {}) })
+  registerOpsRoutes(app, {
+    stats, previewRegistry, requireAuth: hasSession, httpMetrics,
+    ...(deps.dbPing ? { dbPing: deps.dbPing } : {}),
+    // RAG ingest/corpus health when RAG is on — a thunk so ops.routes stays decoupled from
+    // knowledge internals (getMetrics returns ingest counters + corpusSize).
+    ...(services.ragService ? { ragMetrics: () => services.ragService?.getMetrics() as Record<string, unknown> | undefined } : {}),
+  })
   // Thread env + keyStore so the chat route can resolve a DIFFERENT provider/model PER
   // REQUEST (the model picker), fail-closed like createProvider. Absent any override every
   // chat turn uses services.provider unchanged. CHAT-ONLY: builds keep their workflow bindings.
@@ -587,7 +618,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // pushes NOTHING — the human SpecCard click stays the sole approve path (the chat route still holds
   // NO orchestrator handle). A provider error propagates so the route surfaces an honest chat error.
   const draftSpec: ChatDeps['draftSpec'] = (input) => services.scribe.draftSpec(input)
-  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), ownerOf: userIdOf, sessionRead, chatAppend, draftSpec })
+  registerChatRoutes(app, { provider: services.provider, env, ...(deps.keyStore ? { keyStore: deps.keyStore } : {}), usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), ...(routeRateLimits ? { rateLimits: routeRateLimits } : {}), ownerOf: userIdOf, sessionRead, chatAppend, draftSpec })
   // Knowledge ingestion routes (issue #7) ONLY when the RAG stack is present (AKIS_RAG):
   // the upload/repo sources are surfaced by buildServices only when rag is on, so absent
   // them the route is never registered (404) and there is no behavior change when RAG off.

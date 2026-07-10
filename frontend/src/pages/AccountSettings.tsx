@@ -1,6 +1,7 @@
 import { useState, useEffect, type FormEvent } from 'react'
 import type { ApiClient } from '../api/client.js'
 import { ApiError } from '../api/client.js'
+import { authErrorKey } from './authError.js'
 import { useAuth } from '../auth/AuthContext.js'
 import { SectionTitle, Button, Field, Input, ErrorNote } from '../ui/kit.js'
 import { useI18n } from '../i18n/I18nContext.js'
@@ -29,7 +30,7 @@ export function AccountSettings({ api }: { api: ApiClient }) {
     if (!name.trim()) return
     setSavingName(true); setNameErr(undefined); setNameSaved(false)
     try { await api.updateProfile(name.trim()); await refresh(); setNameSaved(true) }
-    catch (err) { setNameErr(ApiError.is(err) ? err.message : String(err)) }
+    catch (err) { setNameErr(t(authErrorKey(err))) } // B6-i
     finally { setSavingName(false) }
   }
   const changePw = async (e: FormEvent): Promise<void> => {
@@ -37,7 +38,9 @@ export function AccountSettings({ api }: { api: ApiClient }) {
     if (next.length < 8) { setPwErr(t('auth.pwTooShort')); return }
     setSavingPw(true); setPwErr(undefined); setPwDone(false)
     try { await api.changePassword(cur, next); setCur(''); setNext(''); setPwDone(true) }
-    catch (err) { setPwErr(ApiError.is(err) ? err.message : String(err)) }
+    // Review MED: the backend reuses BadCredentials for a wrong CURRENT password — the login
+    // copy would name an email field this form doesn't have, so special-case to accurate copy.
+    catch (err) { setPwErr(ApiError.is(err) && err.code === 'BadCredentials' ? t('settings.password.currentWrong') : t(authErrorKey(err))) }
     finally { setSavingPw(false) }
   }
 

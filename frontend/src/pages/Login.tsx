@@ -1,13 +1,14 @@
 import { useState, useMemo, type FormEvent } from 'react'
 import { useAuth } from '../auth/AuthContext.js'
 import { useRouter, Link } from '../router/router.js'
-import { ApiClient, ApiError } from '../api/client.js'
+import { ApiClient } from '../api/client.js'
 import { Button, Field, Input, ErrorNote } from '../ui/kit.js'
 import { PasswordInput } from '../ui/PasswordInput.js'
 import { useI18n } from '../i18n/I18nContext.js'
 import { AuthShell } from './AuthShell.js'
 import { OAuthButtons } from './OAuthButtons.js'
 import type { StringKey } from '../i18n/catalog.js'
+import { authErrorKey } from './authError.js'
 
 /** Map the OAuth callback's ?error=<code> to a specific message key. An unrecognized/empty code
  *  falls through to the generic auth.oauth.error — so the page never shows a raw code. */
@@ -40,7 +41,7 @@ export function Login({ api }: { api: ApiClient }) {
     e.preventDefault()
     setBusy(true); setErr(undefined)
     try { await login(email, password); navigate('/') }
-    catch (e) { setErr(ApiError.is(e) ? e.message : String(e)) }
+    catch (e) { setErr(t(authErrorKey(e))) } // B6-i: code → catalog copy, never the raw transport string
     finally { setBusy(false) }
   }
 

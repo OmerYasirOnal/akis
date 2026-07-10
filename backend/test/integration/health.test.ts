@@ -65,5 +65,37 @@ describe('GET /api/ops — operator view', () => {
     expect(typeof body.ops.memory.rssMb).toBe('number')
     expect(body.ops.db).toBe('ok')
     expect(body.ops.livePreviews).toBe(0)
+    // HTTP metrics: the counter fed by the onResponse hook. The snapshot reflects PRIOR requests
+    // (this request's onResponse fires after reply.send), so total>0 comes from the signup + this GET.
+    expect(typeof body.http.total).toBe('number')
+    expect(body.http.total).toBeGreaterThan(0)
+    expect(typeof body.http.errorRate).toBe('number')
+    expect(typeof body.http.serverErrorRate).toBe('number')
+    expect(typeof body.http.tooManyRequests).toBe('number')
+  })
+
+  it('http.errorRate + tooManyRequests reflect real 4xx/429 traffic; RAG metrics absent when RAG is off', async () => {
+    const app = buildServer({ keyStore: keyStore(), env: { AUTH_JWT_SECRET: 'ops-secret' } })
+    const cookie = cookieOf(await app.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'ada@akis.dev', password: 'password1234' } }))
+    // Generate a 4xx (unknown route) and a 401 (unauth ops) so the error counters move.
+    await app.inject({ method: 'GET', url: '/nope-404' })
+    await app.inject({ method: 'GET', url: '/api/ops' }) // 401
+    const body = (await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie } })).json()
+    expect(body.http.clientError).toBeGreaterThan(0)
+    expect(body.http.errorRate).toBeGreaterThan(0)
+    // RAG is off by default (no AKIS_RAG) → the rag block is omitted, not an empty object.
+    expect(body.rag).toBeUndefined()
+  })
+
+  it('surfaces RAG ingest/corpus health on /api/ops when RAG is on (AKIS_RAG=1)', async () => {
+    const app = buildServer({ keyStore: keyStore(), env: { AUTH_JWT_SECRET: 'ops-secret', AKIS_RAG: '1' } })
+    const cookie = cookieOf(await app.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'ada@akis.dev', password: 'password1234' } }))
+    const body = (await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie } })).json()
+    // RagService.getMetrics() → ingest counters + corpusSize, decoupled via the thunk.
+    expect(body.rag).toBeDefined()
+    expect(typeof body.rag.corpusSize).toBe('number')
+    expect(typeof body.rag.ingested).toBe('number')
+    expect(typeof body.rag.deadLettered).toBe('number')
+    await app.close() // RAG-on wiring starts an ingest queue/timers — close so nothing leaks past the test
   })
 })

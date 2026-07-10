@@ -5,6 +5,7 @@ import { AKIS_PERSONA, registerChatRoutes, resolvePerRequestProvider, mapEffortT
 import type { LlmProvider, ChatRequest, ChatResult } from '../../src/agent/LlmProvider.js'
 import type { SessionState } from '@akis/shared'
 import { JsonFileKeyStore } from '../../src/keys/KeyStore.js'
+import { resolveRouteRateLimits } from '../../src/usage/rateLimit.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -613,6 +614,17 @@ describe('POST /api/chat — REAL Scribe handoff (akis-spec-request → akis-spe
     expect(res.json().code).toBe('ScribeError')
   })
 
+  it('SECURITY: the ScribeError 502 does NOT echo the raw upstream provider message to the client', async () => {
+    const { provider } = fixedReplyProvider(REQUEST_REPLY)
+    const { fn } = draftSpecSpy({ title: 'x', body: 'x' }, { throws: true }) // throws 'scribe provider down'
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider, draftSpec: fn })
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'build it' } })
+    expect(res.statusCode).toBe(502)
+    expect(res.json().code).toBe('ScribeError')
+    expect(res.body).not.toContain('scribe provider down') // raw provider text must not leak to the client
+  })
+
   it('Scribe returns an UNPARSEABLE draft → honest error, no fake spec', async () => {
     const { provider } = fixedReplyProvider(REQUEST_REPLY)
     const { fn } = draftSpecSpy({ title: 'Spec for: x', body: 'x' }, { parsed: false })
@@ -687,6 +699,7 @@ describe('POST /api/chat/stream — REAL Scribe handoff', () => {
     expect(res.statusCode).toBe(200) // SSE already hijacked — failure rides as an error frame
     expect(res.body).toContain('event: error')
     expect(res.body).toContain('ScribeError')
+    expect(res.body).not.toContain('scribe provider down') // SECURITY: raw provider text must not leak in the frame
   })
 
   // F1(b) — LIVE DRAFTING SIGNAL: when the REAL Scribe call actually starts the route emits an
@@ -723,5 +736,39 @@ describe('POST /api/chat/stream — REAL Scribe handoff', () => {
     const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'build it' } })
     expect(parseSse(res.body).some(fr => fr.event === 'scribe')).toBe(false)
     await f.close()
+  })
+})
+
+// ── chatPreflight: request-RATE limit + quota, BEFORE the model (Faz 2) ──
+describe('POST /api/chat — chatPreflight rate limit (chat bucket)', () => {
+  it('throttles the chat bucket: the 2nd rapid turn → 429 RateLimited and the provider is NOT called', async () => {
+    const { provider, calls } = spyProvider()
+    const f = Fastify({ logger: false })
+    // cap 1: the first turn passes, the second is over the window.
+    const rateLimits = resolveRouteRateLimits({ AKIS_RATE_LIMIT: '1', AKIS_RATE_LIMIT_CHAT_MAX: '1' })!
+    registerChatRoutes(f, { provider, rateLimits })
+    expect((await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'hi' } })).statusCode).toBe(200)
+    const res = await f.inject({ method: 'POST', url: '/api/chat', payload: { message: 'hi again' } })
+    expect(res.statusCode).toBe(429)
+    expect(res.json().code).toBe('RateLimited')
+    expect(calls.length).toBe(1) // SACRED: the blocked turn never reached the model
+  })
+
+  it('the stream route is rate-limited too (pre-hijack 429, not an SSE frame)', async () => {
+    const { provider } = spyProvider()
+    const f = Fastify({ logger: false })
+    const rateLimits = resolveRouteRateLimits({ AKIS_RATE_LIMIT: '1', AKIS_RATE_LIMIT_CHAT_MAX: '1' })!
+    registerChatRoutes(f, { provider, rateLimits })
+    expect((await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'a' } })).statusCode).toBe(200)
+    const res = await f.inject({ method: 'POST', url: '/api/chat/stream', payload: { message: 'b' } })
+    expect(res.statusCode).toBe(429)
+    expect(res.json().code).toBe('RateLimited') // a clean JSON 429, not a hijacked SSE stream
+  })
+
+  it('DEFAULT (no rateLimits dep): unchanged — many rapid turns all 200', async () => {
+    const { provider } = spyProvider()
+    const f = Fastify({ logger: false })
+    registerChatRoutes(f, { provider })
+    for (let i = 0; i < 5; i++) expect((await f.inject({ method: 'POST', url: '/api/chat', payload: { message: `m${i}` } })).statusCode).toBe(200)
   })
 })

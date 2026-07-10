@@ -46,6 +46,21 @@ describe('ProviderKeys', () => {
     expect(screen.queryByText('Loading…')).not.toBeInTheDocument()
   })
 
+  it('shows honest shared-key copy — a server env key must NOT read as a personal "Connected" (B5)', async () => {
+    const providers: ProviderInfo[] = [
+      { id: 'anthropic', label: 'Anthropic', available: true, keySource: 'shared', defaultModel: 'claude-3-5-sonnet-20241022', models: [] },
+      { id: 'openai', label: 'OpenAI', available: true, keySource: 'user', last4: 'abcd', defaultModel: 'gpt-4o', models: [] },
+    ]
+    renderI18n(<ProviderKeys api={fakeApi({ listProviders: async () => providers })} />)
+
+    // The shared-key row carries the honest server-key copy, not a personal "Connected".
+    expect(await screen.findByText(/Shared server key/)).toBeInTheDocument()
+    // Exactly ONE row (the user-key one) reads "Connected …" — the shared row must not.
+    expect(screen.getAllByText(/^Connected/).length).toBe(1)
+    // The user-key row keeps its last4 tail untouched.
+    expect(screen.getByText(/••••abcd/)).toBeInTheDocument()
+  })
+
   it('clears the loading row on a fetch failure (catch resolves to [])', async () => {
     // If listProviders rejects, the catch branch sets providers=[] and the empty grid renders
     // instead of being stuck on the loading row forever.
