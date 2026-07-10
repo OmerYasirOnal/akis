@@ -15,8 +15,14 @@ export interface HttpMetricsSnapshot {
   clientError: number   // 4xx (includes 429)
   serverError: number   // 5xx
   tooManyRequests: number // 429 specifically — the abuse-guard refusal signal
-  /** (clientError + serverError) / total, rounded to 3 dp; 0 when no requests yet (never NaN). */
+  /** (clientError + serverError) / total, rounded to 3 dp; 0 when no requests yet (never NaN).
+   *  NOTE: this includes benign 4xx (401 auth challenges, 404 probes, 409 lock conflicts, 429
+   *  rate-limits), so it's a NOISY headline — alert on `serverErrorRate` (real failures) and
+   *  read the raw per-class counts for detail. */
   errorRate: number
+  /** serverError / total (5xx only) — the "real service failure" rate an operator should alert
+   *  on; excludes client-caused 4xx. Rounded to 3 dp; 0 when no requests yet. */
+  serverErrorRate: number
 }
 
 export class HttpMetrics {
@@ -40,7 +46,7 @@ export class HttpMetrics {
   }
 
   snapshot(): HttpMetricsSnapshot {
-    const errors = this.clientError + this.serverError
+    const rate = (n: number): number => (this.total > 0 ? Math.round((n / this.total) * 1000) / 1000 : 0)
     return {
       total: this.total,
       ok: this.ok,
@@ -48,7 +54,8 @@ export class HttpMetrics {
       clientError: this.clientError,
       serverError: this.serverError,
       tooManyRequests: this.tooManyRequests,
-      errorRate: this.total > 0 ? Math.round((errors / this.total) * 1000) / 1000 : 0,
+      errorRate: rate(this.clientError + this.serverError),
+      serverErrorRate: rate(this.serverError),
     }
   }
 }

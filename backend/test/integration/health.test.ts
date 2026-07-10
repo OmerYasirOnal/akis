@@ -65,10 +65,12 @@ describe('GET /api/ops — operator view', () => {
     expect(typeof body.ops.memory.rssMb).toBe('number')
     expect(body.ops.db).toBe('ok')
     expect(body.ops.livePreviews).toBe(0)
-    // HTTP metrics: the counter fed by the onResponse hook (this very request is counted).
+    // HTTP metrics: the counter fed by the onResponse hook. The snapshot reflects PRIOR requests
+    // (this request's onResponse fires after reply.send), so total>0 comes from the signup + this GET.
     expect(typeof body.http.total).toBe('number')
     expect(body.http.total).toBeGreaterThan(0)
     expect(typeof body.http.errorRate).toBe('number')
+    expect(typeof body.http.serverErrorRate).toBe('number')
     expect(typeof body.http.tooManyRequests).toBe('number')
   })
 
@@ -94,5 +96,6 @@ describe('GET /api/ops — operator view', () => {
     expect(typeof body.rag.corpusSize).toBe('number')
     expect(typeof body.rag.ingested).toBe('number')
     expect(typeof body.rag.deadLettered).toBe('number')
+    await app.close() // RAG-on wiring starts an ingest queue/timers — close so nothing leaks past the test
   })
 })

@@ -4,7 +4,7 @@ import { HttpMetrics } from '../../src/analytics/HttpMetrics.js'
 describe('HttpMetrics — status-class counters + error rate', () => {
   it('starts empty with a 0 error rate (never NaN)', () => {
     const m = new HttpMetrics()
-    expect(m.snapshot()).toEqual({ total: 0, ok: 0, redirect: 0, clientError: 0, serverError: 0, tooManyRequests: 0, errorRate: 0 })
+    expect(m.snapshot()).toEqual({ total: 0, ok: 0, redirect: 0, clientError: 0, serverError: 0, tooManyRequests: 0, errorRate: 0, serverErrorRate: 0 })
   })
 
   it('buckets responses by status class', () => {
@@ -30,10 +30,11 @@ describe('HttpMetrics — status-class counters + error rate', () => {
     expect(s.total).toBe(3)
   })
 
-  it('errorRate = (4xx+5xx)/total, rounded to 3 decimals', () => {
+  it('errorRate = (4xx+5xx)/total; serverErrorRate = 5xx-only/total (excludes benign 4xx)', () => {
     const m = new HttpMetrics()
-    m.observe(200); m.observe(200); m.observe(500); m.observe(404) // 2 errors of 4
-    expect(m.snapshot().errorRate).toBe(0.5)
+    m.observe(200); m.observe(200); m.observe(500); m.observe(404) // 2 non-2xx of 4, but only 1 is a 5xx
+    expect(m.snapshot().errorRate).toBe(0.5)       // (404 + 500) / 4
+    expect(m.snapshot().serverErrorRate).toBe(0.25) // 500 / 4 — a 404 is NOT a service failure
   })
 
   it('ignores a non-numeric / out-of-range status defensively (never throws)', () => {
