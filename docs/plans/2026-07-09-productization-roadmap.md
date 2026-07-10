@@ -100,14 +100,48 @@ akisflow.com bugün 2 kullanıcı + kapalı signup ile duruyor. Gerçek kullanı
    2 MED'i kapatıldı (dürüst kapsam dokümanı + summary-projection sayımı). BİLİNEN kapsam
    sınırı (bilinçli): retry/proceed/confirmPush park statülerinde compute koşturur ve kapıya
    dahil değil — airtight sınır istenirse ayrı ürün kararı.
-2. **Rate limiting + abuse yüzeyi:** auth uçları, build tetikleme, MCP/external-write önerileri.
-3. **Gözlemlenebilirlik:** yapısal log + temel metrikler (aktif build, kuyruk, hata oranı,
-   provider gecikmesi); audit ledger zaten var — üstüne operasyonel görünürlük.
-4. **Yedekleme/kurtarma:** Postgres yedeği + `encrypted KeyStore` anahtar rotasyon hikâyesi.
-5. **Signup'ı kademeli açma:** davet kodu/allowlist → açık kayıt; `AKIS_ALLOW_MOCK` ve
-   demo bayraklarının prod'daki duruşunun gözden geçirilmesi.
-6. Güvenlik taraması: `pnpm audit` + secret-scan + SSRF/path-traversal yüzeylerinin
-   (publisher, MCP) tekrar gözden geçirilmesi. Gate'ler kutsal — değişiklik yok, sadece çevre.
+2. **Rate limiting + abuse yüzeyi:** ✅ KAPANDI (`8393927` + test follow-up `a2b64c5`).
+   Ground-truth: auth login/signup/forgot'ta zaten per-IP limiter vardı; boşluk pahalı/yazma
+   uçlarıydı. Eklendi: `usage/rateLimit.ts` route-katmanı, opt-in `AKIS_RATE_LIMIT` (default
+   kapalı/byte-identical), 3 bucket (build/chat/external-write), owner-yoksa-IP anahtarı,
+   429 RateLimited + retry-after + FE TR/EN kopyası. Wired: POST /sessions + approve, chat +
+   stream (chatPreflight ile owner tek-çözümleme, quota semantiği byte-korundu), external-write
+   propose/confirm. Anonim artık per-IP flood-guard'lı (concurrency muafiyeti kapandı). Auth'a
+   always-on reset + change-password limiter'ları eklendi. Gate-keeper 0 bulgu; reviewer 2 bulgu
+   → skeptik ikisini de çürüttü (change-pw per-IP mevcut pattern'le tutarlı); chat-preflight
+   test kapsamı yine de eklendi. BE 1759/5-skip + FE 762/762.
+
+**Ground-truth (2026-07-09, 5-scout sweep) — kalan Faz 2 kalemlerinin gerçek durumu:**
+
+3. **Gözlemlenebilirlik (PARTIAL):** GEMİDE — OpsBlock (`/health` + authed `/api/ops`:
+   uptime/memory/activeSessions/livePreviews/db), `audit_events` durable ledger
+   (`GET /sessions/:id/audit`), StatsCollector (`/api/analytics`), RagService.getMetrics +
+   UsageCollector sayaçları. GERÇEK boşluklar (temiz-otonom): (a) HTTP error-rate / 4xx-5xx-429
+   sayacı (onResponse hook) — S; (b) RagService.getMetrics HTTP'ye açık değil — S. Owner-kararı:
+   Prometheus `/metrics` (M — stack'e bağlı), pino yapısal request log (M). CLAUDE.md düzeltmesi:
+   `~/.akis/dev-events.json` "error feed" değil tam bus-snapshot + prod'da da yazıyor.
+4. **Yedekleme/anahtar (PARTIAL):** GEMİDE — `keys/crypto.ts` AES-256-GCM + scoped AAD (4 secret
+   store), `pg.ts` idempotent MIGRATIONS, SELF_HOSTING pg_dump/restore, RAG right-to-forget.
+   GERÇEK boşluklar (çoğu OWNER/hukuk kararı): anahtar rotasyonu (M — `keyVersion` yazılıyor ama
+   okunmuyor; rotasyon = tüm secret kaybı), hesap silme/GDPR cascade (M), config-volume yedek
+   otomasyonu (S), toplu veri export (S), schema-versioning/rollback (L).
+5. **Signup/tier (PARTIAL):** GEMİDE — `resolveSignupDisabled` fail-closed, Stripe-webhook tier
+   ataması, requireAuthForBuilds, tier-aware quota, users.status/email_verified kolonları (ŞEMADA
+   VAR, kullanılmıyor). GERÇEK boşluklar (hepsi OWNER/ürün kararı): davet-kodu/allowlist (M),
+   e-posta doğrulama zorlaması (M), self-serve/admin tier yönetimi (M), **insan admin/owner rolü
+   HİÇ YOK** (L — abuse hesabı kapatma bile DB elle-edit ister).
+6. **Güvenlik (PARTIAL):** GEMİDE — publish SSRF/option-injection field validasyonu, tek XSS-safe
+   `<Markdown>`, httpOnly cookie, CSRF Origin-hook. GERÇEK boşluklar (temiz-otonom): (a) CI'da
+   bağımlılık taraması YOK (Dependabot + `pnpm audit` — S); (b) chat 502'lerde ham upstream
+   provider hata mesajı istemciye sızıyor (`chat.routes.ts:337/445/545` — S, bilgi ifşası); (c)
+   CSRF Origin-hook PUBLIC_BASE_URL yoksa/Origin header'sız no-op (S — nüanslı, deploy uyumu).
+   NOT: MCP SSRF premisi yanlışmış — REMOTE_MCP_PROVIDERS hardcoded 2 girdi, kullanıcı URL
+   veremiyor (bugün SSRF yüzeyi yok).
+
+**Faz 2 sıralaması (öneri):** temiz-otonom kalanlar önce — güvenlik S-üçlüsü (Dependabot+CI audit,
+provider-hata temizleme) → observability S-ikilisi (error-rate sayacı, RAG metrics). Sonra OWNER
+kararı gerektirenler (admin rolü, invite/allowlist, e-posta doğrulama, hesap silme, anahtar
+rotasyonu) ayrı ayrı sunulacak — bunlar ürün/hukuk yüzeyi değiştirdiği için otonom yapılmayacak.
 
 ## Faz 3 — RAG/Agents kalanları (**issue #168** — #4'ün doğrulanmış artıkları)
 
