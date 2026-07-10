@@ -150,7 +150,10 @@ function AppFrame({ api }: { api: ApiClient }) {
             <NavLink to="/settings" label={t('nav.settings')} />
             <NavLink to="/docs" label={t('nav.docs')} />
           </nav>
-          <div className="flex items-center gap-2">
+          {/* ml-auto: on the narrower content pages (max-w-6xl) this cluster wraps to a second
+              row — without it, justify-between leaves the wrapped row LEFT-aligned under the
+              brand (live-audit finding). ml-auto keeps it right-aligned whether it wraps or not. */}
+          <div className="ml-auto flex items-center gap-2">
             <DemoBadge api={api} />
             <LanguageToggle />
             <div className="hidden text-right sm:block">

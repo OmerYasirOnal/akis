@@ -21,10 +21,13 @@ function defaultCriticJson(isCode: boolean): string {
 
 /** A valid Scribe spec JSON so the live agent path works deterministically under the mock. */
 function defaultScribeJson(rawIdea: string): string {
-  // The agent appends a RAG grounding block to the user content; the mock would
-  // otherwise echo it into the title. Use only the original idea (a real LLM writes
-  // a clean title regardless). Also cap length so the demo title stays tidy.
-  const idea = (rawIdea.split('\n\nRELEVANT PRIOR KNOWLEDGE')[0] ?? rawIdea).trim().slice(0, 80) || 'app'
+  // The agent appends scaffolding to the user content — a RAG grounding block, and (on the
+  // chat→Scribe draft path) the folded "Conversation so far:" transcript. The mock would echo
+  // either into the title/body (live-audit: the demo SpecCard showed "Conversation so far:
+  // User: …"). Keep only the leading brief/idea line (a real LLM writes a clean title regardless),
+  // and cap length so the demo title stays tidy.
+  const idea = ((rawIdea.split('\n\nRELEVANT PRIOR KNOWLEDGE')[0] ?? rawIdea)
+    .split('\n\nConversation so far:')[0] ?? rawIdea).trim().slice(0, 80) || 'app'
   return JSON.stringify({
     kind: 'spec',
     title: `Spec for: ${idea}`,
@@ -35,6 +38,61 @@ function defaultScribeJson(rawIdea: string): string {
       '', '## Out of scope', '- Authentication, deployment.',
     ].join('\n'),
   })
+}
+
+/** The distinctive opener of the Ask-AKIS chat persona (chat.routes.ts AKIS_PERSONA). Keyed on
+ *  the FULL phrase — `DOCS_SYSTEM` starts "You are AKIS Scribe…", so a bare "you are akis"
+ *  match would misroute the README pass into the conversation branch. */
+const AKIS_PERSONA_MARK = 'you are akis, the friendly orchestrator'
+
+/** Crude-but-deterministic language mirror: Turkish diacritics or common Turkish words. */
+function looksTurkish(msg: string): boolean {
+  return /[çğıöşü]/i.test(msg) || /\b(merhaba|selam|nasıl|neler|kimsin|istiyorum|yapar mısın|lütfen|bir)\b/i.test(msg)
+}
+
+/** Whether the message reads as "build me something" (vs a question ABOUT AKIS/chat). The demo
+ *  must be predictable, so this is two coarse signals: it is NOT an about-AKIS question, and it
+ *  carries a make-verb or an app-ish noun. A real model judges this properly; the mock only has
+ *  to make the demo flow reachable. */
+function looksLikeBuildAsk(msg: string): boolean {
+  const aboutAkis = /(kimsin|who are you|what can you|neler yapabilir|nasıl çalış|how (do|does)|gates?\b|kapılar)/i.test(msg)
+  if (aboutAkis) return false
+  const makeVerb = /(yap|kur|oluştur|geliştir|inşa|hazırla|build|create|make|develop|implement|write me)/i.test(msg)
+  const appNoun = /(uygulama|app\b|site|website|sayfa|oyun|game|liste|list\b|tracker|takip|blog|notlar|notes|not defteri|calculator|hesap|todo|araç|tool)/i.test(msg)
+  return makeVerb || appNoun
+}
+
+/**
+ * The keyless-demo Ask-AKIS conversation (live-audit fix): the persona turn used to fall into the
+ * `scribe` branch (AKIS_PERSONA mentions Scribe) and returned raw spec JSON — the demo chat was
+ * unusable and no SpecCard could ever appear. This holds a REAL (deterministic) conversation in
+ * the user's language, is honest that it's the demo mode, offers akis-suggest quick-replies, and
+ * hands a build ask to the REAL Scribe via the standard ````akis-spec-request fence — so the
+ * whole chat → SpecCard → Approve & Build → pipeline loop works keyless, end to end.
+ */
+function mockAkisChat(rawMsg: string): string {
+  const msg = rawMsg.trim()
+  const tr = looksTurkish(msg)
+  if (looksLikeBuildAsk(msg)) {
+    const brief = msg.replace(/\s+/g, ' ').slice(0, 180)
+    const lead = tr ? 'Harika fikir! Scribe spec’i hazırlıyor…' : 'Great idea! Scribe is drafting the spec…'
+    return `${lead}\n\n\`\`\`\`akis-spec-request\n${brief}\n\`\`\`\``
+  }
+  const body = tr
+    ? [
+        'Merhaba! Ben AKIS — ajan tabanlı yazılım stüdyosunun orkestratörüyüm. Bana bir uygulama fikri anlat: Scribe spec’ini yazar, Proto kodu üretir, Trace GERÇEK testlerle doğrular, Critic gözden geçirir — ve sen onaylamadan hiçbir şey ship edilmez.',
+        '',
+        'Şu an anahtar tanımlı olmadığı için deterministik demo modundayım: akış birebir gerçek, model çıktıları örnektir. Ne inşa edelim?',
+      ]
+    : [
+        'Hi! I’m AKIS — the orchestrator of this agentic build studio. Tell me an app idea: Scribe writes the spec, Proto writes the code, Trace verifies it with REAL tests, and Critic reviews it — nothing ships until you approve.',
+        '',
+        'I’m running in deterministic demo mode right now (no provider key configured): the flow is the real thing, the model output is canned. What should we build?',
+      ]
+  const chips = tr
+    ? ['- Bir yapılacaklar uygulaması yap', '- Basit bir not defteri oluştur', '- Kapılar (gates) nasıl çalışıyor?']
+    : ['- Build a todo app', '- Create a simple notes app', '- How do the gates work?']
+  return `${body.join('\n')}\n\n\`\`\`akis-suggest\n${chips.join('\n')}\n\`\`\``
 }
 
 /** Strip the spec framing the agent prepends, recovering a clean app title. */
@@ -114,6 +172,12 @@ export class MockProvider implements LlmProvider {
     // Role-appropriate parseable JSON so the LIVE agent path works under the mock.
     const sys = req.system.toLowerCase()
     const last = req.messages[req.messages.length - 1]?.content ?? ''
+    // The Ask-AKIS chat persona FIRST — it mentions Scribe/Proto/Critic by name, so the
+    // role-keyword checks below would misroute every conversation turn into raw agent JSON
+    // (the live-audit bug: the demo chat answered greetings with Scribe spec JSON).
+    if (sys.includes(AKIS_PERSONA_MARK)) {
+      return { text: mockAkisChat(last), usage: { inTokens: 0, outTokens: 0 } }
+    }
     if (sys.includes('reviewer')) {
       return { text: defaultCriticJson(sys.includes('code reviewer')), usage: { inTokens: 0, outTokens: 0 } }
     }

@@ -739,6 +739,29 @@ describe('POST /api/chat/stream — REAL Scribe handoff', () => {
   })
 })
 
+// ── The KEYLESS demo conversation, end-to-end through the FULL server (live-audit fix) ──
+// The mock used to hit the `scribe` branch for every persona turn (AKIS_PERSONA mentions Scribe),
+// so the demo chat answered greetings with raw spec JSON and no SpecCard was ever reachable.
+describe('POST /api/chat — keyless demo conversation (full server, default mock)', () => {
+  it('a greeting gets a CONVERSATIONAL reply with suggestion chips — never raw Scribe JSON', async () => {
+    const res = await app().inject({ method: 'POST', url: '/api/chat', payload: { message: 'Merhaba! Sen kimsin, neler yapabilirsin?' } })
+    expect(res.statusCode).toBe(200)
+    const reply = res.json().reply as string
+    expect(reply).not.toContain('"kind":"spec"')
+    expect(reply).toMatch(/```akis-suggest\n/)
+  })
+
+  it('a build ask hands off to the REAL (mock) Scribe → the reply carries the standard akis-spec block (SpecCard reachable)', async () => {
+    const res = await app().inject({ method: 'POST', url: '/api/chat', payload: { message: 'Build a simple todo list app' } })
+    expect(res.statusCode).toBe(200)
+    const reply = res.json().reply as string
+    expect(reply).toMatch(/akis-spec\n/)          // the standard build block the FE promotes to a SpecCard
+    expect(reply).not.toContain('akis-spec-request') // the request fence was consumed by the handoff
+    expect(reply).toContain('# Build a simple todo list app') // a CLEAN spec H1 — no prompt scaffolding
+    expect(reply).not.toContain('Conversation so far')        // the draft scaffold must never echo into the spec
+  })
+})
+
 // ── chatPreflight: request-RATE limit + quota, BEFORE the model (Faz 2) ──
 describe('POST /api/chat — chatPreflight rate limit (chat bucket)', () => {
   it('throttles the chat bucket: the 2nd rapid turn → 429 RateLimited and the provider is NOT called', async () => {

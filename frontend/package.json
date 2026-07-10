@@ -13,6 +13,8 @@
   },
   "dependencies": {
     "@akis/shared": "workspace:^",
+    "@fontsource-variable/dm-sans": "^5.2.8",
+    "@fontsource/jetbrains-mono": "^5.2.8",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "react-markdown": "^10.1.0",

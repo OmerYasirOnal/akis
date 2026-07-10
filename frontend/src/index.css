@@ -1,4 +1,9 @@
-@import url('https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700;9..40,800&family=JetBrains+Mono:wght@400;600&display=swap');
+/* SELF-HOSTED fonts (live-audit fix): the Google Fonts @import broke offline/self-host deploys
+   (connection-reset console errors + system-font fallback on an airgapped box) and leaked every
+   visitor to Google. Fontsource bundles the same faces into our own build — no external request. */
+@import '@fontsource-variable/dm-sans/opsz.css';
+@import '@fontsource/jetbrains-mono/400.css';
+@import '@fontsource/jetbrains-mono/600.css';
 @import "tailwindcss";
 
 /* ───────────────────────── AKIS cosmic theme ─────────────────────────
@@ -19,7 +24,8 @@ html, body, #root { min-height: 100%; }
 body {
   background: var(--akis-bg);
   color: #E9F1F3;
-  font-family: 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  /* 'DM Sans Variable' is the fontsource-variable family name; 'DM Sans' kept as an alias. */
+  font-family: 'DM Sans Variable', 'DM Sans', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
 }
 code, pre, .font-mono { font-family: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 

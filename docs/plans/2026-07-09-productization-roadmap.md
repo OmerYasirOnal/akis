@@ -182,6 +182,28 @@ Gerçek artıklar:
 
 ## Faz 4 — Ürün yüzeyi / büyüme (owner ile şekillenecek)
 
+**✅ İlk paket KAPANDI (2026-07-10, canlı-denetim turu):** keyless demo sohbeti + live-audit
+düzeltmeleri. Canlı instance (:3001, mock provider) Playwright ile uçtan uca denetlendi;
+3 doğrulanmış bulgu düzeltildi:
+1. **Keyless demo sohbeti tamamen kırıktı** — Ask-AKIS, `sys.includes('scribe')` eşleşmesi
+   yüzünden her persona turunda ham Scribe JSON'u döndürüyordu (AKIS_PERSONA metni Scribe'dan
+   bahsediyor); SpecCard'a hiç ulaşılamıyor, UI'dan build başlatılamıyordu. Fix: MockProvider'a
+   tam-cümle `AKIS_PERSONA_MARK` dalı (keyword dallarından ÖNCE) — TR/EN sohbet yanıtları
+   (dürüst "demo modundayım"), ```akis-suggest çipleri, build isteğinde standart
+   ````akis-spec-request fence'i ile GERÇEK (mock) Scribe'a devir. Ayrıca mock Scribe'ın
+   spec gövdesine "Conversation so far:" prompt iskelesini echo'laması kapatıldı.
+   Kanıt: canlı TR akışı uçtan uca — selamlama → persona yanıtı + çipler → çip → SpecCard →
+   Approve & Build → pipeline → Verified rozeti → push gate. 8 yeni unit + 2 yeni full-server
+   integration testi (persona dalı kaldırılırsa kırmızıya düşerler).
+2. **/workflows (ve tüm max-w-6xl alt sayfalarında) header kümesi sola sarıyordu** —
+   `ml-auto` sarmalayıcıyla sağa hizalandı; canlı geometri doğrulaması clusterRight ==
+   headerRight. Workflows builder'ın kendisi canlıda sağlıklı (preset oluşturma → Version 1 ·
+   5 ajan listelendi); başka bulgu yok.
+3. **Google Fonts @import** offline/self-host kurulumda console hatası + sistem-fontu
+   fallback'ine düşüyor ve her ziyaretçiyi Google'a sızdırıyordu — self-host `@fontsource`
+   paketleriyle değiştirildi (DM Sans Variable + JetBrains Mono 400/600). Canlı doğrulama:
+   oturum boyunca SIFIR harici istek, `document.fonts` DM Sans Variable yüklü.
+
 - Rafta duran `studio-cohesion-phase1` paketinden değerli kalemlerin seçilerek geri alınması
   (`2026-06-10-cohesion-branch-shelved-tasks.md`; önce oradaki 2 bilinen defekt).
 - Onboarding: ilk-kullanım akışı, örnek spec galerisi, "ilk build'ini 2 dakikada al" yolu.
