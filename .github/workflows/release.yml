@@ -48,7 +48,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       # Resolve the version ONCE from whichever trigger fired:
       #   • tag push   → strip refs/tags/ (e.g. v1.0.0)
