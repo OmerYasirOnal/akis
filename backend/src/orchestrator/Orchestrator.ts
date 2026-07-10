@@ -401,7 +401,10 @@ export class Orchestrator {
     // RAG/specSource is absent (RAG-off default is byte-for-byte unchanged).
     if (this.s.specSource) {
       const userId = this.s.ragUserIdFor?.(id) ?? id
-      try { this.s.specSource.ingest({ sessionId: id, userId, spec }) } catch { /* additive grounding — never breaks approval */ }
+      // Never breaks approval (already committed above), but LOG a swallowed failure so a future
+      // synchronous regression in SpecSource doesn't silently stop all spec grounding (LOW-3).
+      try { this.s.specSource.ingest({ sessionId: id, userId, spec }) }
+      catch (err) { this.narrate(id, `Spec auto-ingest skipped: ${err instanceof Error ? err.message : String(err)}`, { ephemeral: true }) }
     }
     return session
   }

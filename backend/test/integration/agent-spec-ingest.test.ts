@@ -61,4 +61,12 @@ describe('agent-spec ingest (issue #168)', () => {
     const s = await orch.start({ idea: 'a ledger app', spec: SPEC })
     expect((await services.store.get(s.id))?.status).toBe('building') // approval succeeded, unchanged
   })
+
+  it('a THROWING specSource.ingest never breaks approval (LOW-3: swallowed + logged, off the gate path)', async () => {
+    const { orch, services } = ragOrch(true)
+    services.specSource = { ingest() { throw new Error('chunker boom') } } as never // simulate a sync regression
+    const s = await orch.start({ idea: 'a ledger app', spec: SPEC })
+    // Gate 1 already committed before the ingest — the throw is caught, approval stands.
+    expect((await services.store.get(s.id))?.status).toBe('building')
+  })
 })

@@ -126,7 +126,7 @@ export function buildRag(opts: BuildRagOpts): RagStack {
     new MockRepoReader(opts.github ?? new MockGitHubAdapter())
   const repoSource = new RepoSource({ rag: service, queue, reader })
   const uploadSource = new UploadSource({ rag: service, queue })
-  const specSource = new SpecSource({ rag: service })
+  const specSource = new SpecSource({ rag: service, queue })
   return { service, port, sink, queue, repoSource, uploadSource, specSource, userIdFor, repoReader: reader }
 }
 

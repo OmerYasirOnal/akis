@@ -1,10 +1,15 @@
 import type { SpecArtifact } from '@akis/shared'
 import type { RagService } from '../RagService.js'
+import type { IngestQueue } from './IngestQueue.js'
 import { chunkByKind } from './structureChunk.js'
 import { shouldExclude } from './exclude.js'
 
 export interface SpecSourceDeps {
   rag: RagService
+  /** The SAME queue inside the RagService — used only to count a whole-spec exclusion (a secret
+   *  trips the filter BEFORE rag.ingest), mirroring RepoSource/UploadSource so the excluded
+   *  counter on /api/ops RAG health reflects it. */
+  queue: IngestQueue
 }
 
 export interface SpecIngestInput {
@@ -39,12 +44,16 @@ export class SpecSource {
 
   ingest(input: SpecIngestInput): void {
     const { sessionId, userId, spec } = input
-    // Carry the title as a heading so a chunk without it still reads as "the spec for X".
-    const body = spec.title.trim() ? `# ${spec.title.trim()}\n\n${spec.body}` : spec.body
+    const title = spec.title.trim()
+    // Carry the title as a heading so a chunk without it still reads as "the spec for X" — BUT
+    // skip the prepend when the body already opens with that exact H1 (Scribe's common shape), so
+    // we don't emit a duplicated heading chunk (LOW-1).
+    const leadsWithTitle = title !== '' && spec.body.trimStart().toLowerCase().startsWith(`# ${title.toLowerCase()}`)
+    const body = title !== '' && !leadsWithTitle ? `# ${title}\n\n${spec.body}` : spec.body
     if (!body.trim()) return
     // Secret exclusion BEFORE chunking (F1-AC12) — a spec should never carry a secret, but be
     // consistent with RepoSource. Use a synthetic 'spec.md' source so path-based rules are sane.
-    if (shouldExclude(body, 'spec.md').excluded) return
+    if (shouldExclude(body, 'spec.md').excluded) { this.deps.queue.metrics.excluded++; return }
     for (const text of chunkByKind(body, 'spec')) {
       if (text.trim()) this.deps.rag.ingest({ text, source: 'agent-spec', sourceId: sessionId, userId, sessionId })
     }
