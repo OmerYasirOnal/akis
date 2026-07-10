@@ -84,7 +84,7 @@ jobs:
       # smoke can `docker run` it). amd64 only — keep the release fast and match the
       # ops-job build; arm64 is intentionally out of scope to keep this simple.
       - name: Build the bundled self-host image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@v7
         with:
           context: .
           file: ./Dockerfile
