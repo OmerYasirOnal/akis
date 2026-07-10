@@ -11,7 +11,7 @@ import { registerProviderRoutes } from './providers.routes.js'
 import { registerSessionRoutes } from './sessions.routes.js'
 import { registerPreviewRoutes, wirePreviewPrewarm } from './preview.routes.js'
 import { registerWorkflowRoutes } from './workflows.routes.js'
-import { registerAuthRoutes, userIdFromRequest } from './auth.routes.js'
+import { registerAuthRoutes, userIdFromRequest, userFromRequest } from './auth.routes.js'
 import { UserStore, type UserStorePort } from '../auth/UserStore.js'
 import { JsonFileUserStore } from '../auth/JsonFileUserStore.js'
 import { createPgUserStoreWithClient } from '../auth/PgUserStore.js'
@@ -40,7 +40,7 @@ import { createPgUsageStoreWithClient } from '../usage/PgUsageStore.js'
 import { UsageCollector } from '../usage/UsageCollector.js'
 import { resolveQuotaPolicy } from '../usage/quota.js'
 import { resolveConcurrencyPolicy } from '../usage/concurrency.js'
-import { resolveAdminPolicy, isAdminEmail } from '../auth/admin.js'
+import { resolveAdminPolicy, isAdminUser, type AccessCheck } from '../auth/admin.js'
 import { resolveRouteRateLimits } from '../usage/rateLimit.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
@@ -491,15 +491,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // Human ADMIN allowlist (AKIS_ADMIN_EMAILS + AKIS_OWNER_EMAIL). Derived at read time; surfaces
   // `isAdmin` on user responses (auth routes) and gates operator-only surfaces (e.g. /api/ops).
   const adminPolicy = resolveAdminPolicy(env)
-  // ADMIN guard: when NO allowlist is configured it falls back to any-authenticated (byte-identical
-  // single-operator dev/self-host); when an allowlist IS set, only an allowlisted email passes — a
-  // multi-user deploy SHOULD set it.
-  const requireAdmin = async (req: Parameters<typeof userIdFromRequest>[0]): Promise<boolean> => {
-    if (!adminPolicy.configured) return hasSession(req) // unconfigured ⇒ any authed (unchanged)
-    const uid = await userIdOf(req)
-    if (!uid) return false
-    const user = await userStore.findById(uid)
-    return isAdminEmail(user?.email, adminPolicy)
+  // ADMIN guard (tri-state so routes return the RIGHT code: 401 unauth vs 403 authed-not-admin —
+  // a 403 must NOT be a 401, or the FE would log the user out). Unconfigured ⇒ any authenticated
+  // user is an operator (byte-identical single-operator dev/self-host); configured ⇒ only an
+  // allowlisted PROVIDER-VERIFIED (OAuth-bound) email passes.
+  const adminGuard = async (req: Parameters<typeof userIdFromRequest>[0]): Promise<AccessCheck> => {
+    let user
+    try { user = await userFromRequest(req, { users: userStore, secret: authSecret, cookie }) }
+    catch { return 'unauthenticated' }
+    if (!adminPolicy.configured) return 'ok' // any authed ⇒ operator (unchanged)
+    return isAdminUser(user, adminPolicy) ? 'ok' : 'forbidden'
   }
 
   // /health surfaces the active serving mode so a demo (fake-verification) boot is never
@@ -582,15 +583,16 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // userIdOf closure (revocation-aware) so only the authenticated owner reaches their own profile.
   // The SSH key is stored encrypted in `publishProfiles` — NEVER returned/logged.
   registerPublishRoutes(app, { profiles: publishProfiles, userIdOf })
-  registerAnalyticsRoutes(app, { stats })
+  // ADMIN-gated (reviewer MED): the same global snapshot /api/ops serves — operator-only when an
+  // allowlist is configured, any-authenticated fallback otherwise (was fully public before).
+  registerAnalyticsRoutes(app, { stats, guard: adminGuard })
   // Per-user usage indicator (GET /api/usage; 401 when unauthenticated, mirroring /sessions/mine).
   registerUsageRoutes(app, { usage: usageStore, quota, ...(quotaFor ? { quotaFor } : {}), requireOwner: userIdOf })
-  // Operator ops view (GET /api/ops; authenticated via hasSession) — the richer StatsCollector
-  // snapshot + the operational block (uptime/memory/activeSessions/livePreviews/db).
+  // Operator ops view (GET /api/ops) — the richer StatsCollector snapshot + the operational block.
   registerOpsRoutes(app, {
-    // ADMIN-gated: the aggregate ops/stats view is operator-only when an admin allowlist is set
-    // (gate-keeper note on #169); falls back to any-authenticated when unconfigured (unchanged).
-    stats, previewRegistry, requireAuth: requireAdmin, httpMetrics,
+    // ADMIN-gated: operator-only when an admin allowlist is set (gate-keeper note on #169); falls
+    // back to any-authenticated when unconfigured (unchanged). Tri-state: 401 unauth / 403 non-admin.
+    stats, previewRegistry, guard: adminGuard, httpMetrics,
     ...(deps.dbPing ? { dbPing: deps.dbPing } : {}),
     // RAG ingest/corpus health when RAG is on — a thunk so ops.routes stays decoupled from
     // knowledge internals (getMetrics returns ingest counters + corpusSize).

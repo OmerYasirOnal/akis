@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { resolveAdminPolicy, isAdminEmail } from '../../src/auth/admin.js'
+import { resolveAdminPolicy, isAdminUser } from '../../src/auth/admin.js'
 
 describe('resolveAdminPolicy (env allowlist)', () => {
   it('NO admin env ⇒ not configured, empty set (byte-identical default)', () => {
@@ -8,7 +8,7 @@ describe('resolveAdminPolicy (env allowlist)', () => {
     expect(p.emails.size).toBe(0)
   })
 
-  it('AKIS_ADMIN_EMALS: comma-split, trimmed, lowercased', () => {
+  it('AKIS_ADMIN_EMAILS: comma-split, trimmed, lowercased', () => {
     const p = resolveAdminPolicy({ AKIS_ADMIN_EMAILS: ' Ada@Akis.dev , bob@akis.dev ,, ' })
     expect(p.configured).toBe(true)
     expect([...p.emails].sort()).toEqual(['ada@akis.dev', 'bob@akis.dev'])
@@ -26,21 +26,33 @@ describe('resolveAdminPolicy (env allowlist)', () => {
   })
 })
 
-describe('isAdminEmail', () => {
+describe('isAdminUser — allowlisted AND provider-verified (OAuth-bound)', () => {
   const p = resolveAdminPolicy({ AKIS_ADMIN_EMAILS: 'ada@akis.dev' })
-  it('matches case-insensitively', () => {
-    expect(isAdminEmail('ADA@AKIS.dev', p)).toBe(true)
-    expect(isAdminEmail(' ada@akis.dev ', p)).toBe(true)
+  const oauth = (email: string) => ({ email, externalId: `google:${email}` }) // provider-verified
+  const password = (email: string) => ({ email }) // no externalId → unverified email
+
+  it('an OAuth-bound allowlisted email IS an admin (case-insensitive)', () => {
+    expect(isAdminUser(oauth('ada@akis.dev'), p)).toBe(true)
+    expect(isAdminUser(oauth('ADA@AKIS.dev'), p)).toBe(true)
   })
-  it('rejects a non-admin email', () => {
-    expect(isAdminEmail('mallory@akis.dev', p)).toBe(false)
+
+  it('SECURITY: a PASSWORD account (no externalId) is NEVER an admin even if the email is allowlisted', () => {
+    // Closes the pre-registration escalation: a password signup verifies email format, not ownership.
+    expect(isAdminUser(password('ada@akis.dev'), p)).toBe(false)
   })
+
+  it('an OAuth-bound NON-allowlisted email is not an admin', () => {
+    expect(isAdminUser(oauth('mallory@akis.dev'), p)).toBe(false)
+  })
+
   it('an unconfigured policy is never an admin (guard against accidental all-admin)', () => {
     const none = resolveAdminPolicy({})
-    expect(isAdminEmail('ada@akis.dev', none)).toBe(false)
+    expect(isAdminUser(oauth('ada@akis.dev'), none)).toBe(false)
   })
-  it('undefined/empty email is never an admin', () => {
-    expect(isAdminEmail(undefined, p)).toBe(false)
-    expect(isAdminEmail('', p)).toBe(false)
+
+  it('undefined user / undefined-or-empty email is never an admin', () => {
+    expect(isAdminUser(undefined, p)).toBe(false)
+    expect(isAdminUser({ email: '', externalId: 'google:x' }, p)).toBe(false)
+    expect(isAdminUser({ externalId: 'google:x' }, p)).toBe(false)
   })
 })

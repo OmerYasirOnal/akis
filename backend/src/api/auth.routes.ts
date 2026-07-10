@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { EmailTakenError, toPublic, type AuthUser, type PublicUser, type UserStorePort } from '../auth/UserStore.js'
-import { isAdminEmail, type AdminPolicy } from '../auth/admin.js'
+import { isAdminUser, type AdminPolicy } from '../auth/admin.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { verifyJwt, signResetToken, verifyResetToken } from '../auth/jwt.js'
 import { serializeCookie, parseCookies, type CookieConfig } from '../auth/cookie.js'
@@ -51,14 +51,20 @@ const dummyHash = (): Promise<string> => (dummyHashP ??= hashPassword('timing-eq
  *  Exported so other protected routes can guard with the same logic. ASYNC since the
  *  REVOCATION check (audit gap): the JWT's `tv` claim must match the user record's
  *  tokenVersion — a bump (password change / logout-all) kills every outstanding token. */
-export async function userIdFromRequest(req: FastifyRequest, deps: AuthDeps): Promise<string> {
+export async function userIdFromRequest(req: FastifyRequest, deps: Pick<AuthDeps, 'users' | 'secret' | 'cookie'>): Promise<string> {
+  return (await userFromRequest(req, deps)).id
+}
+
+/** Like `userIdFromRequest` but returns the full authenticated user (so a caller that needs more
+ *  than the id — e.g. the admin check reads `.email`/`.externalId` — avoids a second findById). */
+export async function userFromRequest(req: FastifyRequest, deps: Pick<AuthDeps, 'users' | 'secret' | 'cookie'>): Promise<AuthUser> {
   const token = parseCookies(req.headers.cookie)[deps.cookie.name]
   if (!token) throw new UnauthorizedError()
   let claims
   try { claims = verifyJwt(token, deps.secret) } catch { throw new UnauthorizedError() }
   const user = await deps.users.findById(claims.sub)
   if (!user || (claims.tv ?? 0) !== (user.tokenVersion ?? 0)) throw new UnauthorizedError()
-  return claims.sub
+  return user
 }
 
 function setSession(reply: FastifyReply, user: AuthUser, deps: AuthDeps): void {
@@ -71,7 +77,7 @@ function setSession(reply: FastifyReply, user: AuthUser, deps: AuthDeps): void {
  *  this email an admin. Additive — absent the allowlist, byte-identical to toPublic. */
 function publicUser(user: AuthUser, deps: AuthDeps): PublicUser {
   const base = toPublic(user)
-  return deps.adminPolicy && isAdminEmail(user.email, deps.adminPolicy) ? { ...base, isAdmin: true } : base
+  return deps.adminPolicy && isAdminUser(user, deps.adminPolicy) ? { ...base, isAdmin: true } : base
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {

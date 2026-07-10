@@ -19,6 +19,10 @@ export interface AdminPolicy {
   configured: boolean
 }
 
+/** The outcome of an admin-gated access check. `unauthenticated` → 401 (not logged in);
+ *  `forbidden` → 403 (logged in but not an admin — NEVER 401, or the FE would log the user out). */
+export type AccessCheck = 'ok' | 'unauthenticated' | 'forbidden'
+
 export function resolveAdminPolicy(env: Record<string, string | undefined>): AdminPolicy {
   const emails = new Set<string>()
   const add = (raw: string | undefined): void => {
@@ -32,9 +36,19 @@ export function resolveAdminPolicy(env: Record<string, string | undefined>): Adm
   return { emails, configured: emails.size > 0 }
 }
 
-/** Whether `email` is an admin under `policy`. An UNCONFIGURED policy is never an admin (so a
- *  deployment that forgot to set the allowlist is fail-closed for explicit admin, not all-admin). */
-export function isAdminEmail(email: string | undefined, policy: AdminPolicy): boolean {
-  if (!policy.configured || !email) return false
-  return policy.emails.has(email.trim().toLowerCase())
+/**
+ * Whether `user` is an admin under `policy`. TWO conditions, both required:
+ *  1. the email is in the allowlist, AND
+ *  2. the email is PROVIDER-VERIFIED — the account is OAuth-bound (`externalId` present).
+ *
+ * (2) closes the pre-registration escalation (gate-keeper + reviewer MED): password signup
+ * verifies only email FORMAT, not ownership, so without this check an attacker could register
+ * an allowlisted admin's email and become admin (and lock the real admin out via EmailTaken).
+ * A password account (no `externalId`) therefore can NEVER be an admin — an admin must sign in
+ * with a provider that verified the email (Google/GitHub). An UNCONFIGURED policy is never an
+ * admin (fail-closed, never all-admin).
+ */
+export function isAdminUser(user: { email?: string; externalId?: string } | undefined, policy: AdminPolicy): boolean {
+  if (!policy.configured || !user?.externalId || !user.email) return false
+  return policy.emails.has(user.email.trim().toLowerCase())
 }

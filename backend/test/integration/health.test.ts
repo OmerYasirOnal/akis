@@ -1,6 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { buildServer } from '../../src/api/server.js'
 import { JsonFileKeyStore } from '../../src/keys/KeyStore.js'
+import { UserStore } from '../../src/auth/UserStore.js'
+import { signJwt } from '../../src/auth/jwt.js'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -100,33 +102,54 @@ describe('GET /api/ops — operator view', () => {
   })
 })
 
-describe('admin allowlist — /api/ops gating + /auth/me isAdmin', () => {
-  it('NO allowlist (default): any authenticated user reaches /api/ops (byte-identical) and isAdmin is absent', async () => {
-    const app = buildServer({ keyStore: keyStore(), env: { AUTH_JWT_SECRET: 'ops-secret' } })
+describe('admin allowlist — /api/ops + /api/analytics gating + /auth/me isAdmin', () => {
+  const SECRET = 'ops-secret'
+  // Mint a valid session cookie for a seeded user (so we can test an OAuth-verified admin without
+  // driving the whole OAuth callback).
+  const mint = (u: { id: string; email: string; name: string; tokenVersion?: number }) =>
+    `akis_session=${signJwt({ sub: u.id, email: u.email, name: u.name, tv: u.tokenVersion ?? 0 }, SECRET)}`
+
+  it('NO allowlist (default): any authenticated user reaches /api/ops + /api/analytics (byte-identical); isAdmin absent', async () => {
+    const app = buildServer({ keyStore: keyStore(), env: { AUTH_JWT_SECRET: SECRET } })
     const signup = await app.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Ada', email: 'ada@akis.dev', password: 'password1234' } })
     expect(signup.json().user.isAdmin).toBeUndefined() // no allowlist → no derived flag
     const cookie = cookieOf(signup)
     expect((await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie } })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/api/analytics', headers: { cookie } })).statusCode).toBe(200)
+    // Analytics is no longer PUBLIC — an unauthenticated request is refused.
+    expect((await app.inject({ method: 'GET', url: '/api/analytics' })).statusCode).toBe(401)
   })
 
-  it('allowlist SET: an allowlisted email is admin (isAdmin=true, /api/ops 200); a non-admin is refused 401', async () => {
-    const env = { AUTH_JWT_SECRET: 'ops-secret', AKIS_ADMIN_EMAILS: 'boss@akis.dev' }
-    const app = buildServer({ keyStore: keyStore(), env })
-    // The admin.
-    const adminCookie = cookieOf(await app.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Boss', email: 'boss@akis.dev', password: 'password1234' } }))
-    const me = await app.inject({ method: 'GET', url: '/auth/me', headers: { cookie: adminCookie } })
-    expect(me.json().user.isAdmin).toBe(true)
-    expect((await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie: adminCookie } })).statusCode).toBe(200)
-    // A non-admin authenticated user is refused the operator view (401), and isAdmin is absent.
-    const userCookie = cookieOf(await app.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Mal', email: 'mal@akis.dev', password: 'password1234' } }))
-    const userMe = await app.inject({ method: 'GET', url: '/auth/me', headers: { cookie: userCookie } })
-    expect(userMe.json().user.isAdmin).toBeUndefined()
-    expect((await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie: userCookie } })).statusCode).toBe(401)
+  it('allowlist SET + OAuth-verified admin: isAdmin=true, /api/ops + /api/analytics 200', async () => {
+    const users = new UserStore()
+    const admin = await users.upsertOAuth({ externalId: 'google:1', email: 'boss@akis.dev', name: 'Boss' }, { allowCreate: true })
+    const app = buildServer({ keyStore: keyStore(), userStore: users, env: { AUTH_JWT_SECRET: SECRET, AKIS_ADMIN_EMAILS: 'boss@akis.dev' } })
+    const cookie = mint(admin!)
+    expect((await app.inject({ method: 'GET', url: '/auth/me', headers: { cookie } })).json().user.isAdmin).toBe(true)
+    expect((await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie } })).statusCode).toBe(200)
+    expect((await app.inject({ method: 'GET', url: '/api/analytics', headers: { cookie } })).statusCode).toBe(200)
   })
 
-  it('AKIS_OWNER_EMAIL alone makes that user an admin (the single-owner is always an admin)', async () => {
-    const app = buildServer({ keyStore: keyStore(), env: { AUTH_JWT_SECRET: 'ops-secret', AKIS_OWNER_EMAIL: 'owner@akis.dev' } })
-    const ownerCookie = cookieOf(await app.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Own', email: 'owner@akis.dev', password: 'password1234' } }))
-    expect((await app.inject({ method: 'GET', url: '/auth/me', headers: { cookie: ownerCookie } })).json().user.isAdmin).toBe(true)
+  it('SECURITY: a PASSWORD account with an allowlisted email is NOT admin (isAdmin absent) → /api/ops + /api/analytics 403 (not 401)', async () => {
+    // The pre-registration escalation: an attacker password-registers the admin email. It must NOT
+    // grant admin (no provider-verified externalId). 403 (not 401) so the FE doesn't log them out.
+    const app = buildServer({ keyStore: keyStore(), env: { AUTH_JWT_SECRET: SECRET, AKIS_ADMIN_EMAILS: 'boss@akis.dev' } })
+    const cookie = cookieOf(await app.inject({ method: 'POST', url: '/auth/signup', payload: { name: 'Mal', email: 'boss@akis.dev', password: 'password1234' } }))
+    expect((await app.inject({ method: 'GET', url: '/auth/me', headers: { cookie } })).json().user.isAdmin).toBeUndefined()
+    expect((await app.inject({ method: 'GET', url: '/api/ops', headers: { cookie } })).statusCode).toBe(403)
+    expect((await app.inject({ method: 'GET', url: '/api/analytics', headers: { cookie } })).statusCode).toBe(403)
+  })
+
+  it('allowlist SET + unauthenticated ⇒ 401 on both operator surfaces', async () => {
+    const app = buildServer({ keyStore: keyStore(), env: { AUTH_JWT_SECRET: SECRET, AKIS_ADMIN_EMAILS: 'boss@akis.dev' } })
+    expect((await app.inject({ method: 'GET', url: '/api/ops' })).statusCode).toBe(401)
+    expect((await app.inject({ method: 'GET', url: '/api/analytics' })).statusCode).toBe(401)
+  })
+
+  it('AKIS_OWNER_EMAIL + OAuth account makes that user an admin (the single-owner is always an admin)', async () => {
+    const users = new UserStore()
+    const owner = await users.upsertOAuth({ externalId: 'github:9', email: 'owner@akis.dev', name: 'Own' }, { allowCreate: true })
+    const app = buildServer({ keyStore: keyStore(), userStore: users, env: { AUTH_JWT_SECRET: SECRET, AKIS_OWNER_EMAIL: 'owner@akis.dev' } })
+    expect((await app.inject({ method: 'GET', url: '/auth/me', headers: { cookie: mint(owner!) } })).json().user.isAdmin).toBe(true)
   })
 })
