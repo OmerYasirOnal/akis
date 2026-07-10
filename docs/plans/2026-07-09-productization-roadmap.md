@@ -130,13 +130,16 @@ akisflow.com bugün 2 kullanıcı + kapalı signup ile duruyor. Gerçek kullanı
    VAR, kullanılmıyor). GERÇEK boşluklar (hepsi OWNER/ürün kararı): davet-kodu/allowlist (M),
    e-posta doğrulama zorlaması (M), self-serve/admin tier yönetimi (M), **insan admin/owner rolü
    HİÇ YOK** (L — abuse hesabı kapatma bile DB elle-edit ister).
-6. **Güvenlik (PARTIAL):** GEMİDE — publish SSRF/option-injection field validasyonu, tek XSS-safe
-   `<Markdown>`, httpOnly cookie, CSRF Origin-hook. GERÇEK boşluklar (temiz-otonom): (a) CI'da
-   bağımlılık taraması YOK (Dependabot + `pnpm audit` — S); (b) chat 502'lerde ham upstream
-   provider hata mesajı istemciye sızıyor (`chat.routes.ts:337/445/545` — S, bilgi ifşası); (c)
-   CSRF Origin-hook PUBLIC_BASE_URL yoksa/Origin header'sız no-op (S — nüanslı, deploy uyumu).
-   NOT: MCP SSRF premisi yanlışmış — REMOTE_MCP_PROVIDERS hardcoded 2 girdi, kullanıcı URL
-   veremiyor (bugün SSRF yüzeyi yok).
+6. **Güvenlik (PARTIAL → 2/3 kapandı):** GEMİDE — publish SSRF/option-injection field validasyonu,
+   tek XSS-safe `<Markdown>`, httpOnly cookie, CSRF Origin-hook. Boşluklar:
+   - ✅ (a) CI bağımlılık taraması — `dependabot.yml` (npm+actions, weekly) + advisory
+     `pnpm audit --audit-level=high` job'u (`ed50c41`).
+   - ✅ (b) chat 502 ham provider-hata sızıntısı — 4 sink server-side loglanıp generic mesaja
+     çevrildi, FE `ProviderError`'ı `akis.error.provider`'a lokalize eder; ham metin DOM'a hiç
+     ulaşmaz (`ed50c41`). Gate-keeper 0; reviewer 1 LOW (stream sink test boşluğu) pakette kapandı.
+   - 🔴 (c) CSRF Origin-hook PUBLIC_BASE_URL yoksa/Origin header'sız no-op (S — nüanslı, deploy
+     uyumu; kalan tek temiz-otonom güvenlik kalemi ama cookie SameSite'ı önce doğrulanmalı).
+   NOT: MCP SSRF premisi yanlışmış — REMOTE_MCP_PROVIDERS hardcoded 2 girdi (bugün SSRF yüzeyi yok).
 
 **Faz 2 sıralaması (öneri):** temiz-otonom kalanlar önce — güvenlik S-üçlüsü (Dependabot+CI audit,
 provider-hata temizleme) → observability S-ikilisi (error-rate sayacı, RAG metrics). Sonra OWNER
@@ -199,5 +202,10 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   **#168 (RAG artıkları)** mı — owner önceliğine göre.
 - **2026-07-09 (devam 5):** FAZ 2 BAŞLADI — kota/limit kalemi kapandı (`37d5f58`+`48e7903`,
   ayrıntı yukarıda Faz 2 §1). Süitler: typecheck 3/3, BE 1746/5-skip, FE 761/761.
-  Faz 2'de sıradaki adaylar: §2 rate-limiting genişletmesi (auth'ta zaten var — build/MCP
-  uçları ground-truth ister), §3 gözlemlenebilirlik, §5 kademeli signup.
+- **2026-07-09 (devam 6):** Faz 2 §2 rate-limiting KAPANDI (`8393927`+`a2b64c5`) ve §6 güvenliğin
+  2/3'ü KAPANDI (`ed50c41`: CI dep-audit + provider-hata scrub). 5-scout ground-truth Faz 2'nin
+  tamamını haritaladı (yukarı işlendi). **Kalan Faz 2 — temiz-otonom:** §3 observability S-ikilisi
+  (error-rate sayacı + RAG metrics HTTP), §6c CSRF sertleştirme (nüanslı). **Kalan Faz 2 — OWNER
+  KARARI (otonom YAPILMAYACAK):** admin/owner rolü, davet-kodu/allowlist, e-posta doğrulama, hesap
+  silme/GDPR, anahtar rotasyonu, Prometheus /metrics, pino yapısal log. Süitler: BE 1764/5-skip,
+  FE 762/762. Branch main'in 18 commit önünde — **owner merge'i bekliyor.**
