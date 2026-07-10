@@ -17,7 +17,9 @@ export function providerOf(externalId?: string): AuthProvider {
  *  is the provider used for the MOST-RECENT login (so the FE badges how the user signed in
  *  THIS time, not whatever identity the account is permanently bound to) — see lastLoginProvider.
  *  `avatarUrl` is the provider picture (only present for OAuth users that exposed one). */
-export interface PublicUser { id: string; name: string; email: string; provider: AuthProvider; avatarUrl?: string }
+/** `isAdmin` is a DERIVED, read-time field the auth routes attach from the env admin allowlist —
+ *  it is NEVER set by `toPublic` and never persisted in the session cookie (see auth/admin.ts). */
+export interface PublicUser { id: string; name: string; email: string; provider: AuthProvider; avatarUrl?: string; isAdmin?: boolean }
 export const toPublic = (u: AuthUser): PublicUser => ({
   // Prefer the recorded last-login provider; fall back to deriving from the bound externalId for
   // rows written before lastLoginProvider existed (and for password accounts, which have neither —

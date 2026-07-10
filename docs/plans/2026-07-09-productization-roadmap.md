@@ -128,9 +128,16 @@ akisflow.com bugün 2 kullanıcı + kapalı signup ile duruyor. Gerçek kullanı
    otomasyonu (S), toplu veri export (S), schema-versioning/rollback (L).
 5. **Signup/tier (PARTIAL):** GEMİDE — `resolveSignupDisabled` fail-closed, Stripe-webhook tier
    ataması, requireAuthForBuilds, tier-aware quota, users.status/email_verified kolonları (ŞEMADA
-   VAR, kullanılmıyor). GERÇEK boşluklar (hepsi OWNER/ürün kararı): davet-kodu/allowlist (M),
-   e-posta doğrulama zorlaması (M), self-serve/admin tier yönetimi (M), **insan admin/owner rolü
-   HİÇ YOK** (L — abuse hesabı kapatma bile DB elle-edit ister).
+   VAR, kullanılmıyor). ✅ **İnsan admin/owner rolü EKLENDİ** (`3a74734`+`abc2309`): env-allowlist
+   (`AKIS_ADMIN_EMAILS` + `AKIS_OWNER_EMAIL`), admin = allowlist'te VE provider-verified (OAuth-bound)
+   e-posta — password hesabı allowlist'te olsa bile admin OLAMAZ (pre-registration escalation kapalı);
+   `isAdmin` `/auth/me`'de; `/api/ops` + `/api/analytics` admin-gated (401 unauth / 403 non-admin;
+   analytics eskiden PUBLIC'ti). Gate-keeper base+fold 0 bulgu. KALAN GERÇEK boşluklar (hepsi
+   OWNER/ürün kararı): davet-kodu/allowlist (M), e-posta doğrulama zorlaması (M — password-admin +
+   güvenli signup için), self-serve/admin tier yönetimi + admin WRITE ops (disable-user/set-tier) (M).
+   NOT (pre-existing, e-posta-doğrulama işi kapatmalı): password-pre-registered bir e-postaya sonradan
+   OAuth link'lenirse `upsertOAuth` link-by-verified-email ile o satıra bağlanır — admin ol(ur). FE
+   cila: non-admin'e /analytics nav'ı gizlenebilir (bugün boş sayfa; veri 403 ile saklı).
 6. **Güvenlik (PARTIAL → 2/3 kapandı):** GEMİDE — publish SSRF/option-injection field validasyonu,
    tek XSS-safe `<Markdown>`, httpOnly cookie, CSRF Origin-hook. Boşluklar:
    - ✅ (a) CI bağımlılık taraması — `dependabot.yml` (npm+actions, weekly) + advisory

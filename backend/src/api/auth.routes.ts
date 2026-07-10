@@ -1,5 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { EmailTakenError, toPublic, type AuthUser, type UserStorePort } from '../auth/UserStore.js'
+import { EmailTakenError, toPublic, type AuthUser, type PublicUser, type UserStorePort } from '../auth/UserStore.js'
+import { isAdminUser, type AdminPolicy } from '../auth/admin.js'
 import { hashPassword, verifyPassword } from '../auth/password.js'
 import { verifyJwt, signResetToken, verifyResetToken } from '../auth/jwt.js'
 import { serializeCookie, parseCookies, type CookieConfig } from '../auth/cookie.js'
@@ -30,6 +31,9 @@ export interface AuthDeps {
    *  network edge (Caddy) — a fresh self-host was open by default. server.ts now defaults this ON
    *  in production (opt back in with AKIS_ALLOW_SIGNUP=1) and honours AKIS_DISABLE_SIGNUP anywhere. */
   signupDisabled?: boolean
+  /** Env-derived admin allowlist (auth/admin.ts). When present, the user responses carry a
+   *  derived `isAdmin` flag (for a future admin UI). Absent ⇒ no flag (byte-identical). */
+  adminPolicy?: AdminPolicy
 }
 
 export class UnauthorizedError extends Error { constructor() { super('unauthorized'); this.name = 'UnauthorizedError' } }
@@ -47,18 +51,33 @@ const dummyHash = (): Promise<string> => (dummyHashP ??= hashPassword('timing-eq
  *  Exported so other protected routes can guard with the same logic. ASYNC since the
  *  REVOCATION check (audit gap): the JWT's `tv` claim must match the user record's
  *  tokenVersion — a bump (password change / logout-all) kills every outstanding token. */
-export async function userIdFromRequest(req: FastifyRequest, deps: AuthDeps): Promise<string> {
+export async function userIdFromRequest(req: FastifyRequest, deps: Pick<AuthDeps, 'users' | 'secret' | 'cookie'>): Promise<string> {
+  return (await userFromRequest(req, deps)).id
+}
+
+/** Like `userIdFromRequest` but returns the full authenticated user (so a caller that needs more
+ *  than the id — e.g. the admin check reads `.email`/`.externalId` — avoids a second findById). */
+export async function userFromRequest(req: FastifyRequest, deps: Pick<AuthDeps, 'users' | 'secret' | 'cookie'>): Promise<AuthUser> {
   const token = parseCookies(req.headers.cookie)[deps.cookie.name]
   if (!token) throw new UnauthorizedError()
   let claims
   try { claims = verifyJwt(token, deps.secret) } catch { throw new UnauthorizedError() }
   const user = await deps.users.findById(claims.sub)
   if (!user || (claims.tv ?? 0) !== (user.tokenVersion ?? 0)) throw new UnauthorizedError()
-  return claims.sub
+  return user
 }
 
 function setSession(reply: FastifyReply, user: AuthUser, deps: AuthDeps): void {
+  // The COOKIE stays the plain toPublic identity — isAdmin is NEVER persisted in the token; it is
+  // derived at read time from the env allowlist (so revoking admin is immediate, not stuck in a token).
   setSessionCookie(reply, toPublic(user), deps.secret, deps.cookie, user.tokenVersion ?? 0)
+}
+
+/** The RESPONSE-BODY user projection: toPublic + a derived `isAdmin` when the env allowlist marks
+ *  this email an admin. Additive — absent the allowlist, byte-identical to toPublic. */
+function publicUser(user: AuthUser, deps: AuthDeps): PublicUser {
+  const base = toPublic(user)
+  return deps.adminPolicy && isAdminUser(user, deps.adminPolicy) ? { ...base, isAdmin: true } : base
 }
 
 export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
@@ -97,7 +116,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     try {
       const user = await deps.users.create({ name, email, passwordHash: await hashPassword(password) })
       setSession(reply, user, deps)
-      return reply.code(201).send({ user: toPublic(user) })
+      return reply.code(201).send({ user: publicUser(user, deps) })
     } catch (err) {
       if (err instanceof EmailTakenError) return reply.code(409).send({ error: err.message, code: 'EmailTaken' })
       throw err
@@ -117,7 +136,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
       return reply.code(401).send({ error: 'invalid email or password', code: 'BadCredentials' })
     }
     setSession(reply, user, deps)
-    return reply.send({ user: toPublic(user) })
+    return reply.send({ user: publicUser(user, deps) })
   })
 
   app.get('/auth/me', async (req, reply) => {
@@ -125,7 +144,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     try { id = await userIdFromRequest(req, deps) } catch { return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' }) }
     const user = await deps.users.findById(id)
     if (!user) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
-    return reply.send({ user: toPublic(user) })
+    return reply.send({ user: publicUser(user, deps) })
   })
 
   app.patch<{ Body: { name?: unknown } }>('/auth/me', async (req, reply) => {
@@ -135,7 +154,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     if (!name) return reply.code(400).send({ error: 'name required', code: 'BadRequest' })
     const user = await deps.users.updateName(id, name)
     if (!user) return reply.code(401).send({ error: 'unauthorized', code: 'Unauthorized' })
-    return reply.send({ user: toPublic(user) })
+    return reply.send({ user: publicUser(user, deps) })
   })
 
   app.post<{ Body: { currentPassword?: unknown; newPassword?: unknown } }>('/auth/change-password', async (req, reply) => {
@@ -218,6 +237,6 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthDeps): void {
     await deps.users.bumpTokenVersion(user.id)
     const fresh = await deps.users.findById(user.id)
     setSession(reply, fresh ?? user, deps) // reset succeeds → sign the user in (with the NEW token version)
-    return reply.send({ user: toPublic(user) })
+    return reply.send({ user: publicUser(user, deps) })
   })
 }
