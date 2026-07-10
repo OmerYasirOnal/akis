@@ -40,6 +40,7 @@ import { createPgUsageStoreWithClient } from '../usage/PgUsageStore.js'
 import { UsageCollector } from '../usage/UsageCollector.js'
 import { resolveQuotaPolicy } from '../usage/quota.js'
 import { resolveConcurrencyPolicy } from '../usage/concurrency.js'
+import { resolveAdminPolicy, isAdminEmail } from '../auth/admin.js'
 import { resolveRouteRateLimits } from '../usage/rateLimit.js'
 import { registerKnowledgeRoutes, DEFAULT_UPLOAD_MAX_BYTES } from './knowledge.routes.js'
 import { registerOAuthRoutes } from './oauth.routes.js'
@@ -487,6 +488,19 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   const userIdOf = async (req: Parameters<typeof userIdFromRequest>[0]): Promise<string | undefined> => {
     try { return await userIdFromRequest(req, { users: userStore, secret: authSecret, cookie }) } catch { return undefined }
   }
+  // Human ADMIN allowlist (AKIS_ADMIN_EMAILS + AKIS_OWNER_EMAIL). Derived at read time; surfaces
+  // `isAdmin` on user responses (auth routes) and gates operator-only surfaces (e.g. /api/ops).
+  const adminPolicy = resolveAdminPolicy(env)
+  // ADMIN guard: when NO allowlist is configured it falls back to any-authenticated (byte-identical
+  // single-operator dev/self-host); when an allowlist IS set, only an allowlisted email passes — a
+  // multi-user deploy SHOULD set it.
+  const requireAdmin = async (req: Parameters<typeof userIdFromRequest>[0]): Promise<boolean> => {
+    if (!adminPolicy.configured) return hasSession(req) // unconfigured ⇒ any authed (unchanged)
+    const uid = await userIdOf(req)
+    if (!uid) return false
+    const user = await userStore.findById(uid)
+    return isAdminEmail(user?.email, adminPolicy)
+  }
 
   // /health surfaces the active serving mode so a demo (fake-verification) boot is never
   // hidden: `mode: 'demo'` means the mock provider and/or mock verification is active and
@@ -550,6 +564,7 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   registerAuthRoutes(app, {
     users: userStore, secret: authSecret, cookie, devEcho: env.NODE_ENV !== 'production', mailer, signupDisabled,
     ...(trustedOrigin ? { publicBaseUrl: trustedOrigin } : {}),
+    ...(adminPolicy.configured ? { adminPolicy } : {}),
   })
   registerOAuthRoutes(app, { users: userStore, secret: authSecret, cookie, env, signupDisabled })
   // Paid-tier billing (Stripe). DORMANT until STRIPE_SECRET_KEY+STRIPE_PRICE_PRO are set; needs a
@@ -573,7 +588,9 @@ export function buildServer(deps: ServerDeps): FastifyInstance {
   // Operator ops view (GET /api/ops; authenticated via hasSession) — the richer StatsCollector
   // snapshot + the operational block (uptime/memory/activeSessions/livePreviews/db).
   registerOpsRoutes(app, {
-    stats, previewRegistry, requireAuth: hasSession, httpMetrics,
+    // ADMIN-gated: the aggregate ops/stats view is operator-only when an admin allowlist is set
+    // (gate-keeper note on #169); falls back to any-authenticated when unconfigured (unchanged).
+    stats, previewRegistry, requireAuth: requireAdmin, httpMetrics,
     ...(deps.dbPing ? { dbPing: deps.dbPing } : {}),
     // RAG ingest/corpus health when RAG is on — a thunk so ops.routes stays decoupled from
     // knowledge internals (getMetrics returns ingest counters + corpusSize).
