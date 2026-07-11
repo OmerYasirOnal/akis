@@ -21,6 +21,10 @@ for f in Dockerfile .dockerignore docker-compose.yml \
 done
 
 # ── 2) CI workflow: the pieces the contract pins ─────────────────────────────
+# NOTE: the three action pins below move in LOCKSTEP with ci.yml — a version bump
+# must update both files in the SAME PR, or the ops job fails on the stale literal
+# (exactly how Dependabot's solo bumps #172/#174 went red while their real jobs
+# passed). dependabot.yml groups the github-actions ecosystem for this reason.
 ci=.github/workflows/ci.yml
 have "actions/checkout@v4"      "$ci"
 have "pnpm/action-setup@v6"     "$ci"

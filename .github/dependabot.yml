@@ -38,6 +38,14 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    groups:
+      # One PR for all action bumps: validate-p2-artifacts.sh literal-pins three of
+      # them, so a bump only goes green when the script moves in the same PR — a
+      # single grouped PR is easy to take over and pair with that one-line edit
+      # (solo bumps #172/#174 could never pass on their own).
+      github-actions:
+        patterns:
+          - "*"
     labels:
       - dependencies
       - ci
