@@ -15,6 +15,21 @@ updates:
         update-types:
           - minor
           - patch
+      # vitest and its plugins share a lockstep peer range — split major PRs can
+      # NEVER go green individually (observed: #176 + #177 both failed alone).
+      vitest-major:
+        patterns:
+          - vitest
+          - "@vitest/*"
+        update-types:
+          - major
+    ignore:
+      # @types/node must track the RUNTIME Node major (22, pinned in ci.yml and
+      # the Dockerfile) — a types-only major bump lies about the platform API
+      # surface (observed: #179 red). Minors within 22.x still arrive.
+      - dependency-name: "@types/node"
+        update-types:
+          - version-update:semver-major
     labels:
       - dependencies
 

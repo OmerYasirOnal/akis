@@ -23,8 +23,8 @@ done
 # ── 2) CI workflow: the pieces the contract pins ─────────────────────────────
 ci=.github/workflows/ci.yml
 have "actions/checkout@v4"      "$ci"
-have "pnpm/action-setup@v4"     "$ci"
-have "actions/setup-node@v4"    "$ci"
+have "pnpm/action-setup@v6"     "$ci"
+have "actions/setup-node@v6"    "$ci"
 have "node-version: 22"         "$ci"   # one Node major, pinned (no 'lts')
 have "cache: pnpm"              "$ci"
 have "install --frozen-lockfile" "$ci"

@@ -257,6 +257,23 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   Gate-keeper 0, reviewer temiz + 3 LOW kapatıldı. BE 1783/5-skip, FE 762/762, typecheck 3/3.
   **Kalan temiz-otonom tek iş:** #168 kalem-2 ANN ranking (düşük öncelik, korpus-ölçeği). Branch
   main'in **25 commit** önünde — merge birikimi arttı; owner merge'i güçlü öneri.
+- **2026-07-11 (Dependabot ilk-tarama triage'ı):** dün gemiye alınan `dependabot.yml` ilk
+  taramada 10 PR açtı (#172–#181); hepsi işlendi. **Merge (3):** #175 minor/patch grubu
+  (fastify 5.10, pg 8.22, vite 8.1.4, tsx, playwright, tailwind — lokalde tam süit yeşil),
+  #181 `@fastify/multipart` 10.1.0 (lokalde tam süit + upload testleri yeşil), #173
+  `actions/cache@6`. Merge sonrası main frozen-lockfile + tam süitlerle doğrulandı
+  (BE 1807, FE 762). **İki sistemik kırmızı kök nedeni bulunup düzeltildi:** (a) claude-review
+  job'ı Dependabot PR'larında GARANTİ düşüyordu — Dependabot secret alamaz,
+  `CLAUDE_CODE_OAUTH_TOKEN` boş gider; workflow'a dependabot guard'ı eklendi. (b)
+  `validate-p2-artifacts.sh` action sürümlerini LİTERAL pin'liyor — action bump'ları artık
+  script'le birlikte güncellenmeli; `setup-node@6` + `pnpm/action-setup@6` script'le birlikte
+  bump'landı (#172/#174'ü kapsar; o PR'larda gerçek job'lar zaten yeşildi). **Kapatılan (5):**
+  #172/#174 (bu paketle süpersede), #176/#177 (vitest 4 + coverage-v8 4 lockstep peer —
+  tek tek ASLA yeşil olamaz; dependabot'a `vitest-major` grubu eklendi, migration ayrı
+  paket), #178 (pdf-parse 2 gerçek API kırılması — knowledge ingest migration'ı ayrı paket),
+  #179 (`@types/node` 26 — runtime Node 22; ignore kuralı eklendi), #180 (TypeScript 7 —
+  typecheck kırmızı, bilinçli ayrı migration paketi). **Ertelenen işler Faz 2/bakım
+  kuyruğuna not düştü:** vitest-4 migration'ı, pdf-parse-2 migration'ı, TS-7 migration'ı.
 - **2026-07-11 (YENİ ÜRÜN HATTI — çapraz referans):** **AKIS Attest** başlatıldı ve v0.1.0 inşa
   edildi: kanıt katmanı (gate + attestation + gerçek-test doğrulaması) app-builder'dan ayrıştırılıp
   bağımsız bir teslimat-kanıtı CLI'ına taşındı — ayrı repo `github.com/OmerYasirOnal/akis-attest`
