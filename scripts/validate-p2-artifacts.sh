@@ -26,7 +26,7 @@ done
 # (exactly how Dependabot's solo bumps #172/#174 went red while their real jobs
 # passed). dependabot.yml groups the github-actions ecosystem for this reason.
 ci=.github/workflows/ci.yml
-have "actions/checkout@v4"      "$ci"
+have "actions/checkout@v7"      "$ci"
 have "pnpm/action-setup@v6"     "$ci"
 have "actions/setup-node@v6"    "$ci"
 have "node-version: 22"         "$ci"   # one Node major, pinned (no 'lts')

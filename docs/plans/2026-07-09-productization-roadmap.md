@@ -274,6 +274,11 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   #179 (`@types/node` 26 — runtime Node 22; ignore kuralı eklendi), #180 (TypeScript 7 —
   typecheck kırmızı, bilinçli ayrı migration paketi). **Ertelenen işler Faz 2/bakım
   kuyruğuna not düştü:** vitest-4 migration'ı, pdf-parse-2 migration'ı, TS-7 migration'ı.
+  **Follow-up:** yeni grup config'i aynı gün ilk birleşik actions PR'ını (#188: checkout 7,
+  upload-artifact 7, docker/* ve gh-release major'ları) üretti — playbook'a uygun devralındı:
+  diff olduğu gibi + `validate-p2-artifacts.sh` checkout pin'i aynı pakette. NOT: docker/* +
+  gh-release action'ları yalnız release workflow'unda koşar — CI kanıtlayamaz, bir sonraki
+  tag-release'te gözlenmeli.
 - **2026-07-11 (YENİ ÜRÜN HATTI — çapraz referans):** **AKIS Attest** başlatıldı ve v0.1.0 inşa
   edildi: kanıt katmanı (gate + attestation + gerçek-test doğrulaması) app-builder'dan ayrıştırılıp
   bağımsız bir teslimat-kanıtı CLI'ına taşındı — ayrı repo `github.com/OmerYasirOnal/akis-attest`

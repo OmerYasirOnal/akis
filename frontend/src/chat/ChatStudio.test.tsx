@@ -323,7 +323,13 @@ describe('ChatStudio — reopened replay projected to stopped offers Run, no dea
     const api = new ApiClient('', fetchFn)
     render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
     const drawer = await screen.findByTestId('preview-drawer')
-    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/sstop/events')!)
+    const live = await waitFor(() => {
+      // find() returning undefined does NOT throw, so a bare `!` would let waitFor resolve
+      // before the SSE client connects (flaky `live.emit` TypeError on slow CI runners).
+      const s = EmitStream.created.find(s => s.connectedUrl === '/sessions/sstop/events')
+      if (!s) throw new Error('no EmitStream connected to /sessions/sstop/events yet')
+      return s
+    })
 
     // What the server now replays: an earlier genuine 'ready' frame + the LAST frame projected
     // to 'stopped' (url stripped) because the registry could not back the liveness claim.
@@ -378,7 +384,13 @@ describe('ChatStudio — a recovery park refreshes the durable snapshot (Run app
     const api = new ApiClient('', fetchFn)
     render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
     const drawer = await screen.findByTestId('preview-drawer')
-    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')!)
+    const live = await waitFor(() => {
+      // find() returning undefined does NOT throw, so a bare `!` would let waitFor resolve
+      // before the SSE client connects (flaky `live.emit` TypeError on slow CI runners).
+      const s = EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')
+      if (!s) throw new Error('no EmitStream connected to /sessions/spark/events yet')
+      return s
+    })
     await waitFor(() => expect(getCalls).toBeGreaterThan(0)) // the mid-build snapshot landed
 
     // No Run yet: building is not previewable (and that's correct — code is mid-write).
@@ -417,7 +429,13 @@ describe('ChatStudio — a recovery park refreshes the durable snapshot (Run app
     const api = new ApiClient('', fetchFn)
     render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
     const drawer = await screen.findByTestId('preview-drawer')
-    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')!)
+    const live = await waitFor(() => {
+      // find() returning undefined does NOT throw, so a bare `!` would let waitFor resolve
+      // before the SSE client connects (flaky `live.emit` TypeError on slow CI runners).
+      const s = EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')
+      if (!s) throw new Error('no EmitStream connected to /sessions/spark/events yet')
+      return s
+    })
     await waitFor(() => expect(getCalls).toBeGreaterThan(0))
 
     // No Run yet: building is not previewable (code mid-write).
@@ -466,7 +484,13 @@ describe('ChatStudio — a recovery park refreshes the durable snapshot (Run app
     const api = new ApiClient('', fetchFn)
     render(wrap(<ChatStudio api={api} makeClient={() => new EmitStream() as unknown as EventStreamClient} />))
     const drawer = await screen.findByTestId('preview-drawer')
-    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')!)
+    const live = await waitFor(() => {
+      // find() returning undefined does NOT throw, so a bare `!` would let waitFor resolve
+      // before the SSE client connects (flaky `live.emit` TypeError on slow CI runners).
+      const s = EmitStream.created.find(s => s.connectedUrl === '/sessions/spark/events')
+      if (!s) throw new Error('no EmitStream connected to /sessions/spark/events yet')
+      return s
+    })
     await waitFor(() => expect(getCalls).toBeGreaterThan(0)) // the mid-build snapshot landed (building, no code)
 
     // No Run yet: building is not previewable AND there's no code — the correct mid-write state.
@@ -883,7 +907,13 @@ describe('ChatStudio — preview drawer (push-split shell + auto-open on ready)'
     await userEvent.click(await screen.findByRole('button', { name: /Recent/i })) // in-card recent-builds dropdown
     await userEvent.click(await screen.findByRole('menuitem', { name: /Reopened App/i }))
     await waitFor(() => expect(screen.getByText('Reopened App')).toBeInTheDocument())
-    const live = await waitFor(() => EmitStream.created.find(s => s.connectedUrl === '/sessions/sR/events')!)
+    const live = await waitFor(() => {
+      // find() returning undefined does NOT throw, so a bare `!` would let waitFor resolve
+      // before the SSE client connects (flaky `live.emit` TypeError on slow CI runners).
+      const s = EmitStream.created.find(s => s.connectedUrl === '/sessions/sR/events')
+      if (!s) throw new Error('no EmitStream connected to /sessions/sR/events yet')
+      return s
+    })
 
     const drawer = await screen.findByTestId('preview-drawer')
     // A reopen pre-seeds drawerAutoOpened — even a fresh `ready` frame must NOT auto-open it (the
