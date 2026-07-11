@@ -34,6 +34,11 @@ export interface BootSmokeDeps {
   fetchImpl?: (url: string, init?: ProbeInit) => Promise<ProbeResponse>
   timeoutMs?: number
   sessionId: string
+  /** The process-execution seam for the CLI fallback: a project with no server to boot ('cli' app
+   *  type) is verified by RUNNING ITS TESTS via `runRealTests(sandbox)` instead of a boot+probe.
+   *  Absent ⇒ a CLI fails closed (never mints on a runner-less path). Threaded from the trusted DI
+   *  wiring; the mock/vite/node-service paths ignore it, so those runs stay byte-identical. */
+  sandbox?: import('../exec/Sandbox.js').Sandbox
   /** Opt-in (AKIS_ROUNDTRIP_VERIFY): also run a BEHAVIORAL round-trip probe on a writable API path
    *  of a node-service app (POST a marker → GET → assert it persisted). Default OFF, so the boot is
    *  byte-identical to the GET-only smoke run unless explicitly enabled. */
@@ -266,8 +271,28 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
   const fetchImpl = deps.fetchImpl ?? defaultFetch
 
   // Pre-boot gate: an app type we don't run locally yet can't be booted → fail-closed, no boot.
-  if (detectAppType(files) === 'unsupported') {
+  const appType = detectAppType(files)
+  if (appType === 'unsupported') {
     return failClosed('app type unsupported — cannot boot to verify')
+  }
+
+  // A CLI has NO persistent server to boot — booting it exits immediately and false-fails the build
+  // with testsRun:0, even when the project ships a real, passing test suite. Instead of booting (or
+  // fail-closing on 0 tests), verify it by RUNNING ITS OWN vitest suite via runCliTests: install
+  // (lifecycle scripts blocked) → `pnpm exec vitest run --reporter=json` → parse the report. Returns
+  // that RealRunResult UNCHANGED — no boot, no probe. The fail-closed pass/fail decision lives inside
+  // runCliTests (≥1 test && no failures), so this is choosing the correct honest verifier for a
+  // server-less shape, never relaxing minting.
+  if (appType === 'cli') {
+    const sandbox = deps.sandbox
+    // Defensive: no runner available ⇒ fail closed with a bounded reason. A CLI must NEVER mint on a
+    // code path with no real runner (would violate the SACRED ≥1-test-pass rule).
+    if (!sandbox) return failClosed('cli app but no test sandbox available — cannot verify')
+    const { runCliTests } = await import('./cliRun.js')
+    return runCliTests(files, {
+      sandbox,
+      ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
+    })
   }
 
   // Bound the WHOLE run (boot + every probe) by timeoutMs. On exceed we resolve fail-closed and
@@ -289,7 +314,7 @@ export async function runBootSmoke(files: RepoFile[], deps: BootSmokeDeps): Prom
     // (a) ALWAYS a smoke probe (the testsRun ≥ 1 floor) + (b) one probe per LOCAL asset
     // index.html references (Phase E: a missing ./app.js renders a blank page the smoke
     // probe alone would over-claim) + (c) one probe per derived acceptance criterion.
-    const appType = detectAppType(files)
+    // `appType` is the same pre-boot classification computed above (reused, not recomputed).
     // SPA (vite/next) served HTML is a JS SHELL: a spec literal is rendered CLIENT-side by JS that
     // the boot-smoke fetch never executes, so a bodyContains-against-`/` probe would FALSE-RED a
     // perfectly healthy app and the build could NEVER verify. Downgrade those to a render check
