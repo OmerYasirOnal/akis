@@ -279,6 +279,19 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   diff olduğu gibi + `validate-p2-artifacts.sh` checkout pin'i aynı pakette. NOT: docker/* +
   gh-release action'ları yalnız release workflow'unda koşar — CI kanıtlayamaz, bir sonraki
   tag-release'te gözlenmeli.
+  **Follow-up 2 (aynı gün, döngü kapandı):** yeni config'in ikinci dalgası da işlendi —
+  #189 `@types/node` 22.20.1 minor'ı (ignore kuralı doğru çalıştı: major yok, minor geldi)
+  ve #191 `@fastify/static` 10.1.0 (lokal tam süit + canlı SERVE_STATIC probu: SPA index,
+  fallback route, JS asset, woff2, /health hepsi 200) merge edildi. **#190 vitest-major
+  grubu migration'SIZ yeşil çıktı** — solo #176/#177'nin kırmızısı yalnız lockstep peer
+  çakışmasıymış; grup halinde vitest 4.1.10 + coverage-v8 4.1.10 hiçbir kod değişikliği
+  istemeden geçti (lokal doğrulama: test SAYILARI birebir korunmuş, BE 195 dosya/1812,
+  FE 77/762 — sessiz atlama yok). Yukarıdaki "vitest-4 migration'ı" ertelemesi BOŞA DÜŞTÜ;
+  kalan gerçek migration'lar yalnız pdf-parse-2 ve TS-7. claude-review guard'ı da kanıtlandı:
+  üç yeni PR'da job `skipped` (kırmızı X yok). Ayrıca #192 CI'ında yakalanan GERÇEK bir FE
+  flake'i kökten düzeltildi: `waitFor(find(...)!)` throw etmediği için SSE bağlanmadan
+  resolve olabiliyordu — ChatStudio.test'teki 5 çağrı noktası artık bağlantıya kadar
+  bekliyor (assertion güçlendi, gevşemedi).
 - **2026-07-11 (YENİ ÜRÜN HATTI — çapraz referans):** **AKIS Attest** başlatıldı ve v0.1.0 inşa
   edildi: kanıt katmanı (gate + attestation + gerçek-test doğrulaması) app-builder'dan ayrıştırılıp
   bağımsız bir teslimat-kanıtı CLI'ına taşındı — ayrı repo `github.com/OmerYasirOnal/akis-attest`
