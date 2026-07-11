@@ -73,6 +73,20 @@ async function readReport(absPath: string): Promise<string | undefined> {
  * The vitest results populate the BDD half (they are unit-level scenarios, not HTTP E2E); the E2E
  * half stays empty. This is the SAME RealRunResult shape realRun.ts emits, so the boot-smoke runner
  * brands it through the identical buildTestEvidence → mint path with no new minting surface.
+ *
+ * OWNER-DECISION FLAG (raised independently by two review passes on PR #186): unlike
+ * node-service/static verification, where Trace derives its OWN probes/BDD features from the
+ * approved spec's acceptance criteria (see realRun.ts's generateFeature + bootSmoke.ts's
+ * deriveChecks) — an independent check the producer did not author — the CLI path here has no
+ * such independent signal at all: it runs exactly the tests Proto itself wrote (mandated by
+ * ProtoAgent.ts rule 6). A CLI VerifyToken therefore means "the producer's own tests, which the
+ * producer also wrote, genuinely passed" rather than "an independently-derived check against the
+ * approved spec passed." Still fail-closed (never mints on 0 tests / a non-pass / a forged
+ * report), but this is a real, intentional narrowing of what "verified" means for this app
+ * class, not a bug — flagging it here so it isn't silently assumed equivalent to the other
+ * shapes. Building independent spec-derived verification for CLI apps (e.g. probing `--help`
+ * output or invoking documented commands) is a separate, larger effort than this bug fix and is
+ * deliberately out of scope here.
  */
 export async function runCliTests(files: RepoFile[], deps: CliRunDeps): Promise<RealRunResult> {
   const timeoutMs = deps.timeoutMs ?? 120_000

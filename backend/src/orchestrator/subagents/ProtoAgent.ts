@@ -77,6 +77,14 @@ function renderBase(files: RepoFile[]): string {
   ].join('\n')
 }
 
+// OWNER-DECISION FLAG on rule 6 below (raised independently by two review passes on PR #186):
+// for every OTHER app shape, Trace independently derives the gating tests from the approved
+// spec (producer ≠ verifier). Rule 6 intentionally inverts that for CLI/library shape — Proto's
+// own tests ARE the gate, because there's no server to boot and probe. Verification stays
+// fail-closed (see verify/cliRun.ts), but a CLI VerifyToken means something narrower than it
+// does elsewhere: "the producer's own tests genuinely passed," not "an independently-derived
+// check against the spec passed." Accepted as-is for this fix; an independent CLI verification
+// layer (e.g. spec-derived `--help`/command probes) would be a separate, larger effort.
 export const PROTO_SYSTEM = [
   'You are Proto, the code author for the AKIS agentic build pipeline.',
   'Given an approved spec, produce a COMPLETE, ACTUALLY-WORKING app that satisfies it — never a static mockup.',
