@@ -1,7 +1,7 @@
 # AKIS Attest — Tasarım Dokümanı (Spec)
 
 - **Tarih:** 2026-07-10
-- **Durum:** Owner ile birlikte tasarlandı; 4 ana bölüm tek tek onaylandı (yön, ilk kullanıcı, yaklaşım, marka/repo + kanıt modeli, CLI, kanıt sayfası, dogfood). Yazılı spec owner incelemesini bekliyor.
+- **Durum:** Owner ile birlikte tasarlandı; 4 ana bölüm tek tek onaylandı (yön, ilk kullanıcı, yaklaşım, marka/repo + kanıt modeli, CLI, kanıt sayfası, dogfood). Owner spec'i onayladı ve plan uygulandı (2026-07-11): v0.1.0 `github.com/OmerYasirOnal/akis-attest` (private) olarak inşa edildi — bu belge artık tasarım KAYDIdır. Uygulama birkaç detayı rafine etti; farklar bu revizyonda işlendi (DSSE zarfı, exact-path artifacts).
 - **Karar sahibi:** Ömer Yasir Önal
 - **İlişki:** `akis-platform-mvp` (github.com/OmerYasirOnal/akis) olduğu gibi yaşamaya devam eder; bu spec **yeni bir ürün hattı** başlatır. AKIS'in stratejik "verifiability layer" kararının (2026-06) sonuna kadar götürülmüş hâlidir.
 
@@ -68,10 +68,10 @@ Her hedef repoda `.attest/` dizini:
 
 ```
 .attest/
-  config.json      # test komut(lar)ı, proje adı, anahtar parmak izi
+  config.json      # test komut(lar)ı, proje adı (anahtar parmak izi config'te değil, init olayının payload'ında)
   ledger.jsonl     # hash-zincirli, append-only olay defteri
-  attestation.json # export anında üretilen in-toto/SLSA hizalı statement
-  attestation.sig  # Ed25519 imzası
+  attestation.json # export anında üretilen in-toto/SLSA hizalı statement (okunabilir kopya)
+  envelope.json    # DSSE v1 zarfı — imzalı payload + Ed25519 imza (uygulamada attestation.sig'in yerini aldı)
 ```
 
 - **Ledger olayı:** `{ seq, ts, kind, gitSha, dirty, actor, payload, prevHash, hash }`.
@@ -87,8 +87,9 @@ Her hedef repoda `.attest/` dizini:
   3. **`delivery`** (insan) — "bunu teslim ediyorum" onayı. **Fail-closed:** HEAD için geçmiş
      bir PASS verify yoksa veya working tree kirliyse reddedilir.
 - **Attestation:** in-toto Statement biçiminde: `subject` = **her zaman git SHA**; config'te
-  artifact glob'ları tanımlıysa ek olarak o dosyaların SHA-256 digest'leri (v1 default: yalnız git
-  SHA — glob'lar opsiyonel). `predicate` = kapı zinciri (ledger kök hash'i dahil), verify sonuçları, ortam.
+  **exact artifact yolları** (`artifacts: string[]`, tam göreli dosya yolları — glob YOK, v1.1'e
+  ertelendi, bkz. §8) tanımlıysa ek olarak o dosyaların SHA-256 digest'leri. `predicate` = kapı
+  zinciri (ledger kök hash'i dahil), verify sonuçları, ortam.
   Ed25519 (node:crypto) ile imzalanır. Anahtar `~/.config/akis-attest/` altında; kaybı = yeni
   kimlik (dokümante edilir).
 - **İmza dürüstlüğü (v1):** kanıt sayfası açıkça söyler — *"Bu imza, defterin bu anahtar sahibi
@@ -103,7 +104,7 @@ Node 22 + TypeScript; **sıfıra yakın runtime bağımlılık** (node:util `par
 attest init                    # .attest/ + config + anahtar üretimi (yoksa)
 attest approve plan -m "..."   # kapı 1
 attest verify                  # test komut(lar)ını koşar, sonucu kaydeder
-attest approve delivery        # kapı 3 (fail-closed kurallar yukarıda)
+attest approve delivery -m "..."  # kapı 3 (fail-closed kurallar yukarıda; -m zorunlu)
 attest export [--draft]        # proof.html + bundle üretir
 attest check [path]            # offline doğrulama: imza + hash zinciri (şüphecinin aracı)
 ```
