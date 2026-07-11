@@ -12,12 +12,11 @@ on:
 
 jobs:
   claude-review:
-    # Optional: Filter by PR author
-    # if: |
-    #   github.event.pull_request.user.login == 'external-contributor' ||
-    #   github.event.pull_request.user.login == 'new-developer' ||
-    #   github.event.pull_request.author_association == 'FIRST_TIME_CONTRIBUTOR'
-
+    # Dependabot PRs run with a read-only token and NO repo secrets, so
+    # CLAUDE_CODE_OAUTH_TOKEN arrives empty and the action fails — every
+    # Dependabot PR got a guaranteed red X (observed on #172–#181). Version
+    # bumps carry no reviewable prose anyway; skip them.
+    if: github.event.pull_request.user.login != 'dependabot[bot]'
     runs-on: ubuntu-latest
     permissions:
       contents: read
