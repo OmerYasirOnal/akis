@@ -257,3 +257,11 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   Gate-keeper 0, reviewer temiz + 3 LOW kapatıldı. BE 1783/5-skip, FE 762/762, typecheck 3/3.
   **Kalan temiz-otonom tek iş:** #168 kalem-2 ANN ranking (düşük öncelik, korpus-ölçeği). Branch
   main'in **25 commit** önünde — merge birikimi arttı; owner merge'i güçlü öneri.
+- **2026-07-11 (YENİ ÜRÜN HATTI — çapraz referans):** **AKIS Attest** başlatıldı ve v0.1.0 inşa
+  edildi: kanıt katmanı (gate + attestation + gerçek-test doğrulaması) app-builder'dan ayrıştırılıp
+  bağımsız bir teslimat-kanıtı CLI'ına taşındı — ayrı repo `github.com/OmerYasirOnal/akis-attest`
+  (private; 44 test + 6 tarayıcı-E2E + CI yeşil; sıfır-bağlamlı adversarial final review:
+  "Ready to merge: YES"). Tasarım kaydı: `docs/superpowers/specs/2026-07-10-akis-attest-design.md`
+  + `docs/superpowers/plans/2026-07-10-akis-attest-v1.md` (PR #185). **Bu repo ve bu roadmap
+  OLDUĞU GİBİ yaşamaya devam ediyor** — app-builder hattının önceliği/geleceği owner kararıdır;
+  bu doküman kapanmadı, yalnızca yeni ürün hattının varlığı buradan görünür olsun diye not düşüldü.
