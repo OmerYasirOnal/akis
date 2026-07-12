@@ -77,7 +77,15 @@ export async function publish(input: PublishInput): Promise<PublishRecord> {
     return out
   }
   const log = new BoundedLog(scrub)
-  const appType = detectAppType(input.files) as PublishAppType
+  // A CLI/library is a command-line tool distributed as source, not a running service — it isn't a
+  // publishable target for the "deploy to your server" path. Handle it EXPLICITLY (no silent cast of
+  // the new 'cli' AppType value): once excluded, the remaining AppType members ARE PublishAppType.
+  const detected = detectAppType(input.files)
+  if (detected === 'cli') {
+    log.push("app type 'cli' is a command-line tool, not a publishable service (code:Unsupported)")
+    return { ok: false, at, appType: 'unsupported', logTail: log.value() }
+  }
+  const appType: PublishAppType = detected
 
   // Defense-in-depth re-validation: the route validated these, but the Publisher must never build
   // a remote command from an unvalidated value (a future caller might skip the route).

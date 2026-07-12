@@ -1,7 +1,11 @@
-import { describe, it, expect, vi } from 'vitest'
+import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { runBootSmoke, deriveAssetChecks, type BootResult, type ProbeResponse } from '../../src/verify/bootSmoke.js'
 import { createBootSmokeRunner } from '../../src/verify/TestRunner.js'
 import type { RepoFile } from '../../src/di/MockGitHubAdapter.js'
+import type { Sandbox, RunResult, RunOpts } from '../../src/exec/Sandbox.js'
 
 // A previewable (vite) file set and an unsupported (pure DB infra, no runnable surface) one.
 const VITE_FILES: RepoFile[] = [
@@ -224,5 +228,83 @@ describe('asset probes (Phase E: multi-file apps verify their own references)', 
     const ok = await runBootSmoke(MULTI, { boot, sessionId: 's20', fetchImpl: constFetch(OK_RES) })
     expect(ok.passed).toBe(true)
     expect(ok.testsRun).toBe(3)
+  })
+})
+
+describe('CLI apps route to REAL test execution (no boot / no probe)', () => {
+  // A real CLI: bin + a genuine test script, NO server-listen code → detectAppType === 'cli'.
+  const CLI_FILES: RepoFile[] = [
+    { filePath: 'package.json', content: JSON.stringify({ name: 'mycli', main: 'dist/cli.js', bin: { mycli: 'dist/cli.js' }, scripts: { start: 'node dist/cli.js', test: 'vitest run' } }) },
+    { filePath: 'dist/cli.js', content: 'console.log("ran once and exited")' },
+    { filePath: 'tests/cli.test.ts', content: 'import { it, expect } from "vitest"; it("works", () => expect(1).toBe(1))' },
+  ]
+  // A passing vitest JSON report (the exact fields runCliTests parses — see cliRun.ts).
+  const VITEST_PASS = JSON.stringify({
+    numTotalTests: 1, numPassedTests: 1, numFailedTests: 0, success: true,
+    testResults: [{ assertionResults: [{ title: 'works', fullName: 'works', status: 'passed', duration: 1 }] }],
+  })
+  const okRun: RunResult = { code: 0, stdout: '', stderr: '', timedOut: false }
+
+  /** Extract the ABSOLUTE report path runCliTests passes via `--outputFile=<abs>` (out-of-tree). */
+  const outFile = (args: string[]): string | undefined =>
+    args.find(a => a.startsWith('--outputFile='))?.slice('--outputFile='.length)
+
+  /** A sandbox that answers install then writes a passing vitest report to the OUT-OF-TREE path on
+   *  the vitest run — the REAL-test mechanism runCliTests drives (install → `vitest run --reporter=json`). */
+  function passingSandbox(): Sandbox {
+    return {
+      async run(_cmd: string, args: string[], _opts: RunOpts): Promise<RunResult> {
+        if (args.includes('vitest')) { const out = outFile(args); if (out) await writeFile(out, VITEST_PASS, 'utf8') }
+        return okRun
+      },
+    }
+  }
+
+  let wsRoot: string
+  beforeAll(async () => { wsRoot = await mkdtemp(join(tmpdir(), 'akis-cli-')); process.env.AKIS_WORKSPACES_DIR = wsRoot })
+  afterAll(() => { delete process.env.AKIS_WORKSPACES_DIR })
+
+  it('a CLI file set runs the real tests, can genuinely PASS, and never boots or probes', async () => {
+    const boot = vi.fn(async (): Promise<BootResult> => { throw new Error('boot must NOT be called for a CLI') })
+    const fetchImpl = vi.fn(async (): Promise<ProbeResponse> => { throw new Error('probe must NOT be called for a CLI') })
+    const res = await runBootSmoke(CLI_FILES, { boot, fetchImpl, sessionId: 'cli1', sandbox: passingSandbox() })
+    expect(res.passed).toBe(true)
+    expect(res.testsRun).toBeGreaterThanOrEqual(1)
+    expect(boot).not.toHaveBeenCalled()
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('an install/sandbox failure fails closed (0 tests) — still no boot/probe', async () => {
+    const boot = vi.fn(async (): Promise<BootResult> => { throw new Error('boot must NOT be called for a CLI') })
+    const failSandbox: Sandbox = { async run(): Promise<RunResult> { return { code: 1, stdout: '', stderr: '', timedOut: false } } } // install fails → no report
+    const res = await runBootSmoke(CLI_FILES, { boot, sessionId: 'cli2', sandbox: failSandbox })
+    expect(res.passed).toBe(false)
+    expect(res.testsRun).toBe(0)
+    expect(boot).not.toHaveBeenCalled()
+  })
+
+  it('a GENUINE vitest test failure fails closed (no vacuous green) — still no boot/probe', async () => {
+    const boot = vi.fn(async (): Promise<BootResult> => { throw new Error('boot must NOT be called for a CLI') })
+    const VITEST_FAIL = JSON.stringify({
+      numTotalTests: 2, numPassedTests: 1, numFailedTests: 1, success: false,
+      testResults: [{ assertionResults: [{ title: 'ok', status: 'passed', duration: 1 }, { title: 'bad', status: 'failed', duration: 1 }] }],
+    })
+    const failSandbox: Sandbox = {
+      async run(_c: string, args: string[], _opts: RunOpts): Promise<RunResult> {
+        if (args.includes('vitest')) { const out = outFile(args); if (out) await writeFile(out, VITEST_FAIL, 'utf8'); return { code: 1, stdout: '', stderr: '', timedOut: false } }
+        return okRun
+      },
+    }
+    const res = await runBootSmoke(CLI_FILES, { boot, sessionId: 'cli2b', sandbox: failSandbox })
+    expect(res.passed).toBe(false)
+    expect(boot).not.toHaveBeenCalled()
+  })
+
+  it('a CLI with NO sandbox available fails closed (never mints on a runner-less path)', async () => {
+    const boot = vi.fn(async (): Promise<BootResult> => { throw new Error('boot must NOT be called for a CLI') })
+    const res = await runBootSmoke(CLI_FILES, { boot, sessionId: 'cli3' })
+    expect(res.passed).toBe(false)
+    expect(res.testsRun).toBe(0)
+    expect(boot).not.toHaveBeenCalled()
   })
 })
