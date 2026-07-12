@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  com.akis.backuppull.plist — launchd agent that pulls the daily SQL backups
+  from the production box at 08:15 every morning.
+
+  This is a REFERENCE COPY kept in the repo for version control. The file
+  launchd actually reads lives at ~/Library/LaunchAgents/com.akis.backuppull.plist
+  on the Mac running this agent — copy this file there (see scripts/akis-backuppull.sh
+  for the retry/alerting logic this now calls instead of an inline command).
+
+  ProgramArguments below hardcodes the local checkout path
+  (/Users/omeryasironal/Projects/akis-platform-mvp) — update it if the repo is
+  ever moved or re-cloned elsewhere.
+-->
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>com.akis.backuppull</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/Users/omeryasironal/Projects/akis-platform-mvp/scripts/akis-backuppull.sh</string>
+  </array>
+  <key>StartCalendarInterval</key>
+  <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>15</integer></dict>
+  <key>StandardOutPath</key><string>/tmp/akis-backuppull.log</string>
+  <key>StandardErrorPath</key><string>/tmp/akis-backuppull.log</string>
+</dict>
+</plist>
