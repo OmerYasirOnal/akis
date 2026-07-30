@@ -265,3 +265,23 @@ başlanması önerilir. Faz 3-4 owner önceliğine göre araya alınabilir.
   + `docs/superpowers/plans/2026-07-10-akis-attest-v1.md` (PR #185). **Bu repo ve bu roadmap
   OLDUĞU GİBİ yaşamaya devam ediyor** — app-builder hattının önceliği/geleceği owner kararıdır;
   bu doküman kapanmadı, yalnızca yeni ürün hattının varlığı buradan görünür olsun diye not düşüldü.
+- **2026-07-11 (dogfood buldu → gerçek bug fix, PR #186):** AKIS Attest v1.1 fikrini (Sigstore/CI-
+  countersigning) AKIS'in KENDİ chat-pipeline'ından (Scribe/Proto/Trace) bağımsız bir demo olarak
+  inşa ettirme denemesi sırasında GERÇEK bir platform bug'ı bulundu: `detectAppType` herhangi bir
+  `main` alanı/`start` script'i olan paketi boot edilebilir 'node-service' sanıyordu — saf bir CLI
+  aracı bile böyle sınıflanıp boot-smoke'un onu sunucu gibi ayağa kaldırmaya çalışmasına, CLI hemen
+  çıkınca "testsRun:0" ile fail-closed olmasına yol açıyordu (Proto'nun yazdığı GERÇEK, geçen test
+  suite'i hiç çalıştırılmadan). Worktree `~/Projects/akis-boot-smoke-cli-fix`, branch
+  `fix/verify-cli-no-bootsmoke`: yeni `'cli'` AppType + sunucu-dinleme kanıtı taraması + ayrı
+  `verify/cliRun.ts` (gerçek `pnpm install` + `vitest run --reporter=json`, cucumber/playwright
+  YENİDEN KULLANILMADI — o web-app harness'i, CLI'ın ne bağımlılığı ne step definition'ı var).
+  **İKİ TUR** adversarial review (gate-keeper+reviewer paralel) + **bağımsız sıfır-bağlamlı PR
+  review** (owner'ın standart disiplini) — 2. turda gate-keeper GERÇEK bir **YÜKSEK** VerifyToken
+  mint bypass buldu (üretilen proje kendi sahte `vitest-report.json`'ını workspace içine bırakıp
+  sıfır test ile token alabiliyordu; rapor artık workspace DIŞINDA bir mkdtemp yolunda + exit-code
+  de kapı koşulu) — kapatıldı + exploit'in kendisini kanıtlayan regresyon testiyle doğrulandı.
+  Bağımsız reviewer 1 ORTA (CLI doğrulaması spec'ten bağımsız bir kontrol türetmiyor — Proto'nun
+  kendi testleri = kapı, diğer her app tipinden farklı) + 2 DÜŞÜK buldu; ORTA owner-kararı olarak
+  koda (cliRun.ts + ProtoAgent.ts) açıkça not düşüldü (sessizce genişletilmedi), DÜŞÜK'lerden biri
+  (Publisher testi) kapatıldı. Süitler: typecheck 3/3, backend 1819/5-skip, frontend 762/762, CI
+  yeşil. **PR #186 açık, owner merge'ini bekliyor** — merge etmedim (owner-merge disiplini).
