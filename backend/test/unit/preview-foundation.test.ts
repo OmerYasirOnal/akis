@@ -82,6 +82,43 @@ describe('detectAppType', () => {
   it('unsupported when nothing recognizable', () => {
     expect(detectAppType([f('readme.md', 'hi')])).toBe('unsupported')
   })
+  it('classifies a CLI (bin field, no server-listen evidence) as cli, NOT node-service', () => {
+    // A real CLI tool: bin entry, a start script that runs the CLI once, a test script — but
+    // NO server-listen code anywhere. Must NOT be booted as a persistent server.
+    const files = [
+      f('package.json', JSON.stringify({
+        name: 'mycli', main: 'dist/cli.js', bin: { mycli: 'dist/cli.js' },
+        scripts: { start: 'node dist/cli.js', test: 'vitest run' },
+      })),
+      f('dist/cli.js', 'const args = process.argv.slice(2); console.log("hello", args)'),
+      f('tests/cli.test.ts', 'import { it, expect } from "vitest"; it("works", () => expect(1).toBe(1))'),
+    ]
+    expect(detectAppType(files)).toBe('cli')
+  })
+  it('classifies a main+start+test app with no listen/framework as cli (the reproduced bug)', () => {
+    const files = [
+      f('package.json', JSON.stringify({
+        name: 'tool', main: 'dist/index.js',
+        scripts: { start: 'node dist/index.js', test: 'vitest run', build: 'tsc' },
+      })),
+      f('src/index.ts', 'export function run() { return 42 }'),
+    ]
+    expect(detectAppType(files)).toBe('cli')
+  })
+  it('a node-service with ACTUAL listen code stays node-service (even with a test script)', () => {
+    const files = [
+      f('package.json', JSON.stringify({ main: 'server.js', scripts: { start: 'node server.js', test: 'vitest run' } })),
+      f('server.js', "const http = require('node:http'); http.createServer((_q,r)=>r.end('ok')).listen(process.env.PORT)"),
+    ]
+    expect(detectAppType(files)).toBe('node-service')
+  })
+  it('a node-service with a server FRAMEWORK dep stays node-service (framework is server evidence)', () => {
+    const files = [
+      f('package.json', JSON.stringify({ main: 'server.js', dependencies: { express: '^4' }, scripts: { start: 'node server.js', test: 'vitest run' } })),
+      f('server.js', 'const app = require("express")(); app.get("/", (_q,r)=>r.send("ok")); module.exports = app'),
+    ]
+    expect(detectAppType(files)).toBe('node-service')
+  })
 })
 
 let made: string | undefined

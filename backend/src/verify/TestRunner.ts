@@ -177,6 +177,9 @@ export interface BootSmokeRunnerDeps {
   sessionId?: string
   /** Opt-in (AKIS_ROUNDTRIP_VERIFY) — also run the behavioral round-trip probe on node-service apps. */
   roundTrip?: boolean
+  /** The process-execution seam for the CLI fallback (a server-less 'cli' app is verified by RUNNING
+   *  ITS TESTS via runRealTests(sandbox), not booted). Threaded from the trusted DI wiring. */
+  sandbox?: import('../exec/Sandbox.js').Sandbox
 }
 
 /**
@@ -207,6 +210,7 @@ export function createBootSmokeRunner(deps: BootSmokeRunnerDeps): TestRunner {
         ...(deps.fetchImpl ? { fetchImpl: deps.fetchImpl } : {}),
         ...(deps.timeoutMs !== undefined ? { timeoutMs: deps.timeoutMs } : {}),
         ...(deps.roundTrip ? { roundTrip: true } : {}),
+        ...(deps.sandbox ? { sandbox: deps.sandbox } : {}),
       })
       // ADDITIVE observability — same path as the real runner. `passed` is the run's REAL
       // outcome for display; it cannot influence the branded result below.

@@ -170,6 +170,20 @@ describe('Publisher (FakeSshTransport, offline)', () => {
     expect(rec.logTail.join(' ')).toContain('Unsupported')
   })
 
+  it("a CLI/library app → ok:false, appType 'unsupported' (not a publishable service, no silent AppType cast)", async () => {
+    const CLI_FILES = [
+      { filePath: 'package.json', content: JSON.stringify({ name: 'app', bin: { app: './cli.js' }, scripts: { test: 'vitest run' } }) },
+      { filePath: 'cli.js', content: '#!/usr/bin/env node\nconsole.log("hi")' },
+    ]
+    const { input, fake } = setup(CLI_FILES)
+    const rec = await publish(input)
+    expect(rec.ok).toBe(false)
+    expect(rec.appType).toBe('unsupported')
+    expect(rec.logTail.join(' ')).toContain('cli')
+    // Rejected before any remote work — no ssh commands run for a non-publishable CLI.
+    expect(fake.commands.length).toBe(0)
+  })
+
   it('url defaults to http://host:appPort, or the publicUrl override', async () => {
     const a = setup(STATIC_FILES)
     expect((await publish(a.input)).url).toBe('http://oci.example.com:8080')

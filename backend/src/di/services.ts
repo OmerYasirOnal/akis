@@ -289,7 +289,7 @@ export function buildServices(opts: BuildServicesOptions): OrchestratorServices 
     opts.testRunner ? { kind: 'runner', runner: opts.testRunner }
       // realTests + a boot adapter → the boot-smoke verifier (PR2): Trace boots the produced
       // app and probes the running server. Preferred over bare 'real' for generated apps.
-      : opts.realTests && opts.verifyBoot ? { kind: 'boot', boot: opts.verifyBoot, ...(opts.roundTripVerify ? { roundTrip: true } : {}) }
+      : opts.realTests && opts.verifyBoot ? { kind: 'boot', boot: opts.verifyBoot, sandbox: opts.sandbox ?? new LocalDirectSandbox(), ...(opts.roundTripVerify ? { roundTrip: true } : {}) }
       : opts.realTests ? { kind: 'real', sandbox: opts.sandbox ?? new LocalDirectSandbox() }
       : { kind: 'mock' }
 

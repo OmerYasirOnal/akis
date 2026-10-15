@@ -37,8 +37,11 @@ export function startSpec(type: AppType, port: number, sessionId = ''): StartSpe
     case 'node-service':
       // `node .` runs package.json "main" (or index.js); the app must honor PORT.
       return { cmd: 'node', args: ['.'], env: { PORT: String(port), HOST: '127.0.0.1' } }
+    case 'cli':
     case 'static':
     case 'unsupported':
+      // A CLI has no long-running server to start (it runs once and exits); static/unsupported
+      // are deferred. None are startable as a persistent preview process.
       return null
   }
 }

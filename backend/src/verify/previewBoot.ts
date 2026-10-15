@@ -44,7 +44,9 @@ export function makePreviewBoot(registry: PreviewRegistry): (sessionId: string, 
   return async (sessionId, files) => {
     const verifyId = `${sessionId}${VERIFY_SESSION_SUFFIX}-${randomBytes(4).toString('hex')}`
     const type = detectAppType(files)
-    if (type === 'unsupported') return { failed: `app type '${type}' cannot be booted to verify` }
+    // A CLI has no server to boot — the boot-smoke runner routes it to real-test execution before
+    // ever calling this boot fn; guard anyway so a stray caller can't try to "boot" a CLI.
+    if (type === 'unsupported' || type === 'cli') return { failed: `app type '${type}' cannot be booted to verify` }
 
     // STATIC apps (the most common Proto output — a self-contained index.html) get a tiny
     // throwaway loopback file server over the materialized workspace (PR3): the registry's
